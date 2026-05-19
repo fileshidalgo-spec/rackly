@@ -28,3 +28,22 @@ Stage Summary:
 - Single-page app architecture with tab-based navigation
 - 0 ESLint errors in new code (all warnings are from old cuadraje/ directory)
 - App accessible at / route with RACKLY branding
+
+---
+Task ID: 2
+Agent: Main Agent
+Task: Fix confirmation dialog for salida and add realtime updates to SalidaForm
+
+Work Log:
+- Analyzed current MovimientoForm.tsx - confirmation dialog code already existed from previous commit
+- Identified that AlertDialogAction from Radix UI auto-closes dialog, potentially causing race conditions with handleConfirm
+- Changed AlertDialogAction to a regular Button for the confirm action in SalidaLocationCard
+- Added Supabase realtime subscription to SalidaForm so locations auto-refresh when movements are registered from other devices
+- Extracted location search logic into reusable `refreshLocations` callback with useRef for current searchCode
+- Built project successfully with Turbopack
+- Committed and pushed to GitHub to trigger Netlify auto-deploy
+
+Stage Summary:
+- Confirmation dialog for salida parcial/total now uses Button instead of AlertDialogAction to prevent premature dialog close
+- SalidaForm now subscribes to Supabase realtime (postgres_changes on movimientos table) to auto-refresh search results
+- Deployed to https://rackly.netlify.app via GitHub push (auto-deploy)

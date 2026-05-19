@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   addMovimiento,
   calcularStockUbicacion,
@@ -45,6 +45,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
+import { supabase } from '@/lib/supabase/client'
 import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
@@ -339,7 +340,59 @@ function SalidaForm({
   const [qtyMap, setQtyMap] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
+  const searchCodeRef = useRef(searchCode)
+  searchCodeRef.current = searchCode
 
+  const refreshLocations = useCallback(async () => {
+    const code = searchCodeRef.current.trim()
+    if (!code) {
+      setLocations([])
+      setSelectedLoc(null)
+      setQtyMap({})
+      return
+    }
+    setLoading(true)
+    try {
+      const { fetchMovimientos } = await import('@/lib/rackly/kardex')
+      const movs = await fetchMovimientos()
+      const upperCode = code.toUpperCase()
+      const locMap = new Map<string, LocWithKey>()
+      const relevant = movs.filter((m) => m.codigo === upperCode)
+      for (const m of relevant) {
+        const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+        const current = locMap.get(key)
+        if (current) {
+          current.stock += m.tipo === 'ingreso' ? m.cantidad : -m.cantidad
+        } else {
+          locMap.set(key, {
+            bloque: m.bloque,
+            torre: m.torre,
+            piso: m.piso,
+            posicion: m.posicion,
+            codigo: m.codigo,
+            descripcion: m.descripcion,
+            un: m.un,
+            stock: m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
+            fVencimiento: m.fVencimiento || undefined,
+            proveedor: m.proveedor,
+          })
+        }
+      }
+      const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
+      setLocations(results)
+      if (results.length >= 1) {
+        setSelectedLoc(`${results[0].bloque}-${results[0].torre}-${results[0].piso}-${results[0].posicion}`)
+      } else {
+        setSelectedLoc(null)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Búsqueda con debounce
   useEffect(() => {
     if (!searchCode.trim()) {
       setLocations([])
@@ -347,50 +400,23 @@ function SalidaForm({
       setQtyMap({})
       return
     }
-    const timer = setTimeout(async () => {
-      setLoading(true)
-      try {
-        const { fetchMovimientos } = await import('@/lib/rackly/kardex')
-        const movs = await fetchMovimientos()
-        const code = searchCode.trim().toUpperCase()
-        const locMap = new Map<string, LocWithKey>()
-        const relevant = movs.filter((m) => m.codigo === code)
-        for (const m of relevant) {
-          const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-          const current = locMap.get(key)
-          if (current) {
-            current.stock += m.tipo === 'ingreso' ? m.cantidad : -m.cantidad
-          } else {
-            locMap.set(key, {
-              bloque: m.bloque,
-              torre: m.torre,
-              piso: m.piso,
-              posicion: m.posicion,
-              codigo: m.codigo,
-              descripcion: m.descripcion,
-              un: m.un,
-              stock: m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
-              fVencimiento: m.fVencimiento || undefined,
-              proveedor: m.proveedor,
-            })
-          }
-        }
-        const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
-        setLocations(results)
-        // Auto-seleccionar la primera ubicación siempre
-        if (results.length >= 1) {
-          setSelectedLoc(`${results[0].bloque}-${results[0].torre}-${results[0].piso}-${results[0].posicion}`)
-        } else {
-          setSelectedLoc(null)
-        }
-      } catch {
-        // ignore
-      } finally {
-        setLoading(false)
-      }
-    }, 300)
+    const timer = setTimeout(() => refreshLocations(), 300)
     return () => clearTimeout(timer)
-  }, [searchCode])
+  }, [searchCode, refreshLocations])
+
+  // Tiempo real: actualizar ubicaciones cuando otro dispositivo registre un movimiento
+  useEffect(() => {
+    const channelName = `salida-form-realtime-${Math.random().toString(36).slice(2)}`
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'movimientos' },
+        () => refreshLocations()
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [refreshLocations])
 
   async function handleSalida(locKey: string, full = false) {
     const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
@@ -421,10 +447,11 @@ function SalidaForm({
         proveedor: loc.proveedor,
       })
       toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
+      // Limpiar y refrescar para que refleje el nuevo stock en tiempo real
+      setSearchCode('')
       setQtyMap({})
       setSelectedLoc(null)
       setLocations([])
-      setSearchCode('')
       onCreated(result)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
@@ -650,12 +677,13 @@ function SalidaLocationCard({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>No, cancelar</AlertDialogCancel>
-            <AlertDialogAction
+            <Button
               onClick={handleConfirm}
-              className="bg-red-600 hover:bg-red-700"
+              disabled={busy}
+              className="bg-red-600 hover:bg-red-700 text-white"
             >
               Sí, confirmar salida
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

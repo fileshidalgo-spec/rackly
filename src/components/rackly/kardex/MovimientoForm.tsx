@@ -48,6 +48,13 @@ import { toast } from 'sonner'
 import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
+const PROVEEDORES_FILM = ['INCOMIN', 'DAMAR', 'DIAMAND', 'NEOPACK', 'SOLPACK', 'ITS']
+
+function requiereProveedor(descripcion: string): boolean {
+  const upper = descripcion.toUpperCase()
+  return upper.includes('LAMINA') || upper.includes('STRETCH')
+}
+
 type Props = {
   tipo: TipoMovimiento
   onCreated: (movs: Movimiento[]) => void
@@ -107,6 +114,10 @@ function IngresoForm({
     e.preventDefault()
     if (!bloque || !torre || !piso || !posicion || !codigo.trim() || !cantidad) {
       toast.error('Completa todos los campos requeridos')
+      return
+    }
+    if (requiereProveedor(descripcion) && !proveedor) {
+      toast.error('Selecciona un proveedor para este producto')
       return
     }
     const qty = parseFloat(cantidad)
@@ -267,10 +278,21 @@ function IngresoForm({
               <Checkbox checked={sinVencimiento} onCheckedChange={(v) => setSinVencimiento(!!v)} />
             </div>
           </div>
-          <div className="space-y-1 col-span-2 sm:col-span-2">
-            <Label className="text-xs text-muted-foreground">Proveedor</Label>
-            <Input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Opcional" className="h-10" />
-          </div>
+          {requiereProveedor(descripcion) && (
+            <div className="space-y-1 col-span-2">
+              <Label className="text-xs text-muted-foreground font-medium">Proveedor <span className="text-red-500">*</span></Label>
+              <Select value={proveedor} onValueChange={setProveedor}>
+                <SelectTrigger className="h-10">
+                  <SelectValue placeholder="Selecciona proveedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROVEEDORES_FILM.map((p) => (
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
 
         <Button type="submit" disabled={busy} className="w-full h-11 bg-green-600 hover:bg-green-700 text-white text-sm font-medium sm:w-auto">

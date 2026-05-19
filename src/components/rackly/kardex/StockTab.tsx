@@ -34,6 +34,7 @@ export function StockTab() {
       stock: number
       descripcion: string
       un: string
+      proveedor?: string
     }[]
   >([])
   const [loading, setLoading] = useState(false)
@@ -53,6 +54,7 @@ export function StockTab() {
         stock: number
         descripcion: string
         un: string
+        proveedor?: string
       }
     >()
     const relevant = movs.filter((m) => m.codigo === code)
@@ -70,6 +72,7 @@ export function StockTab() {
           stock: m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
           descripcion: m.descripcion,
           un: m.un,
+          proveedor: m.proveedor || undefined,
         })
       }
     }
@@ -122,6 +125,7 @@ export function StockTab() {
                 <TableHead>Posición</TableHead>
                 <TableHead>Descripción</TableHead>
                 <TableHead>UN</TableHead>
+                <TableHead>Proveedor</TableHead>
                 <TableHead className="text-right">Stock</TableHead>
                 <TableHead className="w-12"></TableHead>
               </TableRow>
@@ -135,6 +139,15 @@ export function StockTab() {
                   <TableCell>{s.posicion}</TableCell>
                   <TableCell>{s.descripcion}</TableCell>
                   <TableCell>{s.un}</TableCell>
+                  <TableCell>
+                    {s.proveedor ? (
+                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                        {s.proveedor}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right font-medium">
                     <Badge variant="default">{s.stock}</Badge>
                   </TableCell>

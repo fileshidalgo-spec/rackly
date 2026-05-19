@@ -29,6 +29,7 @@ type FefoItem = {
   diasRestantes: number
   fVencimiento: string
   un: string
+  proveedor?: string
   status: 'vigente' | 'proximo' | 'urgente' | 'vencido'
 }
 
@@ -58,6 +59,7 @@ export function FefoTab() {
         posicion: string
         stock: number
         fVencimiento: string
+        proveedor?: string
       }
     >()
 
@@ -81,6 +83,7 @@ export function FefoTab() {
           posicion: m.posicion,
           stock: m.cantidad,
           fVencimiento: m.fVencimiento || '',
+          proveedor: m.proveedor || undefined,
         })
       }
     }
@@ -241,6 +244,7 @@ export function FefoTab() {
               <TableHead>Torre</TableHead>
               <TableHead>Pos</TableHead>
               <TableHead className="text-right">Stock</TableHead>
+              <TableHead>Proveedor</TableHead>
               <TableHead>Vencimiento</TableHead>
               <TableHead className="text-right">Días</TableHead>
               <TableHead>Estado</TableHead>
@@ -255,6 +259,15 @@ export function FefoTab() {
                 <TableCell>{item.torre}</TableCell>
                 <TableCell>{item.posicion}</TableCell>
                 <TableCell className="text-right">{item.stock}</TableCell>
+                <TableCell>
+                  {item.proveedor ? (
+                    <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                      {item.proveedor}
+                    </Badge>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </TableCell>
                 <TableCell>{item.fVencimiento}</TableCell>
                 <TableCell className="text-right font-medium">
                   {item.diasRestantes}
@@ -270,7 +283,7 @@ export function FefoTab() {
             ))}
             {filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
                   Sin resultados
                 </TableCell>
               </TableRow>

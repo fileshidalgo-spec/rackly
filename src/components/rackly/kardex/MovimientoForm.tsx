@@ -558,6 +558,9 @@ function SalidaForm({
                 <TableHead className="w-16 text-center">Piso</TableHead>
                 <TableHead className="w-20 text-center">Posición</TableHead>
                 <TableHead className="text-right">Stock</TableHead>
+                {(productoDesc && requiereProveedor(productoDesc)) && (
+                  <TableHead className="w-28">Proveedor</TableHead>
+                )}
                 <TableHead className="w-36">Cantidad salida</TableHead>
                 <TableHead className="w-44">Acción</TableHead>
               </TableRow>
@@ -572,6 +575,17 @@ function SalidaForm({
                     <TableCell className="text-center font-medium">{loc.piso}</TableCell>
                     <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
                     <TableCell className="text-right font-bold">{loc.stock}</TableCell>
+                    {(productoDesc && requiereProveedor(productoDesc)) && (
+                      <TableCell>
+                        {loc.proveedor ? (
+                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                            {loc.proveedor}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell>
                       <Input
                         type="number"

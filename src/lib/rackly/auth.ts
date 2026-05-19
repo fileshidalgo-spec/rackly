@@ -45,8 +45,13 @@ export async function getPerfilActual(): Promise<Perfil | null> {
     data: u,
     error: userErr,
   } = await supabase.auth.getUser()
-  if (userErr || !u?.user) return null
-  const [{ data: perfil }, { data: roles }] = await Promise.all([
+  if (userErr) {
+    console.error('[RACKLY] getUser error:', userErr.message)
+    return null
+  }
+  if (!u?.user) return null
+
+  const [perfilRes, rolesRes] = await Promise.all([
     supabase
       .from('profiles')
       .select('id, correo, nombre, aprobado, must_change_password')
@@ -54,12 +59,23 @@ export async function getPerfilActual(): Promise<Perfil | null> {
       .maybeSingle(),
     supabase.from('user_roles').select('role').eq('user_id', u.user.id),
   ])
+
+  if (perfilRes.error) {
+    console.error('[RACKLY] profiles query error:', perfilRes.error.message)
+  }
+  if (rolesRes.error) {
+    console.error('[RACKLY] user_roles query error:', rolesRes.error.message)
+  }
+
+  const perfil = perfilRes.data
+  const roles = rolesRes.data
+
   if (!perfil) {
     const nombre =
       (u.user.user_metadata?.nombre as string | undefined)?.trim() ||
       u.user.email?.split('@')[0] ||
       'Usuario'
-    const { data: perfilCreado } = await supabase
+    const { data: perfilCreado, error: upsertErr } = await supabase
       .from('profiles')
       .upsert(
         { id: u.user.id, correo: u.user.email ?? '', nombre, aprobado: false },
@@ -67,6 +83,9 @@ export async function getPerfilActual(): Promise<Perfil | null> {
       )
       .select('id, correo, nombre, aprobado, must_change_password')
       .maybeSingle()
+    if (upsertErr) {
+      console.error('[RACKLY] profile upsert error:', upsertErr.message)
+    }
     if (!perfilCreado) return null
     return {
       id: perfilCreado.id,
@@ -77,7 +96,7 @@ export async function getPerfilActual(): Promise<Perfil | null> {
       mustChangePassword: perfilCreado.must_change_password ?? false,
     }
   }
-  if (!perfil) return null
+
   const esAdmin = (roles ?? []).some((r: { role: string }) => r.role === 'admin')
   return {
     id: perfil.id,

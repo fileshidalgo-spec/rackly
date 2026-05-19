@@ -26,12 +26,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [perfil, setPerfil] = useState<Perfil | null>(null)
   const [loading, setLoading] = useState(true)
 
-  async function refresh() {
+  async function refresh(): Promise<Perfil | null> {
     try {
       const p = await getPerfilActual()
       setPerfil(p)
-    } catch {
+      return p
+    } catch (err) {
+      console.error('[RACKLY] Error cargando perfil:', err)
       setPerfil(null)
+      return null
     }
   }
 
@@ -48,9 +51,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false)
         return
       }
-      setTimeout(() => {
-        if (active) refresh().finally(() => setLoading(false))
-      }, 0)
+      // No usar setTimeout — llamar refresh directamente para evitar race conditions
+      refresh().finally(() => {
+        if (active) setLoading(false)
+      })
     })
 
     supabase.auth

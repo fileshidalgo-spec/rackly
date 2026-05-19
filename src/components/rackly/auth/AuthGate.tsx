@@ -7,6 +7,7 @@ import {
   signUp,
   signOut,
   cambiarPasswordPropia,
+  type Perfil,
 } from '@/lib/rackly/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -195,7 +196,7 @@ function PendingApprovalScreen({
 function LoginScreen({
   onSuccess,
 }: {
-  onSuccess: () => Promise<void>
+  onSuccess: () => Promise<Perfil | null>
 }) {
   const [tab, setTab] = useState<'login' | 'signup'>('login')
   const [correo, setCorreo] = useState('')
@@ -212,8 +213,14 @@ function LoginScreen({
     setBusy(true)
     try {
       await signIn(correo.trim().toLowerCase(), password)
-      await onSuccess()
-      toast.success('Sesión iniciada')
+      const perfil = await onSuccess()
+      if (perfil) {
+        toast.success('Sesión iniciada')
+      } else {
+        toast.error('No se pudo cargar tu perfil', {
+          description: 'Intenta de nuevo o contacta al administrador.',
+        })
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
       toast.error('Error al iniciar sesión', { description: message })

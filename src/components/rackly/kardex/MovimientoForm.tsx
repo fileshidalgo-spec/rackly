@@ -322,6 +322,8 @@ function IngresoForm({
 /* ═══════════════════════════════════════════
    SALIDA FORM
    ═══════════════════════════════════════════ */
+type LocWithKey = StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string }
+
 function SalidaForm({
   turno,
   onCreated,
@@ -332,9 +334,9 @@ function SalidaForm({
   perfil: { id: string; nombre: string; correo: string }
 }) {
   const [searchCode, setSearchCode] = useState('')
-  const [locations, setLocations] = useState<(StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string })[]>([])
+  const [locations, setLocations] = useState<LocWithKey[]>([])
   const [selectedLoc, setSelectedLoc] = useState<string | null>(null)
-  const [qty, setQty] = useState('')
+  const [qtyMap, setQtyMap] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -342,6 +344,7 @@ function SalidaForm({
     if (!searchCode.trim()) {
       setLocations([])
       setSelectedLoc(null)
+      setQtyMap({})
       return
     }
     const timer = setTimeout(async () => {
@@ -350,7 +353,7 @@ function SalidaForm({
         const { fetchMovimientos } = await import('@/lib/rackly/kardex')
         const movs = await fetchMovimientos()
         const code = searchCode.trim().toUpperCase()
-        const locMap = new Map<string, (StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string })>()
+        const locMap = new Map<string, LocWithKey>()
         const relevant = movs.filter((m) => m.codigo === code)
         for (const m of relevant) {
           const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
@@ -374,8 +377,8 @@ function SalidaForm({
         }
         const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
         setLocations(results)
-        // Auto-seleccionar si solo hay una ubicación
-        if (results.length === 1) {
+        // Auto-seleccionar la primera ubicación siempre
+        if (results.length >= 1) {
           setSelectedLoc(`${results[0].bloque}-${results[0].torre}-${results[0].piso}-${results[0].posicion}`)
         } else {
           setSelectedLoc(null)
@@ -389,16 +392,13 @@ function SalidaForm({
     return () => clearTimeout(timer)
   }, [searchCode])
 
-  async function handleSalida(full = false) {
-    if (!selectedLoc) {
-      toast.error('Selecciona una ubicación')
-      return
-    }
-    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedLoc)
+  async function handleSalida(locKey: string, full = false) {
+    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
     if (!loc) return
-    const qtyNum = full ? loc.stock : parseFloat(qty)
+    const qtyVal = qtyMap[locKey] || ''
+    const qtyNum = full ? loc.stock : parseFloat(qtyVal)
     if (isNaN(qtyNum) || qtyNum <= 0 || qtyNum > loc.stock) {
-      toast.error('Cantidad inválida')
+      toast.error('Cantidad inválida', { description: full ? '' : 'Ingresa una cantidad válida' })
       return
     }
     setBusy(true)
@@ -421,7 +421,7 @@ function SalidaForm({
         proveedor: loc.proveedor,
       })
       toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
-      setQty('')
+      setQtyMap({})
       setSelectedLoc(null)
       setLocations([])
       setSearchCode('')
@@ -433,10 +433,6 @@ function SalidaForm({
       setBusy(false)
     }
   }
-
-  const selectedData = selectedLoc
-    ? locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedLoc)
-    : null
 
   return (
     <div className="space-y-4">
@@ -467,88 +463,28 @@ function SalidaForm({
         </div>
       )}
 
-      {/* Tabla de ubicaciones con stock — responsive */}
+      {/* Ubicaciones con stock */}
       {locations.length > 0 && (
-        <div className="space-y-1">
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+        <div className="space-y-3">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
             Ubicaciones con stock ({locations.length})
-          </Label>
+          </p>
 
-          {/* Vista tarjetas en mobile, tabla en desktop */}
-          <div className="block sm:hidden space-y-2">
-            {locations.map((loc) => {
-              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
-              const isSelected = selectedLoc === key
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setSelectedLoc(key)}
-                  className={`w-full text-left rounded-lg border-2 p-3 transition-all ${
-                    isSelected
-                      ? 'border-orange-400 bg-orange-50 dark:border-orange-600 dark:bg-orange-950/40'
-                      : 'border-border bg-card hover:border-orange-200 dark:hover:border-orange-800'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-mono font-bold text-sm">{loc.codigo}</span>
-                    <Badge className={isSelected ? 'bg-orange-500 text-white' : 'bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300'}>
-                      {loc.stock} {loc.un}
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground truncate">{loc.descripcion}</p>
-                  <div className="flex gap-2 mt-2">
-                    <Badge variant="outline" className="text-xs">B-{loc.bloque}</Badge>
-                    <Badge variant="outline" className="text-xs">T-{loc.torre}</Badge>
-                    <Badge variant="outline" className="text-xs">P-{loc.piso}</Badge>
-                    <Badge variant="outline" className="text-xs">Pos-{loc.posicion}</Badge>
-                  </div>
-                  {loc.fVencimiento && (
-                    <p className="text-xs text-muted-foreground mt-1">Venc: {loc.fVencimiento}</p>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Tabla en desktop */}
-          <div className="hidden sm:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Código</TableHead>
-                  <TableHead>Descripción</TableHead>
-                  <TableHead>Bloque</TableHead>
-                  <TableHead>Torre</TableHead>
-                  <TableHead>Piso</TableHead>
-                  <TableHead>Pos</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead>Vencimiento</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {locations.map((loc) => {
-                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
-                  return (
-                    <TableRow
-                      key={key}
-                      className={`cursor-pointer transition-colors ${selectedLoc === key ? 'bg-orange-100 dark:bg-orange-950' : 'hover:bg-muted'}`}
-                      onClick={() => setSelectedLoc(key)}
-                    >
-                      <TableCell className="font-mono">{loc.codigo}</TableCell>
-                      <TableCell>{loc.descripcion}</TableCell>
-                      <TableCell><Badge variant="outline">{loc.bloque}</Badge></TableCell>
-                      <TableCell><Badge variant="outline">{loc.torre}</Badge></TableCell>
-                      <TableCell><Badge variant="outline">{loc.piso}</Badge></TableCell>
-                      <TableCell><Badge variant="outline">{loc.posicion}</Badge></TableCell>
-                      <TableCell className="text-right font-bold text-orange-600 dark:text-orange-400">{loc.stock}</TableCell>
-                      <TableCell>{loc.fVencimiento || '—'}</TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </div>
+          {locations.map((loc) => {
+            const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+            return (
+              <SalidaLocationCard
+                key={key}
+                loc={loc}
+                isSelected={selectedLoc === key}
+                qty={qtyMap[key] || ''}
+                busy={busy}
+                onSelect={() => setSelectedLoc(key)}
+                onQtyChange={(val) => setQtyMap((prev) => ({ ...prev, [key]: val }))}
+                onSalida={(full) => handleSalida(key, full)}
+              />
+            )
+          })}
         </div>
       )}
 
@@ -559,61 +495,97 @@ function SalidaForm({
           <span className="text-sm">Sin stock para este código</span>
         </div>
       )}
+    </div>
+  )
+}
 
-      {/* Panel de cantidad — aparece automático cuando hay ubicación seleccionada */}
-      {selectedLoc && selectedData && (
-        <div className="rounded-lg border-2 border-orange-200 dark:border-orange-800 p-4 bg-orange-50 dark:bg-orange-950/30 space-y-3 transition-all">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono font-bold">{selectedData.codigo}</span>
-            <span className="text-xs text-muted-foreground">—</span>
-            <span className="text-sm truncate">{selectedData.descripcion}</span>
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <Badge variant="outline">B-{selectedData.bloque}</Badge>
-            <Badge variant="outline">T-{selectedData.torre}</Badge>
-            <Badge variant="outline">P-{selectedData.piso}</Badge>
-            <Badge variant="outline">Pos-{selectedData.posicion}</Badge>
-            <Badge className="bg-orange-500 text-white ml-auto">
-              Stock: {selectedData.stock} {selectedData.un}
-            </Badge>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-orange-700 dark:text-orange-300 text-sm font-medium">Cantidad a retirar</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                step="any"
-                min="0.001"
-                max={selectedData.stock}
-                value={qty}
-                onChange={(e) => setQty(e.target.value)}
-                placeholder="Cantidad"
-                className="border-orange-300 dark:border-orange-700 h-10 flex-1"
-              />
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="destructive"
-              onClick={() => handleSalida(false)}
-              disabled={busy}
-              className="flex-1 h-10 sm:flex-none"
-            >
-              {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-              Salida parcial
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => handleSalida(true)}
-              disabled={busy}
-              className="flex-1 h-10 bg-red-700 hover:bg-red-800 sm:flex-none"
-            >
-              {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-              Retirar todo
-            </Button>
-          </div>
+/* ─── Tarjeta de ubicación con acciones de salida integradas ─── */
+function SalidaLocationCard({
+  loc,
+  isSelected,
+  qty,
+  busy,
+  onSelect,
+  onQtyChange,
+  onSalida,
+}: {
+  loc: LocWithKey
+  isSelected: boolean
+  qty: string
+  busy: boolean
+  onSelect: () => void
+  onQtyChange: (val: string) => void
+  onSalida: (full: boolean) => void
+}) {
+  return (
+    <div
+      onClick={onSelect}
+      className={`rounded-xl border-2 overflow-hidden transition-all ${
+        isSelected
+          ? 'border-orange-400 bg-orange-50 dark:border-orange-600 dark:bg-orange-950/30'
+          : 'border-border bg-card hover:border-orange-200 dark:hover:border-orange-800 cursor-pointer'
+      }`}
+    >
+      {/* Info del producto y ubicación */}
+      <div className="p-3 pb-2">
+        <div className="flex items-center justify-between mb-1">
+          <span className="font-mono font-bold text-sm">{loc.codigo}</span>
+          <Badge className="bg-orange-500 text-white text-xs">
+            Stock: {loc.stock} {loc.un}
+          </Badge>
         </div>
-      )}
+        <p className="text-xs text-muted-foreground truncate mb-2">{loc.descripcion}</p>
+        <div className="flex gap-1.5 flex-wrap">
+          <Badge variant="outline" className="text-xs">B-{loc.bloque}</Badge>
+          <Badge variant="outline" className="text-xs">T-{loc.torre}</Badge>
+          <Badge variant="outline" className="text-xs">P-{loc.piso}</Badge>
+          <Badge variant="outline" className="text-xs">Pos-{loc.posicion}</Badge>
+          {loc.fVencimiento && (
+            <Badge variant="outline" className="text-xs">Venc: {loc.fVencimiento}</Badge>
+          )}
+        </div>
+      </div>
+
+      {/* Cantidad y botones — siempre visibles */}
+      <div className="border-t border-orange-200 dark:border-orange-800 p-3 pt-3 space-y-2 bg-orange-50/80 dark:bg-orange-950/20">
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-orange-700 dark:text-orange-300 font-medium whitespace-nowrap">
+            Cantidad a retirar
+          </Label>
+          <Input
+            type="number"
+            step="any"
+            min="0.001"
+            max={loc.stock}
+            value={qty}
+            onChange={(e) => onQtyChange(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            placeholder="0"
+            className="border-orange-300 dark:border-orange-700 h-10 text-sm"
+          />
+        </div>
+        <div className="flex gap-2">
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={(e) => { e.stopPropagation(); onSalida(false) }}
+            disabled={busy}
+            className="flex-1 h-9 text-xs"
+          >
+            {busy && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+            Salida parcial
+          </Button>
+          <Button
+            size="sm"
+            onClick={(e) => { e.stopPropagation(); onSalida(true) }}
+            disabled={busy}
+            className="flex-1 h-9 text-xs bg-red-700 hover:bg-red-800 text-white"
+          >
+            {busy && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+            Retirar todo ({loc.stock})
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

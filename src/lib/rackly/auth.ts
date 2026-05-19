@@ -40,6 +40,15 @@ export async function signOut() {
   await supabase.auth.signOut()
 }
 
+export async function resetPassword(correo: string) {
+  const redirectTo = `${window.location.origin}/`
+  const { data, error } = await supabase.auth.resetPasswordForEmail(correo, {
+    redirectTo,
+  })
+  if (error) throw error
+  return data
+}
+
 export async function getPerfilActual(): Promise<Perfil | null> {
   const {
     data: u,

@@ -14,17 +14,22 @@ type AuthCtx = {
   perfil: Perfil | null
   loading: boolean
   refresh: () => Promise<void>
+  passwordRecovery: boolean
+  clearPasswordRecovery: () => void
 }
 
 const Ctx = createContext<AuthCtx>({
   perfil: null,
   loading: true,
   refresh: async () => {},
+  passwordRecovery: false,
+  clearPasswordRecovery: () => {},
 })
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [perfil, setPerfil] = useState<Perfil | null>(null)
   const [loading, setLoading] = useState(true)
+  const [passwordRecovery, setPasswordRecovery] = useState(false)
 
   async function refresh(): Promise<Perfil | null> {
     try {
@@ -43,6 +48,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return
+      // Detectar flujo de recuperación de contraseña
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery(true)
+        if (!session) {
+          setPerfil(null)
+          setLoading(false)
+          return
+        }
+      }
       if (event === 'TOKEN_REFRESHED' && !session) {
         supabase.auth.signOut().catch(() => {})
       }
@@ -83,8 +97,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  function clearPasswordRecovery() {
+    setPasswordRecovery(false)
+  }
+
   return (
-    <Ctx.Provider value={{ perfil, loading, refresh }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{ perfil, loading, refresh, passwordRecovery, clearPasswordRecovery }}>{children}</Ctx.Provider>
   )
 }
 

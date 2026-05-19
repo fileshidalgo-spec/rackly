@@ -6,6 +6,7 @@ import {
   signIn,
   signUp,
   signOut,
+  resetPassword,
   cambiarPasswordPropia,
   type Perfil,
 } from '@/lib/rackly/auth'
@@ -25,11 +26,64 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs'
-import { Warehouse, Clock, RefreshCw, KeyRound, Loader2 } from 'lucide-react'
+import {
+  Warehouse,
+  Clock,
+  RefreshCw,
+  KeyRound,
+  Loader2,
+  Eye,
+  EyeOff,
+  ArrowLeft,
+  Mail,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
+/* ─── Componente auxiliar: campo contraseña con toggle de visibilidad ─── */
+function PasswordInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  autoComplete,
+  className,
+}: {
+  id: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  autoComplete?: string
+  className?: string
+}) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <div className="relative">
+      <Input
+        id={id}
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        className={`pr-10 ${className ?? ''}`}
+      />
+      <button
+        type="button"
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+        onClick={() => setVisible((v) => !v)}
+        tabIndex={-1}
+        aria-label={visible ? 'Ocultar contraseña' : 'Ver contraseña'}
+      >
+        {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    </div>
+  )
+}
+
+/* ─── AuthGate principal ─── */
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const { perfil, loading, refresh } = useAuth()
+  const { perfil, loading, refresh, passwordRecovery, clearPasswordRecovery } =
+    useAuth()
 
   if (loading) {
     return (
@@ -37,6 +91,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </main>
     )
+  }
+
+  // Si viene del link de recuperación de contraseña, mostrar formulario
+  if (passwordRecovery) {
+    return <SetNewPasswordScreen onDone={() => { clearPasswordRecovery(); refresh() }} />
   }
 
   if (!perfil) return <LoginScreen onSuccess={refresh} />
@@ -50,6 +109,85 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/* ─── Pantalla: establecer nueva contraseña (tras click en link de email) ─── */
+function SetNewPasswordScreen({
+  onDone,
+}: {
+  onDone: () => Promise<void>
+}) {
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (password.length < 6) {
+      toast.error('La contraseña debe tener al menos 6 caracteres')
+      return
+    }
+    if (password !== confirm) {
+      toast.error('Las contraseñas no coinciden')
+      return
+    }
+    setBusy(true)
+    try {
+      await cambiarPasswordPropia(password)
+      toast.success('Contraseña actualizada correctamente')
+      await signOut()
+      await onDone()
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('No se pudo actualizar la contraseña', {
+        description: message,
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-background p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+            <KeyRound className="h-6 w-6 text-primary" />
+          </div>
+          <CardTitle>Nueva contraseña</CardTitle>
+          <CardDescription>
+            Ingresa tu nueva contraseña. Debe tener al menos 6 caracteres.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="rp-pass">Nueva contraseña</Label>
+              <PasswordInput
+                id="rp-pass"
+                value={password}
+                onChange={setPassword}
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="rp-pass2">Confirmar contraseña</Label>
+              <PasswordInput
+                id="rp-pass2"
+                value={confirm}
+                onChange={setConfirm}
+                autoComplete="new-password"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={busy}>
+              {busy ? 'Guardando…' : 'Guardar y continuar'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </main>
+  )
+}
+
+/* ─── Pantalla: forzar cambio de contraseña ─── */
 function ForceChangePasswordScreen({
   onDone,
 }: {
@@ -99,21 +237,19 @@ function ForceChangePasswordScreen({
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="fc-pass">Nueva contraseña</Label>
-              <Input
+              <PasswordInput
                 id="fc-pass"
-                type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={setPassword}
                 autoComplete="new-password"
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="fc-pass2">Confirmar contraseña</Label>
-              <Input
+              <PasswordInput
                 id="fc-pass2"
-                type="password"
                 value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
+                onChange={setConfirm}
                 autoComplete="new-password"
               />
             </div>
@@ -138,6 +274,7 @@ function ForceChangePasswordScreen({
   )
 }
 
+/* ─── Pantalla: cuenta pendiente de aprobación ─── */
 function PendingApprovalScreen({
   nombre,
   onRefresh,
@@ -193,11 +330,131 @@ function PendingApprovalScreen({
   )
 }
 
+/* ─── Pantalla de recuperar contraseña (solicitar email) ─── */
+function ForgotPasswordScreen({
+  onBack,
+}: {
+  onBack: () => void
+}) {
+  const [correo, setCorreo] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [sent, setSent] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!correo.trim()) {
+      toast.error('Ingresa tu correo electrónico')
+      return
+    }
+    setBusy(true)
+    try {
+      await resetPassword(correo.trim().toLowerCase())
+      setSent(true)
+      toast.success('Correo enviado', {
+        description:
+          'Revisa tu bandeja de entrada y haz clic en el enlace para crear tu nueva contraseña.',
+      })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('No se pudo enviar el correo', { description: message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (sent) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+              <Mail className="h-6 w-6 text-primary" />
+            </div>
+            <CardTitle>Revisa tu correo</CardTitle>
+            <CardDescription>
+              Enviamos un enlace a <strong>{correo}</strong> para que crees tu
+              nueva contraseña. Revisa también la carpeta de spam o correo no
+              deseado.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full gap-2"
+              onClick={() => {
+                setSent(false)
+                setCorreo('')
+              }}
+            >
+              Enviar de nuevo
+            </Button>
+            <Button
+              type="button"
+              className="w-full gap-2"
+              onClick={onBack}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Volver al inicio de sesión
+            </Button>
+          </CardContent>
+        </Card>
+      </main>
+    )
+  }
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-background p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+            <KeyRound className="h-6 w-6 text-primary" />
+          </div>
+          <CardTitle>Recuperar contraseña</CardTitle>
+          <CardDescription>
+            Ingresa tu correo electrónico y te enviaremos un enlace para crear
+            una nueva contraseña.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="fp-correo">Correo electrónico</Label>
+              <Input
+                id="fp-correo"
+                type="email"
+                value={correo}
+                onChange={(e) => setCorreo(e.target.value)}
+                placeholder="usuario@empresa.com"
+                autoComplete="email"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={busy}>
+              {busy ? 'Enviando…' : 'Enviar enlace de recuperación'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full gap-2"
+              onClick={onBack}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Volver al inicio de sesión
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </main>
+  )
+}
+
+/* ─── Pantalla de login / registro ─── */
 function LoginScreen({
   onSuccess,
 }: {
   onSuccess: () => Promise<Perfil | null>
 }) {
+  const [view, setView] = useState<'auth' | 'forgot'>('auth')
   const [tab, setTab] = useState<'login' | 'signup'>('login')
   const [correo, setCorreo] = useState('')
   const [password, setPassword] = useState('')
@@ -275,6 +532,11 @@ function LoginScreen({
     }
   }
 
+  // Vista de recuperar contraseña
+  if (view === 'forgot') {
+    return <ForgotPasswordScreen onBack={() => setView('auth')} />
+  }
+
   return (
     <main className="flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
@@ -313,17 +575,27 @@ function LoginScreen({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="login-pass">Contraseña</Label>
-                  <Input
+                  <PasswordInput
                     id="login-pass"
-                    type="password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={setPassword}
+                    placeholder="Tu contraseña"
                     autoComplete="current-password"
                   />
                 </div>
                 <Button type="submit" className="w-full" disabled={busy}>
                   {busy ? 'Ingresando…' : 'Ingresar'}
                 </Button>
+                {/* Link de recuperar contraseña */}
+                <div className="text-center">
+                  <button
+                    type="button"
+                    className="text-sm text-primary hover:underline"
+                    onClick={() => setView('forgot')}
+                  >
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
               </form>
             </TabsContent>
 
@@ -351,11 +623,11 @@ function LoginScreen({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="su-pass">Contraseña (mín. 6 caracteres)</Label>
-                  <Input
+                  <PasswordInput
                     id="su-pass"
-                    type="password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={setPassword}
+                    placeholder="Mínimo 6 caracteres"
                     autoComplete="new-password"
                   />
                 </div>

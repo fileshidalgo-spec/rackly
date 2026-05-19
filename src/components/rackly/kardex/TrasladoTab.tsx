@@ -9,6 +9,7 @@ import {
 import { calcularTurno } from '@/lib/rackly/turno'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
 import { useAuth } from '@/hooks/useAuth'
+import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
 import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
 
@@ -45,7 +46,6 @@ import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { Loader2, ArrowRightLeft, PackageSearch } from 'lucide-react'
 import type { CatalogoItem, StockEnUbicacion } from '@/lib/rackly/catalogo'
-import type { StockEnUbicacion as StockType } from '@/lib/rackly/kardex'
 
 type LocStock = {
   bloque: string
@@ -77,11 +77,7 @@ export function TrasladoTab() {
 
   const [movs, setMovs] = useState<Movimiento[]>([])
 
-  useEffect(() => {
-    fetchMovimientos()
-      .then(setMovs)
-      .catch(() => {})
-  }, [])
+  useMovimientosRealtime(setMovs)
 
   function handleCatalogoPick(item: CatalogoItem) {
     setCodigo(item.codigo)

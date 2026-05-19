@@ -45,7 +45,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, RefreshCw } from 'lucide-react'
+import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 type Props = {
@@ -169,7 +169,6 @@ function IngresoForm({
 
   return (
     <>
-      {/* Header visual para ingreso */}
       <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-800">
         <ArrowDownToLine className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0" />
         <div className="min-w-0">
@@ -179,7 +178,6 @@ function IngresoForm({
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Ubicación — 2 columnas en mobile, 5 en desktop */}
         <div className="space-y-1">
           <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Ubicación</Label>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
@@ -226,7 +224,6 @@ function IngresoForm({
           </div>
         </div>
 
-        {/* Producto — búsqueda */}
         <div className="space-y-1">
           <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Producto</Label>
           <CatalogoSearchInput
@@ -243,7 +240,6 @@ function IngresoForm({
           />
         </div>
 
-        {/* Detalles del producto — aparecen automáticamente al seleccionar código */}
         {descripcion && (
           <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 p-3 space-y-2 transition-all">
             <div className="flex items-start gap-3 flex-wrap">
@@ -259,7 +255,6 @@ function IngresoForm({
           </div>
         )}
 
-        {/* Cantidad y fecha */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div className="space-y-1 col-span-2 sm:col-span-1">
             <Label className="text-xs text-muted-foreground">Cantidad</Label>
@@ -320,7 +315,7 @@ function IngresoForm({
 }
 
 /* ═══════════════════════════════════════════
-   SALIDA FORM
+   SALIDA FORM — Tabla con formato exacto de la imagen
    ═══════════════════════════════════════════ */
 type LocWithKey = StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string }
 
@@ -334,12 +329,12 @@ function SalidaForm({
   perfil: { id: string; nombre: string; correo: string }
 }) {
   const [searchCode, setSearchCode] = useState('')
+  const [productoDesc, setProductoDesc] = useState('')
+  const [productoUn, setProductoUn] = useState('')
   const [locations, setLocations] = useState<LocWithKey[]>([])
-  const [selectedLoc, setSelectedLoc] = useState<string | null>(null)
   const [qtyMap, setQtyMap] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [autoRefresh, setAutoRefresh] = useState(true)
   const searchCodeRef = useRef(searchCode)
   searchCodeRef.current = searchCode
 
@@ -348,7 +343,8 @@ function SalidaForm({
     const code = searchCodeRef.current.trim()
     if (!code) {
       setLocations([])
-      setSelectedLoc(null)
+      setProductoDesc('')
+      setProductoUn('')
       setQtyMap({})
       return
     }
@@ -358,7 +354,11 @@ function SalidaForm({
       const upperCode = code.toUpperCase()
       const locMap = new Map<string, LocWithKey>()
       const relevant = movs.filter((m) => m.codigo === upperCode)
+      let desc = ''
+      let un = ''
       for (const m of relevant) {
+        if (!desc && m.descripcion) desc = m.descripcion
+        if (!un && m.un) un = m.un
         const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
         const current = locMap.get(key)
         if (current) {
@@ -380,11 +380,8 @@ function SalidaForm({
       }
       const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
       setLocations(results)
-      if (results.length >= 1) {
-        setSelectedLoc(`${results[0].bloque}-${results[0].torre}-${results[0].piso}-${results[0].posicion}`)
-      } else {
-        setSelectedLoc(null)
-      }
+      setProductoDesc(desc)
+      setProductoUn(un)
     } catch {
       // silencioso
     }
@@ -394,7 +391,8 @@ function SalidaForm({
   useEffect(() => {
     if (!searchCode.trim()) {
       setLocations([])
-      setSelectedLoc(null)
+      setProductoDesc('')
+      setProductoUn('')
       setQtyMap({})
       return
     }
@@ -406,50 +404,46 @@ function SalidaForm({
     return () => clearTimeout(timer)
   }, [searchCode, refreshLocations])
 
-  // POLLING: refrescar automáticamente cada 8 segundos cuando hay búsqueda activa
+  // POLLING: refrescar automáticamente cada 8 segundos
   useEffect(() => {
-    if (!searchCode.trim() || !autoRefresh) return
+    if (!searchCode.trim()) return
     const interval = setInterval(() => {
       refreshLocations()
     }, 8000)
     return () => clearInterval(interval)
-  }, [searchCode, autoRefresh, refreshLocations])
-
-  // Realtime: refrescar cuando Supabase notifica cambios (si está configurado)
-  useEffect(() => {
-    if (!searchCode.trim()) return
-    let channel: ReturnType<typeof import('@/lib/supabase/client').supabase.channel> | null = null
-    try {
-      const { supabase } = require('@/lib/supabase/client')
-      const channelName = `salida-rt-${Date.now()}`
-      channel = supabase
-        .channel(channelName)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'movimientos' }, () => {
-          refreshLocations()
-        })
-        .subscribe()
-    } catch {
-      // Si Supabase Realtime no está configurado, el polling se encarga
-    }
-    return () => {
-      if (channel) {
-        try {
-          const { supabase } = require('@/lib/supabase/client')
-          supabase.removeChannel(channel)
-        } catch { /* ignore */ }
-      }
-    }
   }, [searchCode, refreshLocations])
 
-  async function handleSalida(locKey: string, full = false) {
+  async function handleSalidaParcial(locKey: string) {
     const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
     if (!loc) return
     const qtyVal = qtyMap[locKey] || ''
-    const qtyNum = full ? loc.stock : parseFloat(qtyVal)
-    if (isNaN(qtyNum) || qtyNum <= 0 || qtyNum > loc.stock) {
-      toast.error('Cantidad inválida', { description: full ? '' : 'Ingresa una cantidad válida' })
+    const qtyNum = parseFloat(qtyVal)
+    if (isNaN(qtyNum) || qtyNum <= 0) {
+      toast.error('Ingresa una cantidad válida para la salida parcial')
       return
     }
+    if (qtyNum > loc.stock) {
+      toast.error('La cantidad excede el stock disponible')
+      return
+    }
+    setConfirmState({ loc, qtyNum, full: false })
+  }
+
+  function handleRetirarTodo(locKey: string) {
+    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
+    if (!loc) return
+    setConfirmState({ loc, qtyNum: loc.stock, full: true })
+  }
+
+  const [confirmState, setConfirmState] = useState<{
+    loc: LocWithKey
+    qtyNum: number
+    full: boolean
+  } | null>(null)
+
+  async function doSalida() {
+    if (!confirmState) return
+    const { loc, qtyNum } = confirmState
     setBusy(true)
     try {
       const result = await addMovimiento({
@@ -470,10 +464,9 @@ function SalidaForm({
         proveedor: loc.proveedor,
       })
       toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
+      setConfirmState(null)
       setSearchCode('')
       setQtyMap({})
-      setSelectedLoc(null)
-      setLocations([])
       onCreated(result)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
@@ -485,29 +478,9 @@ function SalidaForm({
 
   return (
     <div className="space-y-4">
-      {/* Header visual para salida */}
-      <div className="flex items-center justify-between p-3 rounded-lg bg-orange-50 dark:bg-orange-950/40 border border-orange-200 dark:border-orange-800">
-        <div className="flex items-center gap-2 min-w-0">
-          <ArrowUpFromLine className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0" />
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-orange-700 dark:text-orange-300">Salida de mercadería</p>
-            <p className="text-xs text-orange-600/80 dark:text-orange-400/70">Turno: {turno}</p>
-          </div>
-        </div>
-        {searchCode.trim() && (
-          <button
-            onClick={() => refreshLocations()}
-            className="p-2 rounded-lg hover:bg-orange-100 dark:hover:bg-orange-900/40 transition-colors"
-            title="Refrescar ubicaciones"
-          >
-            <RefreshCw className={`h-4 w-4 text-orange-600 dark:text-orange-400 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-        )}
-      </div>
-
-      {/* Búsqueda de código */}
+      {/* Búsqueda */}
       <div className="space-y-1">
-        <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Buscar producto</Label>
+        <Label className="text-sm text-muted-foreground">Buscar (código o descripción)</Label>
         <CatalogoSearchInput
           onPick={(item) => setSearchCode(item.codigo)}
           value={searchCode}
@@ -515,47 +488,106 @@ function SalidaForm({
         />
       </div>
 
-      {/* Loading */}
-      {loading && (
-        <div className="flex items-center justify-center py-6">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">Buscando ubicaciones...</span>
+      {/* Producto (solo lectura) */}
+      {productoDesc && (
+        <div className="space-y-1">
+          <Label className="text-sm text-muted-foreground">Producto</Label>
+          <Input
+            value={`${productoUn ? productoUn + ' — ' : ''}${productoDesc}`}
+            readOnly
+            className="h-10 bg-muted/50 cursor-default"
+          />
         </div>
       )}
 
-      {/* Ubicaciones con stock */}
-      {locations.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Ubicaciones con stock ({locations.length})
-            </p>
-            <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
-                className="rounded border-gray-300 text-orange-600 focus:ring-orange-500 h-3.5 w-3.5"
-              />
-              <span className="text-xs text-muted-foreground">Auto-refresco</span>
-            </label>
-          </div>
+      {/* Badges de metadata */}
+      {searchCode.trim() && (
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+            Turno: {turno}
+          </Badge>
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+            Usuario: {perfil.nombre}
+          </Badge>
+          {!loading && (
+            <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800">
+              Ubicaciones con stock: <span className="font-bold">{locations.length}</span>
+            </Badge>
+          )}
+        </div>
+      )}
 
-          {locations.map((loc) => {
-            const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
-            return (
-              <SalidaLocationCard
-                key={key}
-                loc={loc}
-                isSelected={selectedLoc === key}
-                qty={qtyMap[key] || ''}
-                busy={busy}
-                onSelect={() => setSelectedLoc(key)}
-                onQtyChange={(val) => setQtyMap((prev) => ({ ...prev, [key]: val }))}
-                onSalida={(full) => handleSalida(key, full)}
-              />
-            )
-          })}
+      {/* Loading */}
+      {loading && (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">Buscando...</span>
+        </div>
+      )}
+
+      {/* Tabla de ubicaciones */}
+      {locations.length > 0 && !loading && (
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-16 text-center">Bloque</TableHead>
+                <TableHead className="w-16 text-center">Torre</TableHead>
+                <TableHead className="w-16 text-center">Piso</TableHead>
+                <TableHead className="w-20 text-center">Posición</TableHead>
+                <TableHead className="text-right">Stock</TableHead>
+                <TableHead className="w-36">Cantidad salida</TableHead>
+                <TableHead className="w-44">Acción</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {locations.map((loc) => {
+                const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+                return (
+                  <TableRow key={key}>
+                    <TableCell className="text-center font-medium">{loc.bloque}</TableCell>
+                    <TableCell className="text-center font-medium">{loc.torre}</TableCell>
+                    <TableCell className="text-center font-medium">{loc.piso}</TableCell>
+                    <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
+                    <TableCell className="text-right font-bold">{loc.stock}</TableCell>
+                    <TableCell>
+                      <Input
+                        type="number"
+                        step="any"
+                        min="0.001"
+                        max={loc.stock}
+                        value={qtyMap[key] || ''}
+                        onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
+                        placeholder="Parcial"
+                        className="h-9 text-sm"
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => handleSalidaParcial(key)}
+                          disabled={busy}
+                          className="flex-1 h-9 text-xs bg-red-600 hover:bg-red-700 text-white"
+                        >
+                          Salida
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleRetirarTodo(key)}
+                          disabled={busy}
+                          className="flex-1 h-9 text-xs"
+                        >
+                          Todo
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
         </div>
       )}
 
@@ -566,183 +598,71 @@ function SalidaForm({
           <span className="text-sm">Sin stock para este código</span>
         </div>
       )}
-    </div>
-  )
-}
 
-/* ─── Tarjeta de ubicación con acciones de salida integradas ─── */
-function SalidaLocationCard({
-  loc,
-  isSelected,
-  qty,
-  busy,
-  onSelect,
-  onQtyChange,
-  onSalida,
-}: {
-  loc: LocWithKey
-  isSelected: boolean
-  qty: string
-  busy: boolean
-  onSelect: () => void
-  onQtyChange: (val: string) => void
-  onSalida: (full: boolean) => void
-}) {
-  const [confirmDialog, setConfirmDialog] = useState<{
-    full: boolean
-    qtyNum: number
-  } | null>(null)
-
-  function handleButtonClick(full: boolean, e: React.MouseEvent) {
-    e.stopPropagation()
-    const qtyNum = full ? loc.stock : parseFloat(qty)
-    if (!full && (isNaN(qtyNum) || qtyNum <= 0)) {
-      toast.error('Ingresa una cantidad válida')
-      return
-    }
-    if (qtyNum > loc.stock) {
-      toast.error('La cantidad excede el stock disponible')
-      return
-    }
-    setConfirmDialog({ full, qtyNum })
-  }
-
-  function handleConfirm() {
-    if (!confirmDialog) return
-    onSalida(confirmDialog.full)
-    setConfirmDialog(null)
-  }
-
-  const stockDespues = confirmDialog
-    ? loc.stock - confirmDialog.qtyNum
-    : loc.stock
-
-  return (
-    <>
-      <div
-        onClick={onSelect}
-        className={`rounded-xl border-2 overflow-hidden transition-all ${
-          isSelected
-            ? 'border-orange-400 bg-orange-50 dark:border-orange-600 dark:bg-orange-950/30'
-            : 'border-border bg-card hover:border-orange-200 dark:hover:border-orange-800 cursor-pointer'
-        }`}
-      >
-        {/* Info del producto y ubicación */}
-        <div className="p-3 pb-2">
-          <div className="flex items-center justify-between mb-1">
-            <span className="font-mono font-bold text-sm">{loc.codigo}</span>
-            <Badge className="bg-orange-500 text-white text-xs">
-              Stock: {loc.stock} {loc.un}
-            </Badge>
-          </div>
-          <p className="text-xs text-muted-foreground truncate mb-2">{loc.descripcion}</p>
-          <div className="flex gap-1.5 flex-wrap">
-            <Badge variant="outline" className="text-xs">B-{loc.bloque}</Badge>
-            <Badge variant="outline" className="text-xs">T-{loc.torre}</Badge>
-            <Badge variant="outline" className="text-xs">P-{loc.piso}</Badge>
-            <Badge variant="outline" className="text-xs">Pos-{loc.posicion}</Badge>
-            {loc.fVencimiento && (
-              <Badge variant="outline" className="text-xs">Venc: {loc.fVencimiento}</Badge>
-            )}
-          </div>
-        </div>
-
-        {/* Cantidad y botones — siempre visibles */}
-        <div className="border-t border-orange-200 dark:border-orange-800 p-3 pt-3 space-y-2 bg-orange-50/80 dark:bg-orange-950/20">
-          <div className="flex items-center gap-2">
-            <Label className="text-xs text-orange-700 dark:text-orange-300 font-medium whitespace-nowrap">
-              Cantidad a retirar
-            </Label>
-            <Input
-              type="number"
-              step="any"
-              min="0.001"
-              max={loc.stock}
-              value={qty}
-              onChange={(e) => onQtyChange(e.target.value)}
-              onClick={(e) => e.stopPropagation()}
-              placeholder="0"
-              className="border-orange-300 dark:border-orange-700 h-10 text-sm"
-            />
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={(e) => handleButtonClick(false, e)}
-              disabled={busy}
-              className="flex-1 h-9 text-xs"
-            >
-              Salida parcial
-            </Button>
-            <Button
-              size="sm"
-              onClick={(e) => handleButtonClick(true, e)}
-              disabled={busy}
-              className="flex-1 h-9 text-xs bg-red-700 hover:bg-red-800 text-white"
-            >
-              Retirar todo ({loc.stock})
-            </Button>
-          </div>
-        </div>
-      </div>
+      {/* Nota inferior */}
+      {locations.length > 0 && (
+        <p className="text-xs text-muted-foreground text-center">
+          Las ubicaciones que lleguen a stock 0 desaparecen automáticamente de esta lista.
+        </p>
+      )}
 
       {/* Diálogo de confirmación Sí/No */}
-      <AlertDialog open={!!confirmDialog} onOpenChange={(open) => { if (!open) setConfirmDialog(null) }}>
+      <AlertDialog open={!!confirmState} onOpenChange={(open) => { if (!open) setConfirmState(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmDialog?.full ? 'Retirar todo el stock' : 'Confirmar salida parcial'}
+              {confirmState?.full ? 'Retirar todo el stock' : 'Confirmar salida'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3">
                 <p>¿Estás seguro de registrar esta salida?</p>
-                <div className="rounded-lg border bg-muted/50 p-3 space-y-1.5 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Producto:</span>
-                    <span className="font-medium">{loc.codigo} — {loc.descripcion}</span>
+                {confirmState && (
+                  <div className="rounded-lg border bg-muted/50 p-3 space-y-1.5 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Producto:</span>
+                      <span className="font-medium">{confirmState.loc.codigo} — {confirmState.loc.descripcion}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Ubicación:</span>
+                      <span className="font-medium">
+                        B-{confirmState.loc.bloque} T-{confirmState.loc.torre} P-{confirmState.loc.piso} Pos-{confirmState.loc.posicion}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Stock actual:</span>
+                      <span className="font-medium">{confirmState.loc.stock} {confirmState.loc.un}</span>
+                    </div>
+                    <div className="border-t pt-1.5 flex justify-between font-bold">
+                      <span className="text-red-600">Cantidad a retirar:</span>
+                      <span className="text-red-600">{confirmState.qtyNum} {confirmState.loc.un}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Stock después:</span>
+                      <span className={`font-medium ${confirmState.loc.stock - confirmState.qtyNum === 0 ? 'text-red-600' : ''}`}>
+                        {confirmState.loc.stock - confirmState.qtyNum} {confirmState.loc.un}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Ubicación:</span>
-                    <span className="font-medium">B-{loc.bloque} T-{loc.torre} P-{loc.piso} Pos-{loc.posicion}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Stock actual:</span>
-                    <span className="font-medium">{loc.stock} {loc.un}</span>
-                  </div>
-                  <div className="border-t pt-1.5 flex justify-between font-bold">
-                    <span className="text-red-600">Cantidad a retirar:</span>
-                    <span className="text-red-600">{confirmDialog?.qtyNum} {loc.un}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Stock después:</span>
-                    <span className={`font-medium ${stockDespues === 0 ? 'text-red-600' : ''}`}>
-                      {stockDespues} {loc.un} {stockDespues === 0 ? '(vacío)' : ''}
-                    </span>
-                  </div>
-                </div>
+                )}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>No, cancelar</AlertDialogCancel>
             <Button
-              onClick={(e) => {
-                e.preventDefault()
-                handleConfirm()
-              }}
+              onClick={(e) => { e.preventDefault(); doSalida() }}
               disabled={busy}
               className="bg-red-600 hover:bg-red-700 text-white"
             >
               {busy ? (
                 <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Procesando...</>
               ) : (
-                'Sí, confirmar salida'
+                'Sí, confirmar'
               )}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </>
+    </div>
   )
 }

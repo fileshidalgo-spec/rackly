@@ -46,10 +46,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true
 
+    // Detectar tokens de recuperación en la URL (#access_token=...&type=recovery)
+    const hash = window.location.hash
+    if (hash.includes('type=recovery') || hash.includes('type=_recovery')) {
+      console.log('[RACKLY] Tokens de recuperación detectados en URL')
+      setPasswordRecovery(true)
+    }
+
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return
+      console.log('[RACKLY] Auth event:', event)
       // Detectar flujo de recuperación de contraseña
       if (event === 'PASSWORD_RECOVERY') {
+        console.log('[RACKLY] PASSWORD_RECOVERY detectado')
         setPasswordRecovery(true)
         if (!session) {
           setPerfil(null)
@@ -71,14 +80,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
     })
 
+    // getSession() procesa los tokens del hash automáticamente
     supabase.auth
       .getSession()
       .then(({ data, error }) => {
         if (!active) return
+        console.log('[RACKLY] getSession:', error ? error.message : 'OK', 'session:', !!data.session)
         if (error || !data.session) {
-          supabase.auth.signOut().catch(() => {})
-          setPerfil(null)
-          setLoading(false)
+          // Si no hay sesión pero hay tokens de recovery en la URL, mostrar formulario
+          const h = window.location.hash
+          if (h.includes('type=recovery') || h.includes('type=_recovery')) {
+            setPasswordRecovery(true)
+            setLoading(false)
+          } else {
+            supabase.auth.signOut().catch(() => {})
+            setPerfil(null)
+            setLoading(false)
+          }
         } else {
           refresh().finally(() => setLoading(false))
         }

@@ -10,6 +10,7 @@ import {
   cambiarPasswordPropia,
   type Perfil,
 } from '@/lib/rackly/auth'
+import { supabase } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -131,15 +132,37 @@ function SetNewPasswordScreen({
     }
     setBusy(true)
     try {
-      await cambiarPasswordPropia(password)
+      // Primero intentar con updateUser (funciona con tokens del hash de la URL)
+      const { error } = await supabase.auth.updateUser({ password })
+      if (error) throw error
+      // Si hay sesión, también actualizar el flag en profiles
+      try {
+        const { data: u } = await supabase.auth.getUser()
+        if (u?.user) {
+          await supabase
+            .from('profiles')
+            .update({ must_change_password: false })
+            .eq('id', u.user.id)
+        }
+      } catch {
+        // no crítico
+      }
+      // Limpiar el hash de la URL
+      window.location.hash = ''
       toast.success('Contraseña actualizada correctamente')
       await signOut()
       await onDone()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
-      toast.error('No se pudo actualizar la contraseña', {
-        description: message,
-      })
+      if (message.toLowerCase().includes('expired') || message.toLowerCase().includes('invalid')) {
+        toast.error('Enlace expirado', {
+          description: 'El enlace de recuperación ha expirado. Solicita uno nuevo desde "¿Olvidaste tu contraseña?".',
+        })
+      } else {
+        toast.error('No se pudo actualizar la contraseña', {
+          description: message,
+        })
+      }
     } finally {
       setBusy(false)
     }

@@ -79,6 +79,7 @@ function IngresoForm({
 }) {
   const [bloque, setBloque] = useState('')
   const [torre, setTorre] = useState('')
+  const [piso, setPiso] = useState('')
   const [posicion, setPosicion] = useState('')
   const [codigo, setCodigo] = useState('')
   const [descripcion, setDescripcion] = useState('')
@@ -104,7 +105,7 @@ function IngresoForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!bloque || !torre || !posicion || !codigo.trim() || !cantidad) {
+    if (!bloque || !torre || !piso || !posicion || !codigo.trim() || !cantidad) {
       toast.error('Completa todos los campos requeridos')
       return
     }
@@ -115,9 +116,9 @@ function IngresoForm({
     }
     setBusy(true)
     try {
-      const stock = await calcularStockUbicacion(codigo, bloque, torre, '1', posicion)
+      const stock = await calcularStockUbicacion(codigo, bloque, torre, piso, posicion)
       if (stock > 0) {
-        const details = await stockEnUbicacion(bloque, torre, '1', posicion)
+        const details = await stockEnUbicacion(bloque, torre, piso, posicion)
         setConfirmData(details)
         setBusy(false)
         return
@@ -136,7 +137,7 @@ function IngresoForm({
         tipo: 'ingreso',
         bloque,
         torre,
-        piso: '1',
+        piso,
         posicion,
         codigo,
         descripcion,
@@ -172,7 +173,7 @@ function IngresoForm({
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="space-y-1">
             <Label>Bloque</Label>
-            <Select value={bloque} onValueChange={(v) => { setBloque(v); setTorre(''); setPosicion('') }}>
+            <Select value={bloque} onValueChange={(v) => { setBloque(v); setTorre(''); setPiso(''); setPosicion('') }}>
               <SelectTrigger><SelectValue placeholder="Bloque" /></SelectTrigger>
               <SelectContent>
                 {BLOQUES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
@@ -185,6 +186,15 @@ function IngresoForm({
               <SelectTrigger><SelectValue placeholder="Torre" /></SelectTrigger>
               <SelectContent>
                 {torres.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Piso</Label>
+            <Select value={piso} onValueChange={setPiso} disabled={!bloque}>
+              <SelectTrigger><SelectValue placeholder="Piso" /></SelectTrigger>
+              <SelectContent>
+                {PISOS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

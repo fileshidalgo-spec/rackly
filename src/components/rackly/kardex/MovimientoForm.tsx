@@ -255,7 +255,7 @@ function IngresoForm({
           </div>
         </div>
 
-        <Button type="submit" disabled={busy} className="w-full sm:w-auto">
+        <Button type="submit" disabled={busy} className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white">
           {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
           Registrar Ingreso
         </Button>
@@ -306,10 +306,11 @@ function SalidaForm({
   perfil: { id: string; nombre: string; correo: string }
 }) {
   const [searchCode, setSearchCode] = useState('')
-  const [locations, setLocations] = useState<StockEnUbicacion[]>([])
+  const [locations, setLocations] = useState<(StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string })[]>([])
   const [selectedLoc, setSelectedLoc] = useState<string | null>(null)
   const [qty, setQty] = useState('')
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (!searchCode.trim()) {
@@ -317,11 +318,12 @@ function SalidaForm({
       return
     }
     const timer = setTimeout(async () => {
+      setLoading(true)
       try {
         const { fetchMovimientos } = await import('@/lib/rackly/kardex')
         const movs = await fetchMovimientos()
         const code = searchCode.trim().toUpperCase()
-        const locMap = new Map<string, StockEnUbicacion>()
+        const locMap = new Map<string, (StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string })>()
         const relevant = movs.filter((m) => m.codigo === code)
         for (const m of relevant) {
           const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
@@ -330,6 +332,10 @@ function SalidaForm({
             current.stock += m.tipo === 'ingreso' ? m.cantidad : -m.cantidad
           } else {
             locMap.set(key, {
+              bloque: m.bloque,
+              torre: m.torre,
+              piso: m.piso,
+              posicion: m.posicion,
               codigo: m.codigo,
               descripcion: m.descripcion,
               un: m.un,
@@ -342,6 +348,8 @@ function SalidaForm({
         setLocations(Array.from(locMap.values()).filter((l) => l.stock > 0))
       } catch {
         // ignore
+      } finally {
+        setLoading(false)
       }
     }, 300)
     return () => clearTimeout(timer)
@@ -352,7 +360,7 @@ function SalidaForm({
       toast.error('Selecciona una ubicación')
       return
     }
-    const loc = locations.find((l) => `${l.codigo}-${l.un}-${l.stock}` === selectedLoc)
+    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedLoc)
     if (!loc) return
     const qtyNum = full ? loc.stock : parseFloat(qty)
     if (isNaN(qtyNum) || qtyNum <= 0 || qtyNum > loc.stock) {
@@ -361,21 +369,12 @@ function SalidaForm({
     }
     setBusy(true)
     try {
-      // Find the movimiento to get location details
-      const { fetchMovimientos } = await import('@/lib/rackly/kardex')
-      const movs = await fetchMovimientos()
-      const codeMovs = movs.filter((m) => m.codigo === loc.codigo && m.tipo === 'ingreso')
-      const lastIngreso = codeMovs[0]
-      if (!lastIngreso) {
-        toast.error('No se encontró ingreso para esta ubicación')
-        return
-      }
       const result = await addMovimiento({
         tipo: 'salida',
-        bloque: lastIngreso.bloque,
-        torre: lastIngreso.torre,
-        piso: lastIngreso.piso,
-        posicion: lastIngreso.posicion,
+        bloque: loc.bloque,
+        torre: loc.torre,
+        piso: loc.piso,
+        posicion: loc.posicion,
         codigo: loc.codigo,
         descripcion: loc.descripcion,
         un: loc.un,
@@ -409,6 +408,13 @@ function SalidaForm({
         onChange={setSearchCode}
       />
 
+      {loading && (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-muted-foreground">Buscando ubicaciones...</span>
+        </div>
+      )}
+
       {locations.length > 0 && (
         <Table>
           <TableHeader>
@@ -417,27 +423,28 @@ function SalidaForm({
               <TableHead>Descripción</TableHead>
               <TableHead>Bloque</TableHead>
               <TableHead>Torre</TableHead>
+              <TableHead>Piso</TableHead>
               <TableHead>Pos</TableHead>
               <TableHead className="text-right">Stock</TableHead>
               <TableHead>Vencimiento</TableHead>
-              <TableHead></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {locations.map((loc) => {
-              const key = `${loc.codigo}-${loc.un}-${loc.stock}`
+              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
               return (
                 <TableRow
                   key={key}
-                  className={`cursor-pointer ${selectedLoc === key ? 'bg-accent' : ''}`}
+                  className={`cursor-pointer transition-colors ${selectedLoc === key ? 'bg-orange-100 dark:bg-orange-950' : 'hover:bg-muted'}`}
                   onClick={() => setSelectedLoc(key)}
                 >
                   <TableCell className="font-mono">{loc.codigo}</TableCell>
                   <TableCell>{loc.descripcion}</TableCell>
-                  <TableCell>—</TableCell>
-                  <TableCell>—</TableCell>
-                  <TableCell>—</TableCell>
-                  <TableCell className="text-right font-medium">{loc.stock}</TableCell>
+                  <TableCell><Badge variant="outline">{loc.bloque}</Badge></TableCell>
+                  <TableCell><Badge variant="outline">{loc.torre}</Badge></TableCell>
+                  <TableCell><Badge variant="outline">{loc.piso}</Badge></TableCell>
+                  <TableCell><Badge variant="outline">{loc.posicion}</Badge></TableCell>
+                  <TableCell className="text-right font-bold text-orange-600 dark:text-orange-400">{loc.stock}</TableCell>
                   <TableCell>{loc.fVencimiento || '—'}</TableCell>
                 </TableRow>
               )
@@ -446,7 +453,7 @@ function SalidaForm({
         </Table>
       )}
 
-      {locations.length === 0 && searchCode.trim() && (
+      {!loading && locations.length === 0 && searchCode.trim() && (
         <div className="flex items-center gap-2 text-muted-foreground py-4 justify-center">
           <PackageSearch className="h-5 w-5" />
           <span>Sin stock para este código</span>
@@ -454,9 +461,9 @@ function SalidaForm({
       )}
 
       {selectedLoc && (
-        <div className="flex items-end gap-3">
+        <div className="flex items-end gap-3 rounded-lg border-2 border-orange-200 dark:border-orange-900 p-4 bg-orange-50 dark:bg-orange-950/30">
           <div className="space-y-1 flex-1">
-            <Label>Cantidad a retirar</Label>
+            <Label className="text-orange-700 dark:text-orange-300 font-medium">Cantidad a retirar</Label>
             <Input
               type="number"
               step="any"
@@ -464,13 +471,15 @@ function SalidaForm({
               value={qty}
               onChange={(e) => setQty(e.target.value)}
               placeholder="Cantidad"
+              className="border-orange-300 dark:border-orange-700"
             />
           </div>
-          <Button onClick={() => handleSalida(false)} disabled={busy}>
+          <Button variant="destructive" onClick={() => handleSalida(false)} disabled={busy}>
             {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
             Salida parcial
           </Button>
-          <Button variant="destructive" onClick={() => handleSalida(true)} disabled={busy}>
+          <Button variant="destructive" onClick={() => handleSalida(true)} disabled={busy} className="bg-red-700 hover:bg-red-800">
+            {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
             Retirar todo
           </Button>
         </div>

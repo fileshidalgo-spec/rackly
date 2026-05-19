@@ -167,22 +167,9 @@ export async function stockEnUbicacion(
 }
 
 export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
-  const PAGE_SIZE = 1000
-  const all: Record<string, unknown>[] = []
-  let from = 0
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const to = from + PAGE_SIZE - 1
-    const { data, error } = await supabase
-      .rpc('ocupacion_celdas')
-      .range(from, to)
-    if (error) throw error
-    const rows = (data ?? []) as Record<string, unknown>[]
-    all.push(...rows)
-    if (rows.length < PAGE_SIZE) break
-    from += PAGE_SIZE
-  }
-  return all.map((r) => ({
+  const { data, error } = await supabase.rpc('ocupacion_celdas')
+  if (error) throw error
+  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
     bloque: String(r.bloque ?? ''),
     torre: String(r.torre ?? ''),
     piso: String(r.piso ?? ''),

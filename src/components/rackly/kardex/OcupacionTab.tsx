@@ -8,6 +8,7 @@ import {
   type StockEnUbicacion,
 } from '@/lib/rackly/kardex'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
+import { supabase } from '@/lib/supabase/client'
 import {
   Select,
   SelectContent,
@@ -62,6 +63,19 @@ export function OcupacionTab() {
 
   useEffect(() => {
     load()
+  }, [load])
+
+  // Realtime: recargar ocupación cuando cambian movimientos
+  useEffect(() => {
+    const ch = supabase
+      .channel('ocupacion-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'movimientos' },
+        () => load()
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
   }, [load])
 
   const filtered =

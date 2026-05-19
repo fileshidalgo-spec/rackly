@@ -45,8 +45,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { supabase } from '@/lib/supabase/client'
-import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
+import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, RefreshCw } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 type Props = {
@@ -340,9 +339,11 @@ function SalidaForm({
   const [qtyMap, setQtyMap] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(true)
   const searchCodeRef = useRef(searchCode)
   searchCodeRef.current = searchCode
 
+  // Función central para refrescar las ubicaciones
   const refreshLocations = useCallback(async () => {
     const code = searchCodeRef.current.trim()
     if (!code) {
@@ -351,7 +352,6 @@ function SalidaForm({
       setQtyMap({})
       return
     }
-    setLoading(true)
     try {
       const { fetchMovimientos } = await import('@/lib/rackly/kardex')
       const movs = await fetchMovimientos()
@@ -386,13 +386,11 @@ function SalidaForm({
         setSelectedLoc(null)
       }
     } catch {
-      // ignore
-    } finally {
-      setLoading(false)
+      // silencioso
     }
   }, [])
 
-  // Búsqueda con debounce
+  // Búsqueda inicial con debounce
   useEffect(() => {
     if (!searchCode.trim()) {
       setLocations([])
@@ -400,23 +398,48 @@ function SalidaForm({
       setQtyMap({})
       return
     }
-    const timer = setTimeout(() => refreshLocations(), 300)
+    setLoading(true)
+    const timer = setTimeout(async () => {
+      await refreshLocations()
+      setLoading(false)
+    }, 300)
     return () => clearTimeout(timer)
   }, [searchCode, refreshLocations])
 
-  // Tiempo real: actualizar ubicaciones cuando otro dispositivo registre un movimiento
+  // POLLING: refrescar automáticamente cada 8 segundos cuando hay búsqueda activa
   useEffect(() => {
-    const channelName = `salida-form-realtime-${Math.random().toString(36).slice(2)}`
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'movimientos' },
-        () => refreshLocations()
-      )
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [refreshLocations])
+    if (!searchCode.trim() || !autoRefresh) return
+    const interval = setInterval(() => {
+      refreshLocations()
+    }, 8000)
+    return () => clearInterval(interval)
+  }, [searchCode, autoRefresh, refreshLocations])
+
+  // Realtime: refrescar cuando Supabase notifica cambios (si está configurado)
+  useEffect(() => {
+    if (!searchCode.trim()) return
+    let channel: ReturnType<typeof import('@/lib/supabase/client').supabase.channel> | null = null
+    try {
+      const { supabase } = require('@/lib/supabase/client')
+      const channelName = `salida-rt-${Date.now()}`
+      channel = supabase
+        .channel(channelName)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'movimientos' }, () => {
+          refreshLocations()
+        })
+        .subscribe()
+    } catch {
+      // Si Supabase Realtime no está configurado, el polling se encarga
+    }
+    return () => {
+      if (channel) {
+        try {
+          const { supabase } = require('@/lib/supabase/client')
+          supabase.removeChannel(channel)
+        } catch { /* ignore */ }
+      }
+    }
+  }, [searchCode, refreshLocations])
 
   async function handleSalida(locKey: string, full = false) {
     const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
@@ -447,7 +470,6 @@ function SalidaForm({
         proveedor: loc.proveedor,
       })
       toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
-      // Limpiar y refrescar para que refleje el nuevo stock en tiempo real
       setSearchCode('')
       setQtyMap({})
       setSelectedLoc(null)
@@ -464,12 +486,23 @@ function SalidaForm({
   return (
     <div className="space-y-4">
       {/* Header visual para salida */}
-      <div className="flex items-center gap-2 p-3 rounded-lg bg-orange-50 dark:bg-orange-950/40 border border-orange-200 dark:border-orange-800">
-        <ArrowUpFromLine className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0" />
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-orange-700 dark:text-orange-300">Salida de mercadería</p>
-          <p className="text-xs text-orange-600/80 dark:text-orange-400/70">Turno: {turno}</p>
+      <div className="flex items-center justify-between p-3 rounded-lg bg-orange-50 dark:bg-orange-950/40 border border-orange-200 dark:border-orange-800">
+        <div className="flex items-center gap-2 min-w-0">
+          <ArrowUpFromLine className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-orange-700 dark:text-orange-300">Salida de mercadería</p>
+            <p className="text-xs text-orange-600/80 dark:text-orange-400/70">Turno: {turno}</p>
+          </div>
         </div>
+        {searchCode.trim() && (
+          <button
+            onClick={() => refreshLocations()}
+            className="p-2 rounded-lg hover:bg-orange-100 dark:hover:bg-orange-900/40 transition-colors"
+            title="Refrescar ubicaciones"
+          >
+            <RefreshCw className={`h-4 w-4 text-orange-600 dark:text-orange-400 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        )}
       </div>
 
       {/* Búsqueda de código */}
@@ -493,9 +526,20 @@ function SalidaForm({
       {/* Ubicaciones con stock */}
       {locations.length > 0 && (
         <div className="space-y-3">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            Ubicaciones con stock ({locations.length})
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Ubicaciones con stock ({locations.length})
+            </p>
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+                className="rounded border-gray-300 text-orange-600 focus:ring-orange-500 h-3.5 w-3.5"
+              />
+              <span className="text-xs text-muted-foreground">Auto-refresco</span>
+            </label>
+          </div>
 
           {locations.map((loc) => {
             const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
@@ -560,7 +604,6 @@ function SalidaLocationCard({
       toast.error('La cantidad excede el stock disponible')
       return
     }
-    // Mostrar diálogo de confirmación
     setConfirmDialog({ full, qtyNum })
   }
 
@@ -569,6 +612,10 @@ function SalidaLocationCard({
     onSalida(confirmDialog.full)
     setConfirmDialog(null)
   }
+
+  const stockDespues = confirmDialog
+    ? loc.stock - confirmDialog.qtyNum
+    : loc.stock
 
   return (
     <>
@@ -641,7 +688,7 @@ function SalidaLocationCard({
       </div>
 
       {/* Diálogo de confirmación Sí/No */}
-      <AlertDialog open={!!confirmDialog} onOpenChange={() => setConfirmDialog(null)}>
+      <AlertDialog open={!!confirmDialog} onOpenChange={(open) => { if (!open) setConfirmDialog(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -650,7 +697,7 @@ function SalidaLocationCard({
             <AlertDialogDescription asChild>
               <div className="space-y-3">
                 <p>¿Estás seguro de registrar esta salida?</p>
-                <div className="rounded-lg border bg-muted/50 p-3 space-y-1 text-sm">
+                <div className="rounded-lg border bg-muted/50 p-3 space-y-1.5 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Producto:</span>
                     <span className="font-medium">{loc.codigo} — {loc.descripcion}</span>
@@ -663,13 +710,15 @@ function SalidaLocationCard({
                     <span className="text-muted-foreground">Stock actual:</span>
                     <span className="font-medium">{loc.stock} {loc.un}</span>
                   </div>
-                  <div className="flex justify-between font-bold">
+                  <div className="border-t pt-1.5 flex justify-between font-bold">
                     <span className="text-red-600">Cantidad a retirar:</span>
                     <span className="text-red-600">{confirmDialog?.qtyNum} {loc.un}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Stock después:</span>
-                    <span className="font-medium">{(loc.stock - (confirmDialog?.qtyNum ?? 0))} {loc.un}</span>
+                    <span className={`font-medium ${stockDespues === 0 ? 'text-red-600' : ''}`}>
+                      {stockDespues} {loc.un} {stockDespues === 0 ? '(vacío)' : ''}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -678,11 +727,18 @@ function SalidaLocationCard({
           <AlertDialogFooter>
             <AlertDialogCancel>No, cancelar</AlertDialogCancel>
             <Button
-              onClick={handleConfirm}
+              onClick={(e) => {
+                e.preventDefault()
+                handleConfirm()
+              }}
               disabled={busy}
               className="bg-red-600 hover:bg-red-700 text-white"
             >
-              Sí, confirmar salida
+              {busy ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Procesando...</>
+              ) : (
+                'Sí, confirmar salida'
+              )}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

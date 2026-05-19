@@ -65,17 +65,28 @@ export function OcupacionTab() {
     load()
   }, [load])
 
-  // Realtime: recargar ocupación cuando cambian movimientos
+  // Polling: refresco automático cada 8 segundos como respaldo
   useEffect(() => {
-    const ch = supabase
-      .channel('ocupacion-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'movimientos' },
-        () => load()
-      )
-      .subscribe()
-    return () => { supabase.removeChannel(ch) }
+    const interval = setInterval(() => load(), 8000)
+    return () => clearInterval(interval)
+  }, [load])
+
+  // Realtime: refresco instantáneo cuando cambian movimientos
+  useEffect(() => {
+    let ch: ReturnType<typeof supabase.channel> | null = null
+    try {
+      ch = supabase
+        .channel('ocupacion-realtime')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'movimientos' },
+          () => load()
+        )
+        .subscribe()
+    } catch {
+      // Si Realtime no está configurado, el polling cubre
+    }
+    return () => { if (ch) try { supabase.removeChannel(ch) } catch { /* ignore */ } }
   }, [load])
 
   const filtered =

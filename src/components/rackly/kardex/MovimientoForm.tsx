@@ -517,75 +517,148 @@ function SalidaLocationCard({
   onQtyChange: (val: string) => void
   onSalida: (full: boolean) => void
 }) {
+  const [confirmDialog, setConfirmDialog] = useState<{
+    full: boolean
+    qtyNum: number
+  } | null>(null)
+
+  function handleButtonClick(full: boolean, e: React.MouseEvent) {
+    e.stopPropagation()
+    const qtyNum = full ? loc.stock : parseFloat(qty)
+    if (!full && (isNaN(qtyNum) || qtyNum <= 0)) {
+      toast.error('Ingresa una cantidad válida')
+      return
+    }
+    if (qtyNum > loc.stock) {
+      toast.error('La cantidad excede el stock disponible')
+      return
+    }
+    // Mostrar diálogo de confirmación
+    setConfirmDialog({ full, qtyNum })
+  }
+
+  function handleConfirm() {
+    if (!confirmDialog) return
+    onSalida(confirmDialog.full)
+    setConfirmDialog(null)
+  }
+
   return (
-    <div
-      onClick={onSelect}
-      className={`rounded-xl border-2 overflow-hidden transition-all ${
-        isSelected
-          ? 'border-orange-400 bg-orange-50 dark:border-orange-600 dark:bg-orange-950/30'
-          : 'border-border bg-card hover:border-orange-200 dark:hover:border-orange-800 cursor-pointer'
-      }`}
-    >
-      {/* Info del producto y ubicación */}
-      <div className="p-3 pb-2">
-        <div className="flex items-center justify-between mb-1">
-          <span className="font-mono font-bold text-sm">{loc.codigo}</span>
-          <Badge className="bg-orange-500 text-white text-xs">
-            Stock: {loc.stock} {loc.un}
-          </Badge>
+    <>
+      <div
+        onClick={onSelect}
+        className={`rounded-xl border-2 overflow-hidden transition-all ${
+          isSelected
+            ? 'border-orange-400 bg-orange-50 dark:border-orange-600 dark:bg-orange-950/30'
+            : 'border-border bg-card hover:border-orange-200 dark:hover:border-orange-800 cursor-pointer'
+        }`}
+      >
+        {/* Info del producto y ubicación */}
+        <div className="p-3 pb-2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-mono font-bold text-sm">{loc.codigo}</span>
+            <Badge className="bg-orange-500 text-white text-xs">
+              Stock: {loc.stock} {loc.un}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground truncate mb-2">{loc.descripcion}</p>
+          <div className="flex gap-1.5 flex-wrap">
+            <Badge variant="outline" className="text-xs">B-{loc.bloque}</Badge>
+            <Badge variant="outline" className="text-xs">T-{loc.torre}</Badge>
+            <Badge variant="outline" className="text-xs">P-{loc.piso}</Badge>
+            <Badge variant="outline" className="text-xs">Pos-{loc.posicion}</Badge>
+            {loc.fVencimiento && (
+              <Badge variant="outline" className="text-xs">Venc: {loc.fVencimiento}</Badge>
+            )}
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground truncate mb-2">{loc.descripcion}</p>
-        <div className="flex gap-1.5 flex-wrap">
-          <Badge variant="outline" className="text-xs">B-{loc.bloque}</Badge>
-          <Badge variant="outline" className="text-xs">T-{loc.torre}</Badge>
-          <Badge variant="outline" className="text-xs">P-{loc.piso}</Badge>
-          <Badge variant="outline" className="text-xs">Pos-{loc.posicion}</Badge>
-          {loc.fVencimiento && (
-            <Badge variant="outline" className="text-xs">Venc: {loc.fVencimiento}</Badge>
-          )}
+
+        {/* Cantidad y botones — siempre visibles */}
+        <div className="border-t border-orange-200 dark:border-orange-800 p-3 pt-3 space-y-2 bg-orange-50/80 dark:bg-orange-950/20">
+          <div className="flex items-center gap-2">
+            <Label className="text-xs text-orange-700 dark:text-orange-300 font-medium whitespace-nowrap">
+              Cantidad a retirar
+            </Label>
+            <Input
+              type="number"
+              step="any"
+              min="0.001"
+              max={loc.stock}
+              value={qty}
+              onChange={(e) => onQtyChange(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              placeholder="0"
+              className="border-orange-300 dark:border-orange-700 h-10 text-sm"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={(e) => handleButtonClick(false, e)}
+              disabled={busy}
+              className="flex-1 h-9 text-xs"
+            >
+              Salida parcial
+            </Button>
+            <Button
+              size="sm"
+              onClick={(e) => handleButtonClick(true, e)}
+              disabled={busy}
+              className="flex-1 h-9 text-xs bg-red-700 hover:bg-red-800 text-white"
+            >
+              Retirar todo ({loc.stock})
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/* Cantidad y botones — siempre visibles */}
-      <div className="border-t border-orange-200 dark:border-orange-800 p-3 pt-3 space-y-2 bg-orange-50/80 dark:bg-orange-950/20">
-        <div className="flex items-center gap-2">
-          <Label className="text-xs text-orange-700 dark:text-orange-300 font-medium whitespace-nowrap">
-            Cantidad a retirar
-          </Label>
-          <Input
-            type="number"
-            step="any"
-            min="0.001"
-            max={loc.stock}
-            value={qty}
-            onChange={(e) => onQtyChange(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            placeholder="0"
-            className="border-orange-300 dark:border-orange-700 h-10 text-sm"
-          />
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={(e) => { e.stopPropagation(); onSalida(false) }}
-            disabled={busy}
-            className="flex-1 h-9 text-xs"
-          >
-            {busy && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-            Salida parcial
-          </Button>
-          <Button
-            size="sm"
-            onClick={(e) => { e.stopPropagation(); onSalida(true) }}
-            disabled={busy}
-            className="flex-1 h-9 text-xs bg-red-700 hover:bg-red-800 text-white"
-          >
-            {busy && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-            Retirar todo ({loc.stock})
-          </Button>
-        </div>
-      </div>
-    </div>
+      {/* Diálogo de confirmación Sí/No */}
+      <AlertDialog open={!!confirmDialog} onOpenChange={() => setConfirmDialog(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmDialog?.full ? 'Retirar todo el stock' : 'Confirmar salida parcial'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>¿Estás seguro de registrar esta salida?</p>
+                <div className="rounded-lg border bg-muted/50 p-3 space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Producto:</span>
+                    <span className="font-medium">{loc.codigo} — {loc.descripcion}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Ubicación:</span>
+                    <span className="font-medium">B-{loc.bloque} T-{loc.torre} P-{loc.piso} Pos-{loc.posicion}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Stock actual:</span>
+                    <span className="font-medium">{loc.stock} {loc.un}</span>
+                  </div>
+                  <div className="flex justify-between font-bold">
+                    <span className="text-red-600">Cantidad a retirar:</span>
+                    <span className="text-red-600">{confirmDialog?.qtyNum} {loc.un}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Stock después:</span>
+                    <span className="font-medium">{(loc.stock - (confirmDialog?.qtyNum ?? 0))} {loc.un}</span>
+                  </div>
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No, cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirm}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Sí, confirmar salida
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

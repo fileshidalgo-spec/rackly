@@ -541,12 +541,19 @@ function LoginScreen({
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : 'Error desconocido'
-      if (message.toLowerCase().includes('already registered')) {
+      const msg = message.toLowerCase()
+      if (msg.includes('already registered') || msg.includes('already been registered')) {
         toast.info('Esta cuenta ya existe', {
           description:
             'Inicia sesión con ese correo; si aún no accedes, un administrador debe aprobarla.',
         })
         setTab('login')
+      } else if (msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('too many requests')) {
+        toast.warning('Demasiados intentos', {
+          description:
+            'Se ha excedido el límite de correos. Espera unos minutos (5-10 min) y vuelve a intentar. Si el problema persiste, contacta al administrador.',
+          duration: 8000,
+        })
       } else {
         toast.error('No se pudo crear la cuenta', { description: message })
       }

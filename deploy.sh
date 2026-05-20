@@ -1,17 +1,34 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════
-# RACKLY - Pipeline de Despliegue Automático
-# GitHub → Cloudflare Pages
+# RACKLY - Deploy automático: GitHub → Cloudflare Pages
 # ═══════════════════════════════════════════════════════
-
 set -e
 
-echo "☁️  RACKLY - Pipeline CI/CD"
-echo "════════════════════════════════════════"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# 1. Build del proyecto
+# Cargar credenciales
+if [ -f "$SCRIPT_DIR/.cf.env" ]; then
+  source "$SCRIPT_DIR/.cf.env"
+  export CLOUDFLARE_API_TOKEN
+  export CLOUDFLARE_ACCOUNT_ID
+fi
+
+if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+  echo "❌ Error: CLOUDFLARE_API_TOKEN no configurado en .cf.env"
+  exit 1
+fi
+
+cd "$SCRIPT_DIR"
+
+echo ""
+echo "☁️  RACKLY - Pipeline de Despliegue Automático"
+echo "════════════════════════════════════════════════"
+
+# 1. Build con variables de entorno inyectadas
 echo ""
 echo "📦 Paso 1/3: Build del proyecto..."
+NEXT_PUBLIC_SUPABASE_URL="https://owjryvcrhpmgtkkdcrkm.supabase.co" \
+NEXT_PUBLIC_SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93anJ5dmNyaHBtZ3Rra2RjcmttIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxOTEwODUsImV4cCI6MjA5NDc2NzA4NX0.txneI_FZQhC782QYCW3jQ8WEIif_0xUZR-6esqy0aTg" \
 npm run build
 echo "✅ Build completado"
 
@@ -30,16 +47,8 @@ fi
 # 3. Deploy a Cloudflare Pages
 echo ""
 echo "📦 Paso 3/3: Desplegando a Cloudflare Pages..."
-if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-  echo "⚠️  CLOUDFLARE_API_TOKEN no configurado"
-  echo "   El despliegue a Cloudflare se hará automáticamente por webhook."
-  echo ""
-  echo "   Para despliegue directo desde CLI, configura:"
-  echo "   export CLOUDFLARE_API_TOKEN=tu_token_aqui"
-  exit 0
-fi
+npx wrangler pages deploy out --project-name=rackly --branch=main --commit-dirty=true
 
-npx wrangler pages deploy out --project-name=rackly
 echo ""
-echo "✅ ¡Despliegue completado!"
-echo "════════════════════════════════════════"
+echo "✅ ¡Despliegue completado en https://rackly.pages.dev !"
+echo "════════════════════════════════════════════════"

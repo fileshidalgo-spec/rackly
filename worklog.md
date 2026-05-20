@@ -47,3 +47,26 @@ Stage Summary:
 - Confirmation dialog for salida parcial/total now uses Button instead of AlertDialogAction to prevent premature dialog close
 - SalidaForm now subscribes to Supabase realtime (postgres_changes on movimientos table) to auto-refresh search results
 - Deployed to https://rackly.netlify.app via GitHub push (auto-deploy)
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Configurar integración Cloudflare Pages + GitHub + Supabase
+
+Work Log:
+- Verificó configuración del proyecto (next.config.ts con output:export, package.json)
+- Removió .env del tracking de git para seguridad
+- Creó wrangler.json para Cloudflare Pages
+- Obtuvo credenciales del usuario (API Token cfat_*, Account ID)
+- Creó proyecto "rackly" en Cloudflare Pages
+- Configuró variables de entorno NEXT_PUBLIC_SUPABASE_* en Cloudflare
+- Build con variables inyectadas y deploy exitoso
+- Creó deploy.sh para pipeline automático (build → git push → cf deploy)
+- Guardó credenciales en .cf.env (excluido de git)
+- Commit y push a GitHub
+
+Stage Summary:
+- App desplegada exitosamente en https://rackly.pages.dev
+- Pipeline configurado: este entorno → GitHub → Cloudflare
+- Script deploy.sh disponible para despliegues automáticos
+- Credenciales seguras (.cf.env en gitignore)

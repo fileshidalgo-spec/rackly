@@ -36,3 +36,13 @@ export function totalCeldas(): number {
     return acc + cfg.torres * PISOS.length * cfg.posiciones
   }, 0)
 }
+
+export function totalCeldasBloque(bloque: string): number {
+  const cfg = CONFIG[bloque]
+  if (!cfg) return 0
+  return cfg.torres * PISOS.length * cfg.posiciones
+}
+
+export function configBloque(bloque: string): ConfigBloque | undefined {
+  return CONFIG[bloque]
+}

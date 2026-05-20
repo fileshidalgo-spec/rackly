@@ -138,38 +138,38 @@ function RacklyApp() {
         {/* KARDEX RACKS VIEW */}
         {view === 'racks' && (
           <Tabs defaultValue="movimientos" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 gap-2 h-auto p-2 md:w-auto md:grid-cols-8 md:gap-1 md:h-9 md:p-1">
-              <TabsTrigger value="movimientos" className="gap-2 py-2 md:py-1">
+            <TabsList className="flex w-full overflow-x-auto gap-1 h-auto p-1 md:w-auto md:flex-wrap md:grid md:grid-cols-8 md:gap-1 md:h-9">
+              <TabsTrigger value="movimientos" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
                 <Warehouse className="h-4 w-4" />
-                <span className="hidden md:inline">Movimientos</span>
+                Movimientos
               </TabsTrigger>
-              <TabsTrigger value="traslado" className="gap-2 py-2 md:py-1">
+              <TabsTrigger value="traslado" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
                 <ArrowRightLeft className="h-4 w-4" />
-                <span className="hidden md:inline">Traslado</span>
+                Traslado
               </TabsTrigger>
-              <TabsTrigger value="kardex" className="gap-2 py-2 md:py-1">
+              <TabsTrigger value="kardex" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
                 <BookOpen className="h-4 w-4" />
-                <span className="hidden md:inline">Catálogo</span>
+                Catálogo
               </TabsTrigger>
-              <TabsTrigger value="stock" className="gap-2 py-2 md:py-1">
+              <TabsTrigger value="stock" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
                 <PackageSearch className="h-4 w-4" />
-                <span className="hidden md:inline">Stock</span>
+                Stock
               </TabsTrigger>
-              <TabsTrigger value="ocupacion" className="gap-2 py-2 md:py-1">
+              <TabsTrigger value="ocupacion" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
                 <LayoutGrid className="h-4 w-4" />
-                <span className="hidden md:inline">Ocupación</span>
+                Ocupación
               </TabsTrigger>
-              <TabsTrigger value="descarga" className="gap-2 py-2 md:py-1">
+              <TabsTrigger value="descarga" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
                 <Download className="h-4 w-4" />
-                <span className="hidden md:inline">Descarga</span>
+                Descarga
               </TabsTrigger>
-              <TabsTrigger value="fefo" className="gap-2 py-2 md:py-1">
+              <TabsTrigger value="fefo" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
                 <CalendarClock className="h-4 w-4" />
-                <span className="hidden md:inline">FEFO</span>
+                FEFO
               </TabsTrigger>
-              <TabsTrigger value="usuarios" className="gap-2 py-2 md:py-1">
+              <TabsTrigger value="usuarios" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
                 <Users className="h-4 w-4" />
-                <span className="hidden md:inline">Usuarios</span>
+                Usuarios
               </TabsTrigger>
             </TabsList>
 
@@ -374,18 +374,18 @@ function RacklyApp() {
         {/* KARDEX PISO VIEW */}
         {view === 'piso' && (
           <Tabs defaultValue="movimientos" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 gap-2 h-auto p-2 md:w-auto md:grid-cols-4 md:gap-1 md:h-9 md:p-1">
-              <TabsTrigger value="movimientos" className="gap-2 py-2 md:py-1">
-                <History className="h-4 w-4" /> <span className="hidden md:inline">Movimientos</span>
+            <TabsList className="flex w-full overflow-x-auto gap-1 h-auto p-1 md:w-auto md:flex-wrap md:grid md:grid-cols-4 md:gap-1 md:h-9">
+              <TabsTrigger value="movimientos" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
+                <History className="h-4 w-4" /> Movimientos
               </TabsTrigger>
-              <TabsTrigger value="up-kardex" className="gap-2 py-2 md:py-1">
-                <Upload className="h-4 w-4" /> <span className="hidden md:inline">UP KARDEX</span>
+              <TabsTrigger value="up-kardex" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
+                <Upload className="h-4 w-4" /> UP Kardex
               </TabsTrigger>
-              <TabsTrigger value="sectores" className="gap-2 py-2 md:py-1">
-                <Layers3 className="h-4 w-4" /> <span className="hidden md:inline">Sectores</span>
+              <TabsTrigger value="sectores" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
+                <Layers3 className="h-4 w-4" /> Sectores
               </TabsTrigger>
-              <TabsTrigger value="columnas" className="gap-2 py-2 md:py-1">
-                <Settings className="h-4 w-4" /> <span className="hidden md:inline">Configuración</span>
+              <TabsTrigger value="columnas" className="gap-1.5 shrink-0 py-2 px-3 text-xs md:text-sm md:py-1 md:px-3">
+                <Settings className="h-4 w-4" /> Config.
               </TabsTrigger>
             </TabsList>
 

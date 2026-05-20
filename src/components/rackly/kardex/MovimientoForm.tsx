@@ -401,6 +401,15 @@ function SalidaForm({
         }
       }
       const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
+        // Ordenar por vencimiento más próximo primero (sin fecha van al final)
+        .sort((a, b) => {
+          const fA = a.fVencimiento || ''
+          const fB = b.fVencimiento || ''
+          if (!fA && !fB) return 0
+          if (!fA) return 1
+          if (!fB) return -1
+          return fA.localeCompare(fB)
+        })
       setLocations(results)
       setProductoDesc(desc)
       setProductoUn(un)
@@ -557,6 +566,7 @@ function SalidaForm({
                 <TableHead className="w-16 text-center">Torre</TableHead>
                 <TableHead className="w-16 text-center">Piso</TableHead>
                 <TableHead className="w-20 text-center">Posición</TableHead>
+                <TableHead className="w-28 text-center">Vencimiento</TableHead>
                 <TableHead className="text-right">Stock</TableHead>
                 {(productoDesc && requiereProveedor(productoDesc)) && (
                   <TableHead className="w-28">Proveedor</TableHead>
@@ -574,6 +584,14 @@ function SalidaForm({
                     <TableCell className="text-center font-medium">{loc.torre}</TableCell>
                     <TableCell className="text-center font-medium">{loc.piso}</TableCell>
                     <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
+                    <TableCell className="text-center">{loc.fVencimiento ? (() => {
+                      const dias = Math.ceil((new Date(loc.fVencimiento).getTime() - Date.now()) / 86400000)
+                      return (
+                        <Badge variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'} className={dias <= 0 ? '' : dias <= 15 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}>
+                          {loc.fVencimiento} <span className="ml-1 opacity-70">({dias <= 0 ? 'vencido' : `${dias}d`})</span>
+                        </Badge>
+                      )
+                    })() : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
                     <TableCell className="text-right font-bold">{loc.stock}</TableCell>
                     {(productoDesc && requiereProveedor(productoDesc)) && (
                       <TableCell>

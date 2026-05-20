@@ -55,6 +55,7 @@ export function StockTab() {
         descripcion: string
         un: string
         proveedor?: string
+        fVencimiento: string
       }
     >()
     const relevant = movs.filter((m) => m.codigo === code)
@@ -63,6 +64,10 @@ export function StockTab() {
       const current = locMap.get(key)
       if (current) {
         current.stock += m.tipo === 'ingreso' ? m.cantidad : -m.cantidad
+        // Conservar la fecha de vencimiento más próxima
+        if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
+          current.fVencimiento = m.fVencimiento
+        }
       } else {
         locMap.set(key, {
           bloque: m.bloque,
@@ -73,10 +78,19 @@ export function StockTab() {
           descripcion: m.descripcion,
           un: m.un,
           proveedor: m.proveedor || undefined,
+          fVencimiento: m.fVencimiento || '',
         })
       }
     }
-    return Array.from(locMap.values()).filter((l) => l.stock > 0)
+    return Array.from(locMap.values())
+      .filter((l) => l.stock > 0)
+      .sort((a, b) => {
+        // Sin vencimiento van al final
+        if (!a.fVencimiento && !b.fVencimiento) return 0
+        if (!a.fVencimiento) return 1
+        if (!b.fVencimiento) return -1
+        return a.fVencimiento.localeCompare(b.fVencimiento)
+      })
   })()
 
   useEffect(() => {
@@ -123,6 +137,7 @@ export function StockTab() {
                 <TableHead>Torre</TableHead>
                 <TableHead>Piso</TableHead>
                 <TableHead>Posición</TableHead>
+                <TableHead>Vencimiento</TableHead>
                 <TableHead>Descripción</TableHead>
                 <TableHead>UN</TableHead>
                 <TableHead>Proveedor</TableHead>
@@ -137,6 +152,14 @@ export function StockTab() {
                   <TableCell>{s.torre}</TableCell>
                   <TableCell>{s.piso}</TableCell>
                   <TableCell>{s.posicion}</TableCell>
+                  <TableCell>{s.fVencimiento ? (() => {
+                    const dias = Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
+                    return (
+                      <Badge variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'} className={dias <= 0 ? '' : dias <= 15 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}>
+                        {s.fVencimiento} <span className="ml-1 opacity-70">({dias <= 0 ? 'vencido' : `${dias}d`})</span>
+                      </Badge>
+                    )
+                  })() : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
                   <TableCell>{s.descripcion}</TableCell>
                   <TableCell>{s.un}</TableCell>
                   <TableCell>

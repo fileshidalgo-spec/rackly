@@ -110,7 +110,14 @@ export function TrasladoTab() {
         })
       }
     }
-    setLocations(Array.from(locMap.values()).filter((l) => l.stock > 0))
+    setLocations(Array.from(locMap.values()).filter((l) => l.stock > 0)
+      // Ordenar por vencimiento más próximo primero (sin fecha van al final)
+      .sort((a, b) => {
+        if (!a.fVencimiento && !b.fVencimiento) return 0
+        if (!a.fVencimiento) return 1
+        if (!b.fVencimiento) return -1
+        return a.fVencimiento.localeCompare(b.fVencimiento)
+      }))
     setStep(1)
   }
 

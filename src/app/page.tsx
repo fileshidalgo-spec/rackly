@@ -139,36 +139,36 @@ function RacklyApp() {
         {view === 'racks' && (
           <Tabs defaultValue="movimientos" className="w-full">
             <TabsList className="grid w-full grid-cols-4 gap-2 h-auto p-2 rounded-xl md:grid-cols-8 md:gap-1.5 md:h-9 md:p-1">
-              <TabsTrigger value="movimientos" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <Warehouse className="h-4 w-4" />
+              <TabsTrigger value="movimientos" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <Warehouse className="h-4 w-4 shrink-0" />
                 <span>Movimientos</span>
               </TabsTrigger>
-              <TabsTrigger value="traslado" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <ArrowRightLeft className="h-4 w-4" />
+              <TabsTrigger value="traslado" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <ArrowRightLeft className="h-4 w-4 shrink-0" />
                 <span>Traslado</span>
               </TabsTrigger>
-              <TabsTrigger value="kardex" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <BookOpen className="h-4 w-4" />
+              <TabsTrigger value="kardex" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <BookOpen className="h-4 w-4 shrink-0" />
                 <span>Catálogo</span>
               </TabsTrigger>
-              <TabsTrigger value="stock" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <PackageSearch className="h-4 w-4" />
+              <TabsTrigger value="stock" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <PackageSearch className="h-4 w-4 shrink-0" />
                 <span>Stock</span>
               </TabsTrigger>
-              <TabsTrigger value="ocupacion" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <LayoutGrid className="h-4 w-4" />
+              <TabsTrigger value="ocupacion" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <LayoutGrid className="h-4 w-4 shrink-0" />
                 <span>Ocupación</span>
               </TabsTrigger>
-              <TabsTrigger value="descarga" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <Download className="h-4 w-4" />
+              <TabsTrigger value="descarga" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <Download className="h-4 w-4 shrink-0" />
                 <span>Descarga</span>
               </TabsTrigger>
-              <TabsTrigger value="fefo" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <CalendarClock className="h-4 w-4" />
+              <TabsTrigger value="fefo" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <CalendarClock className="h-4 w-4 shrink-0" />
                 <span>FEFO</span>
               </TabsTrigger>
-              <TabsTrigger value="usuarios" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <Users className="h-4 w-4" />
+              <TabsTrigger value="usuarios" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <Users className="h-4 w-4 shrink-0" />
                 <span>Usuarios</span>
               </TabsTrigger>
             </TabsList>
@@ -375,17 +375,17 @@ function RacklyApp() {
         {view === 'piso' && (
           <Tabs defaultValue="movimientos" className="w-full">
             <TabsList className="grid w-full grid-cols-2 gap-2 h-auto p-2 rounded-xl md:grid-cols-4 md:gap-1.5 md:h-9 md:p-1">
-              <TabsTrigger value="movimientos" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <History className="h-4 w-4" /> <span>Movimientos</span>
+              <TabsTrigger value="movimientos" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <History className="h-4 w-4 shrink-0" /> <span>Movimientos</span>
               </TabsTrigger>
-              <TabsTrigger value="up-kardex" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <Upload className="h-4 w-4" /> <span>UP Kardex</span>
+              <TabsTrigger value="up-kardex" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <Upload className="h-4 w-4 shrink-0" /> <span>UP Kardex</span>
               </TabsTrigger>
-              <TabsTrigger value="sectores" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <Layers3 className="h-4 w-4" /> <span>Sectores</span>
+              <TabsTrigger value="sectores" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <Layers3 className="h-4 w-4 shrink-0" /> <span>Sectores</span>
               </TabsTrigger>
-              <TabsTrigger value="columnas" className="gap-1.5 py-2.5 px-2 text-xs border border-border/50 rounded-lg md:text-sm md:py-1">
-                <Settings className="h-4 w-4" /> <span>Config.</span>
+              <TabsTrigger value="columnas" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
+                <Settings className="h-4 w-4 shrink-0" /> <span>Config.</span>
               </TabsTrigger>
             </TabsList>
 

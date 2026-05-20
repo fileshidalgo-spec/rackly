@@ -49,7 +49,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Download, Loader2, MapPin, Building2, Package, Warehouse, FileBarChart, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
+import { Download, Loader2, MapPin, Building2, Package, Warehouse, FileBarChart, ArrowDownToLine, ArrowUpFromLine, Check, ChevronRight } from 'lucide-react'
 
 /* ═══════════════════════════════════════════
    TIPO: Reporte por bloque
@@ -121,6 +121,7 @@ export function OcupacionTab() {
   const [busyExport, setBusyExport] = useState(false)
   const [busyAction, setBusyAction] = useState(false)
   const [salidaQty, setSalidaQty] = useState<Record<number, string>>({})
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [confirmAction, setConfirmAction] = useState<{
     tipo: 'salida-parcial' | 'salida-total'
     item: StockEnUbicacion
@@ -245,6 +246,7 @@ export function OcupacionTab() {
       })
       setDetail({ bloque, torre, piso, posicion, stock: sorted })
       setSalidaQty({})
+      setSelectedIdx(null)
     } catch {
       toast.error('Error al cargar detalle')
     }
@@ -719,7 +721,7 @@ export function OcupacionTab() {
       )}
 
       {/* ─── Dialog de detalle ─── */}
-      <Dialog open={!!detail} onOpenChange={() => { setDetail(null); setSalidaQty({}) }}>
+      <Dialog open={!!detail} onOpenChange={() => { setDetail(null); setSalidaQty({}); setSelectedIdx(null) }}>
         <DialogContent className="max-w-[95vw] sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
@@ -754,24 +756,93 @@ export function OcupacionTab() {
 
               {detail.stock.length > 0 ? (
                 <>
-                  {/* ── Vista tarjetas (móvil) ── */}
-                  <div className="space-y-3 sm:hidden">
+                  {/* ── Vista selector + tarjeta (móvil) ── */}
+                  <div className="sm:hidden space-y-3">
+                    {/* Selector de artículo - siempre visible cuando hay 2+ */}
+                    {detail.stock.length >= 2 && (
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          Selecciona un artículo ({detail.stock.length} en esta ubicación)
+                        </p>
+                        <div className="space-y-1.5">
+                          {detail.stock.map((s, i) => {
+                            const dias = s.fVencimiento
+                              ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
+                              : null
+                            const isSelected = selectedIdx === i
+                            return (
+                              <button
+                                key={i}
+                                onClick={() => {
+                                  setSelectedIdx(isSelected ? null : i)
+                                  setSalidaQty({})
+                                }}
+                                className={`
+                                  w-full text-left rounded-lg border-2 p-2.5 transition-all
+                                  ${isSelected
+                                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
+                                    : 'border-border bg-card hover:border-blue-300 dark:hover:border-blue-700'
+                                  }
+                                `}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className={`
+                                    shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center
+                                    ${isSelected ? 'border-blue-500 bg-blue-500' : 'border-muted-foreground/40'}
+                                  `}>
+                                    {isSelected && <Check className="h-3 w-3 text-white" />}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="font-mono font-bold text-sm text-foreground">{s.codigo}</p>
+                                    <p className="text-[11px] text-muted-foreground line-clamp-2 leading-tight">{s.descripcion}</p>
+                                  </div>
+                                  <div className="shrink-0 flex flex-col items-end gap-1">
+                                    <Badge variant="default" className="text-xs font-bold">{s.stock} {s.un}</Badge>
+                                    {dias !== null ? (
+                                      <Badge
+                                        variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
+                                        className={`text-[10px] ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
+                                      >
+                                        {dias <= 0 ? 'Vencido' : `${dias}d`}
+                                      </Badge>
+                                    ) : (
+                                      <span className="text-[10px] text-muted-foreground">—</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tarjeta de salida - solo para el seleccionado (o el único) */}
                     {detail.stock.map((s, i) => {
+                      const showCard = detail.stock.length === 1
+                        ? true
+                        : selectedIdx === i
+                      if (!showCard) return null
+
                       const dias = s.fVencimiento
                         ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
                         : null
+
                       return (
-                        <div key={i} className="rounded-xl border bg-card p-3 space-y-3">
-                          {/* Fila producto + vencimiento */}
-                          <div className="flex items-start justify-between gap-2">
+                        <div key={i} className="rounded-xl border-2 border-blue-200 dark:border-blue-800 bg-card p-3 space-y-3">
+                          {/* Info del producto seleccionado */}
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center shrink-0">
+                              <Package className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                            </div>
                             <div className="min-w-0 flex-1">
                               <p className="font-mono font-bold text-sm text-foreground">{s.codigo}</p>
-                              <p className="text-xs text-muted-foreground truncate">{s.descripcion}</p>
+                              <p className="text-[11px] text-muted-foreground line-clamp-2 leading-tight">{s.descripcion}</p>
                             </div>
                             {dias !== null ? (
                               <Badge
                                 variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
-                                className={dias <= 0 ? 'shrink-0' : dias <= 15 ? 'border-orange-300 text-orange-700 dark:text-orange-400 shrink-0' : 'shrink-0'}
+                                className={`shrink-0 ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
                               >
                                 {dias <= 0 ? 'Vencido' : `${dias}d`}
                               </Badge>
@@ -781,39 +852,37 @@ export function OcupacionTab() {
                           </div>
 
                           {/* Stock disponible - grande y claro */}
-                          <div className="flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2">
-                            <Package className="h-4 w-4 text-muted-foreground shrink-0" />
+                          <div className="flex items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2.5">
+                            <Package className="h-4 w-4 text-blue-500 shrink-0" />
                             <span className="text-xs text-muted-foreground">Stock disponible:</span>
-                            <span className="text-lg font-bold text-foreground ml-auto">{s.stock}</span>
+                            <span className="text-xl font-bold text-foreground ml-auto">{s.stock}</span>
                             <span className="text-xs text-muted-foreground font-medium">{s.un}</span>
                           </div>
 
                           {/* Campo de cantidad para salida parcial */}
                           <div className="space-y-1.5">
-                            <label className="text-xs font-medium text-muted-foreground">
+                            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                               Cantidad a retirar ({s.un})
                             </label>
-                            <div className="flex items-center gap-2">
-                              <Input
-                                type="number"
-                                step="any"
-                                min="0.001"
-                                max={s.stock}
-                                value={salidaQty[i] || ''}
-                                onChange={(e) => setSalidaQty((prev) => ({ ...prev, [i]: e.target.value }))}
-                                placeholder="0"
-                                className="h-12 text-lg font-bold text-center flex-1"
-                              />
-                            </div>
+                            <Input
+                              type="number"
+                              step="any"
+                              min="0.001"
+                              max={s.stock}
+                              value={salidaQty[i] || ''}
+                              onChange={(e) => setSalidaQty((prev) => ({ ...prev, [i]: e.target.value }))}
+                              placeholder="0"
+                              className="h-14 text-xl font-bold text-center"
+                            />
                             {/* Indicador si excede stock */}
                             {salidaQty[i] && parseFloat(salidaQty[i]) > s.stock && (
-                              <p className="text-xs text-red-500 font-medium">
-                                Excede el stock disponible ({s.stock} {s.un})
+                              <p className="text-xs text-red-500 font-medium flex items-center gap-1">
+                                ⚠ Excede el stock disponible ({s.stock} {s.un})
                               </p>
                             )}
                           </div>
 
-                          {/* Botones de acción - grandes y claros */}
+                          {/* Botones de acción */}
                           <div className="grid grid-cols-2 gap-2">
                             <Button
                               variant="destructive"
@@ -837,7 +906,7 @@ export function OcupacionTab() {
                             </Button>
                             <Button
                               variant="outline"
-                              className="h-12 text-sm font-bold rounded-lg border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+                              className="h-12 text-sm font-bold rounded-lg border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800"
                               disabled={busyAction}
                               onClick={() => {
                                 setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })
@@ -850,6 +919,14 @@ export function OcupacionTab() {
                         </div>
                       )
                     })}
+
+                    {/* Indicador cuando hay 2+ y no se ha seleccionado */}
+                    {detail.stock.length >= 2 && selectedIdx === null && (
+                      <div className="flex flex-col items-center gap-1.5 py-4 text-muted-foreground">
+                        <ChevronRight className="h-5 w-5 animate-pulse" />
+                        <p className="text-xs font-medium">Toca un artículo arriba para dar salida</p>
+                      </div>
+                    )}
                   </div>
 
                   {/* ── Vista tabla (desktop) ── */}

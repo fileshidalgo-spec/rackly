@@ -89,3 +89,24 @@ Stage Summary:
 - Vista móvil: tarjetas con campos grandes y claros para evitar errores de cantidad
 - Vista desktop: tabla mejorada con placeholder que muestra máximo disponible
 - Diálogo de confirmación mejorado con visualización más clara
+
+---
+Task ID: 2
+Agent: main
+Task: Corregir descripciones largas descentradas + selector de artículo para múltiples productos
+
+Work Log:
+- Analizada captura: descripciones largas causaban descentramiento del badge de vencimiento
+- Agregado estado `selectedIdx` para selección de artículo en posiciones con 2+ productos
+- Cambiado `truncate` a `line-clamp-2` para descripciones (máximo 2 líneas con puntos suspensivos)
+- Implementado selector con radio buttons estilizados: código + descripción + stock + vencimiento por artículo
+- Tarjeta de salida solo aparece para el artículo seleccionado (o directamente si es el único)
+- Indicador animado "Toca un artículo arriba para dar salida" cuando no se ha seleccionado
+- Campo de cantidad ahora tiene h-14 con texto de 20px para mayor claridad
+- Despliegue exitoso a https://rackly.pages.dev
+
+Stage Summary:
+- Archivo: src/components/rackly/kardex/OcupacionTab.tsx
+- Descripciones con line-clamp-2 evitan descentramiento
+- Selector de artículos con check azul cuando hay 2+ productos
+- Formulario de salida compacto solo para el seleccionado

@@ -725,7 +725,7 @@ export function OcupacionTab() {
 
                     {/* Pisos */}
                     <div className="space-y-2">
-                      {[...PISOS].reverse().map((piso) => {
+                      {[...PISOS].map((piso) => {
                         // Calcular ocupación de este piso
                         let pisoOcupadas = 0
                         for (const pos of posiciones) {

@@ -55,6 +55,7 @@ import {
   History,
   Settings,
   Upload,
+  RotateCcw,
 } from 'lucide-react'
 
 function fmtCantidad(n: number) {
@@ -184,16 +185,22 @@ function RacklyApp() {
                 </CardHeader>
                 <CardContent>
                   <Tabs defaultValue="ingreso" className="w-full">
-                    <TabsList className="grid w-full grid-cols-2 md:w-auto">
-                      <TabsTrigger value="ingreso" className="gap-2">
-                        <ArrowDownToLine className="h-4 w-4" /> Ingreso
+                    <TabsList className="grid w-full grid-cols-3 md:w-auto">
+                      <TabsTrigger value="ingreso" className="gap-1 md:gap-2">
+                        <ArrowDownToLine className="h-3.5 w-3.5 md:h-4 md:w-4" /> <span className="hidden md:inline">Ingreso</span><span className="md:hidden">Ingreso</span>
                       </TabsTrigger>
-                      <TabsTrigger value="salida" className="gap-2">
-                        <ArrowUpFromLine className="h-4 w-4" /> Salida
+                      <TabsTrigger value="devolucion" className="gap-1 md:gap-2">
+                        <RotateCcw className="h-3.5 w-3.5 md:h-4 md:w-4" /> <span className="hidden md:inline">Devolución</span><span className="md:hidden">Devolución</span>
+                      </TabsTrigger>
+                      <TabsTrigger value="salida" className="gap-1 md:gap-2">
+                        <ArrowUpFromLine className="h-3.5 w-3.5 md:h-4 md:w-4" /> <span className="hidden md:inline">Salida</span><span className="md:hidden">Salida</span>
                       </TabsTrigger>
                     </TabsList>
                     <TabsContent value="ingreso" className="mt-6 md:mt-4">
                       <MovimientoForm tipo="ingreso" onCreated={setMovs} />
+                    </TabsContent>
+                    <TabsContent value="devolucion" className="mt-6 md:mt-4">
+                      <MovimientoForm tipo="devolucion" onCreated={setMovs} />
                     </TabsContent>
                     <TabsContent value="salida" className="mt-6 md:mt-4">
                       <MovimientoForm tipo="salida" onCreated={setMovs} />
@@ -238,7 +245,7 @@ function RacklyApp() {
                         {(expandMovs ? movs : movs.slice(0, 5)).map((m) => (
                           <TableRow key={m.id}>
                             <TableCell>
-                              <Badge variant={m.tipo === 'ingreso' ? 'default' : 'destructive'}>
+                              <Badge variant={m.tipo === 'salida' ? 'destructive' : m.tipo === 'devolucion' ? 'outline' : 'default'} className={m.tipo === 'devolucion' ? 'border-amber-400 text-amber-700 dark:text-amber-400' : ''}>
                                 {m.tipo}
                               </Badge>
                             </TableCell>

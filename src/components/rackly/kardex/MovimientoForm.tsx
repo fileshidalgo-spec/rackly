@@ -45,7 +45,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
+import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, RotateCcw } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 const PROVEEDORES_FILM = ['INCOMIN', 'DAMAR', 'DIAMAND', 'NEOPACK', 'SOLPACK', 'ITS']
@@ -71,6 +71,9 @@ export function MovimientoForm({ tipo, onCreated }: Props) {
 
   if (tipo === 'ingreso') {
     return <IngresoForm turno={turno} onCreated={onCreated} perfil={perfil!} />
+  }
+  if (tipo === 'devolucion') {
+    return <DevolucionForm turno={turno} onCreated={onCreated} perfil={perfil!} />
   }
   return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil!} />
 }
@@ -337,6 +340,267 @@ function IngresoForm({
 }
 
 /* ═══════════════════════════════════════════
+   DEVOLUCIÓN FORM — Similar a ingreso pero clasificado como devolución
+   ═══════════════════════════════════════════ */
+function DevolucionForm({
+  turno,
+  onCreated,
+  perfil,
+}: {
+  turno: string
+  onCreated: (movs: Movimiento[]) => void
+  perfil: { id: string; nombre: string; correo: string }
+}) {
+  const [bloque, setBloque] = useState('')
+  const [torre, setTorre] = useState('')
+  const [piso, setPiso] = useState('')
+  const [posicion, setPosicion] = useState('')
+  const [codigo, setCodigo] = useState('')
+  const [descripcion, setDescripcion] = useState('')
+  const [un, setUn] = useState('')
+  const [cantidad, setCantidad] = useState('')
+  const [fVencimiento, setFVencimiento] = useState('')
+  const [sinVencimiento, setSinVencimiento] = useState(false)
+  const [proveedor, setProveedor] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [confirmData, setConfirmData] = useState<StockEnUbicacion[] | null>(null)
+
+  const torres = torresDeBloque(bloque)
+  const posiciones = posicionesDeBloque(bloque)
+
+  function handleCatalogoPick(item: CatalogoItem) {
+    setCodigo(item.codigo)
+    setDescripcion(item.descripcion)
+    setUn(item.un)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!bloque || !torre || !piso || !posicion || !codigo.trim() || !cantidad) {
+      toast.error('Completa todos los campos requeridos')
+      return
+    }
+    if (requiereProveedor(descripcion) && !proveedor) {
+      toast.error('Selecciona un proveedor para este producto')
+      return
+    }
+    const qty = parseFloat(cantidad)
+    if (isNaN(qty) || qty <= 0) {
+      toast.error('La cantidad debe ser mayor a 0')
+      return
+    }
+    setBusy(true)
+    try {
+      const stock = await calcularStockUbicacion(codigo, bloque, torre, piso, posicion)
+      if (stock > 0) {
+        const details = await stockEnUbicacion(bloque, torre, piso, posicion)
+        setConfirmData(details)
+        setBusy(false)
+        return
+      }
+      await doInsert(qty)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('Error al verificar stock', { description: message })
+      setBusy(false)
+    }
+  }
+
+  async function doInsert(qty: number) {
+    try {
+      const movs = await addMovimiento({
+        tipo: 'devolucion',
+        bloque,
+        torre,
+        piso,
+        posicion,
+        codigo,
+        descripcion,
+        un,
+        cantidad: qty,
+        fVencimiento: sinVencimiento ? '' : fVencimiento,
+        turno,
+        usuarioId: perfil.id,
+        usuarioNombre: perfil.nombre,
+        usuarioCorreo: perfil.correo,
+        proveedor: proveedor || undefined,
+      })
+      toast.success('Devolución registrada')
+      setCodigo('')
+      setDescripcion('')
+      setUn('')
+      setCantidad('')
+      setFVencimiento('')
+      setProveedor('')
+      onCreated(movs)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('Error al registrar devolución', { description: message })
+    } finally {
+      setBusy(false)
+      setConfirmData(null)
+    }
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
+        <RotateCcw className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">Devolución desde línea de producción</p>
+          <p className="text-xs text-amber-600/80 dark:text-amber-400/70">Producto que retorna de producción al kardex. Turno: {turno}</p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-1">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Ubicación</Label>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Bloque</Label>
+              <Select value={bloque} onValueChange={(v) => { setBloque(v); setTorre(''); setPiso(''); setPosicion('') }}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Bloque" /></SelectTrigger>
+                <SelectContent>
+                  {BLOQUES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Torre</Label>
+              <Select value={torre} onValueChange={setTorre} disabled={!bloque}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Torre" /></SelectTrigger>
+                <SelectContent>
+                  {torres.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Piso</Label>
+              <Select value={piso} onValueChange={setPiso} disabled={!bloque}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Piso" /></SelectTrigger>
+                <SelectContent>
+                  {PISOS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Posición</Label>
+              <Select value={posicion} onValueChange={setPosicion} disabled={!bloque}>
+                <SelectTrigger className="h-10"><SelectValue placeholder="Pos." /></SelectTrigger>
+                <SelectContent>
+                  {posiciones.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1 col-span-2 sm:col-span-1">
+              <Label className="text-xs text-muted-foreground">Turno</Label>
+              <Input value={turno} readOnly className="h-10 bg-muted text-sm" />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Producto</Label>
+          <CatalogoSearchInput
+            onPick={handleCatalogoPick}
+            value={codigo}
+            onChange={(v) => {
+              setCodigo(v)
+              const cat = findCatalogoByCodigo(v)
+              if (cat) {
+                setDescripcion(cat.descripcion)
+                setUn(cat.un)
+              }
+            }}
+          />
+        </div>
+
+        {descripcion && (
+          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 p-3 space-y-2 transition-all">
+            <div className="flex items-start gap-3 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-muted-foreground">Descripción</p>
+                <p className="text-sm font-medium truncate">{descripcion}</p>
+              </div>
+              <div className="min-w-[60px]">
+                <p className="text-xs text-muted-foreground">UN</p>
+                <p className="text-sm font-medium">{un || '—'}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="space-y-1 col-span-2 sm:col-span-1">
+            <Label className="text-xs text-muted-foreground">Cantidad</Label>
+            <Input type="number" step="any" min="0.001" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0" className="h-10" />
+          </div>
+          <div className="space-y-1 col-span-2 sm:col-span-1">
+            <Label className="text-xs text-muted-foreground">F. Vencimiento</Label>
+            <div className="flex items-center gap-1.5">
+              <Input type="date" value={fVencimiento} onChange={(e) => setFVencimiento(e.target.value)} disabled={sinVencimiento} className="h-10" />
+              <Checkbox checked={sinVencimiento} onCheckedChange={(v) => setSinVencimiento(!!v)} />
+            </div>
+          </div>
+          {requiereProveedor(descripcion) && (
+            <div className="space-y-1 col-span-2">
+              <Label className="text-xs text-muted-foreground font-medium">Proveedor <span className="text-red-500">*</span></Label>
+              <Select value={proveedor} onValueChange={setProveedor}>
+                <SelectTrigger className="h-10">
+                  <SelectValue placeholder="Selecciona proveedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROVEEDORES_FILM.map((p) => (
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+
+        <Button type="submit" disabled={busy} className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium sm:w-auto">
+          {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+          Registrar Devolución
+        </Button>
+      </form>
+
+      <AlertDialog open={!!confirmData} onOpenChange={() => setConfirmData(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ubicación ocupada</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta posición ya tiene stock. ¿Deseas agregar la devolución de todas formas?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {confirmData && confirmData.length > 0 && (
+            <div className="my-2">
+              <Table>
+                <TableBody>
+                  {confirmData.map((s, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="font-mono">{s.codigo}</TableCell>
+                      <TableCell>{s.descripcion}</TableCell>
+                      <TableCell className="text-right">{s.stock}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => doInsert(parseFloat(cantidad))}>
+              Confirmar devolución
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
+/* ═══════════════════════════════════════════
    SALIDA FORM — Tabla con formato exacto de la imagen
    ═══════════════════════════════════════════ */
 type LocWithKey = StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string }
@@ -384,7 +648,7 @@ function SalidaForm({
         const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
         const current = locMap.get(key)
         if (current) {
-          current.stock += m.tipo === 'ingreso' ? m.cantidad : -m.cantidad
+          current.stock += (m.tipo === 'ingreso' || m.tipo === 'devolucion') ? m.cantidad : -m.cantidad
         } else {
           locMap.set(key, {
             bloque: m.bloque,
@@ -394,7 +658,7 @@ function SalidaForm({
             codigo: m.codigo,
             descripcion: m.descripcion,
             un: m.un,
-            stock: m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
+            stock: (m.tipo === 'ingreso' || m.tipo === 'devolucion') ? m.cantidad : -m.cantidad,
             fVencimiento: m.fVencimiento || undefined,
             proveedor: m.proveedor,
           })

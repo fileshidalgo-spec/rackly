@@ -110,3 +110,28 @@ Stage Summary:
 - Descripciones con line-clamp-2 evitan descentramiento
 - Selector de artículos con check azul cuando hay 2+ productos
 - Formulario de salida compacto solo para el seleccionado
+
+---
+Task ID: 3
+Agent: main
+Task: Agregar ingreso en celdas vacías con búsqueda por código/descripción
+
+Work Log:
+- Agregados estados para formulario de ingreso: codigo, descripcion, un, cantidad, fVencimiento, sinVencimiento, proveedor, busyIngreso
+- Importados CatalogoSearchInput, findCatalogoByCodigo, CatalogoItem, Label, Checkbox, Search icon
+- Implementada función doIngreso() que registra movimiento tipo 'ingreso' en la ubicación de la celda
+- Reemplazado mensaje "Ubicación vacía" con formulario completo:
+  - Barra verde indicadora "Registra un ingreso de mercadería"
+  - CatalogoSearchInput para buscar por código o descripción
+  - Tarjeta con código, UN y descripción del producto seleccionado
+  - Campo de cantidad grande (h-12, text-lg) con UN dinámica
+  - Fecha de vencimiento + checkbox "Sin vencimiento"
+  - Selector de proveedor condicional (LAMINA/STRETCH)
+  - Botón "Registrar Ingreso" verde grande
+- Al registrar ingreso, se limpia el formulario y se refresca el detalle y mapa
+- Build exitoso, deploy a https://rackly.pages.dev
+
+Stage Summary:
+- Archivo: src/components/rackly/kardex/OcupacionTab.tsx
+- Flujo: Tocar celda verde (vacía) → Dialog con formulario de ingreso → Buscar producto → Ingresar cantidad y vencimiento → Registrar
+- La ubicación se pre-llena automáticamente desde la celda seleccionada

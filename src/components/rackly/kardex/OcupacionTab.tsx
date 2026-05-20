@@ -9,6 +9,8 @@ import {
   stockEnUbicacion,
   type StockEnUbicacion,
 } from '@/lib/rackly/kardex'
+import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
+import type { CatalogoItem } from '@/lib/rackly/catalogo'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas, totalCeldasBloque } from '@/lib/rackly/ubicaciones'
@@ -39,6 +41,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Table,
   TableBody,
@@ -49,7 +53,8 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Download, Loader2, MapPin, Building2, Package, Warehouse, FileBarChart, ArrowDownToLine, ArrowUpFromLine, Check, ChevronRight } from 'lucide-react'
+import { Download, Loader2, MapPin, Building2, Package, Warehouse, FileBarChart, ArrowDownToLine, ArrowUpFromLine, Check, ChevronRight, Search } from 'lucide-react'
+import { CatalogoSearchInput } from './CatalogoSearchInput'
 
 /* ═══════════════════════════════════════════
    TIPO: Reporte por bloque
@@ -127,6 +132,15 @@ export function OcupacionTab() {
     item: StockEnUbicacion
     qty: number
   } | null>(null)
+    // Estados para ingreso en celda vacía
+  const [ingresoCodigo, setIngresoCodigo] = useState('')
+  const [ingresoDescripcion, setIngresoDescripcion] = useState('')
+  const [ingresoUn, setIngresoUn] = useState('')
+  const [ingresoCantidad, setIngresoCantidad] = useState('')
+  const [ingresoFVencimiento, setIngresoFVencimiento] = useState('')
+  const [ingresoSinVencimiento, setIngresoSinVencimiento] = useState(false)
+  const [ingresoProveedor, setIngresoProveedor] = useState('')
+  const [busyIngreso, setBusyIngreso] = useState(false)
   const isFirstLoad = useRef(true)
 
   const load = useCallback(async () => {
@@ -296,6 +310,85 @@ export function OcupacionTab() {
       toast.error('Error al registrar salida', { description: message })
     } finally {
       setBusyAction(false)
+    }
+  }
+
+  /* ─── Helpers para ingreso ─── */
+  function requiereProveedorIngreso(descripcion: string): boolean {
+    const upper = descripcion.toUpperCase()
+    return upper.includes('LAMINA') || upper.includes('STRETCH')
+  }
+
+  const PROVEEDORES_INGRESO = ['INCOMIN', 'DAMAR', 'DIAMAND', 'NEOPACK', 'SOLPACK', 'ITS']
+
+  function handleCatalogoPickIngreso(item: CatalogoItem) {
+    setIngresoCodigo(item.codigo)
+    setIngresoDescripcion(item.descripcion)
+    setIngresoUn(item.un)
+  }
+
+  async function doIngreso() {
+    if (!detail || !perfil) return
+    if (!ingresoCodigo.trim() || !ingresoCantidad) {
+      toast.error('Selecciona un producto e ingresa la cantidad')
+      return
+    }
+    if (requiereProveedorIngreso(ingresoDescripcion) && !ingresoProveedor) {
+      toast.error('Selecciona un proveedor para este producto')
+      return
+    }
+    const qty = parseFloat(ingresoCantidad)
+    if (isNaN(qty) || qty <= 0) {
+      toast.error('La cantidad debe ser mayor a 0')
+      return
+    }
+    setBusyIngreso(true)
+    try {
+      const turno = calcularTurno()
+      await addMovimiento({
+        tipo: 'ingreso',
+        bloque: detail.bloque,
+        torre: detail.torre,
+        piso: detail.piso,
+        posicion: detail.posicion,
+        codigo: ingresoCodigo.trim().toUpperCase(),
+        descripcion: ingresoDescripcion,
+        un: ingresoUn,
+        cantidad: qty,
+        fVencimiento: ingresoSinVencimiento ? '' : ingresoFVencimiento,
+        turno,
+        usuarioId: perfil.id,
+        usuarioNombre: perfil.nombre,
+        usuarioCorreo: perfil.correo,
+        proveedor: ingresoProveedor || undefined,
+      })
+      toast.success(`Ingreso de ${qty} ${ingresoUn} registrado en B${detail.bloque}-T${detail.torre}-P${detail.piso}-Pos${detail.posicion}`)
+      // Limpiar form
+      setIngresoCodigo('')
+      setIngresoDescripcion('')
+      setIngresoUn('')
+      setIngresoCantidad('')
+      setIngresoFVencimiento('')
+      setIngresoSinVencimiento(false)
+      setIngresoProveedor('')
+      // Refrescar detalle (ahora debería tener stock)
+      const data = await stockEnUbicacion(detail.bloque, detail.torre, detail.piso, detail.posicion)
+      const sorted = [...data].sort((a, b) => {
+        const fA = a.fVencimiento || ''
+        const fB = b.fVencimiento || ''
+        if (!fA && !fB) return 0
+        if (!fA) return 1
+        if (!fB) return -1
+        return fA.localeCompare(fB)
+      })
+      setDetail({ ...detail, stock: sorted })
+      // Refrescar mapa
+      load()
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error'
+      toast.error('Error al registrar ingreso', { description: message })
+    } finally {
+      setBusyIngreso(false)
     }
   }
 
@@ -721,7 +814,7 @@ export function OcupacionTab() {
       )}
 
       {/* ─── Dialog de detalle ─── */}
-      <Dialog open={!!detail} onOpenChange={() => { setDetail(null); setSalidaQty({}); setSelectedIdx(null) }}>
+      <Dialog open={!!detail} onOpenChange={() => { setDetail(null); setSalidaQty({}); setSelectedIdx(null); setIngresoCodigo(''); setIngresoDescripcion(''); setIngresoUn(''); setIngresoCantidad(''); setIngresoFVencimiento(''); setIngresoSinVencimiento(false); setIngresoProveedor('') }}>
         <DialogContent className="max-w-[95vw] sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
@@ -1029,12 +1122,137 @@ export function OcupacionTab() {
                   </p>
                 </>
               ) : (
-                <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground">
-                  <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center">
-                    <Package className="h-5 w-5 text-green-600 dark:text-green-400" />
+                /* ── Celda vacía: Formulario de ingreso ── */
+                <div className="space-y-4">
+                  {/* Indicador vacía + acción */}
+                  <div className="flex items-center gap-2 rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-3 py-2.5">
+                    <div className="w-7 h-7 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center shrink-0">
+                      <ArrowDownToLine className="h-4 w-4 text-green-600 dark:text-green-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-green-700 dark:text-green-300">Ubicación vacía</p>
+                      <p className="text-xs text-green-600/70 dark:text-green-400/70">Registra un ingreso de mercadería</p>
+                    </div>
                   </div>
-                  <p className="text-sm font-medium">Ubicación vacía</p>
-                  <p className="text-xs">No hay productos en esta posición.</p>
+
+                  {/* Búsqueda de producto */}
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <Search className="h-3.5 w-3.5" />
+                      Buscar producto
+                    </Label>
+                    <CatalogoSearchInput
+                      onPick={handleCatalogoPickIngreso}
+                      value={ingresoCodigo}
+                      onChange={(v) => {
+                        setIngresoCodigo(v)
+                        const cat = findCatalogoByCodigo(v)
+                        if (cat) {
+                          setIngresoDescripcion(cat.descripcion)
+                          setIngresoUn(cat.un)
+                        }
+                      }}
+                    />
+                  </div>
+
+                  {/* Info del producto seleccionado */}
+                  {ingresoDescripcion && (
+                    <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 p-3 space-y-2">
+                      <div className="flex items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] text-muted-foreground uppercase">Código</p>
+                          <p className="font-mono font-bold text-sm text-foreground">{ingresoCodigo}</p>
+                        </div>
+                        <div className="min-w-[60px] text-right">
+                          <p className="text-[10px] text-muted-foreground uppercase">UN</p>
+                          <p className="font-bold text-sm text-foreground">{ingresoUn || '—'}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase">Descripción</p>
+                        <p className="text-sm text-foreground leading-snug">{ingresoDescripcion}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Cantidad y vencimiento */}
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          Cantidad ({ingresoUn || '—'})
+                        </Label>
+                        <Input
+                          type="number"
+                          step="any"
+                          min="0.001"
+                          value={ingresoCantidad}
+                          onChange={(e) => setIngresoCantidad(e.target.value)}
+                          placeholder="0"
+                          className="h-12 text-lg font-bold text-center"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          Vencimiento
+                        </Label>
+                        <div className="flex items-center gap-1.5">
+                          <Input
+                            type="date"
+                            value={ingresoFVencimiento}
+                            onChange={(e) => setIngresoFVencimiento(e.target.value)}
+                            disabled={ingresoSinVencimiento}
+                            className="h-12 text-sm"
+                          />
+                        </div>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <Checkbox
+                            checked={ingresoSinVencimiento}
+                            onCheckedChange={(v) => setIngresoSinVencimiento(!!v)}
+                          />
+                          <span className="text-[11px] text-muted-foreground">Sin vencimiento</span>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Proveedor (solo para LAMINA/STRETCH) */}
+                  {requiereProveedorIngreso(ingresoDescripcion) && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Proveedor <span className="text-red-500">*</span>
+                      </Label>
+                      <Select value={ingresoProveedor} onValueChange={setIngresoProveedor}>
+                        <SelectTrigger className="h-11">
+                          <SelectValue placeholder="Selecciona proveedor" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROVEEDORES_INGRESO.map((p) => (
+                            <SelectItem key={p} value={p}>{p}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {/* Botón registrar */}
+                  <Button
+                    onClick={doIngreso}
+                    disabled={busyIngreso || !ingresoCodigo.trim() || !ingresoCantidad}
+                    className="w-full h-12 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-lg"
+                  >
+                    {busyIngreso ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Registrando...
+                      </span>
+                    ) : (
+                      <span className="flex items-center justify-center gap-2">
+                        <ArrowDownToLine className="h-4 w-4" />
+                        Registrar Ingreso
+                      </span>
+                    )}
+                  </Button>
                 </div>
               )}
             </div>

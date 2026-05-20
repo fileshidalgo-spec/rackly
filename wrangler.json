@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/wrangler.json",
+  "name": "rackly",
+  "pages_build_output_dir": "./out",
+  "build": {
+    "command": "npm run build"
+  }
+}

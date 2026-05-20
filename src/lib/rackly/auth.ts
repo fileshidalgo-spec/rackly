@@ -2,7 +2,27 @@
 
 import { supabase } from '@/lib/supabase/client'
 
-export type Rol = 'admin' | 'operario'
+export const ROLES = [
+  'admin',
+  'operario',
+  'auxiliar',
+  'almacenero',
+  'supervisor_almacen',
+  'supervisor_operaciones',
+  'coordinador_operaciones',
+] as const
+
+export type Rol = (typeof ROLES)[number]
+
+export const ROL_LABELS: Record<Rol, string> = {
+  admin: 'Admin',
+  operario: 'Operario',
+  auxiliar: 'Auxiliar',
+  almacenero: 'Almacenero',
+  supervisor_almacen: 'Supervisor de Almacén',
+  supervisor_operaciones: 'Supervisor de Operaciones',
+  coordinador_operaciones: 'Coordinador de Operaciones',
+}
 
 export type Perfil = {
   id: string
@@ -14,7 +34,7 @@ export type Perfil = {
 }
 
 export async function signUp(correo: string, password: string, nombre: string) {
-  const redirectUrl = `${window.location.origin}/`
+  const redirectUrl = 'https://rackly.pages.dev/'
   const { data, error } = await supabase.auth.signUp({
     email: correo,
     password,
@@ -41,7 +61,7 @@ export async function signOut() {
 }
 
 export async function resetPassword(correo: string) {
-  const redirectTo = `${window.location.origin}/`
+  const redirectTo = 'https://rackly.pages.dev/'
   const { data, error } = await supabase.auth.resetPasswordForEmail(correo, {
     redirectTo,
   })
@@ -100,18 +120,21 @@ export async function getPerfilActual(): Promise<Perfil | null> {
       id: perfilCreado.id,
       correo: perfilCreado.correo,
       nombre: perfilCreado.nombre,
-      rol: 'operario',
+      rol: 'operario' as Rol,
       aprobado: perfilCreado.aprobado ?? false,
       mustChangePassword: perfilCreado.must_change_password ?? false,
     }
   }
 
-  const esAdmin = (roles ?? []).some((r: { role: string }) => r.role === 'admin')
+  // Buscar el rol del usuario
+  const userRole = (roles ?? []).find((r: { role: string }) => r.role)
+  const rol: Rol = userRole ? (userRole.role as Rol) : 'operario'
+
   return {
     id: perfil.id,
     correo: perfil.correo,
     nombre: perfil.nombre,
-    rol: esAdmin ? 'admin' : 'operario',
+    rol,
     aprobado: perfil.aprobado ?? false,
     mustChangePassword: perfil.must_change_password ?? false,
   }
@@ -125,16 +148,15 @@ export async function getTodosLosPerfiles(): Promise<Perfil[]> {
       .order('nombre'),
     supabase.from('user_roles').select('user_id, role'),
   ])
-  const adminIds = new Set(
-    (roles ?? [])
-      .filter((r: { role: string }) => r.role === 'admin')
-      .map((r: { user_id: string }) => r.user_id)
-  )
+  const roleMap = new Map<string, string>()
+  for (const r of (roles ?? []) as { user_id: string; role: string }[]) {
+    roleMap.set(r.user_id, r.role)
+  }
   return (perfiles ?? []).map((p: Record<string, unknown>) => ({
     id: p.id as string,
     correo: p.correo as string,
     nombre: p.nombre as string,
-    rol: adminIds.has(p.id as string) ? ('admin' as const) : ('operario' as const),
+    rol: (roleMap.get(p.id as string) ?? 'operario') as Rol,
     aprobado: (p.aprobado as boolean) ?? false,
     mustChangePassword: (p.must_change_password as boolean) ?? false,
   }))
@@ -165,6 +187,31 @@ export async function cambiarRol(userId: string, rol: Rol) {
   const { error } = await supabase
     .from('user_roles')
     .insert({ user_id: userId, role: rol })
+  if (error) throw error
+}
+
+export async function asignarPasswordTemporal(userId: string, nuevaPassword: string) {
+  // Actualizar la contraseña del usuario en Supabase Auth
+  // Nota: Esto requiere el service role key en el backend. 
+  // Desde el cliente, usamos la función de Supabase admin API
+  const { error } = await supabase.auth.updateUser({
+    password: nuevaPassword,
+  })
+  if (error) throw error
+
+  // Marcar que debe cambiar la contraseña en el próximo login
+  const { error: profileErr } = await supabase
+    .from('profiles')
+    .update({ must_change_password: true })
+    .eq('id', userId)
+  if (profileErr) throw profileErr
+}
+
+export async function forzarCambioPassword(userId: string) {
+  const { error } = await supabase
+    .from('profiles')
+    .update({ must_change_password: true })
+    .eq('id', userId)
   if (error) throw error
 }
 

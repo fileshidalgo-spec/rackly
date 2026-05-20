@@ -754,16 +754,114 @@ export function OcupacionTab() {
 
               {detail.stock.length > 0 ? (
                 <>
-                  {/* Tabla de stock con acciones */}
-                  <div className="overflow-x-auto -mx-1 px-1">
+                  {/* ── Vista tarjetas (móvil) ── */}
+                  <div className="space-y-3 sm:hidden">
+                    {detail.stock.map((s, i) => {
+                      const dias = s.fVencimiento
+                        ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
+                        : null
+                      return (
+                        <div key={i} className="rounded-xl border bg-card p-3 space-y-3">
+                          {/* Fila producto + vencimiento */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="font-mono font-bold text-sm text-foreground">{s.codigo}</p>
+                              <p className="text-xs text-muted-foreground truncate">{s.descripcion}</p>
+                            </div>
+                            {dias !== null ? (
+                              <Badge
+                                variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
+                                className={dias <= 0 ? 'shrink-0' : dias <= 15 ? 'border-orange-300 text-orange-700 dark:text-orange-400 shrink-0' : 'shrink-0'}
+                              >
+                                {dias <= 0 ? 'Vencido' : `${dias}d`}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground text-xs shrink-0">—</span>
+                            )}
+                          </div>
+
+                          {/* Stock disponible - grande y claro */}
+                          <div className="flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2">
+                            <Package className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <span className="text-xs text-muted-foreground">Stock disponible:</span>
+                            <span className="text-lg font-bold text-foreground ml-auto">{s.stock}</span>
+                            <span className="text-xs text-muted-foreground font-medium">{s.un}</span>
+                          </div>
+
+                          {/* Campo de cantidad para salida parcial */}
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-muted-foreground">
+                              Cantidad a retirar ({s.un})
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="number"
+                                step="any"
+                                min="0.001"
+                                max={s.stock}
+                                value={salidaQty[i] || ''}
+                                onChange={(e) => setSalidaQty((prev) => ({ ...prev, [i]: e.target.value }))}
+                                placeholder="0"
+                                className="h-12 text-lg font-bold text-center flex-1"
+                              />
+                            </div>
+                            {/* Indicador si excede stock */}
+                            {salidaQty[i] && parseFloat(salidaQty[i]) > s.stock && (
+                              <p className="text-xs text-red-500 font-medium">
+                                Excede el stock disponible ({s.stock} {s.un})
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Botones de acción - grandes y claros */}
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button
+                              variant="destructive"
+                              className="h-12 text-sm font-bold rounded-lg"
+                              disabled={busyAction || !salidaQty[i] || (salidaQty[i] ? parseFloat(salidaQty[i]) > s.stock : false)}
+                              onClick={() => {
+                                const qtyNum = parseFloat(salidaQty[i] || '')
+                                if (!qtyNum || qtyNum <= 0) {
+                                  toast.error('Ingresa una cantidad válida')
+                                  return
+                                }
+                                if (qtyNum > s.stock) {
+                                  toast.error('La cantidad excede el stock')
+                                  return
+                                }
+                                setConfirmAction({ tipo: 'salida-parcial', item: s, qty: qtyNum })
+                              }}
+                            >
+                              <ArrowUpFromLine className="h-4 w-4 mr-1.5" />
+                              Salida Parcial
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="h-12 text-sm font-bold rounded-lg border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+                              disabled={busyAction}
+                              onClick={() => {
+                                setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })
+                              }}
+                            >
+                              <ArrowUpFromLine className="h-4 w-4 mr-1.5" />
+                              Salida Total
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* ── Vista tabla (desktop) ── */}
+                  <div className="hidden sm:block overflow-x-auto -mx-1 px-1">
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead className="text-xs">Código</TableHead>
                           <TableHead className="text-xs">Stock</TableHead>
                           <TableHead className="text-xs">Vencim.</TableHead>
-                          <TableHead className="text-xs w-28">Salida</TableHead>
-                          <TableHead className="text-xs w-24">Acción</TableHead>
+                          <TableHead className="text-xs w-32">Salida</TableHead>
+                          <TableHead className="text-xs w-36">Acción</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -776,13 +874,13 @@ export function OcupacionTab() {
                               <TableCell className="font-mono text-xs py-2 px-1.5">
                                 <div>
                                   <span className="font-semibold">{s.codigo}</span>
-                                  <p className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={s.descripcion}>
+                                  <p className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={s.descripcion}>
                                     {s.descripcion}
                                   </p>
                                 </div>
                               </TableCell>
                               <TableCell className="text-right font-bold text-xs py-2 px-1.5">
-                                <Badge variant="default" className="text-xs">{s.stock}</Badge>
+                                <Badge variant="default" className="text-xs">{s.stock} {s.un}</Badge>
                               </TableCell>
                               <TableCell className="text-xs py-2 px-1.5 whitespace-nowrap">
                                 {dias !== null ? (
@@ -804,8 +902,8 @@ export function OcupacionTab() {
                                   max={s.stock}
                                   value={salidaQty[i] || ''}
                                   onChange={(e) => setSalidaQty((prev) => ({ ...prev, [i]: e.target.value }))}
-                                  placeholder="Parcial"
-                                  className="h-8 text-xs"
+                                  placeholder={`Máx ${s.stock}`}
+                                  className="h-9 text-sm"
                                 />
                               </TableCell>
                               <TableCell className="py-2 px-1">
@@ -813,7 +911,7 @@ export function OcupacionTab() {
                                   <Button
                                     size="sm"
                                     variant="destructive"
-                                    className="flex-1 h-7 text-[10px] px-1"
+                                    className="flex-1 h-8 text-xs px-2"
                                     disabled={busyAction || !salidaQty[i]}
                                     onClick={() => {
                                       const qtyNum = parseFloat(salidaQty[i] || '')
@@ -828,18 +926,18 @@ export function OcupacionTab() {
                                       setConfirmAction({ tipo: 'salida-parcial', item: s, qty: qtyNum })
                                     }}
                                   >
-                                    Salida
+                                    Parcial
                                   </Button>
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="flex-1 h-7 text-[10px] px-1"
+                                    className="flex-1 h-8 text-xs px-2 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
                                     disabled={busyAction}
                                     onClick={() => {
                                       setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })
                                     }}
                                   >
-                                    Todo
+                                    Todo ({s.stock})
                                   </Button>
                                 </div>
                               </TableCell>
@@ -869,47 +967,69 @@ export function OcupacionTab() {
 
       {/* ─── Diálogo de confirmación de salida ─── */}
       <AlertDialog open={!!confirmAction} onOpenChange={(open) => { if (!open) setConfirmAction(null) }}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-[95vw] sm:max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle>
+            <AlertDialogTitle className="flex items-center gap-2 text-base">
+              <ArrowUpFromLine className="h-5 w-5 text-red-500" />
               {confirmAction?.tipo === 'salida-total' ? 'Retirar todo el stock' : 'Confirmar salida parcial'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="space-y-3">
-                <p>¿Estás seguro de registrar esta salida?</p>
+              <div className="space-y-4">
+                <p className="text-sm">¿Estás seguro de registrar esta salida?</p>
                 {confirmAction && (
-                  <div className="rounded-lg border bg-muted/50 p-3 space-y-1.5 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Producto:</span>
-                      <span className="font-medium text-xs">{confirmAction.item.codigo}</span>
+                  <div className="rounded-xl border-2 border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
+                    {/* Producto */}
+                    <div className="space-y-0.5">
+                      <p className="text-xs text-muted-foreground">Producto</p>
+                      <p className="font-mono font-bold text-sm">{confirmAction.item.codigo}</p>
+                      <p className="text-xs text-muted-foreground">{confirmAction.item.descripcion}</p>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Stock actual:</span>
-                      <span className="font-medium">{confirmAction.item.stock} {confirmAction.item.un}</span>
+
+                    <div className="border-t border-red-200/60 dark:border-red-800/60" />
+
+                    {/* Cantidades */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Stock actual:</span>
+                        <span className="font-bold text-base">{confirmAction.item.stock} {confirmAction.item.un}</span>
+                      </div>
+                      <div className="flex justify-between items-center rounded-lg bg-red-100 dark:bg-red-900/40 px-3 py-2">
+                        <span className="text-sm font-medium text-red-700 dark:text-red-300">Cantidad a retirar:</span>
+                        <span className="font-bold text-xl text-red-600 dark:text-red-400">{confirmAction.qty} {confirmAction.item.un}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-muted-foreground">Stock después:</span>
+                        <span className={`font-bold text-base ${confirmAction.item.stock - confirmAction.qty === 0 ? 'text-red-600 dark:text-red-400' : 'text-foreground'}`}>
+                          {confirmAction.item.stock - confirmAction.qty} {confirmAction.item.un}
+                        </span>
+                      </div>
                     </div>
-                    <div className="border-t pt-1.5 flex justify-between font-bold">
-                      <span className="text-red-600">Cantidad a retirar:</span>
-                      <span className="text-red-600">{confirmAction.qty} {confirmAction.item.un}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Stock después:</span>
-                      <span className={`font-medium ${confirmAction.item.stock - confirmAction.qty === 0 ? 'text-red-600' : ''}`}>
-                        {confirmAction.item.stock - confirmAction.qty} {confirmAction.item.un}
-                      </span>
-                    </div>
+
+                    {confirmAction.item.stock - confirmAction.qty === 0 && (
+                      <p className="text-xs text-red-500 font-medium bg-red-100 dark:bg-red-900/30 rounded-lg px-2.5 py-1.5">
+                        La ubicación quedará vacía después de esta salida.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>No, cancelar</AlertDialogCancel>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
+            <AlertDialogCancel className="w-full sm:w-auto h-11">No, cancelar</AlertDialogCancel>
             <Button
               onClick={(e) => { e.preventDefault(); doSalida() }}
               disabled={busyAction}
-              className="bg-red-600 hover:bg-red-700 text-white"
+              className="w-full sm:w-auto h-11 bg-red-600 hover:bg-red-700 text-white font-bold text-sm"
             >
-              {busyAction ? 'Procesando...' : 'Sí, confirmar'}
+              {busyAction ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Procesando...
+                </span>
+              ) : (
+                'Sí, confirmar salida'
+              )}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

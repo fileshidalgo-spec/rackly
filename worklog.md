@@ -70,3 +70,22 @@ Stage Summary:
 - Pipeline configurado: este entorno → GitHub → Cloudflare
 - Script deploy.sh disponible para despliegues automáticos
 - Credenciales seguras (.cf.env en gitignore)
+---
+Task ID: 1
+Agent: main
+Task: Mejorar visualización de salida en móvil - tarjetas en lugar de tabla comprimida
+
+Work Log:
+- Analizado el código actual de OcupacionTab.tsx - la tabla de 5 columnas (Código, Stock, Vencim., Salida, Acción) estaba demasiado comprimida en móvil
+- Reemplazada la tabla por tarjetas (cards) en móvil con layout responsivo: `sm:hidden` para tarjetas, `hidden sm:block` para tabla
+- Cada tarjeta móvil muestra: código/descripción + vencimiento, stock disponible destacado, campo de cantidad grande (h-12, text-lg, centrado), botones grandes (h-12) para Salida Parcial y Salida Total
+- Agregado indicador visual rojo si la cantidad ingresada excede el stock
+- Mejorado el diálogo de confirmación: bordes rojos, cantidades más grandes, descripción del producto, aviso si quedará vacía
+- Botones de confirmación ahora son full-width en móvil con h-11 para fácil toque
+- Deploy exitoso a Cloudflare Pages: https://rackly.pages.dev
+
+Stage Summary:
+- Archivo modificado: src/components/rackly/kardex/OcupacionTab.tsx
+- Vista móvil: tarjetas con campos grandes y claros para evitar errores de cantidad
+- Vista desktop: tabla mejorada con placeholder que muestra máximo disponible
+- Diálogo de confirmación mejorado con visualización más clara

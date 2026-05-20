@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   fetchOcupacionCeldas,
   type OcupacionCelda,
@@ -16,7 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -32,8 +31,25 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Download, Loader2, LayoutGrid } from 'lucide-react'
+import { Download, Loader2, MapPin, Building2, Package, Warehouse } from 'lucide-react'
+
+/* ═══════════════════════════════════════════
+   HELPERS
+   ═══════════════════════════════════════════ */
+
+function buildOccupationMap(data: OcupacionCelda[]) {
+  const map = new Map<string, OcupacionCelda>()
+  for (const c of data) {
+    map.set(`${c.bloque}-${c.torre}-${c.piso}-${c.posicion}`, c)
+  }
+  return map
+}
+
+/* ═══════════════════════════════════════════
+   COMPONENTE PRINCIPAL
+   ═══════════════════════════════════════════ */
 
 export function OcupacionTab() {
   const [ocupacion, setOcupacion] = useState<OcupacionCelda[]>([])
@@ -97,7 +113,11 @@ export function OcupacionTab() {
   const total = filtered.length
   const occupied = filtered.filter((o) => o.stock > 0).length
   const empty = total - occupied
-  const pct = total > 0 ? Math.round((occupied / total) * 100) : 0
+  const pct = total > 0 ? ((occupied / total) * 100).toFixed(1) : '0.0'
+
+  const occMap = useMemo(() => buildOccupationMap(filtered), [filtered])
+
+  const blocksToShow = bloqueFilter === 'all' ? BLOQUES : BLOQUES.filter((b) => b === bloqueFilter)
 
   async function handleCellClick(
     bloque: string,
@@ -140,21 +160,52 @@ export function OcupacionTab() {
     }
   }
 
+  /* ═══════════════════════════════════════════
+     LOADING
+     ═══════════════════════════════════════════ */
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Cargando mapa de ubicaciones...</p>
       </div>
     )
   }
 
+  /* ═══════════════════════════════════════════
+     RENDER
+     ═══════════════════════════════════════════ */
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      {/* ─── Header ─── */}
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+          <h2 className="text-lg font-bold text-foreground">Mapa Visual del Kardex</h2>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Mapa visual de bloques, torres, pisos y posiciones.{' '}
+          <span className="inline-flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> Verde = vacío
+          </span>
+          {', '}
+          <span className="inline-flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" /> Azul = ocupado
+          </span>
+          {', '}
+          <span className="inline-flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" /> Multiple códigos
+          </span>
+          .
+        </p>
+      </div>
+
+      {/* ─── Controles superiores ─── */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
         <div className="flex items-center gap-3">
           <Select value={bloqueFilter} onValueChange={setBloqueFilter}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="Filtrar bloque" />
+            <SelectTrigger className="w-[140px] h-9">
+              <SelectValue placeholder="Bloque" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos</SelectItem>
@@ -166,109 +217,256 @@ export function OcupacionTab() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex items-center gap-2 text-sm">
-          <Badge variant="default">{occupied} ocupadas</Badge>
-          <Badge variant="secondary">{empty} vacías</Badge>
-          <Badge variant="outline">{pct}% ocupación</Badge>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 text-sm">
+            <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
+            <span className="text-green-700 dark:text-green-400 font-medium">Vacias: {empty}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-sm">
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+            <span className="text-blue-700 dark:text-blue-400 font-medium">Ocupadas: {occupied}</span>
+          </div>
+          <span className="text-sm text-muted-foreground font-medium">Ocupación: {pct}%</span>
+          <Button
+            onClick={handleExport}
+            disabled={busyExport}
+            variant="outline"
+            size="sm"
+            className="gap-1.5 h-8 text-xs"
+          >
+            {busyExport ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+            Exportar Excel
+          </Button>
         </div>
       </div>
 
-      <div className="space-y-2">
-        {BLOQUES.filter((b) => bloqueFilter === 'all' || b === bloqueFilter).map(
-          (bloque) => {
-            const torres = torresDeBloque(bloque)
-            return torres.map((torre) => (
-              <div key={`${bloque}-${torre}`} className="space-y-1">
-                <p className="text-sm font-medium">
-                  Bloque {bloque} — Torre {torre}
-                </p>
-                <div className="grid grid-cols-4 gap-1">
-                  {PISOS.map((piso) => (
-                    <div key={piso}>
-                      <p className="text-xs text-muted-foreground mb-1">
-                        Piso {piso}
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {posicionesDeBloque(bloque).map((pos) => {
-                          const cell = ocupacion.find(
-                            (o) =>
-                              o.bloque === bloque &&
-                              o.torre === torre &&
-                              o.piso === piso &&
-                              o.posicion === pos
-                          )
-                          const isOccupied = cell && cell.stock > 0
-                          return (
-                            <button
-                              key={pos}
-                              className={`w-8 h-8 rounded text-xs font-medium transition-colors ${
-                                isOccupied
-                                  ? 'bg-blue-500 text-white hover:bg-blue-600'
-                                  : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900 dark:text-green-100'
-                              }`}
-                              onClick={() =>
-                                handleCellClick(bloque, torre, piso, pos)
-                              }
-                              title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOccupied ? ` (${cell.stock})` : ''}`}
-                            >
-                              {pos}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
+      {/* ─── Barras de progreso por bloque ─── */}
+      {bloqueFilter === 'all' && (
+        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2">
+          {BLOQUES.map((b) => {
+            const bCells = ocupacion.filter((o) => o.bloque === b)
+            const bTotal = bCells.length
+            const bOccupied = bCells.filter((o) => o.stock > 0).length
+            const bPct = bTotal > 0 ? Math.round((bOccupied / bTotal) * 100) : 0
+            return (
+              <button
+                key={b}
+                onClick={() => setBloqueFilter(b)}
+                className="group relative flex flex-col items-center gap-1 p-2 rounded-lg border border-border hover:border-blue-300 hover:bg-blue-50/50 dark:hover:border-blue-700 dark:hover:bg-blue-950/30 transition-all cursor-pointer"
+              >
+                <span className="text-xs font-semibold text-foreground">B-{b}</span>
+                <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${bPct > 80 ? 'bg-red-500' : bPct > 50 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                    style={{ width: `${bPct}%` }}
+                  />
+                </div>
+                <span className="text-[10px] text-muted-foreground">{bPct}%</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ─── Mapa visual por bloques ─── */}
+      <div className="space-y-6">
+        {blocksToShow.map((bloque) => {
+          const torres = torresDeBloque(bloque)
+          const posiciones = posicionesDeBloque(bloque)
+          const bCells = filtered.filter((o) => o.bloque === bloque)
+          const bOccupied = bCells.filter((o) => o.stock > 0).length
+          const bEmpty = bCells.length - bOccupied
+
+          return (
+            <div key={bloque} className="space-y-3">
+              {/* Header del bloque */}
+              <div className="flex items-center gap-2 pb-2 border-b border-border">
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+                <h3 className="text-sm font-bold text-foreground">Bloque {bloque}</h3>
+                <div className="ml-auto flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs h-5 bg-green-50 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800">
+                    {bEmpty} vacías
+                  </Badge>
+                  <Badge variant="outline" className="text-xs h-5 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+                    {bOccupied} ocupadas
+                  </Badge>
                 </div>
               </div>
-            ))
-          }
-        )}
+
+              {/* Torres lado a lado */}
+              <div className={`grid gap-4 ${torres.length === 1 ? 'grid-cols-1 max-w-2xl' : 'grid-cols-1 lg:grid-cols-2'}`}>
+                {torres.map((torre) => (
+                  <div key={torre} className="space-y-2">
+                    {/* Header torre */}
+                    <div className="flex items-center gap-2">
+                      <Warehouse className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-xs font-bold text-foreground uppercase tracking-wider">
+                        Torre {torre}
+                      </span>
+                    </div>
+
+                    {/* Pisos */}
+                    <div className="space-y-2">
+                      {[...PISOS].reverse().map((piso) => {
+                        const pisoCells = bCells.filter(
+                          (o) => o.torre === torre && o.piso === piso
+                        )
+                        const pisoOccupied = pisoCells.filter((o) => o.stock > 0).length
+
+                        return (
+                          <div key={piso} className="space-y-1">
+                            {/* Label del piso */}
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] font-semibold text-muted-foreground w-12">
+                                Piso {piso}
+                              </span>
+                              {pisoOccupied > 0 && (
+                                <span className="text-[10px] text-blue-500 font-medium">
+                                  ({pisoOccupied}/{posiciones.length})
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Grilla de posiciones — 2 filas de 10 */}
+                            <div className="space-y-1">
+                              {Array.from({ length: Math.ceil(posiciones.length / 10) }, (_, rowIdx) => {
+                                const rowPos = posiciones.slice(rowIdx * 10, rowIdx * 10 + 10)
+                                return (
+                                  <div key={rowIdx} className="grid grid-cols-10 gap-1">
+                                    {rowPos.map((pos) => {
+                                      const cell = occMap.get(`${bloque}-${torre}-${piso}-${pos}`)
+                                      const isOccupied = !!cell && cell.stock > 0
+                                      const isMulti = isOccupied && cell && cell.codigos.length > 1
+                                      const stockVal = cell ? cell.stock : 0
+
+                                      return (
+                                        <button
+                                          key={pos}
+                                          title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOccupied ? ` | Stock: ${stockVal} | ${cell!.codigos.join(', ')}` : ' | Vacía'}`}
+                                          onClick={() =>
+                                            handleCellClick(bloque, torre, piso, pos)
+                                          }
+                                          className={`
+                                            relative flex items-center justify-center
+                                            h-8 rounded-md text-[11px] font-semibold
+                                            transition-all duration-150 cursor-pointer
+                                            shadow-sm hover:shadow-md hover:scale-105 hover:z-10
+                                            ${isOccupied
+                                              ? isMulti
+                                                ? 'bg-amber-500 text-white hover:bg-amber-600 ring-1 ring-amber-300 dark:ring-amber-700'
+                                                : 'bg-blue-500 text-white hover:bg-blue-600'
+                                              : 'bg-green-500 text-white hover:bg-green-600'
+                                            }
+                                          `}
+                                        >
+                                          {pos}
+                                          {isMulti && (
+                                            <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-orange-500 border border-white dark:border-gray-800 flex items-center justify-center">
+                                              <span className="text-[7px] font-bold">{cell!.codigos.length}</span>
+                                            </span>
+                                          )}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
-      <Button onClick={handleExport} disabled={busyExport} variant="outline" className="gap-2">
-        {busyExport ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Download className="h-4 w-4" />
-        )}
-        Exportar
-      </Button>
+      {/* ─── Botón volver (cuando se filtra por bloque) ─── */}
+      {bloqueFilter !== 'all' && (
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setBloqueFilter('all')}
+            className="gap-1.5"
+          >
+            Ver todos los bloques
+          </Button>
+        </div>
+      )}
 
+      {/* ─── Dialog de detalle ─── */}
       <Dialog open={!!detail} onOpenChange={() => setDetail(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>
-              Detalle — B{detail?.bloque} T{detail?.torre} P{detail?.piso}{' '}
-              Pos {detail?.posicion}
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-4 w-4 text-blue-500" />
+              Detalle de Ubicación
             </DialogTitle>
           </DialogHeader>
-          {detail && detail.stock.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Código</TableHead>
-                  <TableHead>Descripción</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead>Vencimiento</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {detail.stock.map((s, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="font-mono">{s.codigo}</TableCell>
-                    <TableCell>{s.descripcion}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {s.stock}
-                    </TableCell>
-                    <TableCell>{s.fVencimiento || '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <p className="text-muted-foreground text-center py-4">
-              Ubicación vacía
-            </p>
+          {detail && (
+            <div className="space-y-3">
+              <div className="rounded-lg border bg-muted/50 p-3 grid grid-cols-4 gap-2 text-center">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase">Bloque</p>
+                  <p className="text-sm font-bold">{detail.bloque}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase">Torre</p>
+                  <p className="text-sm font-bold">{detail.torre}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase">Piso</p>
+                  <p className="text-sm font-bold">{detail.piso}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase">Posición</p>
+                  <p className="text-sm font-bold">{detail.posicion}</p>
+                </div>
+              </div>
+              {detail.stock.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Código</TableHead>
+                      <TableHead>Descripción</TableHead>
+                      <TableHead className="text-right">Stock</TableHead>
+                      <TableHead>Vencimiento</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {detail.stock.map((s, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-mono text-xs">{s.codigo}</TableCell>
+                        <TableCell className="text-xs">{s.descripcion}</TableCell>
+                        <TableCell className="text-right font-bold text-xs">
+                          <Badge variant="default" className="text-xs">{s.stock}</Badge>
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {s.fVencimiento || '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground">
+                  <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center">
+                    <Package className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  </div>
+                  <p className="text-sm font-medium">Ubicación vacía</p>
+                  <p className="text-xs">No hay productos en esta posición</p>
+                </div>
+              )}
+            </div>
           )}
         </DialogContent>
       </Dialog>

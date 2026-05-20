@@ -3,10 +3,14 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   fetchOcupacionCeldas,
+  fetchMovimientos,
+  addMovimiento,
   type OcupacionCelda,
   stockEnUbicacion,
   type StockEnUbicacion,
 } from '@/lib/rackly/kardex'
+import { calcularTurno } from '@/lib/rackly/turno'
+import { useAuth } from '@/hooks/useAuth'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas, totalCeldasBloque } from '@/lib/rackly/ubicaciones'
 import { supabase } from '@/lib/supabase/client'
 import {
@@ -22,7 +26,19 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Input } from '@/components/ui/input'
 import {
   Table,
   TableBody,
@@ -33,7 +49,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Download, Loader2, MapPin, Building2, Package, Warehouse, FileBarChart } from 'lucide-react'
+import { Download, Loader2, MapPin, Building2, Package, Warehouse, FileBarChart, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
 
 /* ═══════════════════════════════════════════
    TIPO: Reporte por bloque
@@ -90,6 +106,7 @@ function calcReporteBloques(
    ═══════════════════════════════════════════ */
 
 export function OcupacionTab() {
+  const { perfil } = useAuth()
   const [ocupacion, setOcupacion] = useState<OcupacionCelda[]>([])
   const [bloqueFilter, setBloqueFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
@@ -102,6 +119,13 @@ export function OcupacionTab() {
     stock: StockEnUbicacion[]
   } | null>(null)
   const [busyExport, setBusyExport] = useState(false)
+  const [busyAction, setBusyAction] = useState(false)
+  const [salidaQty, setSalidaQty] = useState<Record<number, string>>({})
+  const [confirmAction, setConfirmAction] = useState<{
+    tipo: 'salida-parcial' | 'salida-total'
+    item: StockEnUbicacion
+    qty: number
+  } | null>(null)
   const isFirstLoad = useRef(true)
 
   const load = useCallback(async () => {
@@ -210,9 +234,66 @@ export function OcupacionTab() {
   ) {
     try {
       const data = await stockEnUbicacion(bloque, torre, piso, posicion)
-      setDetail({ bloque, torre, piso, posicion, stock: data })
+      // Ordenar por vencimiento más próximo (sin fecha al final)
+      const sorted = [...data].sort((a, b) => {
+        const fA = a.fVencimiento || ''
+        const fB = b.fVencimiento || ''
+        if (!fA && !fB) return 0
+        if (!fA) return 1
+        if (!fB) return -1
+        return fA.localeCompare(fB)
+      })
+      setDetail({ bloque, torre, piso, posicion, stock: sorted })
+      setSalidaQty({})
     } catch {
       toast.error('Error al cargar detalle')
+    }
+  }
+
+  async function doSalida() {
+    if (!confirmAction || !detail || !perfil) return
+    const { item, qty } = confirmAction
+    setBusyAction(true)
+    try {
+      const turno = calcularTurno()
+      await addMovimiento({
+        tipo: 'salida',
+        bloque: detail.bloque,
+        torre: detail.torre,
+        piso: detail.piso,
+        posicion: detail.posicion,
+        codigo: item.codigo,
+        descripcion: item.descripcion,
+        un: item.un,
+        cantidad: qty,
+        fVencimiento: item.fVencimiento ?? '',
+        turno,
+        usuarioId: perfil.id,
+        usuarioNombre: perfil.nombre,
+        usuarioCorreo: perfil.correo,
+        proveedor: item.proveedor,
+      })
+      toast.success(`Salida de ${qty} ${item.un} registrada`)
+      setConfirmAction(null)
+      setSalidaQty({})
+      // Refrescar detalle
+      const data = await stockEnUbicacion(detail.bloque, detail.torre, detail.piso, detail.posicion)
+      const sorted = [...data].sort((a, b) => {
+        const fA = a.fVencimiento || ''
+        const fB = b.fVencimiento || ''
+        if (!fA && !fB) return 0
+        if (!fA) return 1
+        if (!fB) return -1
+        return fA.localeCompare(fB)
+      })
+      setDetail({ ...detail, stock: sorted })
+      // Refrescar mapa
+      load()
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error'
+      toast.error('Error al registrar salida', { description: message })
+    } finally {
+      setBusyAction(false)
     }
   }
 
@@ -638,16 +719,20 @@ export function OcupacionTab() {
       )}
 
       {/* ─── Dialog de detalle ─── */}
-      <Dialog open={!!detail} onOpenChange={() => setDetail(null)}>
-        <DialogContent className="max-w-lg">
+      <Dialog open={!!detail} onOpenChange={() => { setDetail(null); setSalidaQty({}) }}>
+        <DialogContent className="max-w-[95vw] sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex items-center gap-2 text-base">
               <Package className="h-4 w-4 text-blue-500" />
               Detalle de Ubicación
             </DialogTitle>
+            <DialogDescription>
+              Productos en esta posición, ordenados por vencimiento más próximo.
+            </DialogDescription>
           </DialogHeader>
           {detail && (
             <div className="space-y-3">
+              {/* Info de ubicación */}
               <div className="rounded-lg border bg-muted/50 p-3 grid grid-cols-4 gap-2 text-center">
                 <div>
                   <p className="text-[10px] text-muted-foreground uppercase">Bloque</p>
@@ -666,44 +751,169 @@ export function OcupacionTab() {
                   <p className="text-sm font-bold">{detail.posicion}</p>
                 </div>
               </div>
+
               {detail.stock.length > 0 ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Código</TableHead>
-                      <TableHead>Descripción</TableHead>
-                      <TableHead className="text-right">Stock</TableHead>
-                      <TableHead>Vencimiento</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detail.stock.map((s, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="font-mono text-xs">{s.codigo}</TableCell>
-                        <TableCell className="text-xs">{s.descripcion}</TableCell>
-                        <TableCell className="text-right font-bold text-xs">
-                          <Badge variant="default" className="text-xs">{s.stock}</Badge>
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {s.fVencimiento || '—'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <>
+                  {/* Tabla de stock con acciones */}
+                  <div className="overflow-x-auto -mx-1 px-1">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Código</TableHead>
+                          <TableHead className="text-xs">Stock</TableHead>
+                          <TableHead className="text-xs">Vencim.</TableHead>
+                          <TableHead className="text-xs w-28">Salida</TableHead>
+                          <TableHead className="text-xs w-24">Acción</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {detail.stock.map((s, i) => {
+                          const dias = s.fVencimiento
+                            ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
+                            : null
+                          return (
+                            <TableRow key={i}>
+                              <TableCell className="font-mono text-xs py-2 px-1.5">
+                                <div>
+                                  <span className="font-semibold">{s.codigo}</span>
+                                  <p className="text-[10px] text-muted-foreground truncate max-w-[120px]" title={s.descripcion}>
+                                    {s.descripcion}
+                                  </p>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-bold text-xs py-2 px-1.5">
+                                <Badge variant="default" className="text-xs">{s.stock}</Badge>
+                              </TableCell>
+                              <TableCell className="text-xs py-2 px-1.5 whitespace-nowrap">
+                                {dias !== null ? (
+                                  <Badge
+                                    variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
+                                    className={dias <= 0 ? '' : dias <= 15 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}
+                                  >
+                                    {dias <= 0 ? 'Vencido' : `${dias}d`}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="py-2 px-1">
+                                <Input
+                                  type="number"
+                                  step="any"
+                                  min="0.001"
+                                  max={s.stock}
+                                  value={salidaQty[i] || ''}
+                                  onChange={(e) => setSalidaQty((prev) => ({ ...prev, [i]: e.target.value }))}
+                                  placeholder="Parcial"
+                                  className="h-8 text-xs"
+                                />
+                              </TableCell>
+                              <TableCell className="py-2 px-1">
+                                <div className="flex gap-1">
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    className="flex-1 h-7 text-[10px] px-1"
+                                    disabled={busyAction || !salidaQty[i]}
+                                    onClick={() => {
+                                      const qtyNum = parseFloat(salidaQty[i] || '')
+                                      if (!qtyNum || qtyNum <= 0) {
+                                        toast.error('Ingresa una cantidad válida')
+                                        return
+                                      }
+                                      if (qtyNum > s.stock) {
+                                        toast.error('La cantidad excede el stock')
+                                        return
+                                      }
+                                      setConfirmAction({ tipo: 'salida-parcial', item: s, qty: qtyNum })
+                                    }}
+                                  >
+                                    Salida
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="flex-1 h-7 text-[10px] px-1"
+                                    disabled={busyAction}
+                                    onClick={() => {
+                                      setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })
+                                    }}
+                                  >
+                                    Todo
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground text-center">
+                    Las ubicaciones con stock 0 desaparecen automáticamente.
+                  </p>
+                </>
               ) : (
                 <div className="flex flex-col items-center gap-2 py-6 text-muted-foreground">
                   <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center">
                     <Package className="h-5 w-5 text-green-600 dark:text-green-400" />
                   </div>
                   <p className="text-sm font-medium">Ubicación vacía</p>
-                  <p className="text-xs">No hay productos en esta posición</p>
+                  <p className="text-xs">No hay productos en esta posición.</p>
                 </div>
               )}
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      {/* ─── Diálogo de confirmación de salida ─── */}
+      <AlertDialog open={!!confirmAction} onOpenChange={(open) => { if (!open) setConfirmAction(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmAction?.tipo === 'salida-total' ? 'Retirar todo el stock' : 'Confirmar salida parcial'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>¿Estás seguro de registrar esta salida?</p>
+                {confirmAction && (
+                  <div className="rounded-lg border bg-muted/50 p-3 space-y-1.5 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Producto:</span>
+                      <span className="font-medium text-xs">{confirmAction.item.codigo}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Stock actual:</span>
+                      <span className="font-medium">{confirmAction.item.stock} {confirmAction.item.un}</span>
+                    </div>
+                    <div className="border-t pt-1.5 flex justify-between font-bold">
+                      <span className="text-red-600">Cantidad a retirar:</span>
+                      <span className="text-red-600">{confirmAction.qty} {confirmAction.item.un}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Stock después:</span>
+                      <span className={`font-medium ${confirmAction.item.stock - confirmAction.qty === 0 ? 'text-red-600' : ''}`}>
+                        {confirmAction.item.stock - confirmAction.qty} {confirmAction.item.un}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No, cancelar</AlertDialogCancel>
+            <Button
+              onClick={(e) => { e.preventDefault(); doSalida() }}
+              disabled={busyAction}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {busyAction ? 'Procesando...' : 'Sí, confirmar'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

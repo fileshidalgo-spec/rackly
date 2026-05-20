@@ -141,6 +141,7 @@ export function OcupacionTab() {
   const [ingresoSinVencimiento, setIngresoSinVencimiento] = useState(false)
   const [ingresoProveedor, setIngresoProveedor] = useState('')
   const [busyIngreso, setBusyIngreso] = useState(false)
+  const [showIngresoForm, setShowIngresoForm] = useState(false)
   const isFirstLoad = useRef(true)
 
   const load = useCallback(async () => {
@@ -261,6 +262,7 @@ export function OcupacionTab() {
       setDetail({ bloque, torre, piso, posicion, stock: sorted })
       setSalidaQty({})
       setSelectedIdx(null)
+      setShowIngresoForm(false)
     } catch {
       toast.error('Error al cargar detalle')
     }
@@ -371,6 +373,7 @@ export function OcupacionTab() {
       setIngresoFVencimiento('')
       setIngresoSinVencimiento(false)
       setIngresoProveedor('')
+      setShowIngresoForm(false)
       // Refrescar detalle (ahora debería tener stock)
       const data = await stockEnUbicacion(detail.bloque, detail.torre, detail.piso, detail.posicion)
       const sorted = [...data].sort((a, b) => {
@@ -814,7 +817,7 @@ export function OcupacionTab() {
       )}
 
       {/* ─── Dialog de detalle ─── */}
-      <Dialog open={!!detail} onOpenChange={() => { setDetail(null); setSalidaQty({}); setSelectedIdx(null); setIngresoCodigo(''); setIngresoDescripcion(''); setIngresoUn(''); setIngresoCantidad(''); setIngresoFVencimiento(''); setIngresoSinVencimiento(false); setIngresoProveedor('') }}>
+      <Dialog open={!!detail} onOpenChange={() => { setDetail(null); setSalidaQty({}); setSelectedIdx(null); setIngresoCodigo(''); setIngresoDescripcion(''); setIngresoUn(''); setIngresoCantidad(''); setIngresoFVencimiento(''); setIngresoSinVencimiento(false); setIngresoProveedor(''); setShowIngresoForm(false) }}>
         <DialogContent className="max-w-[95vw] sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
@@ -1120,6 +1123,162 @@ export function OcupacionTab() {
                   <p className="text-[10px] text-muted-foreground text-center">
                     Las ubicaciones con stock 0 desaparecen automáticamente.
                   </p>
+
+                  {/* Botón para agregar otro código */}
+                  {!showIngresoForm && (
+                    <Button
+                      variant="outline"
+                      className="w-full h-11 border-green-300 text-green-700 hover:bg-green-50 hover:text-green-800 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950/30 text-sm font-bold rounded-lg gap-2"
+                      onClick={() => setShowIngresoForm(true)}
+                    >
+                      <ArrowDownToLine className="h-4 w-4" />
+                      Agregar otro código a esta ubicación
+                    </Button>
+                  )}
+
+                  {/* Formulario de ingreso (mostrar cuando se activa desde celda ocupada o vacía) */}
+                  {showIngresoForm && (
+                    <div className="space-y-4 pt-2 border-t border-border">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-green-700 dark:text-green-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <ArrowDownToLine className="h-3.5 w-3.5" />
+                          Nuevo ingreso
+                        </p>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs text-muted-foreground"
+                          onClick={() => {
+                            setShowIngresoForm(false)
+                            setIngresoCodigo('')
+                            setIngresoDescripcion('')
+                            setIngresoUn('')
+                            setIngresoCantidad('')
+                            setIngresoFVencimiento('')
+                            setIngresoSinVencimiento(false)
+                            setIngresoProveedor('')
+                          }}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
+
+                      {/* Búsqueda de producto */}
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                          <Search className="h-3.5 w-3.5" />
+                          Buscar producto
+                        </Label>
+                        <CatalogoSearchInput
+                          onPick={handleCatalogoPickIngreso}
+                          value={ingresoCodigo}
+                          onChange={(v) => {
+                            setIngresoCodigo(v)
+                            const cat = findCatalogoByCodigo(v)
+                            if (cat) {
+                              setIngresoDescripcion(cat.descripcion)
+                              setIngresoUn(cat.un)
+                            }
+                          }}
+                        />
+                      </div>
+
+                      {/* Info del producto seleccionado */}
+                      {ingresoDescripcion && (
+                        <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 p-3 space-y-2">
+                          <div className="flex items-start gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[10px] text-muted-foreground uppercase">Código</p>
+                              <p className="font-mono font-bold text-sm text-foreground">{ingresoCodigo}</p>
+                            </div>
+                            <div className="min-w-[60px] text-right">
+                              <p className="text-[10px] text-muted-foreground uppercase">UN</p>
+                              <p className="font-bold text-sm text-foreground">{ingresoUn || '—'}</p>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-muted-foreground uppercase">Descripción</p>
+                            <p className="text-sm text-foreground leading-snug">{ingresoDescripcion}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Cantidad y vencimiento */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Cantidad ({ingresoUn || '—'})
+                          </Label>
+                          <Input
+                            type="number"
+                            step="any"
+                            min="0.001"
+                            value={ingresoCantidad}
+                            onChange={(e) => setIngresoCantidad(e.target.value)}
+                            placeholder="0"
+                            className="h-12 text-lg font-bold text-center"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Vencimiento
+                          </Label>
+                          <Input
+                            type="date"
+                            value={ingresoFVencimiento}
+                            onChange={(e) => setIngresoFVencimiento(e.target.value)}
+                            disabled={ingresoSinVencimiento}
+                            className="h-12 text-sm"
+                          />
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <Checkbox
+                              checked={ingresoSinVencimiento}
+                              onCheckedChange={(v) => setIngresoSinVencimiento(!!v)}
+                            />
+                            <span className="text-[11px] text-muted-foreground">Sin vencimiento</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Proveedor (solo para LAMINA/STRETCH) */}
+                      {requiereProveedorIngreso(ingresoDescripcion) && (
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Proveedor <span className="text-red-500">*</span>
+                          </Label>
+                          <Select value={ingresoProveedor} onValueChange={setIngresoProveedor}>
+                            <SelectTrigger className="h-11">
+                              <SelectValue placeholder="Selecciona proveedor" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {PROVEEDORES_INGRESO.map((p) => (
+                                <SelectItem key={p} value={p}>{p}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
+                      {/* Botón registrar */}
+                      <Button
+                        onClick={doIngreso}
+                        disabled={busyIngreso || !ingresoCodigo.trim() || !ingresoCantidad}
+                        className="w-full h-12 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-lg"
+                      >
+                        {busyIngreso ? (
+                          <span className="flex items-center justify-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Registrando...
+                          </span>
+                        ) : (
+                          <span className="flex items-center justify-center gap-2">
+                            <ArrowDownToLine className="h-4 w-4" />
+                            Registrar Ingreso
+                          </span>
+                        )}
+                      </Button>
+                    </div>
+                  )}
                 </>
               ) : (
                 /* ── Celda vacía: Formulario de ingreso ── */

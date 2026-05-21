@@ -963,12 +963,16 @@ export function OcupacionTab() {
                               Cantidad a retirar ({s.un})
                             </label>
                             <Input
-                              type="number"
-                              step="any"
+                              type="text"
+                              inputMode="decimal"
                               min="0.001"
                               max={s.stock}
                               value={salidaQty[i] || ''}
-                              onChange={(e) => setSalidaQty((prev) => ({ ...prev, [i]: e.target.value }))}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/[^0-9.]/g, '')
+                                setSalidaQty((prev) => ({ ...prev, [i]: val }))
+                              }}
+                              onFocus={(e) => e.target.select()}
                               placeholder="0"
                               className="h-14 text-xl font-bold text-center"
                             />
@@ -1069,24 +1073,28 @@ export function OcupacionTab() {
                                   <span className="text-muted-foreground">—</span>
                                 )}
                               </TableCell>
-                              <TableCell className="py-2 px-1">
+                              <TableCell className="py-2 px-1.5">
                                 <Input
-                                  type="number"
-                                  step="any"
+                                  type="text"
+                                  inputMode="decimal"
                                   min="0.001"
                                   max={s.stock}
                                   value={salidaQty[i] || ''}
-                                  onChange={(e) => setSalidaQty((prev) => ({ ...prev, [i]: e.target.value }))}
+                                  onChange={(e) => {
+                                    const val = e.target.value.replace(/[^0-9.]/g, '')
+                                    setSalidaQty((prev) => ({ ...prev, [i]: val }))
+                                  }}
+                                  onFocus={(e) => e.target.select()}
                                   placeholder={`Máx ${s.stock}`}
-                                  className="h-9 text-sm"
+                                  className="h-10 text-sm font-bold text-center border-2 border-gray-300 dark:border-gray-600 focus:border-blue-500 bg-white dark:bg-gray-900"
                                 />
                               </TableCell>
-                              <TableCell className="py-2 px-1">
+                              <TableCell className="py-2 px-1.5">
                                 <div className="flex gap-1">
                                   <Button
                                     size="sm"
                                     variant="destructive"
-                                    className="flex-1 h-8 text-xs px-2"
+                                    className="flex-1 h-10 text-xs font-bold px-2"
                                     disabled={busyAction || !salidaQty[i]}
                                     onClick={() => {
                                       const qtyNum = parseFloat(salidaQty[i] || '')
@@ -1106,7 +1114,7 @@ export function OcupacionTab() {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="flex-1 h-8 text-xs px-2 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                    className="flex-1 h-10 text-xs font-bold px-2 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800"
                                     disabled={busyAction}
                                     onClick={() => {
                                       setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })

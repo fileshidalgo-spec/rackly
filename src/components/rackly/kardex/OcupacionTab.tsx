@@ -1032,36 +1032,36 @@ export function OcupacionTab() {
                   </div>
 
                   {/* ── Vista tarjetas (desktop) ── */}
-                  <div className="hidden sm:block space-y-3">
+                  <div className="hidden sm:block space-y-2">
                     {detail.stock.map((s, i) => {
                       const dias = s.fVencimiento
                         ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
                         : null
                       return (
-                        <div key={i} className="rounded-lg border border-blue-200 dark:border-blue-800 bg-card p-3 space-y-2.5">
+                        <div key={i} className="rounded-lg border border-blue-200 dark:border-blue-800 bg-card p-2.5 space-y-2 max-w-md mx-auto">
                           {/* Fila 1: código + descripción + vencimiento */}
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-2">
                             <div className="min-w-0 flex-1">
-                              <span className="font-mono font-bold text-sm text-foreground">{s.codigo}</span>
-                              <span className="text-xs text-muted-foreground ml-2">{s.descripcion}</span>
+                              <span className="font-mono font-bold text-xs text-foreground">{s.codigo}</span>
+                              <span className="text-[11px] text-muted-foreground ml-1.5">{s.descripcion}</span>
                             </div>
                             {dias !== null ? (
                               <Badge
                                 variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
-                                className={`text-xs shrink-0 ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
+                                className={`text-[11px] shrink-0 ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
                               >
                                 {dias <= 0 ? 'Vencido' : `${dias}d`}
                               </Badge>
                             ) : (
-                              <Badge variant="secondary" className="text-xs shrink-0">—</Badge>
+                              <Badge variant="secondary" className="text-[11px] shrink-0">—</Badge>
                             )}
                           </div>
 
                           {/* Fila 2: stock + input + botones */}
-                          <div className="flex items-center gap-3">
-                            <div className="shrink-0 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2 text-center min-w-[90px]">
-                              <p className="text-lg font-bold text-foreground leading-none">{s.stock}</p>
-                              <p className="text-[10px] text-muted-foreground mt-0.5">{s.un}</p>
+                          <div className="flex items-center gap-2">
+                            <div className="shrink-0 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-2.5 py-1.5 text-center min-w-[72px]">
+                              <p className="text-base font-bold text-foreground leading-none">{s.stock}</p>
+                              <p className="text-[9px] text-muted-foreground mt-0.5">{s.un}</p>
                             </div>
 
                             <Input
@@ -1074,12 +1074,12 @@ export function OcupacionTab() {
                               }}
                               onFocus={(e) => e.target.select()}
                               placeholder="Cantidad..."
-                              className="flex-1 h-10 text-sm font-bold text-center"
+                              className="flex-1 h-8 text-xs font-bold text-center"
                             />
 
                             <Button
                               variant="destructive"
-                              className="h-10 px-4 text-xs font-bold gap-1.5 shrink-0"
+                              className="h-8 px-3 text-[11px] font-bold gap-1 shrink-0"
                               disabled={busyAction || !salidaQty[i]}
                               onClick={() => {
                                 const qtyNum = parseFloat(salidaQty[i] || '')
@@ -1094,25 +1094,25 @@ export function OcupacionTab() {
                                 setConfirmAction({ tipo: 'salida-parcial', item: s, qty: qtyNum })
                               }}
                             >
-                              <ArrowUpFromLine className="h-3.5 w-3.5" />
+                              <ArrowUpFromLine className="h-3 w-3" />
                               Salida
                             </Button>
                             <Button
                               variant="outline"
-                              className="h-10 px-4 text-xs font-bold gap-1.5 shrink-0 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800"
+                              className="h-8 px-3 text-[11px] font-bold gap-1 shrink-0 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800"
                               disabled={busyAction}
                               onClick={() => {
                                 setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })
                               }}
                             >
-                              <ArrowUpFromLine className="h-3.5 w-3.5" />
+                              <ArrowUpFromLine className="h-3 w-3" />
                               Todo ({s.stock})
                             </Button>
                           </div>
 
                           {salidaQty[i] && parseFloat(salidaQty[i]) > s.stock && (
-                            <p className="text-xs text-red-500 font-medium -mt-1">
-                              Excede el stock disponible ({s.stock} {s.un})
+                            <p className="text-[11px] text-red-500 font-medium -mt-1 text-center">
+                              Excede el stock ({s.stock} {s.un})
                             </p>
                           )}
                         </div>

@@ -1031,104 +1031,106 @@ export function OcupacionTab() {
                     )}
                   </div>
 
-                  {/* ── Vista tabla (desktop) ── */}
-                  <div className="hidden sm:block overflow-x-auto -mx-1 px-1">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="text-xs">Código</TableHead>
-                          <TableHead className="text-xs">Stock</TableHead>
-                          <TableHead className="text-xs">Vencim.</TableHead>
-                          <TableHead className="text-xs w-32">Salida</TableHead>
-                          <TableHead className="text-xs w-36">Acción</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {detail.stock.map((s, i) => {
-                          const dias = s.fVencimiento
-                            ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
-                            : null
-                          return (
-                            <TableRow key={i}>
-                              <TableCell className="font-mono text-xs py-2 px-1.5">
-                                <div>
-                                  <span className="font-semibold">{s.codigo}</span>
-                                  <p className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={s.descripcion}>
-                                    {s.descripcion}
-                                  </p>
-                                </div>
-                              </TableCell>
-                              <TableCell className="text-right font-bold text-xs py-2 px-1.5">
-                                <Badge variant="default" className="text-xs">{s.stock} {s.un}</Badge>
-                              </TableCell>
-                              <TableCell className="text-xs py-2 px-1.5 whitespace-nowrap">
-                                {dias !== null ? (
-                                  <Badge
-                                    variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
-                                    className={dias <= 0 ? '' : dias <= 15 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}
-                                  >
-                                    {dias <= 0 ? 'Vencido' : `${dias}d`}
-                                  </Badge>
-                                ) : (
-                                  <span className="text-muted-foreground">—</span>
-                                )}
-                              </TableCell>
-                              <TableCell className="py-2 px-1.5">
-                                <Input
-                                  type="text"
-                                  inputMode="decimal"
-                                  min="0.001"
-                                  max={s.stock}
-                                  value={salidaQty[i] || ''}
-                                  onChange={(e) => {
-                                    const val = e.target.value.replace(/[^0-9.]/g, '')
-                                    setSalidaQty((prev) => ({ ...prev, [i]: val }))
-                                  }}
-                                  onFocus={(e) => e.target.select()}
-                                  placeholder={`Máx ${s.stock}`}
-                                  className="h-10 text-sm font-bold text-center border-2 border-gray-300 dark:border-gray-600 focus:border-blue-500 bg-white dark:bg-gray-900"
-                                />
-                              </TableCell>
-                              <TableCell className="py-2 px-1.5">
-                                <div className="flex gap-1">
-                                  <Button
-                                    size="sm"
-                                    variant="destructive"
-                                    className="flex-1 h-10 text-xs font-bold px-2"
-                                    disabled={busyAction || !salidaQty[i]}
-                                    onClick={() => {
-                                      const qtyNum = parseFloat(salidaQty[i] || '')
-                                      if (!qtyNum || qtyNum <= 0) {
-                                        toast.error('Ingresa una cantidad válida')
-                                        return
-                                      }
-                                      if (qtyNum > s.stock) {
-                                        toast.error('La cantidad excede el stock')
-                                        return
-                                      }
-                                      setConfirmAction({ tipo: 'salida-parcial', item: s, qty: qtyNum })
-                                    }}
-                                  >
-                                    Parcial
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="flex-1 h-10 text-xs font-bold px-2 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800"
-                                    disabled={busyAction}
-                                    onClick={() => {
-                                      setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })
-                                    }}
-                                  >
-                                    Todo ({s.stock})
-                                  </Button>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )
-                        })}
-                      </TableBody>
-                    </Table>
+                  {/* ── Vista tarjetas (desktop) ── */}
+                  <div className="hidden sm:block space-y-4">
+                    {detail.stock.map((s, i) => {
+                      const dias = s.fVencimiento
+                        ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
+                        : null
+                      return (
+                        <div key={i} className="rounded-xl border-2 border-blue-200 dark:border-blue-800 bg-card p-4 space-y-4">
+                          {/* Fila superior: info del producto */}
+                          <div className="flex items-center gap-4 flex-wrap">
+                            <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center shrink-0">
+                              <Package className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-mono font-bold text-base text-foreground">{s.codigo}</p>
+                              <p className="text-sm text-muted-foreground leading-tight">{s.descripcion}</p>
+                            </div>
+                            {dias !== null ? (
+                              <Badge
+                                variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
+                                className={`text-sm px-3 py-1 ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
+                              >
+                                {dias <= 0 ? 'Vencido' : `Vence en ${dias}d`}
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-sm px-3 py-1">Sin vencimiento</Badge>
+                            )}
+                          </div>
+
+                          {/* Fila de stock + salida */}
+                          <div className="flex items-end gap-4">
+                            {/* Stock disponible */}
+                            <div className="shrink-0 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-5 py-3 text-center min-w-[120px]">
+                              <p className="text-xs text-muted-foreground font-medium mb-0.5">Stock disponible</p>
+                              <p className="text-2xl font-bold text-foreground">{s.stock}</p>
+                              <p className="text-xs text-muted-foreground font-medium">{s.un}</p>
+                            </div>
+
+                            {/* Input cantidad */}
+                            <div className="flex-1 space-y-1.5">
+                              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                Cantidad a retirar ({s.un})
+                              </label>
+                              <Input
+                                type="text"
+                                inputMode="decimal"
+                                value={salidaQty[i] || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value.replace(/[^0-9.]/g, '')
+                                  setSalidaQty((prev) => ({ ...prev, [i]: val }))
+                                }}
+                                onFocus={(e) => e.target.select()}
+                                placeholder="Escribe la cantidad..."
+                                className="h-12 text-lg font-bold text-center border-2 border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 dark:focus:ring-blue-900 bg-white dark:bg-gray-900 rounded-lg"
+                              />
+                              {salidaQty[i] && parseFloat(salidaQty[i]) > s.stock && (
+                                <p className="text-xs text-red-500 font-medium">
+                                  Excede el stock disponible ({s.stock} {s.un})
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Botones */}
+                            <div className="shrink-0 flex gap-2 pb-6">
+                              <Button
+                                variant="destructive"
+                                className="h-12 px-6 text-sm font-bold rounded-lg gap-2"
+                                disabled={busyAction || !salidaQty[i]}
+                                onClick={() => {
+                                  const qtyNum = parseFloat(salidaQty[i] || '')
+                                  if (!qtyNum || qtyNum <= 0) {
+                                    toast.error('Ingresa una cantidad válida')
+                                    return
+                                  }
+                                  if (qtyNum > s.stock) {
+                                    toast.error('La cantidad excede el stock')
+                                    return
+                                  }
+                                  setConfirmAction({ tipo: 'salida-parcial', item: s, qty: qtyNum })
+                                }}
+                              >
+                                <ArrowUpFromLine className="h-4 w-4" />
+                                Salida Parcial
+                              </Button>
+                              <Button
+                                variant="outline"
+                                className="h-12 px-6 text-sm font-bold rounded-lg gap-2 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800"
+                                disabled={busyAction}
+                                onClick={() => {
+                                  setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })
+                                }}
+                              >
+                                <ArrowUpFromLine className="h-4 w-4" />
+                                Todo ({s.stock})
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                   <p className="text-[10px] text-muted-foreground text-center">
                     Las ubicaciones con stock 0 desaparecen automáticamente.

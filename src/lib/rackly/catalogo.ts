@@ -6,6 +6,7 @@ export type CatalogoItem = {
   codigo: string
   un: string
   descripcion: string
+  stockBigMagic: number
 }
 
 let _cache: CatalogoItem[] = []
@@ -14,10 +15,15 @@ let _cacheLoaded = false
 export async function fetchCatalogo(): Promise<CatalogoItem[]> {
   const { data, error } = await supabase
     .from('catalogo')
-    .select('codigo, un, descripcion')
+    .select('codigo, un, descripcion, stock_big_magic')
     .order('codigo')
   if (error) throw error
-  _cache = (data ?? []) as CatalogoItem[]
+  _cache = ((data ?? []) as unknown[]).map((r) => ({
+    codigo: r.codigo as string,
+    un: r.un as string,
+    descripcion: r.descripcion as string,
+    stockBigMagic: Number(r.stock_big_magic ?? 0),
+  }))
   _cacheLoaded = true
   return _cache
 }
@@ -51,13 +57,16 @@ export function parseCatalogoText(text: string): CatalogoItem[] {
     else parts = line.split(/\s{2,}|\s+/)
     parts = parts.map((p) => p.trim()).filter((p) => p.length > 0)
     if (parts.length < 3) continue
-    const [codigo, un, ...rest] = parts
+    const [codigo, descripcion, un, ...rest] = parts
     if (!codigo || !un) continue
     if (codigo.toLowerCase() === 'codigo' || codigo.toLowerCase() === 'código') continue
+    const stockStr = rest.length > 0 ? rest.join(' ') : '0'
+    const stockNum = parseFloat(stockStr.replace(/,/g, '')) || 0
     items.push({
       codigo: codigo.trim(),
       un: un.trim(),
-      descripcion: rest.join(' ').trim(),
+      descripcion: descripcion.trim(),
+      stockBigMagic: stockNum,
     })
   }
   return items
@@ -69,6 +78,7 @@ export async function mergeCatalogo(nuevos: CatalogoItem[]): Promise<CatalogoIte
     codigo: i.codigo.trim().toUpperCase(),
     un: i.un,
     descripcion: i.descripcion,
+    stock_big_magic: i.stockBigMagic,
     updated_at: new Date().toISOString(),
   }))
   const { error } = await supabase.from('catalogo').upsert(rows, { onConflict: 'codigo' })

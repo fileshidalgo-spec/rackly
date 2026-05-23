@@ -6,7 +6,7 @@ import {
   type Movimiento,
   eliminarUbicacion,
 } from '@/lib/rackly/kardex'
-import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
+import { findCatalogoByCodigo, fetchCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -64,6 +64,7 @@ export function StockTab() {
     unStr: string
   } | null>(null)
   const [busyDelete, setBusyDelete] = useState(false)
+  const [catalogoItem, setCatalogoItem] = useState<CatalogoItem | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -138,10 +139,11 @@ export function StockTab() {
   const totalDevoluciones = stockLocations.reduce((s, l) => s + l.devoluciones, 0)
   const totalTraslados = stockLocations.reduce((s, l) => s + l.traslados, 0)
 
-  function handleCatalogoPick(item: { codigo: string; descripcion: string; un: string }) {
+  function handleCatalogoPick(item: { codigo: string; descripcion: string; un: string; stockBigMagic?: number }) {
     setCodigo(item.codigo)
     setDescripcion(item.descripcion)
     setUn(item.un)
+    setCatalogoItem(item as CatalogoItem)
   }
 
   function handleCodigoChange(val: string) {
@@ -150,6 +152,7 @@ export function StockTab() {
     if (cat) {
       setDescripcion(cat.descripcion)
       setUn(cat.un)
+      setCatalogoItem(cat)
     } else {
       // Try to find from existing movimientos
       const upper = val.trim().toUpperCase()
@@ -246,10 +249,16 @@ export function StockTab() {
               <p className="text-2xl font-bold text-blue-500 dark:text-blue-400">{totalTraslados.toLocaleString()}</p>
               <p className="text-xs text-muted-foreground">Traslados</p>
             </div>
-            <div className="col-span-2 sm:col-span-1">
+            <div>
               <p className="text-2xl font-bold text-foreground">{totalStock.toLocaleString()} <span className="text-sm font-normal text-muted-foreground">{un}</span></p>
               <p className="text-xs text-muted-foreground font-semibold">Stock Disponible</p>
             </div>
+            {catalogoItem && (
+              <div>
+                <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{catalogoItem.stockBigMagic.toLocaleString()}</p>
+                <p className="text-xs text-muted-foreground">Stock Big Magic</p>
+              </div>
+            )}
           </div>
         </div>
       )}

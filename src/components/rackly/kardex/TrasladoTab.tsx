@@ -157,11 +157,13 @@ export function TrasladoTab() {
     const qtyNum = parseFloat(qty)
     setBusy(true)
     try {
+      const diferencia = qtyNum - origin.stock
       const result = await trasladarMovimiento({
         codigo: origin.codigo,
         descripcion: origin.descripcion,
         un: origin.un,
         cantidad: qtyNum,
+        stockActual: origin.stock,
         origen: {
           bloque: origin.bloque,
           torre: origin.torre,
@@ -181,7 +183,11 @@ export function TrasladoTab() {
         fVencimiento: origin.fVencimiento,
         proveedor: origin.proveedor,
       })
-      toast.success('Traslado registrado')
+      if (diferencia > 0) {
+        toast.success(`Traslado registrado. Se generó un ingreso de corrección de ${diferencia} ${origin.un} en origen.`, { duration: 5000 })
+      } else {
+        toast.success('Traslado registrado')
+      }
       setMovs(result)
       resetForm()
     } catch (err: unknown) {
@@ -329,8 +335,8 @@ export function TrasladoTab() {
               placeholder={`Stock disponible: ${origin.stock} ${origin.un}`}
             />
             {qty && parseFloat(qty) > origin.stock && (
-              <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
-                La cantidad ({parseFloat(qty)}) supera el stock disponible ({origin.stock} {origin.un}). Se registrará de todas formas.
+              <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">
+                La cantidad ({parseFloat(qty)}) supera el stock del sistema ({origin.stock} {origin.un}). Se generará un ingreso de corrección automático de {(parseFloat(qty) - origin.stock)} {origin.un} en el origen.
               </p>
             )}
           </div>
@@ -347,17 +353,25 @@ export function TrasladoTab() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {exceedsStock ? 'Traslado con cantidad mayor al stock' : 'Confirmar traslado'}
+              {exceedsStock ? 'Traslado con corrección de stock' : 'Confirmar traslado'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm">
                 {exceedsStock && (
-                  <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-amber-700 dark:text-amber-300">
-                    La cantidad a trasladar supera el stock disponible en esta ubicación. El stock quedará en negativo.
-                  </div>
+                  <>
+                    <div className="rounded-lg border border-blue-300 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 p-3 text-blue-700 dark:text-blue-300">
+                      <p className="font-medium mb-1">Corrección automática</p>
+                      <p>La cantidad supera el stock del sistema. Se registrará un <strong>ingreso de corrección</strong> de <strong>{(() => { const q = parseFloat(qty); const o = origin?.stock ?? 0; return (q - o).toLocaleString() })()} {origin?.un}</strong> en el origen para igualar la cantidad física real.</p>
+                    </div>
+                    <div className="rounded-lg border border-muted p-2.5 text-xs text-muted-foreground space-y-1">
+                      <p>• Origen: stock {origin?.stock} {origin?.un} → ingreso de {(() => { const q = parseFloat(qty); const o = origin?.stock ?? 0; return (q - o).toLocaleString() })()} {origin?.un} → stock {parseFloat(qty)} {origin?.un}</p>
+                      <p>• Luego: salida de {qty} {origin?.un} en origen → stock 0</p>
+                      <p>• Destino: ingreso de {qty} {origin?.un} por traslado</p>
+                    </div>
+                  </>
                 )}
                 <p><strong>Código:</strong> {origin?.codigo} — {origin?.descripcion}</p>
-                <p><strong>Cantidad:</strong> {qty} {origin?.un}</p>
+                <p><strong>Cantidad a trasladar:</strong> {qty} {origin?.un}</p>
                 <p><strong>Origen:</strong> B{origin?.bloque} T{origin?.torre} P{origin?.piso} Pos{origin?.posicion}</p>
                 <p><strong>Destino:</strong> B{destBloque} T{destTorre} P{destPiso} Pos{destPos}</p>
               </div>

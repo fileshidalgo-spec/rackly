@@ -184,6 +184,7 @@ export type TrasladoInput = {
   descripcion: string
   un: string
   cantidad: number
+  stockActual: number
   origen: { bloque: string; torre: string; piso: string; posicion: string }
   destino: { bloque: string; torre: string; piso: string; posicion: string }
   turno: Turno
@@ -200,7 +201,6 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
     codigo,
     descripcion: t.descripcion,
     un: t.un,
-    cantidad: t.cantidad,
     f_vencimiento: t.fVencimiento || null,
     turno: t.turno,
     usuario_id: t.usuarioId,
@@ -208,24 +208,47 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
     usuario_correo: t.usuarioCorreo ?? null,
     proveedor: t.proveedor ? t.proveedor : null,
   }
-  const { error } = await supabase.from('movimientos').insert([
-    {
+
+  const rows: Record<string, unknown>[] = []
+
+  // Si la cantidad a trasladar supera el stock del sistema en origen,
+  // generar un ingreso de corrección automático para que no quede negativo.
+  const diferencia = t.cantidad - t.stockActual
+  if (diferencia > 0) {
+    rows.push({
       ...base,
-      tipo: 'salida',
+      tipo: 'ingreso',
+      cantidad: diferencia,
       bloque: t.origen.bloque,
       torre: t.origen.torre,
       piso: t.origen.piso,
       posicion: t.origen.posicion,
-    },
-    {
-      ...base,
-      tipo: 'traslado',
-      bloque: t.destino.bloque,
-      torre: t.destino.torre,
-      piso: t.destino.piso,
-      posicion: t.destino.posicion,
-    },
-  ])
+    })
+  }
+
+  // Salida en origen por la cantidad total trasladada
+  rows.push({
+    ...base,
+    tipo: 'salida',
+    cantidad: t.cantidad,
+    bloque: t.origen.bloque,
+    torre: t.origen.torre,
+    piso: t.origen.piso,
+    posicion: t.origen.posicion,
+  })
+
+  // Traslado (ingreso) en destino
+  rows.push({
+    ...base,
+    tipo: 'traslado',
+    cantidad: t.cantidad,
+    bloque: t.destino.bloque,
+    torre: t.destino.torre,
+    piso: t.destino.piso,
+    posicion: t.destino.posicion,
+  })
+
+  const { error } = await supabase.from('movimientos').insert(rows)
   if (error) throw error
   return fetchMovimientos()
 }

@@ -191,6 +191,7 @@ export type TrasladoInput = {
   usuarioNombre?: string
   usuarioCorreo?: string
   fVencimiento?: string
+  proveedor?: string
 }
 
 export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[]> {
@@ -205,6 +206,7 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
     usuario_id: t.usuarioId,
     usuario_nombre: t.usuarioNombre ?? null,
     usuario_correo: t.usuarioCorreo ?? null,
+    proveedor: t.proveedor ? t.proveedor : null,
   }
   const { error } = await supabase.from('movimientos').insert([
     {

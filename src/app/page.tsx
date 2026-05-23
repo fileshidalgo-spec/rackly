@@ -184,12 +184,15 @@ function RacklyApp() {
                 </CardHeader>
                 <CardContent>
                   <Tabs defaultValue="ingreso" className="w-full">
-                    <TabsList className="grid w-full grid-cols-2 md:w-auto">
+                    <TabsList className="grid w-full grid-cols-3 md:w-auto">
                       <TabsTrigger value="ingreso" className="gap-2">
                         <ArrowDownToLine className="h-4 w-4" /> Ingreso
                       </TabsTrigger>
                       <TabsTrigger value="salida" className="gap-2">
                         <ArrowUpFromLine className="h-4 w-4" /> Salida
+                      </TabsTrigger>
+                      <TabsTrigger value="devolucion" className="gap-2">
+                        <ArrowRightLeft className="h-4 w-4" /> Devolución
                       </TabsTrigger>
                     </TabsList>
                     <TabsContent value="ingreso" className="mt-6 md:mt-4">
@@ -197,6 +200,9 @@ function RacklyApp() {
                     </TabsContent>
                     <TabsContent value="salida" className="mt-6 md:mt-4">
                       <MovimientoForm tipo="salida" onCreated={setMovs} />
+                    </TabsContent>
+                    <TabsContent value="devolucion" className="mt-6 md:mt-4">
+                      <MovimientoForm tipo="devolucion" onCreated={setMovs} />
                     </TabsContent>
                   </Tabs>
                 </CardContent>

@@ -68,10 +68,11 @@ export function MovimientoForm({ tipo, onCreated }: Props) {
     return () => clearInterval(interval)
   }, [])
 
-  if (tipo === 'ingreso') {
-    return <IngresoForm turno={turno} onCreated={onCreated} perfil={perfil!} />
+  if (tipo === 'salida') {
+    return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil!} />
   }
-  return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil!} />
+  // ingreso y devolucion usan el mismo formulario, solo cambia el tipo
+  return <IngresoForm turno={turno} onCreated={onCreated} perfil={perfil!} tipo={tipo} />
 }
 
 /* ═══════════════════════════════════════════
@@ -81,10 +82,12 @@ function IngresoForm({
   turno,
   onCreated,
   perfil,
+  tipo = 'ingreso',
 }: {
   turno: string
   onCreated: (movs: Movimiento[]) => void
   perfil: { id: string; nombre: string; correo: string }
+  tipo?: TipoMovimiento
 }) {
   const [bloque, setBloque] = useState('')
   const [torre, setTorre] = useState('')
@@ -144,7 +147,7 @@ function IngresoForm({
   async function doInsert(qty: number) {
     try {
       const movs = await addMovimiento({
-        tipo: 'ingreso',
+        tipo,
         bloque,
         torre,
         piso,
@@ -160,7 +163,7 @@ function IngresoForm({
         usuarioCorreo: perfil.correo,
         proveedor: proveedor || undefined,
       })
-      toast.success('Ingreso registrado')
+      toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
       setCodigo('')
       setDescripcion('')
       setUn('')
@@ -179,11 +182,25 @@ function IngresoForm({
 
   return (
     <>
-      <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-800">
-        <ArrowDownToLine className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+      <div className={`flex items-center gap-2 mb-4 p-3 rounded-lg border ${
+        tipo === 'devolucion'
+          ? 'bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800'
+          : 'bg-green-50 dark:bg-green-950/40 border-green-200 dark:border-green-800'
+      }`}>
+        {tipo === 'devolucion' ? (
+          <ArrowRightLeft className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0" />
+        ) : (
+          <ArrowDownToLine className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+        )}
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-green-700 dark:text-green-300">Ingreso de mercadería</p>
-          <p className="text-xs text-green-600/80 dark:text-green-400/70">Turno: {turno}</p>
+          <p className={`text-sm font-semibold ${
+            tipo === 'devolucion'
+              ? 'text-orange-700 dark:text-orange-300'
+              : 'text-green-700 dark:text-green-300'
+          }`}>
+            {tipo === 'devolucion' ? 'Ingreso por devolución' : 'Ingreso de mercadería'}
+          </p>
+          <p className="text-xs text-muted-foreground">Turno: {turno}</p>
         </div>
       </div>
 
@@ -294,9 +311,13 @@ function IngresoForm({
           )}
         </div>
 
-        <Button type="submit" disabled={busy} className="w-full h-11 bg-green-600 hover:bg-green-700 text-white text-sm font-medium sm:w-auto">
+        <Button type="submit" disabled={busy} className={`w-full h-11 text-white text-sm font-medium sm:w-auto ${
+          tipo === 'devolucion'
+            ? 'bg-orange-600 hover:bg-orange-700'
+            : 'bg-green-600 hover:bg-green-700'
+        }`}>
           {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-          Registrar Ingreso
+          {tipo === 'devolucion' ? 'Registrar Devolución' : 'Registrar Ingreso'}
         </Button>
       </form>
 

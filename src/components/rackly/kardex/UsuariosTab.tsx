@@ -153,30 +153,19 @@ export function UsuariosTab() {
                       value={p.rol}
                       onValueChange={(v) => handleRolChange(p.id, v as Rol)}
                     >
-                      <SelectTrigger className="w-44">
+                      <SelectTrigger className="w-32">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="admin">
-                          <span className="flex items-center gap-1"><Shield className="h-3 w-3" /> Admin</span>
+                          <span className="flex items-center gap-1">
+                            <Shield className="h-3 w-3" /> Admin
+                          </span>
                         </SelectItem>
                         <SelectItem value="operario">
-                          <span className="flex items-center gap-1"><Users className="h-3 w-3" /> Operario</span>
-                        </SelectItem>
-                        <SelectItem value="auxiliar">
-                          <span className="flex items-center gap-1"><Users className="h-3 w-3" /> Auxiliar</span>
-                        </SelectItem>
-                        <SelectItem value="almacenero">
-                          <span className="flex items-center gap-1"><Users className="h-3 w-3" /> Almacenero</span>
-                        </SelectItem>
-                        <SelectItem value="supervisor_almacen">
-                          <span className="flex items-center gap-1"><Users className="h-3 w-3" /> Supervisor Almacen</span>
-                        </SelectItem>
-                        <SelectItem value="supervisor_operaciones">
-                          <span className="flex items-center gap-1"><Users className="h-3 w-3" /> Supervisor Operaciones</span>
-                        </SelectItem>
-                        <SelectItem value="coordinador_operaciones">
-                          <span className="flex items-center gap-1"><Users className="h-3 w-3" /> Coordinador Operaciones</span>
+                          <span className="flex items-center gap-1">
+                            <Users className="h-3 w-3" /> Operario
+                          </span>
                         </SelectItem>
                       </SelectContent>
                     </Select>

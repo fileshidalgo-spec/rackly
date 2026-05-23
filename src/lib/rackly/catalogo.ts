@@ -6,7 +6,6 @@ export type CatalogoItem = {
   codigo: string
   un: string
   descripcion: string
-  stock_big_magic?: number
 }
 
 let _cache: CatalogoItem[] = []
@@ -15,15 +14,10 @@ let _cacheLoaded = false
 export async function fetchCatalogo(): Promise<CatalogoItem[]> {
   const { data, error } = await supabase
     .from('catalogo')
-    .select('codigo, un, descripcion, stock_big_magic')
+    .select('codigo, un, descripcion')
     .order('codigo')
   if (error) throw error
-  _cache = (data ?? []).map((r: Record<string, unknown>) => ({
-    codigo: r.codigo as string,
-    un: r.un as string,
-    descripcion: r.descripcion as string,
-    stock_big_magic: r.stock_big_magic as number | undefined,
-  }))
+  _cache = (data ?? []) as CatalogoItem[]
   _cacheLoaded = true
   return _cache
 }
@@ -80,40 +74,6 @@ export async function mergeCatalogo(nuevos: CatalogoItem[]): Promise<CatalogoIte
   const { error } = await supabase.from('catalogo').upsert(rows, { onConflict: 'codigo' })
   if (error) throw error
   return fetchCatalogo()
-}
-
-export async function addCatalogoItem(item: {
-  codigo: string
-  un: string
-  descripcion: string
-  stock_big_magic?: number
-}): Promise<void> {
-  const { error } = await supabase.from('catalogo').insert({
-    codigo: item.codigo.trim().toUpperCase(),
-    un: item.un,
-    descripcion: item.descripcion,
-    stock_big_magic: item.stock_big_magic ?? 0,
-  })
-  if (error) throw error
-}
-
-export async function updateCatalogoItem(
-  codigo: string,
-  updates: { un?: string; descripcion?: string; stock_big_magic?: number }
-): Promise<void> {
-  const { error } = await supabase
-    .from('catalogo')
-    .update(updates)
-    .eq('codigo', codigo.trim().toUpperCase())
-  if (error) throw error
-}
-
-export async function deleteCatalogoItem(codigo: string): Promise<void> {
-  const { error } = await supabase
-    .from('catalogo')
-    .delete()
-    .eq('codigo', codigo.trim().toUpperCase())
-  if (error) throw error
 }
 
 export async function clearCatalogo(): Promise<CatalogoItem[]> {

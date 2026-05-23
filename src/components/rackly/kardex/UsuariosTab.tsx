@@ -157,16 +157,13 @@ export function UsuariosTab() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="admin">
-                          <span className="flex items-center gap-1">
-                            <Shield className="h-3 w-3" /> Admin
-                          </span>
-                        </SelectItem>
-                        <SelectItem value="operario">
-                          <span className="flex items-center gap-1">
-                            <Users className="h-3 w-3" /> Operario
-                          </span>
-                        </SelectItem>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="operario">Operario</SelectItem>
+                        <SelectItem value="auxiliar">Auxiliar</SelectItem>
+                        <SelectItem value="almacenero">Almacenero</SelectItem>
+                        <SelectItem value="supervisor_almacen">Supervisor Almacén</SelectItem>
+                        <SelectItem value="supervisor_operaciones">Supervisor Operaciones</SelectItem>
+                        <SelectItem value="coordinador_operaciones">Coordinador Operaciones</SelectItem>
                       </SelectContent>
                     </Select>
                   ) : (

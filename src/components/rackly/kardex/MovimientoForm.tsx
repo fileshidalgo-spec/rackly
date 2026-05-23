@@ -383,7 +383,7 @@ function SalidaForm({
         const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
         const current = locMap.get(key)
         if (current) {
-          current.stock += m.tipo === 'ingreso' ? m.cantidad : -m.cantidad
+          current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
         } else {
           locMap.set(key, {
             bloque: m.bloque,
@@ -393,7 +393,7 @@ function SalidaForm({
             codigo: m.codigo,
             descripcion: m.descripcion,
             un: m.un,
-            stock: m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
+            stock: ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad,
             fVencimiento: m.fVencimiento || undefined,
             proveedor: m.proveedor,
           })

@@ -15,7 +15,6 @@ import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
 import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
 
-const findCatalogoByCodigoFromCache = findCatalogoByCodigo
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -94,7 +93,7 @@ export function TrasladoTab() {
       const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
       const current = locMap.get(key)
       if (current) {
-        current.stock += m.tipo === 'ingreso' ? m.cantidad : -m.cantidad
+        current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
         if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
           current.fVencimiento = m.fVencimiento
         }
@@ -104,7 +103,7 @@ export function TrasladoTab() {
           torre: m.torre,
           piso: m.piso,
           posicion: m.posicion,
-          stock: m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
+          stock: ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad,
           descripcion: m.descripcion,
           un: m.un,
           fVencimiento: m.fVencimiento || '',
@@ -209,7 +208,7 @@ export function TrasladoTab() {
         value={codigo}
         onChange={(v) => {
           setCodigo(v)
-          const cat = findCatalogoByCodigoFromCache(v)
+          const cat = findCatalogoByCodigo(v)
           if (cat) handleCatalogoPick(cat)
         }}
       />

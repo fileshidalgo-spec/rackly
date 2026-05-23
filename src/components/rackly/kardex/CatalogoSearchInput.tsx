@@ -25,6 +25,14 @@ export function CatalogoSearchInput({
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    if (value !== undefined && value !== query) {
+      setQuery(value)
+      setShow(false)
+      setResults([])
+    }
+  }, [value])
+
+  useEffect(() => {
     let cancelled = false
     async function search() {
       if (!query.trim()) {

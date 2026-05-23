@@ -62,14 +62,14 @@ export function StockTab() {
       const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
       const current = locMap.get(key)
       if (current) {
-        current.stock += m.tipo === 'ingreso' ? m.cantidad : -m.cantidad
+        current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
       } else {
         locMap.set(key, {
           bloque: m.bloque,
           torre: m.torre,
           piso: m.piso,
           posicion: m.posicion,
-          stock: m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
+          stock: ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad,
           descripcion: m.descripcion,
           un: m.un,
           proveedor: m.proveedor || undefined,

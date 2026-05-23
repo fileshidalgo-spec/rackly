@@ -47,7 +47,7 @@ export function DescargaTab() {
         if (current) {
           current['Stock'] =
             (current['Stock'] as number) +
-            (m.tipo === 'ingreso' ? m.cantidad : -m.cantidad)
+            ((m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado') ? m.cantidad : -m.cantidad)
         } else {
           locMap.set(key, {
             Código: m.codigo,
@@ -58,7 +58,7 @@ export function DescargaTab() {
             Piso: m.piso,
             Posición: m.posicion,
             Stock:
-              m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
+              (m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado') ? m.cantidad : -m.cantidad,
           })
         }
       }

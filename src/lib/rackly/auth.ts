@@ -2,7 +2,7 @@
 
 import { supabase } from '@/lib/supabase/client'
 
-export type Rol = 'admin' | 'operario'
+export type Rol = 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
 
 export type Perfil = {
   id: string
@@ -106,12 +106,12 @@ export async function getPerfilActual(): Promise<Perfil | null> {
     }
   }
 
-  const esAdmin = (roles ?? []).some((r: { role: string }) => r.role === 'admin')
+  const userRole = (roles ?? []).length > 0 ? (roles as { role: string }[])[0].role : 'operario'
   return {
     id: perfil.id,
     correo: perfil.correo,
     nombre: perfil.nombre,
-    rol: esAdmin ? 'admin' : 'operario',
+    rol: (userRole as Rol) || 'operario',
     aprobado: perfil.aprobado ?? false,
     mustChangePassword: perfil.must_change_password ?? false,
   }
@@ -125,16 +125,15 @@ export async function getTodosLosPerfiles(): Promise<Perfil[]> {
       .order('nombre'),
     supabase.from('user_roles').select('user_id, role'),
   ])
-  const adminIds = new Set(
-    (roles ?? [])
-      .filter((r: { role: string }) => r.role === 'admin')
-      .map((r: { user_id: string }) => r.user_id)
-  )
+  const roleMap = new Map<string, string>()
+  for (const r of (roles ?? []) as { user_id: string; role: string }[]) {
+    roleMap.set(r.user_id, r.role)
+  }
   return (perfiles ?? []).map((p: Record<string, unknown>) => ({
     id: p.id as string,
     correo: p.correo as string,
     nombre: p.nombre as string,
-    rol: adminIds.has(p.id as string) ? ('admin' as const) : ('operario' as const),
+    rol: (roleMap.get(p.id as string) as Rol) || 'operario',
     aprobado: (p.aprobado as boolean) ?? false,
     mustChangePassword: (p.must_change_password as boolean) ?? false,
   }))

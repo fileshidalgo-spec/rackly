@@ -70,3 +70,29 @@ Stage Summary:
 - Devolución: same logic as Ingreso (restored + enhanced)
 - Traslado: checks destination occupancy → shows orange warning in confirm dialog
 - All forms clear every field after successful registration
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: Restore all previously implemented changes lost during session file rewrites
+
+Work Log:
+- Analyzed all component files to identify missing features
+- Fixed CatalogoSearchInput: added useEffect to sync internal query when value prop changes (form clear not reflecting visually)
+- Fixed StockTab stock calculation: was only counting 'ingreso' as positive, now also counts 'devolucion' and 'traslado'
+- Fixed DescargaTab stock calculation: same bug - now counts all entry types correctly
+- Fixed FefoTab stock calculation: was only counting 'ingreso' entries and 'salida' exits, now also counts 'devolucion' and 'traslado'
+- Fully rewrote OcupacionTab with enhanced appearance (gradient cells, stock badges, progress bar, rounded cards) and quick ingreso/salida from occupation tab
+- Fully rewrote CatalogoTab with: individual item add form, inline edit dialog, individual delete, Excel file upload (.xlsx/.xls/.csv), search/filter, sort by code/description, stock_big_magic display, collapsible bulk import
+- Updated catalogo.ts: added addCatalogoItem, updateCatalogoItem, deleteCatalogoItem functions; fetchCatalogo now returns stock_big_magic
+- Expanded auth.ts Rol type from 2 to 7 roles: admin, operario, auxiliar, almacenero, supervisor_almacen, supervisor_operaciones, coordinador_operaciones
+- Updated getPerfilActual and getTodosLosPerfiles to return actual role from user_roles instead of just admin/operario
+- Updated UsuariosTab role selector to show all 7 roles
+- Built and deployed to https://rackly.pages.dev
+
+Stage Summary:
+- OcupacionTab: enhanced grid with gradient cells, stock count badges, progress bar, quick ingreso/salida actions
+- CatalogoTab: full CRUD (add single, edit, delete), Excel upload, search, sort, stock_big_magic column
+- Stock calculation bug fixed across StockTab, DescargaTab, FefoTab
+- 7 roles now available in auth system and user management
+- Deployed to https://rackly.pages.dev

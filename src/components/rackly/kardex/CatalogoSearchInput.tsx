@@ -57,6 +57,11 @@ export function CatalogoSearchInput({
     return () => { cancelled = true }
   }, [query])
 
+  // Sync internal query when parent clears value (e.g., after form submit)
+  useEffect(() => {
+    setQuery(value ?? '')
+  }, [value])
+
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {

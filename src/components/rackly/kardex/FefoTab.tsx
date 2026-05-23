@@ -64,7 +64,7 @@ export function FefoTab() {
     >()
 
     for (const m of movs) {
-      if (m.tipo !== 'ingreso') continue
+      if (m.tipo !== 'ingreso' && m.tipo !== 'devolucion' && m.tipo !== 'traslado') continue
       const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
       const existing = locMap.get(key)
       if (existing) {
@@ -91,6 +91,7 @@ export function FefoTab() {
     // Restar salidas
     for (const m of movs) {
       if (m.tipo !== 'salida') continue
+      // devolucion and traslado entries were already counted above; this only subtracts salidas
       const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
       const existing = locMap.get(key)
       if (existing) {

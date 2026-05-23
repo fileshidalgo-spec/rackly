@@ -50,7 +50,9 @@ import type { CatalogoItem } from '@/lib/rackly/catalogo'
 const PROVEEDORES_FILM = ['INCOMIN', 'DAMAR', 'DIAMAND', 'NEOPACK', 'SOLPACK', 'ITS']
 
 function requiereProveedor(descripcion: string): boolean {
-  const upper = descripcion.toUpperCase()
+  const upper = descripcion.toUpperCase().trim()
+  // Excepción: si inicia con "ETIQUETA" y contiene "LÁMINA"/"LAMINA", NO requiere proveedor
+  if (upper.startsWith('ETIQUETA') && upper.includes('LAMINA')) return false
   return upper.includes('LAMINA') || upper.includes('STRETCH')
 }
 

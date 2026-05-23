@@ -337,7 +337,7 @@ function RacklyApp() {
                 <CardHeader>
                   <CardTitle>Ocupación del Kardex</CardTitle>
                   <CardDescription>
-                    Mapa visual: Verde = vacío, Azul = ocupado.
+                    Mapa visual con dashboard de resumen. Verde = vacío, Azul = 1 artículo, Naranja = varios artículos.
                   </CardDescription>
                 </CardHeader>
                 <CardContent><OcupacionTab /></CardContent>

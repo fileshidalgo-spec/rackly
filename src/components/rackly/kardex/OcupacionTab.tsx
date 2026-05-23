@@ -9,7 +9,7 @@ import {
   addMovimiento,
 } from '@/lib/rackly/kardex'
 import type { OcupacionCelda } from '@/lib/rackly/kardex'
-import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
+import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
 import { supabase } from '@/lib/supabase/client'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
@@ -159,15 +159,28 @@ export function OcupacionTab() {
     return () => { if (ch) try { supabase.removeChannel(ch) } catch { /* ignore */ } }
   }, [refreshData])
 
+  // Calcular total de posiciones reales por bloque (desde config de ubicaciones)
+  function totalPosicionesDeBloque(bloque: string): number {
+    const torres = torresDeBloque(bloque)
+    const posiciones = posicionesDeBloque(bloque)
+    return torres.length * PISOS.length * posiciones.length
+  }
+
+  function totalPosicionesFiltradas(): number {
+    if (bloqueFilter === 'all') return totalCeldas()
+    return totalPosicionesDeBloque(bloqueFilter)
+  }
+
   const filtered =
     bloqueFilter === 'all'
       ? ocupacion
       : ocupacion.filter((o) => o.bloque === bloqueFilter)
 
-  const total = filtered.length
+  // Solo posiciones con stock > 0 (el cálculo ya limpia stock <= 0)
   const occupied = filtered.filter((o) => o.stock > 0).length
   const multiArt = filtered.filter((o) => o.stock > 0 && o.codigos.length > 1).length
   const singleArt = occupied - multiArt
+  const total = totalPosicionesFiltradas()
   const empty = total - occupied
   const pct = total > 0 ? Math.round((occupied / total) * 100) : 0
 
@@ -275,57 +288,109 @@ export function OcupacionTab() {
     )
   }
 
+  // Datos por bloque para el dashboard
+  const dashboardBloques = BLOQUES.map((b) => {
+    const bt = totalPosicionesDeBloque(b)
+    const bo = ocupacion.filter((o) => o.bloque === b && o.stock > 0).length
+    const bm = ocupacion.filter((o) => o.bloque === b && o.stock > 0 && o.codigos.length > 1).length
+    const bs = bo - bm
+    const be = bt - bo
+    const bp = bt > 0 ? Math.round((bo / bt) * 100) : 0
+    return { bloque: b, total: bt, occupied: bo, single: bs, multi: bm, empty: be, pct: bp }
+  })
+
   return (
-    <div className="space-y-4">
-      {/* Filtros y estadísticas */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Select value={bloqueFilter} onValueChange={setBloqueFilter}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="Filtrar bloque" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos</SelectItem>
-              {BLOQUES.map((b) => (
-                <SelectItem key={b} value={b}>Bloque {b}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+    <div className="space-y-5">
+      {/* ===== DASHBOARD DE RESUMEN ===== */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-xl border bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-4 shadow-sm">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total posiciones</p>
+          <p className="text-3xl font-bold mt-1 text-slate-800 dark:text-slate-100">{total.toLocaleString()}</p>
+          <p className="text-xs text-muted-foreground mt-1">{bloqueFilter === 'all' ? 'Todos los bloques' : `Bloque ${bloqueFilter}`}</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-2 flex-1 min-w-[140px]">
-            <div className="flex-1 h-3 rounded-full bg-muted overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${pct}%`,
-                  background: pct > 80 ? 'linear-gradient(90deg, #ef4444, #f97316)' : pct > 50 ? 'linear-gradient(90deg, #f97316, #eab308)' : 'linear-gradient(90deg, #22c55e, #3b82f6)',
-                }}
-              />
-            </div>
+        <div className="rounded-xl border bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950 dark:to-blue-900 p-4 shadow-sm">
+          <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wide">Ocupadas</p>
+          <p className="text-3xl font-bold mt-1 text-blue-700 dark:text-blue-300">{occupied}</p>
+          <p className="text-xs text-blue-600/70 dark:text-blue-400/70 mt-1">{singleArt} con 1 art. · {multiArt} mixtas</p>
+        </div>
+        <div className="rounded-xl border bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-950 dark:to-emerald-900 p-4 shadow-sm">
+          <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">Vacías</p>
+          <p className="text-3xl font-bold mt-1 text-emerald-700 dark:text-emerald-300">{empty.toLocaleString()}</p>
+          <p className="text-xs text-emerald-600/70 dark:text-emerald-400/70 mt-1">Disponibles para uso</p>
+        </div>
+        <div className="rounded-xl border bg-gradient-to-br from-violet-50 to-violet-100 dark:from-violet-950 dark:to-violet-900 p-4 shadow-sm">
+          <p className="text-xs font-medium text-violet-600 dark:text-violet-400 uppercase tracking-wide">Ocupación</p>
+          <p className="text-3xl font-bold mt-1 text-violet-700 dark:text-violet-300">{pct}%</p>
+          <div className="mt-2 h-2 rounded-full bg-violet-200 dark:bg-violet-800 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{
+                width: `${Math.min(pct, 100)}%`,
+                background: pct > 80 ? 'linear-gradient(90deg, #ef4444, #f97316)' : pct > 50 ? 'linear-gradient(90deg, #f97316, #eab308)' : 'linear-gradient(90deg, #22c55e, #3b82f6)',
+              }}
+            />
           </div>
-          <Badge className="bg-blue-600 text-white border-0">{singleArt} ocupadas</Badge>
-          {multiArt > 0 && <Badge className="bg-orange-500 text-white border-0">{multiArt} mixtas</Badge>}
-          <Badge className="bg-emerald-600 text-white border-0">{empty} vacías</Badge>
-          <Badge variant="outline" className="font-bold">{pct}%</Badge>
         </div>
       </div>
 
-      {/* Leyenda */}
-      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5">
-          <div className="w-4 h-4 rounded-sm bg-gradient-to-br from-blue-500 to-blue-700" />
-          <span>1 artículo</span>
+      {/* ===== RESUMEN POR BLOQUE ===== */}
+      <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+        <div className="px-4 py-3 bg-gradient-to-r from-slate-100 to-slate-50 dark:from-slate-800 dark:to-slate-900 border-b">
+          <p className="text-sm font-bold text-slate-700 dark:text-slate-200">Resumen por bloque</p>
         </div>
-        {multiArt > 0 && (
+        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-px bg-slate-200 dark:bg-slate-700">
+          {dashboardBloques.map((db) => (
+            <div
+              key={db.bloque}
+              className="bg-card p-2.5 text-center space-y-1 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+              onClick={() => setBloqueFilter(bloqueFilter === db.bloque ? 'all' : db.bloque)}
+            >
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-slate-600 to-slate-800 flex items-center justify-center text-white font-bold text-xs mx-auto shadow-sm">
+                {db.bloque}
+              </div>
+              <p className="text-[10px] text-muted-foreground">{db.total} pos</p>
+              <div className="flex justify-center gap-1">
+                <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">{db.occupied}</span>
+                <span className="text-[10px] text-muted-foreground">/</span>
+                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">{db.empty}</span>
+              </div>
+              {db.multi > 0 && (
+                <span className="inline-block text-[9px] font-medium bg-orange-100 dark:bg-orange-900/40 text-orange-600 dark:text-orange-400 px-1 rounded">{db.multi} mix</span>
+              )}
+              <div className="h-1 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500" style={{ width: `${db.pct}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Filtros y leyenda */}
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+        <Select value={bloqueFilter} onValueChange={setBloqueFilter}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="Filtrar bloque" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos los bloques</SelectItem>
+            {BLOQUES.map((b) => (
+              <SelectItem key={b} value={b}>Bloque {b}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5">
+            <div className="w-4 h-4 rounded-sm bg-gradient-to-br from-blue-500 to-blue-700" />
+            <span>1 artículo</span>
+          </div>
           <div className="flex items-center gap-1.5">
             <div className="w-4 h-4 rounded-sm bg-gradient-to-br from-orange-400 to-orange-600" />
             <span>Varios artículos</span>
           </div>
-        )}
-        <div className="flex items-center gap-1.5">
-          <div className="w-4 h-4 rounded-sm bg-gradient-to-br from-emerald-200 to-emerald-400" />
-          <span>Vacío</span>
+          <div className="flex items-center gap-1.5">
+            <div className="w-4 h-4 rounded-sm bg-gradient-to-br from-emerald-200 to-emerald-400" />
+            <span>Vacío</span>
+          </div>
         </div>
       </div>
 
@@ -334,8 +399,10 @@ export function OcupacionTab() {
         {BLOQUES.filter((b) => bloqueFilter === 'all' || b === bloqueFilter).map(
           (bloque) => {
             const torres = torresDeBloque(bloque)
-            const bloqueOcupadas = filtered.filter((o) => o.bloque === bloque && o.stock > 0).length
-            const bloqueTotal = filtered.filter((o) => o.bloque === bloque).length
+            const bloqueTotal = totalPosicionesDeBloque(bloque)
+            const bloqueOcupadas = ocupacion.filter((o) => o.bloque === bloque && o.stock > 0).length
+            const bloqueMulti = ocupacion.filter((o) => o.bloque === bloque && o.stock > 0 && o.codigos.length > 1).length
+            const bloqueEmpty = bloqueTotal - bloqueOcupadas
             const bloquePct = bloqueTotal > 0 ? Math.round((bloqueOcupadas / bloqueTotal) * 100) : 0
             return (
               <div key={bloque} className="space-y-3">
@@ -346,7 +413,7 @@ export function OcupacionTab() {
                     </div>
                     <div>
                       <p className="text-sm font-bold text-slate-700 dark:text-slate-200">Bloque {bloque}</p>
-                      <p className="text-xs text-muted-foreground">{torres.length} torre(s) · {bloqueTotal} posiciones</p>
+                      <p className="text-xs text-muted-foreground">{torres.length} torre(s) · {bloqueTotal} posiciones · {bloqueOcupadas} ocupadas · {bloqueEmpty} vacías</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -359,8 +426,8 @@ export function OcupacionTab() {
 
                 <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.min(torres.length, 2)}, 1fr)` }}>
                   {torres.map((torre) => {
-                    const torreOcupadas = filtered.filter((o) => o.bloque === bloque && o.torre === torre && o.stock > 0).length
-                    const torreTotal = filtered.filter((o) => o.bloque === bloque && o.torre === torre).length
+                    const torreTotal = PISOS.length * posicionesDeBloque(bloque).length
+                    const torreOcupadas = ocupacion.filter((o) => o.bloque === bloque && o.torre === torre && o.stock > 0).length
                     return (
                       <div key={torre} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden shadow-lg">
                         <div className="bg-gradient-to-r from-slate-700 to-slate-800 dark:from-slate-600 dark:to-slate-700 px-4 py-2 flex items-center justify-between">

@@ -47,3 +47,26 @@ Stage Summary:
 - Confirmation dialog for salida parcial/total now uses Button instead of AlertDialogAction to prevent premature dialog close
 - SalidaForm now subscribes to Supabase realtime (postgres_changes on movimientos table) to auto-refresh search results
 - Deployed to https://rackly.netlify.app via GitHub push (auto-deploy)
+
+---
+Task ID: 2
+Agent: main
+Task: Show confirmation dialog when registering ingreso/devolucion/traslado to an occupied location (ANY product, not just same code)
+
+Work Log:
+- Read MovimientoForm.tsx, TrasladoTab.tsx to understand current occupancy check logic
+- Found IngresoForm used `calcularStockUbicacion(codigo, ...)` which only checked the SAME code
+- Found DevolucionForm was missing from file (lost between sessions) — restored it completely
+- Changed IngresoForm and DevolucionForm to use `stockEnUbicacion(bloque, torre, piso, posicion)` which checks ANY product in that location
+- Updated confirmation dialogs to show table header (Código, Descripción, Stock) and message "Esta posición ya tiene stock de otro artículo"
+- Updated TrasladoTab to check destination occupancy before confirming: calls `stockEnUbicacion` on destination, shows orange warning box with table of existing products
+- Fixed wrangler.json (removed invalid `build` key that was causing deployment errors)
+- Removed unused `calcularStockUbicacion` import from MovimientoForm.tsx
+- Added back RotateCcw icon import for DevolucionForm
+- Built and deployed to https://rackly.pages.dev
+
+Stage Summary:
+- Ingreso: checks ANY product in location → confirm dialog with table
+- Devolución: same logic as Ingreso (restored + enhanced)
+- Traslado: checks destination occupancy → shows orange warning in confirm dialog
+- All forms clear every field after successful registration

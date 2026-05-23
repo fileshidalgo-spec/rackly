@@ -328,55 +328,113 @@ export function OcupacionTab() {
         </div>
       </div>
 
-      {/* Grid de bloques */}
-      <div className="space-y-4">
+      {/* Grid de bloques — Estilo Rack 3D */}
+      <div className="space-y-6">
         {BLOQUES.filter((b) => bloqueFilter === 'all' || b === bloqueFilter).map(
           (bloque) => {
             const torres = torresDeBloque(bloque)
-            return torres.map((torre) => (
-              <div key={`${bloque}-${torre}`} className="rounded-xl border bg-gradient-to-br from-muted/50 to-background p-3 space-y-2">
-                <p className="text-sm font-semibold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                  Bloque {bloque} — Torre {torre}
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {PISOS.map((piso) => (
-                    <div key={piso}>
-                      <p className="text-xs text-muted-foreground mb-1.5 font-medium">
-                        Piso {piso}
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {posicionesDeBloque(bloque).map((pos) => {
-                          const cell = ocupacion.find(
-                            (o) =>
-                              o.bloque === bloque &&
-                              o.torre === torre &&
-                              o.piso === piso &&
-                              o.posicion === pos
-                          )
-                          const isOccupied = cell && cell.stock > 0
-                          return (
-                            <button
-                              key={pos}
-                              className={`w-9 h-9 rounded-md text-xs font-semibold transition-all duration-200 shadow-sm hover:scale-110 hover:shadow-md ${
-                                isOccupied
-                                  ? 'bg-gradient-to-br from-blue-500 to-blue-700 text-white hover:from-blue-600 hover:to-blue-800'
-                                  : 'bg-gradient-to-br from-green-100 to-green-200 text-green-700 hover:from-green-200 hover:to-green-300 dark:from-green-900/80 dark:to-green-800/80 dark:text-green-200'
-                              }`}
-                              onClick={() =>
-                                handleCellClick(bloque, torre, piso, pos)
-                              }
-                              title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOccupied ? ` (${cell.stock})` : ''}`}
-                            >
-                              {pos}
-                            </button>
-                          )
-                        })}
-                      </div>
+            const bloqueOcupadas = filtered.filter((o) => o.bloque === bloque && o.stock > 0).length
+            const bloqueTotal = filtered.filter((o) => o.bloque === bloque).length
+            const bloquePct = bloqueTotal > 0 ? Math.round((bloqueOcupadas / bloqueTotal) * 100) : 0
+            return (
+              <div key={bloque} className="space-y-3">
+                {/* Header del bloque */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-slate-600 to-slate-800 flex items-center justify-center text-white font-bold text-sm shadow-md">
+                      {bloque}
                     </div>
-                  ))}
+                    <div>
+                      <p className="text-sm font-bold text-slate-700 dark:text-slate-200">Bloque {bloque}</p>
+                      <p className="text-xs text-muted-foreground">{torres.length} torre(s) · {bloqueTotal} posiciones</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-24 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-600 transition-all duration-500"
+                        style={{ width: `${bloquePct}%` }}
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-muted-foreground">{bloquePct}%</span>
+                  </div>
+                </div>
+
+                {/* Torres lado a lado */}
+                <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${Math.min(torres.length, 2)}, 1fr)` }}>
+                  {torres.map((torre) => {
+                    const torreOcupadas = filtered.filter((o) => o.bloque === bloque && o.torre === torre && o.stock > 0).length
+                    const torreTotal = filtered.filter((o) => o.bloque === bloque && o.torre === torre).length
+                    return (
+                      <div key={torre} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden shadow-lg">
+                        {/* Header de torre con efecto 3D */}
+                        <div className="bg-gradient-to-r from-slate-700 to-slate-800 dark:from-slate-600 dark:to-slate-700 px-4 py-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-6 rounded-sm bg-gradient-to-b from-slate-400 to-slate-500 shadow-inner" />
+                            <span className="text-sm font-semibold text-white">Torre {torre}</span>
+                          </div>
+                          <span className="text-xs text-slate-300">{torreOcupadas}/{torreTotal}</span>
+                        </div>
+
+                        {/* Pisos apilados verticalmente — efecto rack */}
+                        <div className="p-3 space-y-2">
+                          {[...PISOS].reverse().map((piso) => {
+                            const posiciones = posicionesDeBloque(bloque)
+                            const pisoOcupadas = posiciones.filter((pos) => {
+                              const cell = ocupacion.find(
+                                (o) => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos
+                              )
+                              return cell && cell.stock > 0
+                            }).length
+                            return (
+                              <div key={piso}>
+                                {/* Etiqueta del piso con efecto anaquel */}
+                                <div className="flex items-center gap-2 mb-1.5">
+                                  <div className="h-px flex-1 bg-gradient-to-r from-slate-300 via-slate-400 to-slate-300 dark:from-slate-600 dark:via-slate-500 dark:to-slate-600" />
+                                  <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider whitespace-nowrap">
+                                    Piso {piso} ({pisoOcupadas})
+                                  </span>
+                                  <div className="h-px flex-1 bg-gradient-to-r from-slate-300 via-slate-400 to-slate-300 dark:from-slate-600 dark:via-slate-500 dark:to-slate-600" />
+                                </div>
+                                {/* Posiciones en fila */}
+                                <div className="flex flex-wrap gap-1">
+                                  {posiciones.map((pos) => {
+                                    const cell = ocupacion.find(
+                                      (o) =>
+                                        o.bloque === bloque &&
+                                        o.torre === torre &&
+                                        o.piso === piso &&
+                                        o.posicion === pos
+                                    )
+                                    const isOccupied = cell && cell.stock > 0
+                                    return (
+                                      <button
+                                        key={pos}
+                                        className={`relative w-8 h-8 rounded text-[10px] font-bold transition-all duration-200 ${
+                                          isOccupied
+                                            ? 'bg-gradient-to-br from-blue-500 via-blue-600 to-blue-700 text-white shadow-[0_2px_4px_rgba(37,99,235,0.4)] hover:shadow-[0_4px_8px_rgba(37,99,235,0.5)] hover:scale-105 hover:from-blue-600 hover:via-blue-700 hover:to-blue-800 border border-blue-400/30'
+                                            : 'bg-gradient-to-br from-emerald-100 via-emerald-200 to-emerald-300 text-emerald-700 shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:shadow-[0_4px_8px_rgba(16,185,129,0.3)] hover:scale-105 hover:from-emerald-200 hover:via-emerald-300 hover:to-emerald-400 border border-emerald-300/50 dark:from-emerald-900/60 dark:via-emerald-800/60 dark:to-emerald-700/60 dark:text-emerald-200 dark:border-emerald-600/30'
+                                        }`}
+                                        onClick={() =>
+                                          handleCellClick(bloque, torre, piso, pos)
+                                        }
+                                        title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOccupied ? ` (${cell.stock})` : ''}`}
+                                      >
+                                        {pos}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
-            ))
+            )
           }
         )}
       </div>

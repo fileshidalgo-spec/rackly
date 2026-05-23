@@ -126,7 +126,12 @@ export function CatalogoSearchInput({
               </span>
               <span className="text-muted-foreground">—</span>
               <span className="truncate">{item.descripcion}</span>
-              <span className="ml-auto text-xs text-muted-foreground">
+              <span className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                {item.stock_big_magic > 0 && (
+                  <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-1.5 rounded font-medium">
+                    BM:{item.stock_big_magic}
+                  </span>
+                )}
                 {item.un}
               </span>
             </button>

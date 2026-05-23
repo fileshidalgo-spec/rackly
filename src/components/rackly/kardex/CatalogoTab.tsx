@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
   fetchCatalogo,
   parseCatalogoText,
+  parseCatalogoExcelRows,
   mergeCatalogo,
   clearCatalogo,
   type CatalogoItem,
@@ -35,7 +36,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import {
-  Upload, Trash2, ClipboardList, Plus, Pencil, X, Check, Loader2,
+  Upload, Trash2, ClipboardList, Plus, Pencil, X, Check, Loader2, FileSpreadsheet,
 } from 'lucide-react'
 
 export function CatalogoTab() {
@@ -54,6 +55,8 @@ export function CatalogoTab() {
   const [formBusy, setFormBusy] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [excelBusy, setExcelBusy] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function loadCatalogo() {
     try {
@@ -87,6 +90,37 @@ export function CatalogoTab() {
     }
   }
 
+  async function handleExcelUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setExcelBusy(true)
+    try {
+      const XLSX = await import('xlsx')
+      const buffer = await file.arrayBuffer()
+      const wb = XLSX.read(buffer, { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json(ws) as Record<string, unknown>[]
+      if (rows.length === 0) {
+        toast.error('El archivo está vacío')
+        return
+      }
+      const items = parseCatalogoExcelRows(rows)
+      if (items.length === 0) {
+        toast.error('No se encontraron columnas válidas (CÓDIGO, DESCRIPCIÓN, UN, STOCK BIG MAGIC)')
+        return
+      }
+      const data = await mergeCatalogo(items)
+      setCatalogo(data)
+      toast.success(`${items.length} ítem(s) importados desde Excel`)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error'
+      toast.error('Error al procesar Excel', { description: message })
+    } finally {
+      setExcelBusy(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
   async function handleClear() {
     if (!confirm('¿Eliminar todo el catálogo?')) return
     try {
@@ -111,7 +145,7 @@ export function CatalogoTab() {
     setFormCodigo(item.codigo)
     setFormUn(item.un)
     setFormDesc(item.descripcion)
-    setFormSBM('')
+    setFormSBM(item.stock_big_magic ? String(item.stock_big_magic) : '')
     setEditItem(item)
   }
 
@@ -235,22 +269,53 @@ export function CatalogoTab() {
         </div>
       </div>
 
-      {/* Importar desde texto */}
+      {/* Subir archivo Excel */}
       <div className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          Pega datos desde Excel (TSV/CSV). Columnas: código, UN, descripción.
-        </p>
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={"Código\tUN\tDescripción\nABC123\tKG\tProducto de ejemplo"}
-          rows={4}
-          className="text-xs"
-        />
-        <Button onClick={handleImport} size="sm" variant="outline" className="gap-1.5">
-          <Upload className="h-4 w-4" /> Importar
-        </Button>
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground">
+            Importar catálogo desde Excel (.xlsx)
+          </p>
+          <p className="text-[10px] text-muted-foreground">Columnas: CÓDIGO, DESCRIPCIÓN, UN, STOCK BIG MAGIC</p>
+        </div>
+        <div className="flex gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={handleExcelUpload}
+          />
+          <Button
+            onClick={() => fileInputRef.current?.click()}
+            size="sm"
+            variant="outline"
+            disabled={excelBusy}
+            className="gap-1.5 border-dashed"
+          >
+            {excelBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+            {excelBusy ? 'Procesando...' : 'Subir Excel'}
+          </Button>
+        </div>
       </div>
+
+      {/* Importar desde texto (alternativa) */}
+      <details className="group">
+        <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+          Importar desde texto (pega datos TSV/CSV)
+        </summary>
+        <div className="space-y-2 mt-2">
+          <Textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={"Código\tUN\tDescripción\tStock BM\nABC123\tKG\tProducto\t100"}
+            rows={3}
+            className="text-xs"
+          />
+          <Button onClick={handleImport} size="sm" variant="outline" className="gap-1.5">
+            <Upload className="h-4 w-4" /> Importar texto
+          </Button>
+        </div>
+      </details>
 
       {/* Tabla de catálogo */}
       <div className="overflow-x-auto">
@@ -272,7 +337,7 @@ export function CatalogoTab() {
                 <TableCell className="font-mono font-medium">{item.codigo}</TableCell>
                 <TableCell><Badge variant="secondary">{item.un}</Badge></TableCell>
                 <TableCell>{item.descripcion}</TableCell>
-                <TableCell className="text-right font-mono text-xs">—</TableCell>
+                <TableCell className="text-right font-mono text-xs">{item.stock_big_magic > 0 ? item.stock_big_magic : '—'}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" onClick={() => openEdit(item)} title="Editar">

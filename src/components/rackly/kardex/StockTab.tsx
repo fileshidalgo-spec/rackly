@@ -7,6 +7,7 @@ import {
   calcularStockUbicacion,
   eliminarUbicacion,
 } from '@/lib/rackly/kardex'
+import { findCatalogoByCodigo, fetchCatalogo } from '@/lib/rackly/catalogo'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -38,8 +39,34 @@ export function StockTab() {
     }[]
   >([])
   const [loading, setLoading] = useState(false)
+  const [stockBM, setStockBM] = useState<number | null>(null)
 
   useMovimientosRealtime(setMovs)
+
+  // Buscar stock_big_magic del catálogo cuando cambia el código
+  useEffect(() => {
+    async function lookupBM() {
+      const code = codigo.trim().toUpperCase()
+      if (!code) {
+        setStockBM(null)
+        return
+      }
+      try {
+        const cat = findCatalogoByCodigo(code)
+        if (cat) {
+          setStockBM(cat.stock_big_magic)
+        } else {
+          // Si no está en caché, intentar cargar catálogo
+          await fetchCatalogo()
+          const cat2 = findCatalogoByCodigo(code)
+          setStockBM(cat2 ? cat2.stock_big_magic : null)
+        }
+      } catch {
+        setStockBM(null)
+      }
+    }
+    lookupBM()
+  }, [codigo])
 
   const stockData = (() => {
     if (!codigo.trim() || movs.length === 0) return []
@@ -115,57 +142,82 @@ export function StockTab() {
       </div>
 
       {stock.length > 0 ? (
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Bloque</TableHead>
-                <TableHead>Torre</TableHead>
-                <TableHead>Piso</TableHead>
-                <TableHead>Posición</TableHead>
-                <TableHead>Descripción</TableHead>
-                <TableHead>UN</TableHead>
-                <TableHead>Proveedor</TableHead>
-                <TableHead className="text-right">Stock</TableHead>
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {stock.map((s, i) => (
-                <TableRow key={i}>
-                  <TableCell>{s.bloque}</TableCell>
-                  <TableCell>{s.torre}</TableCell>
-                  <TableCell>{s.piso}</TableCell>
-                  <TableCell>{s.posicion}</TableCell>
-                  <TableCell>{s.descripcion}</TableCell>
-                  <TableCell>{s.un}</TableCell>
-                  <TableCell>
-                    {s.proveedor ? (
-                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
-                        {s.proveedor}
-                      </Badge>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right font-medium">
-                    <Badge variant="default">{s.stock}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() =>
-                        handleDelete(s.bloque, s.torre, s.piso, s.posicion)
-                      }
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TableCell>
+        <div className="space-y-3">
+          {/* Card de Stock Big Magic */}
+          {stockBM !== null && (
+            <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 p-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                  <span className="text-amber-600 dark:text-amber-400 font-bold text-xs">BM</span>
+                </div>
+                <div>
+                  <p className="text-xs text-amber-600/80 dark:text-amber-400/80 font-medium">Stock Big Magic</p>
+                  <p className="text-xs text-muted-foreground">Stock disponible en sistema Big Magic</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{stockBM}</p>
+              </div>
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Bloque</TableHead>
+                  <TableHead>Torre</TableHead>
+                  <TableHead>Piso</TableHead>
+                  <TableHead>Posición</TableHead>
+                  <TableHead>Descripción</TableHead>
+                  <TableHead>UN</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead className="text-right">Stock</TableHead>
+                  <TableHead className="w-12"></TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {stock.map((s, i) => (
+                  <TableRow key={i}>
+                    <TableCell>{s.bloque}</TableCell>
+                    <TableCell>{s.torre}</TableCell>
+                    <TableCell>{s.piso}</TableCell>
+                    <TableCell>{s.posicion}</TableCell>
+                    <TableCell>{s.descripcion}</TableCell>
+                    <TableCell>{s.un}</TableCell>
+                    <TableCell>
+                      {s.proveedor ? (
+                        <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                          {s.proveedor}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      <Badge variant="default">{s.stock}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                          handleDelete(s.bloque, s.torre, s.piso, s.posicion)
+                        }
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {/* Total sum */}
+          <div className="flex justify-end">
+            <Badge variant="outline" className="text-sm px-3 py-1">
+              Total stock: <span className="font-bold ml-1">{stock.reduce((sum, s) => sum + s.stock, 0)}</span>
+            </Badge>
+          </div>
         </div>
       ) : codigo.trim() ? (
         <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">

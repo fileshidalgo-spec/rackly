@@ -244,7 +244,12 @@ function RacklyApp() {
                         {(expandMovs ? movs : movs.slice(0, 5)).map((m) => (
                           <TableRow key={m.id}>
                             <TableCell>
-                              <Badge variant={m.tipo === 'ingreso' ? 'default' : 'destructive'}>
+                              <Badge className={
+                                m.tipo === 'ingreso' ? 'bg-green-600 hover:bg-green-700 text-white border-0' :
+                                m.tipo === 'salida' ? 'bg-red-600 hover:bg-red-700 text-white border-0' :
+                                m.tipo === 'devolucion' ? 'bg-orange-500 hover:bg-orange-600 text-white border-0' :
+                                'bg-blue-600 hover:bg-blue-700 text-white border-0'
+                              }>
                                 {m.tipo}
                               </Badge>
                             </TableCell>

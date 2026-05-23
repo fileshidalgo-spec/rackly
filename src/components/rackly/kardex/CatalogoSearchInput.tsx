@@ -24,6 +24,13 @@ export function CatalogoSearchInput({
   const [idx, setIdx] = useState(-1)
   const ref = useRef<HTMLDivElement>(null)
 
+  // Sync internal query when parent clears value prop
+  useEffect(() => {
+    setQuery(value ?? '')
+    setResults([])
+    setShow(false)
+  }, [value])
+
   useEffect(() => {
     let cancelled = false
     async function search() {

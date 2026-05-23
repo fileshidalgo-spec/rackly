@@ -165,11 +165,17 @@ function IngresoForm({
         proveedor: proveedor || undefined,
       })
       toast.success('Ingreso registrado')
+      // Limpiar todo el formulario
+      setBloque('')
+      setTorre('')
+      setPiso('')
+      setPosicion('')
       setCodigo('')
       setDescripcion('')
       setUn('')
       setCantidad('')
       setFVencimiento('')
+      setSinVencimiento(false)
       setProveedor('')
       onCreated(movs)
     } catch (err: unknown) {
@@ -426,11 +432,17 @@ function DevolucionForm({
         proveedor: proveedor || undefined,
       })
       toast.success('Devolución registrada')
+      // Limpiar todo el formulario
+      setBloque('')
+      setTorre('')
+      setPiso('')
+      setPosicion('')
       setCodigo('')
       setDescripcion('')
       setUn('')
       setCantidad('')
       setFVencimiento('')
+      setSinVencimiento(false)
       setProveedor('')
       onCreated(movs)
     } catch (err: unknown) {

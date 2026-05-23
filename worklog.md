@@ -135,3 +135,22 @@ Stage Summary:
 - Archivo: src/components/rackly/kardex/OcupacionTab.tsx
 - Flujo: Tocar celda verde (vacía) → Dialog con formulario de ingreso → Buscar producto → Ingresar cantidad y vencimiento → Registrar
 - La ubicación se pre-llena automáticamente desde la celda seleccionada
+
+---
+Task ID: 1
+Agent: main
+Task: Auto-clear all form fields after movement registration (ingreso, devolucion, salida, traslado)
+
+Work Log:
+- Read MovimientoForm.tsx, CatalogoSearchInput.tsx, TrasladoTab.tsx, page.tsx
+- Identified root cause: CatalogoSearchInput internal `query` state not syncing when parent clears `value` prop
+- Fixed CatalogoSearchInput.tsx: added useEffect to sync internal query/results/show when value prop changes
+- Fixed IngresoForm.doInsert: added clearing of bloque, torre, piso, posicion, sinVencimiento
+- Fixed DevolucionForm.doInsert: added clearing of bloque, torre, piso, posicion, sinVencimiento
+- SalidaForm and TrasladoTab already cleared all fields properly
+- Built and deployed to Cloudflare Pages
+
+Stage Summary:
+- CatalogoSearchInput now syncs its internal state with the value prop
+- All 4 movement types (ingreso, devolucion, salida, traslado) now clear ALL fields after successful registration
+- Deployed to https://rackly.pages.dev

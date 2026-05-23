@@ -150,7 +150,7 @@ function RacklyApp() {
         {view === 'racks' && (
           <Tabs defaultValue="movimientos" className="w-full">
             {/* Nav Tabs */}
-            <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none">
               {[
                 { val: 'movimientos', icon: BarChart3, label: 'Movimientos', color: 'from-emerald-500 to-green-600' },
                 { val: 'traslado', icon: ArrowRightLeft, label: 'Traslado', color: 'from-blue-500 to-indigo-600' },
@@ -164,7 +164,7 @@ function RacklyApp() {
                 <TabsTrigger
                   key={tab.val}
                   value={tab.val}
-                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-slate-200 hover:bg-white/60 data-[state=active]:hover:bg-white shrink-0"
+                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-slate-200 hover:bg-white/60 data-[state=active]:hover:bg-white shrink-0 flex-1"
                 >
                   <div className={`w-5 h-5 rounded-md bg-gradient-to-br ${tab.color} flex items-center justify-center shadow-sm`}>
                     <tab.icon className="h-3 w-3 text-white" />
@@ -172,7 +172,7 @@ function RacklyApp() {
                   <span className="hidden md:inline">{tab.label}</span>
                 </TabsTrigger>
               ))}
-            </div>
+            </TabsList>
 
             {/* ═══ MOVIMIENTOS ═══ */}
             <TabsContent value="movimientos" className="mt-5 space-y-5">
@@ -191,7 +191,7 @@ function RacklyApp() {
                 <CardContent>
                   {/* Movement type sub-tabs */}
                   <Tabs defaultValue="ingreso" className="w-full">
-                    <div className="flex gap-2 mb-5">
+                    <TabsList className="flex gap-2 bg-transparent p-0 mb-5 h-auto rounded-none">
                       {[
                         { val: 'ingreso', icon: ArrowDownToLine, label: 'Ingreso', gradient: 'from-green-500 to-emerald-600', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', ring: 'ring-green-500/20' },
                         { val: 'salida', icon: ArrowUpFromLine, label: 'Salida', gradient: 'from-red-500 to-rose-600', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', ring: 'ring-red-500/20' },
@@ -208,7 +208,7 @@ function RacklyApp() {
                           {t.label}
                         </TabsTrigger>
                       ))}
-                    </div>
+                    </TabsList>
                     <TabsContent value="ingreso" className="mt-0">
                       <MovimientoForm tipo="ingreso" onCreated={setMovs} />
                     </TabsContent>
@@ -466,7 +466,7 @@ function RacklyApp() {
         {/* ═══ KARDEX PISO VIEW ═══ */}
         {view === 'piso' && (
           <Tabs defaultValue="movimientos" className="w-full">
-            <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none">
               {[
                 { val: 'movimientos', icon: History, label: 'Movimientos', color: 'from-emerald-500 to-green-600' },
                 { val: 'up-kardex', icon: Upload, label: 'UP KARDEX', color: 'from-blue-500 to-indigo-600' },
@@ -476,7 +476,7 @@ function RacklyApp() {
                 <TabsTrigger
                   key={tab.val}
                   value={tab.val}
-                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-slate-200 hover:bg-white/60 data-[state=active]:hover:bg-white shrink-0"
+                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-slate-200 hover:bg-white/60 data-[state=active]:hover:bg-white shrink-0 flex-1"
                 >
                   <div className={`w-5 h-5 rounded-md bg-gradient-to-br ${tab.color} flex items-center justify-center shadow-sm`}>
                     <tab.icon className="h-3 w-3 text-white" />
@@ -484,7 +484,7 @@ function RacklyApp() {
                   <span className="hidden md:inline">{tab.label}</span>
                 </TabsTrigger>
               ))}
-            </div>
+            </TabsList>
 
             <TabsContent value="movimientos" className="mt-5">
               <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">

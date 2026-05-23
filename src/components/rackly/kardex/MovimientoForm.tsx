@@ -44,7 +44,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react'
+import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 const PROVEEDORES_FILM = ['INCOMIN', 'DAMAR', 'DIAMAND', 'NEOPACK', 'SOLPACK', 'ITS']

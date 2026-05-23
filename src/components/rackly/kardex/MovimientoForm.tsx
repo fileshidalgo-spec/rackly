@@ -44,7 +44,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft } from 'lucide-react'
+import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, TriangleAlert, MapPin, Package } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 const PROVEEDORES_FILM = ['INCOMIN', 'DAMAR', 'DIAMAND', 'NEOPACK', 'SOLPACK', 'ITS']
@@ -323,34 +323,104 @@ function IngresoForm({
         </Button>
       </form>
 
+      {/* ═══ DIÁLOGO DE CONFIRMACIÓN — Ubicación Ocupada ═══ */}
       <AlertDialog open={!!confirmData} onOpenChange={() => setConfirmData(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Ubicación ocupada</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta posición ya tiene stock. ¿Deseas agregar de todas formas?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
+        <AlertDialogContent className="max-w-lg p-0 overflow-hidden">
+          {/* Header con gradiente */}
+          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 px-6 py-5 text-white">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+                <TriangleAlert className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+                  Ubicación Ocupada
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-amber-100 text-sm mt-0.5">
+                  Esta posición ya tiene stock registrado. Revisa el detalle.
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+
+          {/* Ubicación info */}
+          <div className="px-6 pt-4 pb-2">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground bg-slate-50 dark:bg-slate-900 rounded-lg px-3 py-2">
+              <MapPin className="h-4 w-4 text-slate-400 flex-shrink-0" />
+              <span className="font-mono font-medium text-slate-700 dark:text-slate-300">
+                Bloque {bloque} · Torre {torre} · Piso {piso} · Pos {posicion}
+              </span>
+            </div>
+          </div>
+
+          {/* Productos existentes */}
           {confirmData && confirmData.length > 0 && (
-            <div className="my-2">
-              <Table>
-                <TableBody>
-                  {confirmData.map((s, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="font-mono">{s.codigo}</TableCell>
-                      <TableCell>{s.descripcion}</TableCell>
-                      <TableCell className="text-right">{s.stock}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+            <div className="px-6 pb-4">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                Productos en esta ubicación ({confirmData.length})
+              </p>
+              <div className="space-y-2">
+                {confirmData.map((s, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3"
+                  >
+                    <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+                      <Package className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-semibold text-sm text-slate-800 dark:text-slate-200">{s.codigo}</span>
+                        <span className="text-[10px] text-muted-foreground bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{s.un}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate mt-0.5">{s.descripcion}</p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-lg font-bold text-slate-800 dark:text-slate-200 leading-none">{s.stock}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">en stock</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => doInsert(parseFloat(cantidad))}>
-              Confirmar ingreso
-            </AlertDialogAction>
+
+          {/* Acción a realizar */}
+          {confirmData && confirmData.length > 0 && (
+            <div className="px-6 pb-4">
+              <div className="rounded-lg border-2 border-dashed border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-950/20 p-3">
+                <p className="text-xs font-semibold text-green-700 dark:text-green-400 mb-1">Producto a agregar:</p>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-sm text-green-800 dark:text-green-300">{codigo}</span>
+                    <span className="text-xs text-green-700/70 dark:text-green-400/70 truncate max-w-48">{descripcion}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <ArrowDownToLine className="h-3.5 w-3.5 text-green-600" />
+                    <span className="font-bold text-green-700 dark:text-green-300">+{cantidad} {un}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Botones de acción */}
+          <AlertDialogFooter className="px-6 pb-6 gap-2 sm:gap-2">
+            <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium border-slate-300 dark:border-slate-600">
+              Cancelar
+            </AlertDialogCancel>
+            <Button
+              onClick={(e) => { e.preventDefault(); doInsert(parseFloat(cantidad)) }}
+              disabled={busy}
+              className="flex-1 h-11 rounded-lg text-sm font-bold bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-md shadow-green-600/20 gap-2"
+            >
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowDownToLine className="h-4 w-4" />
+              )}
+              Confirmar Ingreso
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

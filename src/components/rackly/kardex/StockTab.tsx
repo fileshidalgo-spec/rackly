@@ -41,6 +41,7 @@ type LocStock = {
   ingresos: number
   salidas: number
   devoluciones: number
+  traslados: number
   stock: number
   descripcion: string
   un: string
@@ -97,12 +98,12 @@ export function StockTab() {
         if (m.tipo === 'ingreso') current.ingresos += m.cantidad
         else if (m.tipo === 'devolucion') current.devoluciones += m.cantidad
         else if (m.tipo === 'salida') current.salidas += m.cantidad
-        current.stock += (m.tipo === 'ingreso' || m.tipo === 'devolucion') ? m.cantidad : -m.cantidad
+        current.stock += (m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado') ? m.cantidad : -m.cantidad
         if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
           current.fVencimiento = m.fVencimiento
         }
       } else {
-        const isPositive = m.tipo === 'ingreso' || m.tipo === 'devolucion'
+        const isPositive = m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado'
         locMap.set(key, {
           bloque: m.bloque,
           torre: m.torre,
@@ -111,6 +112,7 @@ export function StockTab() {
           ingresos: m.tipo === 'ingreso' ? m.cantidad : 0,
           salidas: m.tipo === 'salida' ? m.cantidad : 0,
           devoluciones: m.tipo === 'devolucion' ? m.cantidad : 0,
+          traslados: m.tipo === 'traslado' ? m.cantidad : 0,
           stock: isPositive ? m.cantidad : -m.cantidad,
           descripcion: m.descripcion,
           un: m.un,
@@ -133,6 +135,7 @@ export function StockTab() {
   const totalIngresos = stockLocations.reduce((s, l) => s + l.ingresos, 0)
   const totalSalidas = stockLocations.reduce((s, l) => s + l.salidas, 0)
   const totalDevoluciones = stockLocations.reduce((s, l) => s + l.devoluciones, 0)
+  const totalTraslados = stockLocations.reduce((s, l) => s + l.traslados, 0)
 
   function handleCatalogoPick(item: { codigo: string; descripcion: string; un: string }) {
     setCodigo(item.codigo)
@@ -185,7 +188,7 @@ export function StockTab() {
           <h2 className="text-lg font-bold text-foreground">Ubicación por código</h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Stock = ingresos + devoluciones − salidas, agrupado por bloque, torre, piso y posición. Las ubicaciones con stock 0 se eliminan automáticamente.
+          Stock = ingresos + devoluciones + traslados − salidas, agrupado por bloque, torre, piso y posición. Las ubicaciones con stock 0 se eliminan automáticamente.
         </p>
       </div>
 
@@ -221,7 +224,7 @@ export function StockTab() {
       {/* ─── Resumen superior ─── */}
       {!loading && stockLocations.length > 0 && (
         <div className="rounded-lg border bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 p-4">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-4 text-center">
             <div>
               <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stockLocations.length}</p>
               <p className="text-xs text-muted-foreground">Ubicaciones encontradas</p>
@@ -237,6 +240,10 @@ export function StockTab() {
             <div>
               <p className="text-2xl font-bold text-red-600 dark:text-red-400">{totalSalidas.toLocaleString()}</p>
               <p className="text-xs text-muted-foreground">Total Salidas</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-blue-500 dark:text-blue-400">{totalTraslados.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">Traslados</p>
             </div>
             <div className="col-span-2 sm:col-span-1">
               <p className="text-2xl font-bold text-foreground">{totalStock.toLocaleString()} <span className="text-sm font-normal text-muted-foreground">{un}</span></p>
@@ -259,6 +266,7 @@ export function StockTab() {
                 <TableHead className="w-28 text-center">Vencimiento</TableHead>
                 <TableHead className="text-right">Ingresos</TableHead>
                 <TableHead className="text-right">Devoluciones</TableHead>
+                <TableHead className="text-right">Traslados</TableHead>
                 <TableHead className="text-right">Salidas</TableHead>
                 <TableHead className="text-right font-bold">Stock</TableHead>
                 <TableHead className="w-12"></TableHead>
@@ -291,6 +299,13 @@ export function StockTab() {
                   <TableCell className="text-right">
                     {s.devoluciones > 0 ? (
                       <span className="text-amber-600 dark:text-amber-400 font-medium">+{s.devoluciones.toLocaleString()}</span>
+                    ) : (
+                      <span className="text-muted-foreground">0</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {s.traslados > 0 ? (
+                      <span className="text-blue-500 dark:text-blue-400 font-medium">+{s.traslados.toLocaleString()}</span>
                     ) : (
                       <span className="text-muted-foreground">0</span>
                     )}

@@ -3,7 +3,7 @@
 import { supabase } from '@/lib/supabase/client'
 
 export type Turno = 'Día' | 'Noche'
-export type TipoMovimiento = 'ingreso' | 'salida' | 'devolucion'
+export type TipoMovimiento = 'ingreso' | 'salida' | 'devolucion' | 'traslado'
 
 export type Movimiento = {
   id: string
@@ -127,7 +127,7 @@ export async function calcularStockUbicacion(
   if (error) throw error
   return (data ?? []).reduce(
     (s: number, r: { tipo: string; cantidad: number }) =>
-      s + (r.tipo === 'ingreso' || r.tipo === 'devolucion' ? r.cantidad : -r.cantidad),
+      s + (r.tipo === 'ingreso' || r.tipo === 'devolucion' || r.tipo === 'traslado' ? r.cantidad : -r.cantidad),
     0
   )
 }
@@ -217,7 +217,7 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
     },
     {
       ...base,
-      tipo: 'ingreso',
+      tipo: 'traslado',
       bloque: t.destino.bloque,
       torre: t.destino.torre,
       piso: t.destino.piso,

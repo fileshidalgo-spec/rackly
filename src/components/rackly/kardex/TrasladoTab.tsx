@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   fetchMovimientos,
   trasladarMovimiento,
@@ -45,7 +45,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { Loader2, ArrowRightLeft, PackageSearch } from 'lucide-react'
-import type { CatalogoItem, StockEnUbicacion } from '@/lib/rackly/catalogo'
+import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 type LocStock = {
   bloque: string
@@ -70,10 +70,12 @@ export function TrasladoTab() {
   const [selectedOrigin, setSelectedOrigin] = useState<string | null>(null)
   const [destBloque, setDestBloque] = useState('')
   const [destTorre, setDestTorre] = useState('')
+  const [destPiso, setDestPiso] = useState('')
   const [destPos, setDestPos] = useState('')
   const [qty, setQty] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState(false)
+  const [exceedsStock, setExceedsStock] = useState(false)
 
   const [movs, setMovs] = useState<Movimiento[]>([])
 
@@ -91,7 +93,8 @@ export function TrasladoTab() {
       const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
       const current = locMap.get(key)
       if (current) {
-        current.stock += m.tipo === 'ingreso' ? m.cantidad : -m.cantidad
+        current.stock += (m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado')
+          ? m.cantidad : -m.cantidad
         if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
           current.fVencimiento = m.fVencimiento
         }
@@ -101,7 +104,8 @@ export function TrasladoTab() {
           torre: m.torre,
           piso: m.piso,
           posicion: m.posicion,
-          stock: m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
+          stock: (m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado')
+            ? m.cantidad : -m.cantidad,
           descripcion: m.descripcion,
           un: m.un,
           fVencimiento: m.fVencimiento || '',
@@ -111,7 +115,6 @@ export function TrasladoTab() {
       }
     }
     setLocations(Array.from(locMap.values()).filter((l) => l.stock > 0)
-      // Ordenar por vencimiento más próximo primero (sin fecha van al final)
       .sort((a, b) => {
         if (!a.fVencimiento && !b.fVencimiento) return 0
         if (!a.fVencimiento) return 1
@@ -125,21 +128,33 @@ export function TrasladoTab() {
 
   function handleConfirm() {
     if (!origin) return
-    if (selectedOrigin === `${destBloque}-${destTorre}-1-${destPos}`) {
+    const originKey = `${origin.bloque}-${origin.torre}-${origin.piso}-${origin.posicion}`
+    const destKey = `${destBloque}-${destTorre}-${destPiso}-${destPos}`
+    if (originKey === destKey) {
       toast.error('El destino no puede ser igual al origen')
       return
     }
-    const qtyNum = parseFloat(qty) || origin.stock
-    if (qtyNum <= 0 || qtyNum > origin.stock) {
-      toast.error('Cantidad inválida')
+    if (!destBloque || !destTorre || !destPiso || !destPos) {
+      toast.error('Completa la ubicación de destino')
       return
+    }
+    const qtyNum = parseFloat(qty)
+    if (!qtyNum || qtyNum <= 0) {
+      toast.error('Ingresa una cantidad válida mayor a 0')
+      return
+    }
+    // Permitir qty > stock con confirmación especial
+    if (qtyNum > origin.stock) {
+      setExceedsStock(true)
+    } else {
+      setExceedsStock(false)
     }
     setConfirm(true)
   }
 
   async function doTraslado() {
     if (!origin || !perfil) return
-    const qtyNum = parseFloat(qty) || origin.stock
+    const qtyNum = parseFloat(qty)
     setBusy(true)
     try {
       const result = await trasladarMovimiento({
@@ -156,7 +171,7 @@ export function TrasladoTab() {
         destino: {
           bloque: destBloque,
           torre: destTorre,
-          piso: '1',
+          piso: destPiso,
           posicion: destPos,
         },
         turno: calcularTurno(),
@@ -186,6 +201,7 @@ export function TrasladoTab() {
     setSelectedOrigin(null)
     setDestBloque('')
     setDestTorre('')
+    setDestPiso('')
     setDestPos('')
     setQty('')
     setStep(1)
@@ -214,6 +230,13 @@ export function TrasladoTab() {
         <>
           <p className="text-sm font-medium">1. Selecciona ubicación de origen:</p>
           <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Ubicación</TableHead>
+                <TableHead className="text-right">Stock</TableHead>
+                <TableHead>Vencimiento</TableHead>
+              </TableRow>
+            </TableHeader>
             <TableBody>
               {locations.map((loc) => {
                 const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
@@ -227,9 +250,21 @@ export function TrasladoTab() {
                       setStep(2)
                     }}
                   >
-                    <TableCell>B{loc.bloque} T{loc.torre} P{loc.piso} Pos{loc.posicion}</TableCell>
-                    <TableCell className="text-right font-medium">{loc.stock} {loc.un}</TableCell>
-                    <TableCell>{loc.fVencimiento || '—'}</TableCell>
+                    <TableCell className="font-medium">
+                      B{loc.bloque} T{loc.torre} P{loc.piso} Pos{loc.posicion}
+                    </TableCell>
+                    <TableCell className="text-right font-bold">{loc.stock} {loc.un}</TableCell>
+                    <TableCell>
+                      {loc.fVencimiento ? (() => {
+                        const dias = Math.ceil((new Date(loc.fVencimiento).getTime() - Date.now()) / 86400000)
+                        return (
+                          <Badge variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
+                            className={dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}>
+                            {loc.fVencimiento} ({dias <= 0 ? 'vencido' : `${dias}d`})
+                          </Badge>
+                        )
+                      })() : <span className="text-muted-foreground text-xs">—</span>}
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -239,12 +274,12 @@ export function TrasladoTab() {
       )}
 
       {origin && step === 2 && (
-        <div className="space-y-3 p-4 border rounded-lg">
+        <div className="space-y-3 p-4 border rounded-lg bg-card">
           <p className="text-sm font-medium">2. Elige ubicación de destino:</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="space-y-1">
               <Label>Bloque</Label>
-              <Select value={destBloque} onValueChange={(v) => { setDestBloque(v); setDestTorre(''); setDestPos('') }}>
+              <Select value={destBloque} onValueChange={(v) => { setDestBloque(v); setDestTorre(''); setDestPiso(''); setDestPos('') }}>
                 <SelectTrigger><SelectValue placeholder="Bloque" /></SelectTrigger>
                 <SelectContent>
                   {BLOQUES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
@@ -253,10 +288,19 @@ export function TrasladoTab() {
             </div>
             <div className="space-y-1">
               <Label>Torre</Label>
-              <Select value={destTorre} onValueChange={setDestTorre} disabled={!destBloque}>
+              <Select value={destTorre} onValueChange={(v) => { setDestTorre(v); setDestPiso(''); setDestPos('') }} disabled={!destBloque}>
                 <SelectTrigger><SelectValue placeholder="Torre" /></SelectTrigger>
                 <SelectContent>
                   {destTorres.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Piso</Label>
+              <Select value={destPiso} onValueChange={(v) => { setDestPiso(v); setDestPos('') }} disabled={!destBloque}>
+                <SelectTrigger><SelectValue placeholder="Piso" /></SelectTrigger>
+                <SelectContent>
+                  {PISOS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -272,40 +316,57 @@ export function TrasladoTab() {
           </div>
 
           <div className="space-y-1">
-            <Label>Cantidad</Label>
+            <Label>Cantidad a trasladar {origin.un}</Label>
             <Input
-              type="number"
-              step="any"
+              type="text"
+              inputMode="decimal"
               value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              placeholder={`Máx: ${origin.stock}`}
+              onChange={(e) => {
+                const val = e.target.value.replace(/[^0-9.]/g, '')
+                setQty(val)
+              }}
+              onFocus={(e) => e.target.select()}
+              placeholder={`Stock disponible: ${origin.stock} ${origin.un}`}
             />
+            {qty && parseFloat(qty) > origin.stock && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                La cantidad ({parseFloat(qty)}) supera el stock disponible ({origin.stock} {origin.un}). Se registrará de todas formas.
+              </p>
+            )}
           </div>
 
-          <Button onClick={handleConfirm} disabled={!destBloque || !destTorre || !destPos} className="gap-2">
+          <Button onClick={handleConfirm} disabled={!destBloque || !destTorre || !destPiso || !destPos || !qty || parseFloat(qty) <= 0} className="gap-2">
             <ArrowRightLeft className="h-4 w-4" />
             Confirmar traslado
           </Button>
         </div>
       )}
 
-      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+      {/* Dialog de confirmación */}
+      <AlertDialog open={confirm} onOpenChange={(open) => { if (!open) { setConfirm(false); setExceedsStock(false) } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirmar traslado</AlertDialogTitle>
-            <AlertDialogDescription>
-              <div className="space-y-2 text-sm">
+            <AlertDialogTitle>
+              {exceedsStock ? 'Traslado con cantidad mayor al stock' : 'Confirmar traslado'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm">
+                {exceedsStock && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-amber-700 dark:text-amber-300">
+                    La cantidad a trasladar supera el stock disponible en esta ubicación. El stock quedará en negativo.
+                  </div>
+                )}
                 <p><strong>Código:</strong> {origin?.codigo} — {origin?.descripcion}</p>
                 <p><strong>Cantidad:</strong> {qty} {origin?.un}</p>
                 <p><strong>Origen:</strong> B{origin?.bloque} T{origin?.torre} P{origin?.piso} Pos{origin?.posicion}</p>
-                <p><strong>Destino:</strong> B{destBloque} T{destTorre} P1 Pos{destPos}</p>
+                <p><strong>Destino:</strong> B{destBloque} T{destTorre} P{destPiso} Pos{destPos}</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={doTraslado}>
-              Confirmar
+              {busy ? 'Procesando...' : 'Confirmar'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

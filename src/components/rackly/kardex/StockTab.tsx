@@ -97,6 +97,7 @@ export function StockTab() {
       if (current) {
         if (m.tipo === 'ingreso') current.ingresos += m.cantidad
         else if (m.tipo === 'devolucion') current.devoluciones += m.cantidad
+        else if (m.tipo === 'traslado') current.traslados += m.cantidad
         else if (m.tipo === 'salida') current.salidas += m.cantidad
         current.stock += (m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado') ? m.cantidad : -m.cantidad
         if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {

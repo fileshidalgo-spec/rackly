@@ -216,3 +216,26 @@ Stage Summary:
 - Búsqueda por código o descripción con autocompletado en todos los formularios de ingreso/salida/devolución
 - Cantidad se ingresa manualmente en todos los formularios
 - Colores: verde=vacío, azul=ocupado, naranja=múltiple artículo (mantenidos pero adaptados a tema oscuro)
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix catalog autocomplete bug - "no esta jalando la información desde el catalogo"
+
+Work Log:
+- Diagnosed the issue: `piso_bloques` table was completely empty (0 records)
+- `catalogo` table had 953 items but the anon key couldn't read it (RLS blocks)
+- `dataClient` uses service_role key which bypasses RLS, so fallback should have worked
+- Silent `catch { /* ok */ }` blocks were hiding potential errors
+- Synced all 953 items from `catalogo` to `piso_bloques` table
+- Added `console.error` logging to all catch blocks in `listarBloquesParaSelect()` and `buscarBloquePorCodigo()`
+- Fixed `clearPisoBloques()` in `catalogo.ts` - was using `.delete().neq('id', '')` which fails on UUID columns
+- Replaced `filteredCatalogo` useMemo with `getFilteredCatalogo(prefix, idx)` function for per-row filtering
+- Added loading state (`catalogoLoading`) and "Cargando catálogo..." / "Sin resultados" messages to dropdown
+- Removed stray code (lines 731-762) that was outside the component function
+- Removed unused imports (`useMemo`, `Activity`)
+- Built and deployed to https://f51a22b0.rackly.pages.dev
+
+Stage Summary:
+- Root cause: `piso_bloques` was empty and silent error handling masked issues
+- Fixed by syncing data + adding proper error logging + improving autocomplete UX
+- Deployed successfully to Cloudflare Pages

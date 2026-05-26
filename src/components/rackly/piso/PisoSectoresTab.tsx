@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   listarSectores,
   cargarPosicionesSector,
@@ -26,7 +26,7 @@ import {
 import { toast } from 'sonner'
 import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
-  Layers3, BoxSelect, Activity, X, Plus, Trash2, Search, RefreshCw, Package,
+  Layers3, BoxSelect, X, Plus, Trash2, Search, RefreshCw, Package,
   RotateCcw,
 } from 'lucide-react'
 
@@ -100,28 +100,36 @@ export function PisoSectoresTab() {
     }
   }, [sectorFilter])
 
+  const [catalogoLoading, setCatalogoLoading] = useState(false)
+
   const loadBloques = useCallback(async () => {
-    try { setBloquesCatalogo(await listarBloquesParaSelect()) } catch { /* ok */ }
+    setCatalogoLoading(true)
+    try {
+      const data = await listarBloquesParaSelect()
+      if (mountedRef.current) {
+        setBloquesCatalogo(data)
+        console.log(`[Piso] Catálogo cargado: ${data.length} artículos disponibles`)
+      }
+    } catch (err) {
+      console.error('[Piso] Error cargando catálogo:', err)
+      if (mountedRef.current) toast.error('Error al cargar catálogo', { description: 'No se pudieron cargar los artículos. Intenta recargar.' })
+    } finally {
+      if (mountedRef.current) setCatalogoLoading(false)
+    }
   }, [])
 
   useEffect(() => { mountedRef.current = true; loadSectores(); loadPosiciones(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadPosiciones, loadBloques])
   useEffect(() => { if (sectorFilter !== 'all') loadPosiciones() }, [sectorFilter, loadPosiciones])
 
-  // Filtrar catálogo para autocomplete en formularios
-  const filteredCatalogo = useMemo(() => {
-    // Get current search code from whichever mode is active
-    if (mode === 'ingreso' && ingRows.length > 0) {
-      const q = ingRows[0].codigo.trim().toLowerCase()
-      if (!q) return bloquesCatalogo.slice(0, 50)
-      return bloquesCatalogo.filter((b) => b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q))
-    }
-    if (mode === 'devolucion' && devRows.length > 0) {
-      const q = devRows[0].codigo.trim().toLowerCase()
-      if (!q) return bloquesCatalogo.slice(0, 50)
-      return bloquesCatalogo.filter((b) => b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q))
-    }
-    return bloquesCatalogo
-  }, [bloquesCatalogo, mode, ingRows, devRows])
+  // Filtrar catálogo para autocomplete — usa la fila activa que se está editando
+  function getFilteredCatalogo(prefix: 'ing' | 'dev', idx: number) {
+    const rows = prefix === 'ing' ? ingRows : devRows
+    const q = rows[idx]?.codigo.trim().toLowerCase() || ''
+    if (!q) return bloquesCatalogo.slice(0, 50)
+    return bloquesCatalogo.filter((b) =>
+      b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q)
+    )
+  }
 
   // Agrupar posiciones por columna → subcolumna
   const posPorSubcol = new Map<string, PosicionConStock[]>()
@@ -548,8 +556,12 @@ export function PisoSectoresTab() {
                         </div>
                         {/* Dropdown de sugerencias si no hay match exacto */}
                         {!row.bloque_id && row.codigo.length >= 1 && (
-                          <div className="max-h-28 overflow-y-auto rounded-md border border-slate-700 bg-slate-900 mt-1">
-                            {filteredCatalogo.filter((b) => !ingRows.some((r, ri) => ri !== i && r.bloque_id === b.id)).slice(0, 8).map((b) => (
+                          <div className="max-h-28 overflow-y-auto rounded-md border border-slate-700 bg-slate-900 mt-1 shadow-xl">
+                            {catalogoLoading && <div className="px-2 py-1.5 text-xs text-slate-500">Cargando catálogo...</div>}
+                            {!catalogoLoading && getFilteredCatalogo('ing', i).filter((b) => !ingRows.some((r, ri) => ri !== i && r.bloque_id === b.id)).slice(0, 8).length === 0 && (
+                              <div className="px-2 py-1.5 text-xs text-slate-500">Sin resultados</div>
+                            )}
+                            {!catalogoLoading && getFilteredCatalogo('ing', i).filter((b) => !ingRows.some((r, ri) => ri !== i && r.bloque_id === b.id)).slice(0, 8).map((b) => (
                               <button key={b.id} onClick={() => onSelectFromCatalog('ing', i, b)}
                                 className="w-full text-left px-2 py-1.5 text-xs hover:bg-slate-700 text-slate-300 border-b border-slate-800 last:border-0 transition-colors">
                                 <span className="font-mono text-emerald-400">{b.codigo}</span>
@@ -665,8 +677,12 @@ export function PisoSectoresTab() {
                           )}
                         </div>
                         {!row.bloque_id && row.codigo.length >= 1 && (
-                          <div className="max-h-28 overflow-y-auto rounded-md border border-slate-700 bg-slate-900 mt-1">
-                            {filteredCatalogo.filter((b) => !devRows.some((r, ri) => ri !== i && r.bloque_id === b.id)).slice(0, 8).map((b) => (
+                          <div className="max-h-28 overflow-y-auto rounded-md border border-slate-700 bg-slate-900 mt-1 shadow-xl">
+                            {catalogoLoading && <div className="px-2 py-1.5 text-xs text-slate-500">Cargando catálogo...</div>}
+                            {!catalogoLoading && getFilteredCatalogo('dev', i).filter((b) => !devRows.some((r, ri) => ri !== i && r.bloque_id === b.id)).slice(0, 8).length === 0 && (
+                              <div className="px-2 py-1.5 text-xs text-slate-500">Sin resultados</div>
+                            )}
+                            {!catalogoLoading && getFilteredCatalogo('dev', i).filter((b) => !devRows.some((r, ri) => ri !== i && r.bloque_id === b.id)).slice(0, 8).map((b) => (
                               <button key={b.id} onClick={() => onSelectFromCatalog('dev', i, b)}
                                 className="w-full text-left px-2 py-1.5 text-xs hover:bg-slate-700 text-slate-300 border-b border-slate-800 last:border-0 transition-colors">
                                 <span className="font-mono text-amber-400">{b.codigo}</span>
@@ -701,38 +717,6 @@ export function PisoSectoresTab() {
                 ))}
                 <button onClick={addDevRow} className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300"><Plus className="h-3.5 w-3.5" /> Agregar otro artículo</button>
                 <div className="flex gap-2 pt-1">
-                  <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700 text-slate-400 hover:bg-slate-800">Cancelar</Button>
-                  <Button onClick={doDevolucion} disabled={busy} size="sm" className="gap-1 bg-amber-600 hover:bg-amber-700 text-white text-xs">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Registrar devolución</Button>
-                </div>
-              </div>
-            )}
-          </>)}
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-                          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-500" />
-                          <input type="text" value={devSearch} onChange={(e) => setDevSearch(e.target.value)} placeholder="Escribe para buscar..."
-                            className="w-full h-8 rounded-md border border-slate-700 text-xs bg-slate-800 text-white placeholder-slate-500 pl-7 pr-2 focus:outline-none focus:ring-2 focus:ring-amber-500/50 mb-1" />
-                        </div>
-                        <select value={row.bloque_id} onChange={(e) => onDevSelectBloque(i, e.target.value)}
-                          className="w-full h-8 rounded-md border border-slate-700 text-xs bg-slate-800 text-white px-2 focus:outline-none focus:ring-2 focus:ring-amber-500/50">
-                          <option value="">Seleccionar...</option>
-                          {filteredCatalogoDev.map((b) => <option key={b.id} value={b.id}>{b.codigo} — {b.descripcion || b.unidad}</option>)}
-                        </select>
-                      </div>
-                      <div className="w-24">
-                        <Label className="text-[10px] text-slate-500">Cantidad</Label>
-                        <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateDevRow(i, 'cantidad', e.target.value)}
-                          className="h-8 text-xs bg-slate-800 border-slate-700 text-white focus:ring-amber-500/50" placeholder="0" />
-                      </div>
-                      <button onClick={() => removeDevRow(i)} className="p-1.5 rounded hover:bg-red-900/50 text-slate-500 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
-                    </div>
-                  ))}
-                  <button onClick={addDevRow} className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300"><Plus className="h-3.5 w-3.5" /> Agregar otro artículo</button>
-                </div>
-                <div className="flex gap-2">
                   <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700 text-slate-400 hover:bg-slate-800">Cancelar</Button>
                   <Button onClick={doDevolucion} disabled={busy} size="sm" className="gap-1 bg-amber-600 hover:bg-amber-700 text-white text-xs">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Registrar devolución</Button>
                 </div>

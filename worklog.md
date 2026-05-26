@@ -192,3 +192,27 @@ Stage Summary:
 - Todos los NUMERIC de PostgreSQL se convierten correctamente a number
 - Todos los loops tienen guards anti-infinitos
 - Todas las operaciones async protegen contra unmount
+
+---
+Task ID: 1
+Agent: Main
+Task: Aplicar tema oscuro a sección Piso, agregar movimiento de devolución, búsqueda por código/descripción con autocompletado
+
+Work Log:
+- Agregué función `registrarDevolucionPosicion()` al API de Piso (src/lib/piso/api.ts)
+- Reescribí PisoSectoresTab.tsx con tema oscuro completo (fondos slate-800/900, texto blanco)
+- Agregué devolución como acción en el diálogo de posición (ingreso, salida, traslado, devolución)
+- Agregé búsqueda por código/descripción con autocompletado en formularios de ingreso y devolución
+- Reescribí MovimientosTab.tsx con tema oscuro y 4 pestañas: Ingreso, Salida, Devolución, Historial
+- Agregué DevolucionRapida como nuevo componente con búsqueda por código/descripción
+- Reescribí SectoresTab.tsx (Configuración) con tema oscuro
+- Actualicé page.tsx: wrappers de Piso con bg-slate-900, tabs con tema oscuro, texto blanco
+- Build exitoso sin errores
+- Desplegado a Cloudflare Pages: https://fd870890.rackly.pages.dev
+
+Stage Summary:
+- Sección Piso completa con tema oscuro (fondos oscuros, letras blancas)
+- Movimiento de Devolución agregado en MovimientosTab (Rapid) y PisoSectoresTab (Grid)
+- Búsqueda por código o descripción con autocompletado en todos los formularios de ingreso/salida/devolución
+- Cantidad se ingresa manualmente en todos los formularios
+- Colores: verde=vacío, azul=ocupado, naranja=múltiple artículo (mantenidos pero adaptados a tema oscuro)

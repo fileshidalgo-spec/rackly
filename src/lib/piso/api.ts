@@ -717,6 +717,39 @@ export async function registrarSalidaPosicion(
 }
 
 /**
+ * Registra una devolución de stock a una posición.
+ * Funciona como un ingreso pero con tipo 'devolucion'.
+ */
+export async function registrarDevolucionPosicion(
+  turno: string,
+  usuarioId: string,
+  usuarioNombre: string,
+  usuarioCorreo: string,
+  detalles: { nivel_id: string; bloque_id: string; cantidad: number }[]
+): Promise<void> {
+  const { data: movData, error: movErr } = await dataClient
+    .from('piso_movimientos')
+    .insert({ tipo: 'devolucion', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+    .select('id')
+    .single()
+  if (movErr) throw movErr
+  const movimientoId = (movData as { id: string }).id
+
+  if (detalles.length > 0) {
+    const detRows = detalles.map((d) => ({
+      movimiento_id: movimientoId,
+      nivel_id: d.nivel_id,
+      bloque_id: d.bloque_id,
+      cantidad: d.cantidad,
+    }))
+    const { error: detErr } = await dataClient
+      .from('piso_movimiento_detalles')
+      .insert(detRows)
+    if (detErr) throw detErr
+  }
+}
+
+/**
  * Registra un traslado entre posiciones del mismo sector.
  * Crea una salida en el origen y un ingreso en el destino.
  */

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  fetchOcupacionCeldas,
   fetchMovimientos,
   stockEnUbicacion,
   type Movimiento,
@@ -63,21 +62,31 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
   return multiples
 }
 
-// Calcula ocupación desde movimientos (fallback si RPC no disponible)
+// Calcula ocupación desde movimientos — independiente del orden de procesamiento.
+// Rastrea stock POR CÓDIGO para evitar perder códigos con múltiples artículos.
 function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
-  const cellMap = new Map<string, { stock: number; codigos: Set<string> }>()
+  // Mapa: ubicacion_key → (codigo → stock por código)
+  const cellMap = new Map<string, Map<string, number>>()
   for (const m of movs) {
     const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-    let cell = cellMap.get(key)
-    if (!cell) { cell = { stock: 0, codigos: new Set() }; cellMap.set(key, cell) }
+    let codeMap = cellMap.get(key)
+    if (!codeMap) { codeMap = new Map(); cellMap.set(key, codeMap) }
     const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
-    cell.stock += delta
-    if (cell.stock > 0) { cell.codigos.add(m.codigo) } else { cell.codigos.clear(); cell.stock = 0 }
+    const current = codeMap.get(m.codigo) ?? 0
+    codeMap.set(m.codigo, current + delta)
   }
+  // Construir resultado: solo celdas con stock total > 0
   const result: OcupacionCelda[] = []
-  for (const [key, cell] of cellMap) {
-    const [bloque, torre, piso, posicion] = key.split('-')
-    result.push({ bloque, torre, piso, posicion, stock: cell.stock, codigos: Array.from(cell.codigos) })
+  for (const [key, codeMap] of cellMap) {
+    let totalStock = 0
+    const codigos: string[] = []
+    for (const [code, stock] of codeMap) {
+      if (stock > 0) { totalStock += stock; codigos.push(code) }
+    }
+    if (totalStock > 0) {
+      const [bloque, torre, piso, posicion] = key.split('-')
+      result.push({ bloque, torre, piso, posicion, stock: totalStock, codigos })
+    }
   }
   return result
 }
@@ -119,18 +128,15 @@ export function OcupacionTab() {
   const [trCantidad, setTrCantidad] = useState('')
 
   // ── Data refresh ──
+  // Método primario: calcula ocupación directamente desde movimientos
+  // (el RPC 'ocupacion_celdas' no incluye 'traslado' en su CASE → datos incorrectos)
   const refreshData = useCallback(async () => {
     try {
-      const celdas = await fetchOcupacionCeldas()
-      if (mountedRef.current) setOcupacion(celdas)
-    } catch {
-      try {
-        const movs = await fetchMovimientos()
-        if (mountedRef.current) setOcupacion(calcularOcupacion(movs))
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Error'
-        if (mountedRef.current) toast.error('Error al cargar ocupación', { description: msg })
-      }
+      const movs = await fetchMovimientos()
+      if (mountedRef.current) setOcupacion(calcularOcupacion(movs))
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error'
+      if (mountedRef.current) toast.error('Error al cargar ocupación', { description: msg })
     }
   }, [])
 

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
+  fetchOcupacionCeldas,
   fetchMovimientos,
   stockEnUbicacion,
   type Movimiento,
@@ -128,15 +129,20 @@ export function OcupacionTab() {
   const [trCantidad, setTrCantidad] = useState('')
 
   // ── Data refresh ──
-  // Método primario: calcula ocupación directamente desde movimientos
-  // (el RPC 'ocupacion_celdas' no incluye 'traslado' en su CASE → datos incorrectos)
+  // Primario: RPC 'ocupacion_celdas' (server-side, ya corregido con SQL para incluir traslado)
+  // Fallback: calcularOcupacion directo desde movimientos
   const refreshData = useCallback(async () => {
     try {
-      const movs = await fetchMovimientos()
-      if (mountedRef.current) setOcupacion(calcularOcupacion(movs))
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error'
-      if (mountedRef.current) toast.error('Error al cargar ocupación', { description: msg })
+      const celdas = await fetchOcupacionCeldas()
+      if (mountedRef.current) setOcupacion(celdas)
+    } catch {
+      try {
+        const movs = await fetchMovimientos()
+        if (mountedRef.current) setOcupacion(calcularOcupacion(movs))
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Error'
+        if (mountedRef.current) toast.error('Error al cargar ocupación', { description: msg })
+      }
     }
   }, [])
 

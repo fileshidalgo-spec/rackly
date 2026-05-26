@@ -300,7 +300,29 @@ export function OcupacionTab() {
     setBusyExport(true)
     try {
       const XLSX = await import('xlsx')
-      const data = filtered.map(o => ({ Bloque: o.bloque, Torre: o.torre, Piso: o.piso, Posición: o.posicion, Stock: o.stock, Códigos: o.codigos.join(', '), Artículos: o.codigos.length, Estado: o.stock <= 0 ? 'Vacío' : o.codigos.length > 1 ? 'Mixto' : 'Ocupado' }))
+      // Generar TODAS las posiciones (ocupadas + vacías)
+      const bloques = bloqueFilter === 'all' ? BLOQUES : [bloqueFilter]
+      const data: Record<string, string | number>[] = []
+      for (const b of bloques) {
+        for (const t of torresDeBloque(b)) {
+          for (const p of PISOS) {
+            for (const pos of posicionesDeBloque(b)) {
+              const cell = ocupacion.find(o => o.bloque === b && o.torre === t && o.piso === p && o.posicion === pos)
+              const isOcc = cell && cell.stock > 0
+              data.push({
+                Bloque: b,
+                Torre: t,
+                Piso: p,
+                Posición: pos,
+                Stock: isOcc ? cell.stock : 0,
+                Códigos: isOcc ? cell.codigos.join(', ') : '',
+                Artículos: isOcc ? cell.codigos.length : 0,
+                Estado: isOcc ? (cell!.codigos.length > 1 ? 'Mixto' : 'Ocupado') : 'Vacío',
+              })
+            }
+          }
+        }
+      }
       const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Ocupación'); XLSX.writeFile(wb, `RACKLY_Ocupacion_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusyExport(false) }

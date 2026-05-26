@@ -1,22 +1,12 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { fetchMovimientos, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Input } from '@/components/ui/input'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { toast } from 'sonner'
-import { Search, Download, Loader2 } from 'lucide-react'
+import { Search, Download, Loader2, CalendarDays, FilterX } from 'lucide-react'
 
 type FefoItem = {
   codigo: string
@@ -33,9 +23,43 @@ type FefoItem = {
   status: 'vigente' | 'proximo' | 'urgente' | 'vencido'
 }
 
+// ── Colores explícitos por estado (sin clases dinámicas) ──
+const STATUS_BTN_ACTIVE: Record<string, string> = {
+  vigente: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300',
+  proximo: 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300',
+  urgente: 'bg-amber-500/20 border-amber-500/50 text-amber-300',
+  vencido: 'bg-red-500/20 border-red-500/50 text-red-300',
+}
+const STATUS_BTN_DOT: Record<string, string> = {
+  vigente: 'bg-emerald-400',
+  proximo: 'bg-cyan-400',
+  urgente: 'bg-amber-400',
+  vencido: 'bg-red-400',
+}
+const STATUS_BADGE: Record<string, string> = {
+  vigente: 'bg-emerald-500/25 text-emerald-200 border border-emerald-500/40',
+  proximo: 'bg-cyan-500/25 text-cyan-200 border border-cyan-500/40',
+  urgente: 'bg-amber-500/25 text-amber-200 border border-amber-500/40',
+  vencido: 'bg-red-500/25 text-red-200 border border-red-500/40',
+}
+const STATUS_BADGE_DOT: Record<string, string> = {
+  vigente: 'bg-emerald-300',
+  proximo: 'bg-cyan-300',
+  urgente: 'bg-amber-300',
+  vencido: 'bg-red-300',
+}
+const DIAS_COLOR: Record<string, string> = {
+  vigente: 'text-emerald-300',
+  proximo: 'text-cyan-300',
+  urgente: 'text-amber-300',
+  vencido: 'text-red-300',
+}
+
 export function FefoTab() {
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [search, setSearch] = useState('')
+  const [fechaDesde, setFechaDesde] = useState('')
+  const [fechaHasta, setFechaHasta] = useState('')
   const [filtros, setFiltros] = useState({
     vigente: true,
     proximo: true,
@@ -46,22 +70,24 @@ export function FefoTab() {
 
   useMovimientosRealtime(setMovs)
 
+  const hasActiveFilters = useMemo(() => {
+    return search.trim() !== '' || fechaDesde !== '' || fechaHasta !== '' ||
+      !filtros.vigente || !filtros.proximo || !filtros.urgente || !filtros.vencido
+  }, [search, fechaDesde, fechaHasta, filtros])
+
+  function clearFilters() {
+    setSearch('')
+    setFechaDesde('')
+    setFechaHasta('')
+    setFiltros({ vigente: true, proximo: true, urgente: true, vencido: true })
+  }
+
   const fefoData = useMemo(() => {
-    const locMap = new Map<
-      string,
-      {
-        codigo: string
-        descripcion: string
-        un: string
-        bloque: string
-        torre: string
-        piso: string
-        posicion: string
-        stock: number
-        fVencimiento: string
-        proveedor?: string
-      }
-    >()
+    const locMap = new Map<string, {
+      codigo: string; descripcion: string; un: string
+      bloque: string; torre: string; piso: string; posicion: string
+      stock: number; fVencimiento: string; proveedor?: string
+    }>()
 
     for (const m of movs) {
       if (m.tipo !== 'ingreso') continue
@@ -74,28 +100,18 @@ export function FefoTab() {
         }
       } else {
         locMap.set(key, {
-          codigo: m.codigo,
-          descripcion: m.descripcion,
-          un: m.un,
-          bloque: m.bloque,
-          torre: m.torre,
-          piso: m.piso,
-          posicion: m.posicion,
-          stock: m.cantidad,
-          fVencimiento: m.fVencimiento || '',
-          proveedor: m.proveedor || undefined,
+          codigo: m.codigo, descripcion: m.descripcion, un: m.un,
+          bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
+          stock: m.cantidad, fVencimiento: m.fVencimiento || '', proveedor: m.proveedor || undefined,
         })
       }
     }
 
-    // Restar salidas
     for (const m of movs) {
       if (m.tipo !== 'salida') continue
       const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
       const existing = locMap.get(key)
-      if (existing) {
-        existing.stock -= m.cantidad
-      }
+      if (existing) existing.stock -= m.cantidad
     }
 
     const items: FefoItem[] = []
@@ -103,20 +119,13 @@ export function FefoTab() {
     for (const [, loc] of locMap) {
       if (loc.stock <= 0 || !loc.fVencimiento) continue
       const venc = new Date(loc.fVencimiento)
-      const diff = Math.ceil(
-        (venc.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-      )
+      const diff = Math.ceil((venc.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
       let status: FefoItem['status']
       if (diff < 0) status = 'vencido'
       else if (diff <= 15) status = 'urgente'
       else if (diff <= 30) status = 'proximo'
       else status = 'vigente'
-
-      items.push({
-        ...loc,
-        diasRestantes: diff,
-        status,
-      })
+      items.push({ ...loc, diasRestantes: diff, status })
     }
 
     return items.sort((a, b) => a.diasRestantes - b.diasRestantes)
@@ -126,170 +135,176 @@ export function FefoTab() {
     let data = fefoData
     if (search.trim()) {
       const q = search.trim().toUpperCase()
-      data = data.filter(
-        (i) =>
-          i.codigo.toUpperCase().includes(q) ||
-          i.descripcion.toUpperCase().includes(q)
-      )
+      data = data.filter((i) => i.codigo.toUpperCase().includes(q) || i.descripcion.toUpperCase().includes(q))
     }
+    if (fechaDesde) data = data.filter((i) => i.fVencimiento >= fechaDesde)
+    if (fechaHasta) data = data.filter((i) => i.fVencimiento <= fechaHasta)
     return data.filter((i) => filtros[i.status])
-  }, [fefoData, search, filtros])
+  }, [fefoData, search, fechaDesde, fechaHasta, filtros])
 
-  const counts = useMemo(
-    () => ({
-      vigente: fefoData.filter((i) => i.status === 'vigente').length,
-      proximo: fefoData.filter((i) => i.status === 'proximo').length,
-      urgente: fefoData.filter((i) => i.status === 'urgente').length,
-      vencido: fefoData.filter((i) => i.status === 'vencido').length,
-    }),
-    [fefoData]
-  )
-
-  function statusColor(status: FefoItem['status']) {
-    switch (status) {
-      case 'vigente':
-        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
-      case 'proximo':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100'
-      case 'urgente':
-        return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-100'
-      case 'vencido':
-        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
-    }
-  }
+  const counts = useMemo(() => ({
+    vigente: fefoData.filter((i) => i.status === 'vigente').length,
+    proximo: fefoData.filter((i) => i.status === 'proximo').length,
+    urgente: fefoData.filter((i) => i.status === 'urgente').length,
+    vencido: fefoData.filter((i) => i.status === 'vencido').length,
+  }), [fefoData])
 
   async function handleExport() {
     setBusy(true)
     try {
       const XLSX = await import('xlsx')
       const data = filtered.map((i) => ({
-        Código: i.codigo,
-        Descripción: i.descripcion,
-        Bloque: i.bloque,
-        Torre: i.torre,
-        Piso: i.piso,
-        Posición: i.posicion,
-        UN: i.un,
-        Stock: i.stock,
-        'Días restantes': i.diasRestantes,
-        'F. Vencimiento': i.fVencimiento,
-        Estado: i.status,
+        Código: i.codigo, Descripción: i.descripcion, Bloque: i.bloque, Torre: i.torre,
+        Piso: i.piso, Posición: i.posicion, UN: i.un, Stock: i.stock,
+        'Días restantes': i.diasRestantes, 'F. Vencimiento': i.fVencimiento, Estado: i.status,
       }))
       const ws = XLSX.utils.json_to_sheet(data)
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'FEFO')
-      const fecha = new Date().toISOString().slice(0, 10)
-      XLSX.writeFile(wb, `RACKLY_FEFO_${fecha}.xlsx`)
+      XLSX.writeFile(wb, `RACKLY_FEFO_${new Date().toISOString().slice(0, 10)}.xlsx`)
       toast.success('FEFO exportado')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
-      toast.error('Error al exportar', { description: message })
-    } finally {
-      setBusy(false)
-    }
+      toast.error('Error al exportar', { description: err instanceof Error ? err.message : 'Error' })
+    } finally { setBusy(false) }
   }
 
   return (
     <div className="space-y-4">
+      {/* ═══ BARRA DE BÚSQUEDA ═══ */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar código o descripción..."
-            className="pl-9"
+            className="pl-9 h-9 bg-slate-800 border-slate-600/50 text-white text-sm placeholder:text-slate-500 focus:border-sky-400"
           />
         </div>
-        <Button onClick={handleExport} disabled={busy} variant="outline" className="gap-2">
+        <Button onClick={handleExport} disabled={busy} variant="outline"
+          className="h-9 gap-2 border-slate-600/50 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white text-sm font-medium">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           Exportar
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        {(
-          [
-            ['vigente', '> 60 días', 'green'],
-            ['proximo', '≤ 30 días', 'blue'],
-            ['urgente', '≤ 15 días', 'orange'],
-            ['vencido', 'Vencidos', 'red'],
-          ] as const
-        ).map(([key, label]) => (
-          <label
-            key={key}
-            className="flex items-center gap-2 text-sm cursor-pointer"
-          >
-            <Checkbox
-              checked={filtros[key as keyof typeof filtros]}
-              onCheckedChange={(v) =>
-                setFiltros((f) => ({ ...f, [key]: !!v }))
-              }
-            />
-            <span
-              className={`inline-block w-3 h-3 rounded-full bg-${label.includes('60') ? 'green' : label.includes('30') ? 'blue' : label.includes('15') ? 'orange' : 'red'}-500`}
-            />
-            {label} ({counts[key as keyof typeof counts]})
-          </label>
-        ))}
+      {/* ═══ RANGO DE FECHAS + LIMPIAR FILTROS ═══ */}
+      <div className="rounded-xl border border-slate-600/30 bg-slate-800/50 p-3 space-y-3">
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-sky-400" />
+            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Rango de vencimiento</span>
+          </div>
+          <div className="flex items-center gap-2 flex-1 flex-wrap">
+            <span className="text-xs font-medium text-slate-400">Desde</span>
+            <Input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)}
+              className="h-9 w-[150px] bg-slate-700/60 border-slate-600/50 text-white text-sm focus:border-sky-400" />
+            <span className="text-slate-500 text-lg">→</span>
+            <span className="text-xs font-medium text-slate-400">Hasta</span>
+            <Input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)}
+              className="h-9 w-[150px] bg-slate-700/60 border-slate-600/50 text-white text-sm focus:border-sky-400" />
+          </div>
+          {hasActiveFilters && (
+            <Button onClick={clearFilters} variant="outline" size="sm"
+              className="h-9 gap-1.5 border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 hover:text-rose-200 text-xs font-bold">
+              <FilterX className="w-4 h-4" />
+              Limpiar filtros
+            </Button>
+          )}
+        </div>
+
+        {/* ═══ FILTROS POR ESTADO ═══ */}
+        <div className="flex flex-wrap gap-2">
+          {([
+            ['vigente', '> 30 días'],
+            ['proximo', '≤ 30 días'],
+            ['urgente', '≤ 15 días'],
+            ['vencido', 'Vencidos'],
+          ] as const).map(([key, label]) => {
+            const active = filtros[key as keyof typeof filtros]
+            return (
+              <button key={key} type="button"
+                onClick={() => setFiltros((f) => ({ ...f, [key]: !f[key as keyof typeof f] }))}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border ${
+                  active
+                    ? STATUS_BTN_ACTIVE[key]
+                    : 'bg-slate-700/30 border-slate-600/30 text-slate-500 hover:text-slate-400'
+                }`}>
+                <span className={`w-3 h-3 rounded-full ${active ? STATUS_BTN_DOT[key] : 'bg-slate-600'}`} />
+                {label}
+                <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  active ? 'bg-white/10' : 'bg-slate-700/50'
+                }`}>
+                  {counts[key as keyof typeof counts]}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {hasActiveFilters && (
+          <p className="text-xs text-slate-400">
+            Mostrando <span className="text-white font-bold">{filtered.length}</span> de{' '}
+            <span className="text-slate-300">{fefoData.length}</span> registros
+          </p>
+        )}
       </div>
 
-      <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Código</TableHead>
-              <TableHead>Descripción</TableHead>
-              <TableHead>Bloque</TableHead>
-              <TableHead>Torre</TableHead>
-              <TableHead>Pos</TableHead>
-              <TableHead className="text-right">Stock</TableHead>
-              <TableHead>Proveedor</TableHead>
-              <TableHead>Vencimiento</TableHead>
-              <TableHead className="text-right">Días</TableHead>
-              <TableHead>Estado</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      {/* ═══ TABLA ═══ */}
+      <div className="overflow-x-auto max-h-[500px] overflow-y-auto rounded-xl border border-slate-600/40 shadow-lg">
+        <table className="min-w-[750px] w-full text-sm">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-slate-800/95 backdrop-blur border-b-2 border-slate-600/40">
+              {['Código', 'Descripción', 'Bloque', 'Torre', 'Piso', 'Pos', 'Stock', 'Proveedor', 'Vencimiento', 'Días', 'Estado'].map(h => (
+                <th key={h} className={`px-4 py-3 text-xs font-bold text-slate-300 uppercase tracking-wider ${
+                  h === 'Stock' || h === 'Días' ? 'text-right' : 'text-left'
+                }`}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="bg-slate-900/60">
             {filtered.map((item, i) => (
-              <TableRow key={i}>
-                <TableCell className="font-mono">{item.codigo}</TableCell>
-                <TableCell>{item.descripcion}</TableCell>
-                <TableCell>{item.bloque}</TableCell>
-                <TableCell>{item.torre}</TableCell>
-                <TableCell>{item.posicion}</TableCell>
-                <TableCell className="text-right">{item.stock}</TableCell>
-                <TableCell>
+              <tr key={i} className="border-b border-slate-700/25 hover:bg-slate-800/60 transition-colors">
+                <td className="px-4 py-3 font-mono font-bold text-sky-300 text-sm">{item.codigo}</td>
+                <td className="px-4 py-3 text-slate-200 max-w-[220px] truncate font-medium">{item.descripcion}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold">{item.bloque}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold">{item.torre}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold">{item.piso}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold">{item.posicion}</td>
+                <td className="px-4 py-3 text-right">
+                  <span className="text-emerald-300 font-bold text-base">{item.stock}</span>
+                  <span className="text-slate-400 ml-1 text-xs">{item.un}</span>
+                </td>
+                <td className="px-4 py-3">
                   {item.proveedor ? (
-                    <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-violet-500/25 text-violet-200 border border-violet-500/40">
                       {item.proveedor}
-                    </Badge>
+                    </span>
                   ) : (
-                    <span className="text-xs text-muted-foreground">—</span>
+                    <span className="text-slate-600">—</span>
                   )}
-                </TableCell>
-                <TableCell>{item.fVencimiento}</TableCell>
-                <TableCell className="text-right font-medium">
+                </td>
+                <td className="px-4 py-3 text-slate-200 font-medium">{item.fVencimiento}</td>
+                <td className={`px-4 py-3 text-right font-bold text-base ${DIAS_COLOR[item.status]}`}>
                   {item.diasRestantes}
-                </TableCell>
-                <TableCell>
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusColor(item.status)}`}
-                  >
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${STATUS_BADGE[item.status]}`}>
+                    <span className={`w-2 h-2 rounded-full ${STATUS_BADGE_DOT[item.status]}`} />
                     {item.status}
                   </span>
-                </TableCell>
-              </TableRow>
+                </td>
+              </tr>
             ))}
             {filtered.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
-                  Sin resultados
-                </TableCell>
-              </TableRow>
+              <tr>
+                <td colSpan={11} className="text-center text-slate-500 py-10 text-base">
+                  {hasActiveFilters ? 'Sin resultados para los filtros aplicados' : 'Sin registros FEFO'}
+                </td>
+              </tr>
             )}
-          </TableBody>
-        </Table>
+          </tbody>
+        </table>
       </div>
     </div>
   )

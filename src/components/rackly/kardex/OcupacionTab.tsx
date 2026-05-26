@@ -1,20 +1,24 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   fetchOcupacionCeldas,
   fetchMovimientos,
-  addMovimiento,
-  type OcupacionCelda,
   stockEnUbicacion,
+  type Movimiento,
   type StockEnUbicacion,
+  type OcupacionCelda,
+  addMovimiento,
+  trasladarMovimiento,
+  type TrasladoInput,
 } from '@/lib/rackly/kardex'
-import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
-import type { CatalogoItem } from '@/lib/rackly/catalogo'
+import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
+import { supabase } from '@/lib/supabase/client'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
-import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas, totalCeldasBloque } from '@/lib/rackly/ubicaciones'
-import { supabase } from '@/lib/supabase/client'
+import { requiereProveedor } from '@/lib/utils'
+import { PROVEEDORES_FILM } from '@/lib/rackly/constants'
+import { CatalogoSearchInput } from './CatalogoSearchInput'
 import {
   Select,
   SelectContent,
@@ -23,1532 +27,828 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from '@/components/ui/dialog'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Download, Loader2, MapPin, Building2, Package, Warehouse, FileBarChart, ArrowDownToLine, ArrowUpFromLine, Check, ChevronRight, Search, RotateCcw } from 'lucide-react'
-import { CatalogoSearchInput } from './CatalogoSearchInput'
+import {
+  Download, Loader2, ArrowDownToLine, ArrowUpFromLine, Building2, Layers,
+  BoxSelect, Activity, ArrowRightLeft, RotateCcw, X, AlertTriangle, CheckCircle2,
+  Package, CalendarOff, CalendarClock, Flame,
+} from 'lucide-react'
 
-/* ═══════════════════════════════════════════
-   TIPO: Reporte por bloque
-   ═══════════════════════════════════════════ */
-type BloqueReporte = {
-  bloque: string
-  totalPosiciones: number
-  ocupadas: number
-  vacias: number
-  porcentaje: number
+// Calcula días restantes hasta vencimiento (negativo si ya venció)
+function diasParaVencer(fVencimiento: string | undefined): number | null {
+  if (!fVencimiento) return null
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
+  const venc = new Date(fVencimiento + 'T00:00:00')
+  return Math.ceil((venc.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24))
 }
 
-/* ═══════════════════════════════════════════
-   HELPERS
-   ═══════════════════════════════════════════ */
-
-function buildOccupationMap(data: OcupacionCelda[]) {
-  const map = new Map<string, OcupacionCelda>()
-  for (const c of data) {
-    map.set(`${c.bloque}-${c.torre}-${c.piso}-${c.posicion}`, c)
+// Detecta códigos duplicados (mismo artículo con distintas fechas de vencimiento)
+function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
+  const counts = new Map<string, number>()
+  for (const s of stock) {
+    counts.set(s.codigo, (counts.get(s.codigo) ?? 0) + 1)
   }
-  return map
+  const multiples = new Set<string>()
+  for (const [code, count] of counts) {
+    if (count > 1) multiples.add(code)
+  }
+  return multiples
 }
 
-function calcReporteBloques(
-  occMap: Map<string, OcupacionCelda>,
-  bloques: string[]
-): BloqueReporte[] {
-  return bloques.map((b) => {
-    const total = totalCeldasBloque(b)
-    const torres = torresDeBloque(b)
-    const posiciones = posicionesDeBloque(b)
-    let ocupadas = 0
-    for (const t of torres) {
-      for (const p of PISOS) {
-        for (const pos of posiciones) {
-          const cell = occMap.get(`${b}-${t}-${p}-${pos}`)
-          if (cell && cell.stock > 0) ocupadas++
-        }
-      }
-    }
-    return {
-      bloque: b,
-      totalPosiciones: total,
-      ocupadas,
-      vacias: total - ocupadas,
-      porcentaje: total > 0 ? Math.round((ocupadas / total) * 100) : 0,
-    }
-  })
+// Calcula ocupación desde movimientos (fallback si RPC no disponible)
+function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
+  const cellMap = new Map<string, { stock: number; codigos: Set<string> }>()
+  for (const m of movs) {
+    const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+    let cell = cellMap.get(key)
+    if (!cell) { cell = { stock: 0, codigos: new Set() }; cellMap.set(key, cell) }
+    const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+    cell.stock += delta
+    if (cell.stock > 0) { cell.codigos.add(m.codigo) } else { cell.codigos.clear(); cell.stock = 0 }
+  }
+  const result: OcupacionCelda[] = []
+  for (const [key, cell] of cellMap) {
+    const [bloque, torre, piso, posicion] = key.split('-')
+    result.push({ bloque, torre, piso, posicion, stock: cell.stock, codigos: Array.from(cell.codigos) })
+  }
+  return result
 }
 
-/* ═══════════════════════════════════════════
-   COMPONENTE PRINCIPAL
-   ═══════════════════════════════════════════ */
+type DetailMode = 'view' | 'ingreso' | 'salida' | 'transferir'
 
 export function OcupacionTab() {
   const { perfil } = useAuth()
   const [ocupacion, setOcupacion] = useState<OcupacionCelda[]>([])
   const [bloqueFilter, setBloqueFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
-  const [showReport, setShowReport] = useState(false)
-  const [detail, setDetail] = useState<{
-    bloque: string
-    torre: string
-    piso: string
-    posicion: string
-    stock: StockEnUbicacion[]
-  } | null>(null)
+  const [detail, setDetail] = useState<{ bloque: string; torre: string; piso: string; posicion: string; stock: StockEnUbicacion[] } | null>(null)
+  const [detailMode, setDetailMode] = useState<DetailMode>('view')
   const [busyExport, setBusyExport] = useState(false)
-  const [busyAction, setBusyAction] = useState(false)
-  const [salidaQty, setSalidaQty] = useState<Record<number, string>>({})
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
-  const [confirmAction, setConfirmAction] = useState<{
-    tipo: 'salida-parcial' | 'salida-total'
-    item: StockEnUbicacion
-    qty: number
-  } | null>(null)
-    // Estados para ingreso en celda vacía
-  const [ingresoCodigo, setIngresoCodigo] = useState('')
-  const [ingresoDescripcion, setIngresoDescripcion] = useState('')
-  const [ingresoUn, setIngresoUn] = useState('')
-  const [ingresoCantidad, setIngresoCantidad] = useState('')
-  const [ingresoFVencimiento, setIngresoFVencimiento] = useState('')
-  const [ingresoSinVencimiento, setIngresoSinVencimiento] = useState(false)
-  const [ingresoProveedor, setIngresoProveedor] = useState('')
-  const [busyIngreso, setBusyIngreso] = useState(false)
-  const [showIngresoForm, setShowIngresoForm] = useState(false)
-  const [ingresoTipo, setIngresoTipo] = useState<'ingreso' | 'devolucion'>('ingreso')
-  const isFirstLoad = useRef(true)
+  const [actionBusy, setActionBusy] = useState(false)
+  const mountedRef = useRef(true)
 
-  const load = useCallback(async () => {
-    // Solo mostrar spinner en la primera carga
-    if (isFirstLoad.current) {
-      setLoading(true)
-    }
+  // ── Ingreso state ──
+  const [ingTipo, setIngTipo] = useState<'ingreso' | 'devolucion'>('ingreso')
+  const [ingCodigo, setIngCodigo] = useState('')
+  const [ingDescripcion, setIngDescripcion] = useState('')
+  const [ingUn, setIngUn] = useState('')
+  const [ingCantidad, setIngCantidad] = useState('')
+  const [ingFVenc, setIngFVenc] = useState('')
+  const [ingSinFecha, setIngSinFecha] = useState(false)
+  const [ingProveedor, setIngProveedor] = useState('')
+
+  // ── Salida state ──
+  const [salidaIdx, setSalidaIdx] = useState(0)
+  const [salidaCantidad, setSalidaCantidad] = useState('')
+  const [salidaTotal, setSalidaTotal] = useState(false)
+
+  // ── Transferir state ──
+  const [trIdx, setTrIdx] = useState(0)
+  const [trDestBloque, setTrDestBloque] = useState('')
+  const [trDestTorre, setTrDestTorre] = useState('')
+  const [trDestPiso, setTrDestPiso] = useState('')
+  const [trDestPos, setTrDestPos] = useState('')
+  const [trCantidad, setTrCantidad] = useState('')
+
+  // ── Data refresh ──
+  const refreshData = useCallback(async () => {
     try {
-      const data = await fetchOcupacionCeldas()
-      setOcupacion(data)
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
-      // Solo mostrar error la primera vez
-      if (isFirstLoad.current) {
-        toast.error('Error al cargar ocupación', { description: message })
-      }
-    } finally {
-      if (isFirstLoad.current) {
-        setLoading(false)
-        isFirstLoad.current = false
+      const celdas = await fetchOcupacionCeldas()
+      if (mountedRef.current) setOcupacion(celdas)
+    } catch {
+      try {
+        const movs = await fetchMovimientos()
+        if (mountedRef.current) setOcupacion(calcularOcupacion(movs))
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Error'
+        if (mountedRef.current) toast.error('Error al cargar ocupación', { description: msg })
       }
     }
   }, [])
 
-  useEffect(() => {
-    load()
-  }, [load])
+  const refreshDetail = useCallback(async () => {
+    if (!detail) return
+    try {
+      const stock = await stockEnUbicacion(detail.bloque, detail.torre, detail.piso, detail.posicion)
+      if (mountedRef.current) setDetail({ ...detail, stock })
+    } catch { /* ok */ }
+  }, [detail])
 
-  // Polling: refresco automático cada 8 segundos (sin spinner)
-  useEffect(() => {
-    const interval = setInterval(() => load(), 8000)
-    return () => clearInterval(interval)
-  }, [load])
-
-  // Realtime: refresco instantáneo cuando cambian movimientos (sin spinner)
+  useEffect(() => { mountedRef.current = true; setLoading(true); refreshData().finally(() => { if (mountedRef.current) setLoading(false) }); return () => { mountedRef.current = false } }, [refreshData])
+  useEffect(() => { const i = setInterval(() => refreshData(), 10000); return () => clearInterval(i) }, [refreshData])
   useEffect(() => {
     let ch: ReturnType<typeof supabase.channel> | null = null
+    try { ch = supabase.channel('ocupacion-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'movimientos' }, () => refreshData()).subscribe() } catch { /* ok */ }
+    return () => { if (ch) try { supabase.removeChannel(ch) } catch { /* ok */ } }
+  }, [refreshData])
+
+  // ── Derived stats ──
+  const totalPosBloque = (b: string) => torresDeBloque(b).length * PISOS.length * posicionesDeBloque(b).length
+  const filtered = bloqueFilter === 'all' ? ocupacion : ocupacion.filter(o => o.bloque === bloqueFilter)
+  const occupied = filtered.filter(o => o.stock > 0).length
+  const multiArt = filtered.filter(o => o.stock > 0 && o.codigos.length > 1).length
+  const singleArt = occupied - multiArt
+  const total = bloqueFilter === 'all' ? totalCeldas() : totalPosBloque(bloqueFilter)
+  const empty = total - occupied
+  const pct = total > 0 ? Math.round((occupied / total) * 100) : 0
+
+  // ── Transferir: derived ──
+  const trTorres = trDestBloque ? torresDeBloque(trDestBloque) : []
+  const trPositions = trDestBloque ? posicionesDeBloque(trDestBloque) : []
+  const trItem = detail?.stock[trIdx] ?? null
+  const trQtyNum = parseFloat(trCantidad) || 0
+  const trExcede = trItem ? trQtyNum > trItem.stock : false
+  const trFalta = trItem ? trQtyNum > 0 && trQtyNum < trItem.stock : false
+  const trDiferencia = trItem ? trQtyNum - trItem.stock : 0
+  const trTieneAjuste = trExcede || trFalta
+
+  // ── Ingreso: proveedor visible? ──
+  const showProveedor = ingDescripcion ? requiereProveedor(ingDescripcion) : false
+
+  // ── Handlers ──
+  async function handleCellClick(b: string, t: string, p: string, pos: string) {
     try {
-      ch = supabase
-        .channel('ocupacion-realtime')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'movimientos' },
-          () => load()
-        )
-        .subscribe()
-    } catch {
-      // Si Realtime no está configurado, el polling cubre
-    }
-    return () => { if (ch) try { supabase.removeChannel(ch) } catch { /* ignore */ } }
-  }, [load])
-
-  // Mapa de ocupación (key → celda)
-  const occMap = useMemo(() => buildOccupationMap(ocupacion), [ocupacion])
-
-  // Calcular totales REALES desde la configuración del almacén
-  const blocksToShow = bloqueFilter === 'all' ? BLOQUES : BLOQUES.filter((b) => b === bloqueFilter)
-
-  const stats = useMemo(() => {
-    let totalPos = 0
-    let totalOcupadas = 0
-    for (const b of blocksToShow) {
-      const total = totalCeldasBloque(b)
-      const torres = torresDeBloque(b)
-      const posiciones = posicionesDeBloque(b)
-      totalPos += total
-      for (const t of torres) {
-        for (const p of PISOS) {
-          for (const pos of posiciones) {
-            const cell = occMap.get(`${b}-${t}-${p}-${pos}`)
-            if (cell && cell.stock > 0) totalOcupadas++
-          }
-        }
-      }
-    }
-    return {
-      totalPos,
-      ocupadas: totalOcupadas,
-      vacias: totalPos - totalOcupadas,
-      porcentaje: totalPos > 0 ? ((totalOcupadas / totalPos) * 100).toFixed(1) : '0.0',
-    }
-  }, [occMap, blocksToShow])
-
-  // Reporte por bloque
-  const reporte = useMemo(
-    () => calcReporteBloques(occMap, BLOQUES),
-    [occMap]
-  )
-
-  const reporteTotal = useMemo(() => {
-    const tPos = reporte.reduce((s, r) => s + r.totalPosiciones, 0)
-    const tOcup = reporte.reduce((s, r) => s + r.ocupadas, 0)
-    return {
-      totalPosiciones: tPos,
-      totalOcupadas: tOcup,
-      totalVacias: tPos - tOcup,
-      porcentaje: tPos > 0 ? ((tOcup / tPos) * 100).toFixed(1) : '0.0',
-    }
-  }, [reporte])
-
-  async function handleCellClick(
-    bloque: string,
-    torre: string,
-    piso: string,
-    posicion: string
-  ) {
-    try {
-      const data = await stockEnUbicacion(bloque, torre, piso, posicion)
-      // Ordenar por vencimiento más próximo (sin fecha al final)
-      const sorted = [...data].sort((a, b) => {
-        const fA = a.fVencimiento || ''
-        const fB = b.fVencimiento || ''
-        if (!fA && !fB) return 0
-        if (!fA) return 1
-        if (!fB) return -1
-        return fA.localeCompare(fB)
-      })
-      setDetail({ bloque, torre, piso, posicion, stock: sorted })
-      setSalidaQty({})
-      setSelectedIdx(null)
-      setShowIngresoForm(false)
-    } catch {
-      toast.error('Error al cargar detalle')
-    }
+      setDetail({ bloque: b, torre: t, piso: p, posicion: pos, stock: await stockEnUbicacion(b, t, p, pos) })
+      setDetailMode('view')
+    } catch { toast.error('Error al cargar detalle') }
   }
 
-  async function doSalida() {
-    if (!confirmAction || !detail || !perfil) return
-    const { item, qty } = confirmAction
-    setBusyAction(true)
-    try {
-      const turno = calcularTurno()
-      await addMovimiento({
-        tipo: 'salida',
-        bloque: detail.bloque,
-        torre: detail.torre,
-        piso: detail.piso,
-        posicion: detail.posicion,
-        codigo: item.codigo,
-        descripcion: item.descripcion,
-        un: item.un,
-        cantidad: qty,
-        fVencimiento: item.fVencimiento ?? '',
-        turno,
-        usuarioId: perfil.id,
-        usuarioNombre: perfil.nombre,
-        usuarioCorreo: perfil.correo,
-        proveedor: item.proveedor,
-      })
-      toast.success(`Salida de ${qty} ${item.un} registrada`)
-      setConfirmAction(null)
-      setSalidaQty({})
-      // Refrescar detalle
-      const data = await stockEnUbicacion(detail.bloque, detail.torre, detail.piso, detail.posicion)
-      const sorted = [...data].sort((a, b) => {
-        const fA = a.fVencimiento || ''
-        const fB = b.fVencimiento || ''
-        if (!fA && !fB) return 0
-        if (!fA) return 1
-        if (!fB) return -1
-        return fA.localeCompare(fB)
-      })
-      setDetail({ ...detail, stock: sorted })
-      // Refrescar mapa
-      load()
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
-      toast.error('Error al registrar salida', { description: message })
-    } finally {
-      setBusyAction(false)
+  function openIngreso(tipo?: 'ingreso' | 'devolucion') {
+    setIngTipo(tipo ?? 'ingreso')
+    setIngCodigo(''); setIngDescripcion(''); setIngUn('')
+    setIngCantidad(''); setIngFVenc('')
+    setIngSinFecha(false); setIngProveedor('')
+    setDetailMode('ingreso')
+  }
+
+  function openSalida(idx: number, total: boolean) {
+    if (!detail?.stock[idx]) return
+    setSalidaIdx(idx); setSalidaTotal(total)
+    setSalidaCantidad(total ? String(detail.stock[idx].stock) : '')
+    setDetailMode('salida')
+  }
+
+  function openTransferir(idx: number) {
+    if (!detail?.stock[idx]) return
+    setTrIdx(idx); setTrCantidad(String(detail.stock[idx].stock))
+    setTrDestBloque(''); setTrDestTorre(''); setTrDestPiso(''); setTrDestPos('')
+    setDetailMode('transferir')
+  }
+
+  /** Called when a catalog item is selected from the search input */
+  function handleCatalogoPick(item: { codigo: string; descripcion: string; un: string }) {
+    setIngCodigo(item.codigo)
+    setIngDescripcion(item.descripcion)
+    setIngUn(item.un)
+    // Reset proveedor if new description doesn't require it
+    if (!requiereProveedor(item.descripcion)) {
+      setIngProveedor('')
     }
-  }
-
-  /* ─── Helpers para ingreso ─── */
-  function requiereProveedorIngreso(descripcion: string): boolean {
-    const upper = descripcion.toUpperCase()
-    return upper.includes('LAMINA') || upper.includes('STRETCH')
-  }
-
-  const PROVEEDORES_INGRESO = ['INCOMIN', 'DAMAR', 'DIAMAND', 'NEOPACK', 'SOLPACK', 'ITS']
-
-  function handleCatalogoPickIngreso(item: CatalogoItem) {
-    setIngresoCodigo(item.codigo)
-    setIngresoDescripcion(item.descripcion)
-    setIngresoUn(item.un)
   }
 
   async function doIngreso() {
     if (!detail || !perfil) return
-    if (!ingresoCodigo.trim() || !ingresoCantidad) {
-      toast.error('Selecciona un producto e ingresa la cantidad')
-      return
-    }
-    if (requiereProveedorIngreso(ingresoDescripcion) && !ingresoProveedor) {
-      toast.error('Selecciona un proveedor para este producto')
-      return
-    }
-    const qty = parseFloat(ingresoCantidad)
-    if (isNaN(qty) || qty <= 0) {
-      toast.error('La cantidad debe ser mayor a 0')
-      return
-    }
-    setBusyIngreso(true)
+    if (!ingCodigo.trim() || !ingCantidad) { toast.error('Completa código y cantidad'); return }
+    const q = parseFloat(ingCantidad); if (isNaN(q) || q <= 0) { toast.error('Cantidad inválida'); return }
+    if (showProveedor && !ingProveedor) { toast.error('Selecciona un proveedor para este artículo'); return }
+    setActionBusy(true)
     try {
-      const turno = calcularTurno()
-      const tipoLabel = ingresoTipo === 'devolucion' ? 'Devolución' : 'Ingreso'
       await addMovimiento({
-        tipo: ingresoTipo,
-        bloque: detail.bloque,
-        torre: detail.torre,
-        piso: detail.piso,
-        posicion: detail.posicion,
-        codigo: ingresoCodigo.trim().toUpperCase(),
-        descripcion: ingresoDescripcion,
-        un: ingresoUn,
-        cantidad: qty,
-        fVencimiento: ingresoSinVencimiento ? '' : ingresoFVencimiento,
-        turno,
-        usuarioId: perfil.id,
-        usuarioNombre: perfil.nombre,
-        usuarioCorreo: perfil.correo,
-        proveedor: ingresoProveedor || undefined,
+        tipo: ingTipo, bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
+        codigo: ingCodigo.trim().toUpperCase(), descripcion: ingDescripcion, un: ingUn, cantidad: q,
+        fVencimiento: ingSinFecha ? '' : ingFVenc,
+        turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+        proveedor: showProveedor ? ingProveedor : undefined,
       })
-      toast.success(`${tipoLabel} de ${qty} ${ingresoUn} registrado en B${detail.bloque}-T${detail.torre}-P${detail.piso}-Pos${detail.posicion}`)
-      // Limpiar form
-      setIngresoCodigo('')
-      setIngresoDescripcion('')
-      setIngresoUn('')
-      setIngresoCantidad('')
-      setIngresoFVencimiento('')
-      setIngresoSinVencimiento(false)
-      setIngresoProveedor('')
-      setShowIngresoForm(false)
-      // Refrescar detalle (ahora debería tener stock)
-      const data = await stockEnUbicacion(detail.bloque, detail.torre, detail.piso, detail.posicion)
-      const sorted = [...data].sort((a, b) => {
-        const fA = a.fVencimiento || ''
-        const fB = b.fVencimiento || ''
-        if (!fA && !fB) return 0
-        if (!fA) return 1
-        if (!fB) return -1
-        return fA.localeCompare(fB)
+      toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
+      await refreshDetail(); refreshData(); setDetailMode('view')
+    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
+  }
+
+  async function doSalida() {
+    if (!detail || !perfil) return
+    const item = detail.stock[salidaIdx]
+    if (!item) return
+    const qty = parseFloat(salidaCantidad)
+    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
+    if (qty > item.stock) { toast.error(`Cantidad excede stock (${item.stock})`); return }
+    setActionBusy(true)
+    try {
+      await addMovimiento({
+        tipo: 'salida', bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
+        codigo: item.codigo, descripcion: item.descripcion, un: item.un, cantidad: qty,
+        fVencimiento: item.fVencimiento ?? '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
       })
-      setDetail({ ...detail, stock: sorted })
-      // Refrescar mapa
-      load()
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
-      toast.error('Error al registrar ingreso', { description: message })
-    } finally {
-      setBusyIngreso(false)
-    }
+      toast.success('Salida registrada')
+      await refreshDetail(); refreshData(); setDetailMode('view')
+    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
+  }
+
+  async function doTransferir() {
+    if (!detail || !perfil || !trItem) return
+    if (!trDestBloque || !trDestTorre || !trDestPiso || !trDestPos) { toast.error('Completa destino'); return }
+    const qty = parseFloat(trCantidad)
+    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
+    const origKey = `${detail.bloque}-${detail.torre}-${detail.piso}-${detail.posicion}`
+    const destKey = `${trDestBloque}-${trDestTorre}-${trDestPiso}-${trDestPos}`
+    if (origKey === destKey) { toast.error('Origen y destino no pueden ser iguales'); return }
+    setActionBusy(true)
+    try {
+      // Check destination occupancy
+      const destStock = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)
+      if (destStock.length > 0) {
+        toast.error(`Destino ocupado con ${destStock.length} artículo(s). Vacía primero el destino.`)
+        setActionBusy(false); return
+      }
+      const input: TrasladoInput = {
+        codigo: trItem.codigo, descripcion: trItem.descripcion, un: trItem.un, cantidad: qty,
+        origen: { bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion },
+        destino: { bloque: trDestBloque, torre: trDestTorre, piso: trDestPiso, posicion: trDestPos },
+        turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+        fVencimiento: trItem.fVencimiento ?? '',
+        cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
+      }
+      await trasladarMovimiento(input)
+      toast.success('Traslado registrado')
+      await refreshDetail(); refreshData(); setDetailMode('view')
+    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
   }
 
   async function handleExport() {
     setBusyExport(true)
     try {
       const XLSX = await import('xlsx')
-
-      // Sheet 1: Reporte por bloque
-      const repData = reporte.map((r) => ({
-        Bloque: r.bloque,
-        'Total Posiciones': r.totalPosiciones,
-        Ocupadas: r.ocupadas,
-        Vacías: r.vacias,
-        'Ocupación %': `${r.porcentaje}%`,
-      }))
-      // Agregar fila total
-      repData.push({
-        Bloque: 'TOTAL',
-        'Total Posiciones': reporteTotal.totalPosiciones,
-        Ocupadas: reporteTotal.totalOcupadas,
-        Vacías: reporteTotal.totalVacias,
-        'Ocupación %': `${reporteTotal.porcentaje}%`,
-      })
-      const ws1 = XLSX.utils.json_to_sheet(repData)
-      XLSX.utils.book_append_sheet(XLSX.utils.book_new(), ws1, 'Reporte')
-
-      // Sheet 2: Detalle de celdas
-      const celdaData = ocupacion.map((o) => ({
-        Bloque: o.bloque,
-        Torre: o.torre,
-        Piso: o.piso,
-        Posición: o.posicion,
-        Stock: o.stock,
-        Códigos: o.codigos.join(', '),
-        Estado: o.stock > 0 ? 'Ocupado' : 'Vacío',
-      }))
-      const ws2 = XLSX.utils.json_to_sheet(celdaData)
-      const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, ws1, 'Reporte')
-      XLSX.utils.book_append_sheet(wb, ws2, 'Detalle Celdas')
-
-      const fecha = new Date().toISOString().slice(0, 10)
-      XLSX.writeFile(wb, `RACKLY_Ocupacion_${fecha}.xlsx`)
-      toast.success('Reporte exportado')
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
-      toast.error('Error al exportar', { description: message })
-    } finally {
-      setBusyExport(false)
-    }
+      const data = filtered.map(o => ({ Bloque: o.bloque, Torre: o.torre, Piso: o.piso, Posición: o.posicion, Stock: o.stock, Códigos: o.codigos.join(', '), Artículos: o.codigos.length, Estado: o.stock <= 0 ? 'Vacío' : o.codigos.length > 1 ? 'Mixto' : 'Ocupado' }))
+      const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Ocupación'); XLSX.writeFile(wb, `RACKLY_Ocupacion_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
+    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusyExport(false) }
   }
 
-  /* ═══════════════════════════════════════════
-     LOADING (solo primera vez)
-     ═══════════════════════════════════════════ */
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 gap-3">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">Cargando mapa de ubicaciones...</p>
+      <div className="flex items-center justify-center py-16">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 animate-pulse" />
+          <p className="text-sm text-slate-400 animate-pulse">Cargando ocupación...</p>
+        </div>
       </div>
     )
   }
 
-  /* ═══════════════════════════════════════════
-     VISTA REPORTE
-     ═══════════════════════════════════════════ */
-  if (showReport) {
-    return (
-      <div className="space-y-5">
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <FileBarChart className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-              <h2 className="text-lg font-bold text-foreground">Reporte de Ocupación</h2>
-            </div>
-            <p className="text-sm text-muted-foreground">Resumen de vacías y ocupadas por bloque y total del kardex.</p>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => setShowReport(false)} className="gap-1.5">
-            Ver mapa
-          </Button>
-        </div>
+  const dashBloques = BLOQUES.map(b => {
+    const bt = totalPosBloque(b), bo = ocupacion.filter(o => o.bloque === b && o.stock > 0).length
+    const bm = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length > 1).length
+    return { bloque: b, total: bt, occupied: bo, multi: bm, empty: bt - bo, pct: bt > 0 ? Math.round((bo / bt) * 100) : 0 }
+  })
 
-        {/* Resumen total */}
-        <div className="rounded-lg border bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 p-4">
-          <h3 className="text-sm font-bold mb-3 text-blue-800 dark:text-blue-200">Resumen Total Kardex</h3>
-          <div className="grid grid-cols-4 gap-4 text-center">
-            <div>
-              <p className="text-2xl font-bold text-foreground">{reporteTotal.totalPosiciones}</p>
-              <p className="text-xs text-muted-foreground">Total Posiciones</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{reporteTotal.totalOcupadas}</p>
-              <p className="text-xs text-muted-foreground">Ocupadas</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-green-600 dark:text-green-400">{reporteTotal.totalVacias}</p>
-              <p className="text-xs text-muted-foreground">Vacías</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-foreground">{reporteTotal.porcentaje}%</p>
-              <p className="text-xs text-muted-foreground">Ocupación</p>
-            </div>
-          </div>
-        </div>
+  const isView = detailMode === 'view'
+  const salItem = detail?.stock[salidaIdx]
 
-        {/* Tabla por bloque */}
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-24">Bloque</TableHead>
-                <TableHead className="text-right">Total Pos.</TableHead>
-                <TableHead className="text-right">Ocupadas</TableHead>
-                <TableHead className="text-right">Vacías</TableHead>
-                <TableHead className="w-48">Ocupación</TableHead>
-                <TableHead className="text-right">%</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {reporte.map((r) => (
-                <TableRow key={r.bloque}>
-                  <TableCell className="font-bold">Bloque {r.bloque}</TableCell>
-                  <TableCell className="text-right">{r.totalPosiciones}</TableCell>
-                  <TableCell className="text-right">
-                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
-                      {r.ocupadas}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800">
-                      {r.vacias}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all ${r.porcentaje > 80 ? 'bg-red-500' : r.porcentaje > 50 ? 'bg-amber-500' : 'bg-blue-500'}`}
-                          style={{ width: `${r.porcentaje}%` }}
-                        />
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right font-bold">{r.porcentaje}%</TableCell>
-                </TableRow>
-              ))}
-              {/* Fila total */}
-              <TableRow className="font-bold border-t-2">
-                <TableCell className="font-bold">TOTAL</TableCell>
-                <TableCell className="text-right">{reporteTotal.totalPosiciones}</TableCell>
-                <TableCell className="text-right">{reporteTotal.totalOcupadas}</TableCell>
-                <TableCell className="text-right">{reporteTotal.totalVacias}</TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all ${Number(reporteTotal.porcentaje) > 80 ? 'bg-red-500' : Number(reporteTotal.porcentaje) > 50 ? 'bg-amber-500' : 'bg-blue-500'}`}
-                        style={{ width: `${reporteTotal.porcentaje}%` }}
-                      />
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="text-right">{reporteTotal.porcentaje}%</TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </div>
-
-        <Button onClick={handleExport} disabled={busyExport} variant="outline" className="gap-2">
-          {busyExport ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Download className="h-4 w-4" />
-          )}
-          Exportar Excel
-        </Button>
-      </div>
-    )
-  }
-
-  /* ═══════════════════════════════════════════
-     VISTA MAPA VISUAL
-     ═══════════════════════════════════════════ */
   return (
     <div className="space-y-5">
-      {/* ─── Header ─── */}
-      <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <MapPin className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-          <h2 className="text-lg font-bold text-foreground">Mapa Visual del Kardex</h2>
+      {/* ═══ DASHBOARD ═══ */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-xl border border-slate-600/40 bg-gradient-to-br from-slate-800 to-slate-900 p-4 shadow-md">
+          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center"><BoxSelect className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-sky-400/80 uppercase tracking-widest">Total</p></div>
+          <p className="text-2xl font-bold text-slate-100">{total.toLocaleString()}</p>
+          <p className="text-[10px] text-slate-500 mt-0.5">{bloqueFilter === 'all' ? 'Todos los bloques' : `Bloque ${bloqueFilter}`}</p>
         </div>
-        <p className="text-sm text-muted-foreground">
-          Mapa visual de bloques, torres, pisos y posiciones.{' '}
-          <span className="inline-flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block" /> Verde = vacío
-          </span>
-          {', '}
-          <span className="inline-flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" /> Azul = ocupado
-          </span>
-          {', '}
-          <span className="inline-flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" /> Múltiples códigos
-          </span>
-          .
-        </p>
+        <div className="rounded-xl border border-blue-600/30 bg-gradient-to-br from-blue-950/40 to-slate-900 p-4 shadow-md">
+          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center"><Layers className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-blue-400/80 uppercase tracking-widest">Ocupadas</p></div>
+          <p className="text-2xl font-bold text-blue-300">{occupied}</p>
+          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiArt} mixtas</p>
+        </div>
+        <div className="rounded-xl border border-emerald-600/30 bg-gradient-to-br from-emerald-950/40 to-slate-900 p-4 shadow-md">
+          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>
+          <p className="text-2xl font-bold text-emerald-300">{empty.toLocaleString()}</p>
+          <p className="text-[10px] text-sky-600/60 mt-0.5">Disponibles</p>
+        </div>
+        <div className="rounded-xl border border-violet-600/30 bg-gradient-to-br from-violet-950/40 to-slate-900 p-4 shadow-md">
+          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center"><Building2 className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-violet-400/80 uppercase tracking-widest">Ocupación</p></div>
+          <p className="text-2xl font-bold text-violet-300">{pct}<span className="text-base">%</span></p>
+          <div className="mt-2 h-1.5 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(pct, 100)}%`, background: pct > 80 ? 'linear-gradient(90deg,#ef4444,#f97316)' : pct > 50 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#0ea5e9,#3b82f6)' }} /></div>
+        </div>
       </div>
 
-      {/* ─── Controles superiores ─── */}
+      {/* ═══ RESUMEN POR BLOQUE ═══ */}
+      <div className="rounded-xl border border-slate-600/30 bg-slate-800/60 shadow-md overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-slate-600/30 flex items-center gap-2"><div className="w-1 h-3.5 rounded-full bg-gradient-to-b from-sky-400 to-blue-500" /><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Resumen por bloque</p></div>
+        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-px bg-slate-700/20">
+          {dashBloques.map(db => (
+            <button key={db.bloque} className="bg-slate-800/60 p-2 text-center space-y-1 transition-colors hover:bg-slate-700/60" onClick={() => setBloqueFilter(bloqueFilter === db.bloque ? 'all' : db.bloque)}>
+              <div className={`w-7 h-7 rounded-lg mx-auto flex items-center justify-center text-xs font-bold transition-all ${bloqueFilter === db.bloque ? 'bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-md scale-105' : 'bg-slate-700 text-slate-400'}`}>{db.bloque}</div>
+              <p className="text-[9px] text-slate-500">{db.total} pos</p>
+              <div className="flex justify-center gap-1"><span className="text-[9px] font-bold text-blue-400">{db.occupied}</span><span className="text-[9px] text-slate-600">/</span><span className="text-[9px] font-bold text-emerald-400">{db.empty}</span></div>
+              {db.multi > 0 && <span className="text-[8px] font-semibold text-amber-400 bg-amber-400/10 px-1 py-px rounded">{db.multi} mix</span>}
+              <div className="h-1 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-500" style={{ width: `${db.pct}%` }} /></div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ═══ FILTROS Y LEYENDA ═══ */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Select value={bloqueFilter} onValueChange={setBloqueFilter}>
-            <SelectTrigger className="w-[140px] h-9">
-              <SelectValue placeholder="Bloque" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos</SelectItem>
-              {BLOQUES.map((b) => (
-                <SelectItem key={b} value={b}>
-                  Bloque {b}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowReport(true)}
-            className="gap-1.5 h-9 text-xs"
-          >
-            <FileBarChart className="h-3.5 w-3.5" />
-            Reporte
-          </Button>
-        </div>
-
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5 text-sm">
-            <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
-            <span className="text-green-700 dark:text-green-400 font-medium">Vacías: {stats.vacias}</span>
-          </div>
-          <div className="flex items-center gap-1.5 text-sm">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-            <span className="text-blue-700 dark:text-blue-400 font-medium">Ocupadas: {stats.ocupadas}</span>
-          </div>
-          <span className="text-sm text-muted-foreground font-medium">Ocupación: {stats.porcentaje}%</span>
-          <span className="text-sm text-muted-foreground">({stats.totalPos} posiciones)</span>
-          <Button
-            onClick={handleExport}
-            disabled={busyExport}
-            variant="outline"
-            size="sm"
-            className="gap-1.5 h-8 text-xs"
-          >
-            {busyExport ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Download className="h-3.5 w-3.5" />
-            )}
-            Exportar Excel
-          </Button>
+        <Select value={bloqueFilter} onValueChange={setBloqueFilter}>
+          <SelectTrigger className="w-40 bg-slate-800/60 border-slate-600/40 text-slate-300 text-xs"><SelectValue placeholder="Filtrar bloque" /></SelectTrigger>
+          <SelectContent className="bg-slate-800 border-slate-600/40"><SelectItem value="all" className="text-slate-300 focus:bg-slate-700">Todos</SelectItem>{BLOQUES.map(b => <SelectItem key={b} value={b} className="text-slate-300 focus:bg-slate-700">Bloque {b}</SelectItem>)}</SelectContent>
+        </Select>
+        <div className="flex items-center gap-4 text-[10px] text-slate-400">
+          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600" /><span>Ocupado</span></div>
+          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-amber-400 to-orange-500" /><span>Multi-art.</span></div>
+          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-emerald-400 to-green-600" /><span>Vacío</span></div>
         </div>
       </div>
 
-      {/* ─── Barras de progreso por bloque ─── */}
-      {bloqueFilter === 'all' && (
-        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2">
-          {BLOQUES.map((b) => {
-            const r = reporte.find((x) => x.bloque === b)
-            if (!r) return null
-            return (
-              <button
-                key={b}
-                onClick={() => setBloqueFilter(b)}
-                className="group relative flex flex-col items-center gap-1 p-2 rounded-lg border border-border hover:border-blue-300 hover:bg-blue-50/50 dark:hover:border-blue-700 dark:hover:bg-blue-950/30 transition-all cursor-pointer"
-              >
-                <span className="text-xs font-semibold text-foreground">B-{b}</span>
-                <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${r.porcentaje > 80 ? 'bg-red-500' : r.porcentaje > 50 ? 'bg-amber-500' : 'bg-blue-500'}`}
-                    style={{ width: `${r.porcentaje}%` }}
-                  />
-                </div>
-                <span className="text-[10px] text-muted-foreground">{r.porcentaje}%</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      {/* ─── Mapa visual por bloques ─── */}
+      {/* ═══ GRID DE BLOQUES ═══ */}
       <div className="space-y-6">
-        {blocksToShow.map((bloque) => {
+        {BLOQUES.filter(b => bloqueFilter === 'all' || b === bloqueFilter).map(bloque => {
           const torres = torresDeBloque(bloque)
           const posiciones = posicionesDeBloque(bloque)
-          const bReporte = reporte.find((r) => r.bloque === bloque)
-
+          const bTotal = totalPosBloque(bloque)
+          const bOcup = ocupacion.filter(o => o.bloque === bloque && o.stock > 0).length
+          const bEmpty = bTotal - bOcup
+          const bPct = bTotal > 0 ? Math.round((bOcup / bTotal) * 100) : 0
           return (
-            <div key={bloque} className="space-y-3">
-              {/* Header del bloque */}
-              <div className="flex items-center gap-2 pb-2 border-b border-border">
-                <Building2 className="h-4 w-4 text-muted-foreground" />
-                <h3 className="text-sm font-bold text-foreground">Bloque {bloque}</h3>
-                {bReporte && (
-                  <div className="ml-auto flex items-center gap-2">
-                    <Badge variant="outline" className="text-xs h-5 bg-green-50 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800">
-                      {bReporte.vacias} vacías
-                    </Badge>
-                    <Badge variant="outline" className="text-xs h-5 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
-                      {bReporte.ocupadas} ocupadas
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">({bReporte.porcentaje}%)</span>
-                  </div>
-                )}
+            <div key={bloque} className="rounded-xl border border-slate-600/30 bg-gradient-to-b from-slate-800/80 to-slate-900/80 shadow-lg overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-600/25 bg-gradient-to-r from-slate-800/60 to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow">{bloque}</div>
+                  <div><p className="text-xs font-bold text-slate-200">Bloque {bloque}</p><p className="text-[10px] text-slate-500">{torres.length} torre(s) · {posiciones.length} pos/torre</p></div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-20 h-1.5 rounded-full bg-slate-700/50 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-700" style={{ width: `${bPct}%` }} /></div>
+                  <span className="text-xs font-bold text-sky-400">{bPct}%</span>
+                  <span className="text-[10px] text-slate-500">({bOcup}/{bTotal})</span>
+                </div>
               </div>
-
-              {/* Torres lado a lado */}
-              <div className={`grid gap-4 ${torres.length === 1 ? 'grid-cols-1 max-w-2xl' : 'grid-cols-1 lg:grid-cols-2'}`}>
-                {torres.map((torre) => (
-                  <div key={torre} className="space-y-2">
-                    {/* Header torre */}
-                    <div className="flex items-center gap-2">
-                      <Warehouse className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="text-xs font-bold text-foreground uppercase tracking-wider">
-                        Torre {torre}
-                      </span>
-                    </div>
-
-                    {/* Pisos */}
-                    <div className="space-y-2">
-                      {[...PISOS].map((piso) => {
-                        // Calcular ocupación de este piso
-                        let pisoOcupadas = 0
-                        for (const pos of posiciones) {
-                          const cell = occMap.get(`${bloque}-${torre}-${piso}-${pos}`)
-                          if (cell && cell.stock > 0) pisoOcupadas++
-                        }
-
-                        return (
-                          <div key={piso} className="space-y-1">
-                            {/* Label del piso */}
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[11px] font-semibold text-muted-foreground w-12">
-                                Piso {piso}
-                              </span>
-                              {pisoOcupadas > 0 && (
-                                <span className="text-[10px] text-blue-500 font-medium">
-                                  ({pisoOcupadas}/{posiciones.length})
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Grilla de posiciones — 2 filas de 10 */}
-                            <div className="space-y-1">
-                              {Array.from({ length: Math.ceil(posiciones.length / 10) }, (_, rowIdx) => {
-                                const rowPos = posiciones.slice(rowIdx * 10, rowIdx * 10 + 10)
-                                return (
-                                  <div key={rowIdx} className="grid grid-cols-10 gap-1">
-                                    {rowPos.map((pos) => {
-                                      const cell = occMap.get(`${bloque}-${torre}-${piso}-${pos}`)
-                                      const isOccupied = !!cell && cell.stock > 0
-                                      const isMulti = isOccupied && cell!.codigos.length > 1
-                                      const stockVal = cell ? cell.stock : 0
-
-                                      return (
-                                        <button
-                                          key={pos}
-                                          title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOccupied ? ` | Stock: ${stockVal} | ${cell!.codigos.join(', ')}` : ' | Vacía'}`}
-                                          onClick={() =>
-                                            handleCellClick(bloque, torre, piso, pos)
-                                          }
-                                          className={`
-                                            relative flex items-center justify-center
-                                            h-8 rounded-md text-[11px] font-semibold
-                                            transition-all duration-150 cursor-pointer
-                                            shadow-sm hover:shadow-md hover:scale-105 hover:z-10
-                                            ${isOccupied
-                                              ? isMulti
-                                                ? 'bg-amber-500 text-white hover:bg-amber-600 ring-1 ring-amber-300 dark:ring-amber-700'
-                                                : 'bg-blue-500 text-white hover:bg-blue-600'
-                                              : 'bg-green-500 text-white hover:bg-green-600'
-                                            }
-                                          `}
-                                        >
-                                          {pos}
-                                          {isMulti && (
-                                            <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-orange-500 border border-white dark:border-gray-800 flex items-center justify-center">
-                                              <span className="text-[7px] font-bold">{cell!.codigos.length}</span>
-                                            </span>
-                                          )}
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ))}
+              <div className="p-3 sm:p-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+                  {torres.map(torre => {
+                    const tTotal = PISOS.length * posiciones.length
+                    const tOcup = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.stock > 0).length
+                    const halfLen = Math.ceil(posiciones.length / 2)
+                    const posA = posiciones.slice(0, halfLen)
+                    const posB = posiciones.slice(halfLen)
+                    return (
+                      <div key={torre}>
+                        <div className="flex items-center justify-between px-3 py-1.5 mb-2">
+                          <div className="flex items-center gap-1.5"><div className="w-1.5 h-4 rounded-sm bg-gradient-to-b from-sky-400 to-blue-500" /><span className="text-[11px] font-bold text-slate-300">Torre {torre}</span></div>
+                          <div className="flex items-center gap-1"><span className="text-[10px] font-bold text-blue-400">{tOcup}</span><span className="text-[10px] text-slate-600">/</span><span className="text-[10px] font-bold text-emerald-400">{tTotal}</span></div>
+                        </div>
+                        <div className="space-y-1">
+                          {PISOS.map(piso => {
+                            const pisoOcup = posiciones.filter(pos => { const c = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos); return c && c.stock > 0 }).length
+                            return (
+                              <div key={piso} className="rounded-lg border border-slate-600/15 bg-slate-900/40 overflow-hidden">
+                                <div className="flex items-center justify-center gap-2 py-1.5 px-2 bg-slate-800/50 border-b border-slate-700/15">
+                                  <div className={`w-1.5 h-1.5 rounded-full ${pisoOcup > 0 ? 'bg-blue-400' : 'bg-slate-600'}`} />
+                                  <span className="text-[10px] font-bold text-slate-300 tracking-wide">PISO {piso}</span>
+                                  {pisoOcup > 0 && <span className="text-[9px] font-bold text-blue-400 bg-blue-400/10 px-1.5 py-px rounded-full">{pisoOcup}</span>}
+                                  <div className="flex-1 h-px bg-slate-700/20" />
+                                  <span className="text-[8px] text-slate-600">{posA.length}+{posB.length}</span>
+                                </div>
+                                <div className="flex px-1.5 pt-1.5 gap-[2px]">
+                                  {posA.map(pos => {
+                                    const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
+                                    const isOcc = cell && cell.stock > 0
+                                    const isMulti = isOcc && cell.codigos.length > 1
+                                    let cls = 'flex-1 min-w-[24px] h-8 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
+                                    if (isMulti) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
+                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25'
+                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15'
+                                    return <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOcc ? ` (${cell.stock})${isMulti ? ` · ${cell.codigos.length} art` : ''}` : ' · Vacío'}`}>{pos}</button>
+                                  })}
+                                </div>
+                                <div className="flex px-1.5 pt-[2px] pb-1.5 gap-[2px]">
+                                  {posB.map(pos => {
+                                    const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
+                                    const isOcc = cell && cell.stock > 0
+                                    const isMulti = isOcc && cell.codigos.length > 1
+                                    let cls = 'flex-1 min-w-[24px] h-8 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
+                                    if (isMulti) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
+                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25'
+                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15'
+                                    return <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOcc ? ` (${cell.stock})${isMulti ? ` · ${cell.codigos.length} art` : ''}` : ' · Vacío'}`}>{pos}</button>
+                                  })}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             </div>
           )
         })}
       </div>
 
-      {/* ─── Botón volver (cuando se filtra por bloque) ─── */}
-      {bloqueFilter !== 'all' && (
-        <div className="flex justify-center">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setBloqueFilter('all')}
-            className="gap-1.5"
-          >
-            Ver todos los bloques
-          </Button>
-        </div>
-      )}
+      {/* Exportar */}
+      <div className="flex justify-end">
+        <Button onClick={handleExport} disabled={busyExport} variant="outline" size="sm" className="gap-1.5 border-slate-600/40 bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-sky-400 text-xs">
+          {busyExport ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Exportar
+        </Button>
+      </div>
 
-      {/* ─── Dialog de detalle ─── */}
-      <Dialog open={!!detail} onOpenChange={() => { setDetail(null); setSalidaQty({}); setSelectedIdx(null); setIngresoCodigo(''); setIngresoDescripcion(''); setIngresoUn(''); setIngresoCantidad(''); setIngresoFVencimiento(''); setIngresoSinVencimiento(false); setIngresoProveedor(''); setShowIngresoForm(false) }}>
-        <DialogContent className="max-w-[95vw] sm:max-w-lg max-h-[85vh] overflow-y-auto">
+      {/* ═══════════════════════════════════════════════════════════════════
+          DIÁLOGO PRINCIPAL — Vista, Ingreso, Salida, Transferir
+          Todo dentro de la misma ventana emergente
+          ═══════════════════════════════════════════════════════════════════ */}
+      <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setDetailMode('view') } }}>
+        <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-xl bg-slate-800 border-slate-600/40 shadow-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <Package className="h-4 w-4 text-blue-500" />
-              Detalle de Ubicación
+            <DialogTitle className="bg-gradient-to-r from-sky-400 to-blue-500 bg-clip-text text-transparent font-bold text-sm">
+              B{detail?.bloque} · T{detail?.torre} · P{detail?.piso} · Pos {detail?.posicion}
+              {!isView && <span className="text-slate-400 font-normal text-xs ml-2">
+                — {detailMode === 'ingreso' ? (ingTipo === 'ingreso' ? 'Ingreso' : 'Devolución') : detailMode === 'salida' ? 'Salida' : 'Transferir'}
+              </span>}
             </DialogTitle>
-            <DialogDescription>
-              Productos en esta posición, ordenados por vencimiento más próximo.
-            </DialogDescription>
           </DialogHeader>
-          {detail && (
-            <div className="space-y-3">
-              {/* Info de ubicación */}
-              <div className="rounded-lg border bg-muted/50 p-3 grid grid-cols-4 gap-2 text-center">
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase">Bloque</p>
-                  <p className="text-sm font-bold">{detail.bloque}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase">Torre</p>
-                  <p className="text-sm font-bold">{detail.torre}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase">Piso</p>
-                  <p className="text-sm font-bold">{detail.piso}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase">Posición</p>
-                  <p className="text-sm font-bold">{detail.posicion}</p>
-                </div>
-              </div>
 
-              {detail.stock.length > 0 ? (
+          {detail && (<>
+            {/* ═══════ MODO: VISTA ═══════ */}
+            {isView && (
+              detail.stock.length > 0 ? (
                 <>
-                  {/* ── Vista selector + tarjeta (móvil) ── */}
-                  <div className="sm:hidden space-y-3">
-                    {/* Selector de artículo - siempre visible cuando hay 2+ */}
-                    {detail.stock.length >= 2 && (
-                      <div className="space-y-1.5">
-                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Selecciona un artículo ({detail.stock.length} en esta ubicación)
-                        </p>
-                        <div className="space-y-1.5">
-                          {detail.stock.map((s, i) => {
-                            const dias = s.fVencimiento
-                              ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
-                              : null
-                            const isSelected = selectedIdx === i
-                            return (
-                              <button
-                                key={i}
-                                onClick={() => {
-                                  setSelectedIdx(isSelected ? null : i)
-                                  setSalidaQty({})
-                                }}
-                                className={`
-                                  w-full text-left rounded-lg border-2 p-2.5 transition-all
-                                  ${isSelected
-                                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
-                                    : 'border-border bg-card hover:border-blue-300 dark:hover:border-blue-700'
-                                  }
-                                `}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <div className={`
-                                    shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center
-                                    ${isSelected ? 'border-blue-500 bg-blue-500' : 'border-muted-foreground/40'}
-                                  `}>
-                                    {isSelected && <Check className="h-3 w-3 text-white" />}
-                                  </div>
+                  {/* Lista de artículos — separados por lote (código + vencimiento), orden FEFO */}
+                  {(() => {
+                    const multiples = codigosConMultiplesLotes(detail.stock)
+                    return (
+                      <div className="space-y-2">
+                        {detail.stock.map((s, i) => {
+                          const dias = diasParaVencer(s.fVencimiento)
+                          const esLoteMultiple = multiples.has(s.codigo)
+                          // Clase de color según urgencia de vencimiento
+                          let vencBadge = ''
+                          if (dias !== null) {
+                            if (dias < 0) { vencBadge = 'bg-red-500/15 border-red-500/25 text-red-400' }
+                            else if (dias <= 15) { vencBadge = 'bg-orange-500/15 border-orange-500/25 text-orange-400' }
+                            else if (dias <= 30) { vencBadge = 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' }
+                            else { vencBadge = 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' }
+                          }
+                          return (
+                            <div key={`${s.codigo}-${s.fVencimiento || 'sin-fecha'}`} className={`rounded-lg border overflow-hidden ${esLoteMultiple ? 'border-sky-500/25 bg-gradient-to-r from-sky-950/20 to-slate-700/20' : 'border-slate-600/30 bg-slate-700/20'}`}>
+                              <div className="p-3 space-y-1.5">
+                                {/* Encabezado: código + badges */}
+                                <div className="flex items-start justify-between gap-2">
                                   <div className="min-w-0 flex-1">
-                                    <p className="font-mono font-bold text-sm text-foreground">{s.codigo}</p>
-                                    <p className="text-[11px] text-muted-foreground line-clamp-2 leading-tight">{s.descripcion}</p>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-mono text-sky-400 font-bold text-xs">{s.codigo}</span>
+                                      {s.proveedor && <span className="text-[8px] font-semibold text-purple-400 bg-purple-400/10 px-1.5 py-px rounded">{s.proveedor}</span>}
+                                      {/* Badge FEFO: indica que hay múltiples lotes del mismo artículo */}
+                                      {esLoteMultiple && (
+                                        <span className="flex items-center gap-0.5 text-[8px] font-bold text-sky-300 bg-sky-400/15 border border-sky-400/20 px-1.5 py-px rounded">
+                                          <CalendarClock className="w-2.5 h-2.5" /> FEFO #{i + 1}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {s.descripcion && <p className="text-slate-300 text-xs mt-0.5 truncate">{s.descripcion}</p>}
+                                    {/* Fecha de vencimiento con badge de urgencia */}
+                                    <div className="flex items-center gap-2 mt-1 text-[10px] flex-wrap">
+                                      {s.fVencimiento && (
+                                        <span className={`flex items-center gap-1 px-1.5 py-px rounded border ${vencBadge || 'border-slate-600/20 text-slate-500'}`}>
+                                          {dias !== null && dias < 0 && <Flame className="w-2.5 h-2.5" />}
+                                          Venc: {s.fVencimiento}
+                                          {dias !== null && (
+                                            <span className="font-semibold">({dias < 0 ? `${Math.abs(dias)}d vencido` : `${dias}d`})</span>
+                                          )}
+                                        </span>
+                                      )}
+                                      {!s.fVencimiento && <span className="italic text-slate-500">Sin fecha de vencimiento</span>}
+                                      {s.usuarioPrimerNombre && <span className="text-slate-500">Ing: {s.usuarioPrimerNombre}</span>}
+                                    </div>
                                   </div>
-                                  <div className="shrink-0 flex flex-col items-end gap-1">
-                                    <Badge variant="default" className="text-xs font-bold">{s.stock} {s.un}</Badge>
-                                    {dias !== null ? (
-                                      <Badge
-                                        variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
-                                        className={`text-[10px] ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
-                                      >
-                                        {dias <= 0 ? 'Vencido' : `${dias}d`}
-                                      </Badge>
-                                    ) : (
-                                      <span className="text-[10px] text-muted-foreground">—</span>
-                                    )}
+                                  <div className="text-right flex-shrink-0">
+                                    <p className="font-bold text-emerald-400 text-sm">{s.stock}</p>
+                                    <p className="text-[10px] text-slate-500">{s.un}</p>
                                   </div>
                                 </div>
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tarjeta de salida - solo para el seleccionado (o el único) */}
-                    {detail.stock.map((s, i) => {
-                      const showCard = detail.stock.length === 1
-                        ? true
-                        : selectedIdx === i
-                      if (!showCard) return null
-
-                      const dias = s.fVencimiento
-                        ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
-                        : null
-
-                      return (
-                        <div key={i} className="rounded-xl border-2 border-blue-200 dark:border-blue-800 bg-card p-3 space-y-3">
-                          {/* Info del producto seleccionado */}
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center shrink-0">
-                              <Package className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                                {/* Botones de acción */}
+                                <div className="flex items-center gap-1 pt-1">
+                                  <button onClick={() => openSalida(i, true)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Salida total</button>
+                                  <button onClick={() => openSalida(i, false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
+                                  <button onClick={() => openTransferir(i)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
+                                </div>
+                              </div>
                             </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="font-mono font-bold text-sm text-foreground">{s.codigo}</p>
-                              <p className="text-[11px] text-muted-foreground line-clamp-2 leading-tight">{s.descripcion}</p>
-                            </div>
-                            {dias !== null ? (
-                              <Badge
-                                variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
-                                className={`shrink-0 ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
-                              >
-                                {dias <= 0 ? 'Vencido' : `${dias}d`}
-                              </Badge>
-                            ) : (
-                              <span className="text-muted-foreground text-xs shrink-0">—</span>
-                            )}
-                          </div>
-
-                          {/* Stock disponible - grande y claro */}
-                          <div className="flex items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2.5">
-                            <Package className="h-4 w-4 text-blue-500 shrink-0" />
-                            <span className="text-xs text-muted-foreground">Stock disponible:</span>
-                            <span className="text-xl font-bold text-foreground ml-auto">{s.stock}</span>
-                            <span className="text-xs text-muted-foreground font-medium">{s.un}</span>
-                          </div>
-
-                          {/* Campo de cantidad para salida parcial */}
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                              Cantidad a retirar ({s.un})
-                            </label>
-                            <Input
-                              type="text"
-                              inputMode="decimal"
-                              min="0.001"
-                              max={s.stock}
-                              value={salidaQty[i] || ''}
-                              onChange={(e) => {
-                                const val = e.target.value.replace(/[^0-9.]/g, '')
-                                setSalidaQty((prev) => ({ ...prev, [i]: val }))
-                              }}
-                              onFocus={(e) => e.target.select()}
-                              placeholder="0"
-                              className="h-14 text-xl font-bold text-center"
-                            />
-                            {/* Indicador si excede stock */}
-                            {salidaQty[i] && parseFloat(salidaQty[i]) > s.stock && (
-                              <p className="text-xs text-red-500 font-medium flex items-center gap-1">
-                                ⚠ Excede el stock disponible ({s.stock} {s.un})
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Botones de acción */}
-                          <div className="grid grid-cols-2 gap-2">
-                            <Button
-                              variant="destructive"
-                              className="h-12 text-sm font-bold rounded-lg"
-                              disabled={busyAction || !salidaQty[i] || (salidaQty[i] ? parseFloat(salidaQty[i]) > s.stock : false)}
-                              onClick={() => {
-                                const qtyNum = parseFloat(salidaQty[i] || '')
-                                if (!qtyNum || qtyNum <= 0) {
-                                  toast.error('Ingresa una cantidad válida')
-                                  return
-                                }
-                                if (qtyNum > s.stock) {
-                                  toast.error('La cantidad excede el stock')
-                                  return
-                                }
-                                setConfirmAction({ tipo: 'salida-parcial', item: s, qty: qtyNum })
-                              }}
-                            >
-                              <ArrowUpFromLine className="h-4 w-4 mr-1.5" />
-                              Salida Parcial
-                            </Button>
-                            <Button
-                              variant="outline"
-                              className="h-12 text-sm font-bold rounded-lg border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800"
-                              disabled={busyAction}
-                              onClick={() => {
-                                setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })
-                              }}
-                            >
-                              <ArrowUpFromLine className="h-4 w-4 mr-1.5" />
-                              Salida Total
-                            </Button>
-                          </div>
-                        </div>
-                      )
-                    })}
-
-                    {/* Indicador cuando hay 2+ y no se ha seleccionado */}
-                    {detail.stock.length >= 2 && selectedIdx === null && (
-                      <div className="flex flex-col items-center gap-1.5 py-4 text-muted-foreground">
-                        <ChevronRight className="h-5 w-5 animate-pulse" />
-                        <p className="text-xs font-medium">Toca un artículo arriba para dar salida</p>
+                          )
+                        })}
                       </div>
-                    )}
+                    )
+                  })()}
+                  {/* Botones principales */}
+                  <div className="flex gap-2 pt-1">
+                    <Button onClick={() => openIngreso('ingreso')} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white text-xs"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
                   </div>
-
-                  {/* ── Vista tarjetas (desktop) ── */}
-                  <div className="hidden sm:block space-y-2">
-                    {detail.stock.map((s, i) => {
-                      const dias = s.fVencimiento
-                        ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
-                        : null
-                      return (
-                        <div key={i} className="rounded-lg border border-blue-200 dark:border-blue-800 bg-card p-2.5 space-y-2 max-w-md mx-auto">
-                          {/* Fila 1: código + descripción + vencimiento */}
-                          <div className="flex items-center gap-2">
-                            <div className="min-w-0 flex-1">
-                              <span className="font-mono font-bold text-xs text-foreground">{s.codigo}</span>
-                              <span className="text-[11px] text-muted-foreground ml-1.5">{s.descripcion}</span>
-                            </div>
-                            {dias !== null ? (
-                              <Badge
-                                variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
-                                className={`text-[11px] shrink-0 ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
-                              >
-                                {dias <= 0 ? 'Vencido' : `${dias}d`}
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-[11px] shrink-0">—</Badge>
-                            )}
-                          </div>
-
-                          {/* Fila 2: stock + input + botones */}
-                          <div className="flex items-center gap-2">
-                            <div className="shrink-0 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-2.5 py-1.5 text-center min-w-[72px]">
-                              <p className="text-base font-bold text-foreground leading-none">{s.stock}</p>
-                              <p className="text-[9px] text-muted-foreground mt-0.5">{s.un}</p>
-                            </div>
-
-                            <Input
-                              type="text"
-                              inputMode="decimal"
-                              value={salidaQty[i] || ''}
-                              onChange={(e) => {
-                                const val = e.target.value.replace(/[^0-9.]/g, '')
-                                setSalidaQty((prev) => ({ ...prev, [i]: val }))
-                              }}
-                              onFocus={(e) => e.target.select()}
-                              placeholder="Cantidad..."
-                              className="flex-1 h-8 text-xs font-bold text-center"
-                            />
-
-                            <Button
-                              variant="destructive"
-                              className="h-8 px-3 text-[11px] font-bold gap-1 shrink-0"
-                              disabled={busyAction || !salidaQty[i]}
-                              onClick={() => {
-                                const qtyNum = parseFloat(salidaQty[i] || '')
-                                if (!qtyNum || qtyNum <= 0) {
-                                  toast.error('Ingresa una cantidad válida')
-                                  return
-                                }
-                                if (qtyNum > s.stock) {
-                                  toast.error('La cantidad excede el stock')
-                                  return
-                                }
-                                setConfirmAction({ tipo: 'salida-parcial', item: s, qty: qtyNum })
-                              }}
-                            >
-                              <ArrowUpFromLine className="h-3 w-3" />
-                              Salida
-                            </Button>
-                            <Button
-                              variant="outline"
-                              className="h-8 px-3 text-[11px] font-bold gap-1 shrink-0 border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800"
-                              disabled={busyAction}
-                              onClick={() => {
-                                setConfirmAction({ tipo: 'salida-total', item: s, qty: s.stock })
-                              }}
-                            >
-                              <ArrowUpFromLine className="h-3 w-3" />
-                              Todo ({s.stock})
-                            </Button>
-                          </div>
-
-                          {salidaQty[i] && parseFloat(salidaQty[i]) > s.stock && (
-                            <p className="text-[11px] text-red-500 font-medium -mt-1 text-center">
-                              Excede el stock ({s.stock} {s.un})
-                            </p>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground text-center">
-                    Las ubicaciones con stock 0 desaparecen automáticamente.
-                  </p>
-
-                  {/* Botón para agregar otro código */}
-                  {!showIngresoForm && (
-                    <Button
-                      variant="outline"
-                      className="w-full h-11 border-green-300 text-green-700 hover:bg-green-50 hover:text-green-800 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950/30 text-sm font-bold rounded-lg gap-2"
-                      onClick={() => setShowIngresoForm(true)}
-                    >
-                      <ArrowDownToLine className="h-4 w-4" />
-                      Agregar otro código a esta ubicación
-                    </Button>
-                  )}
-
-                  {/* Formulario de ingreso/devolución (mostrar cuando se activa desde celda ocupada o vacía) */}
-                  {showIngresoForm && (
-                    <div className="space-y-4 pt-2 border-t border-border">
-                      <div className="flex items-center justify-between">
-                        {/* Toggle tipo: ingreso / devolución */}
-                        <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
-                          <button
-                            onClick={() => setIngresoTipo('ingreso')}
-                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                              ingresoTipo === 'ingreso'
-                                ? 'bg-green-600 text-white shadow-sm'
-                                : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                          >
-                            <ArrowDownToLine className="h-3 w-3" />
-                            Ingreso
-                          </button>
-                          <button
-                            onClick={() => setIngresoTipo('devolucion')}
-                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                              ingresoTipo === 'devolucion'
-                                ? 'bg-amber-600 text-white shadow-sm'
-                                : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                          >
-                            <RotateCcw className="h-3 w-3" />
-                            Devolución
-                          </button>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs text-muted-foreground"
-                          onClick={() => {
-                            setShowIngresoForm(false)
-                            setIngresoCodigo('')
-                            setIngresoDescripcion('')
-                            setIngresoUn('')
-                            setIngresoCantidad('')
-                            setIngresoFVencimiento('')
-                            setIngresoSinVencimiento(false)
-                            setIngresoProveedor('')
-                            setIngresoTipo('ingreso')
-                          }}
-                        >
-                          Cancelar
-                        </Button>
-                      </div>
-
-                      {/* Búsqueda de producto */}
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                          <Search className="h-3.5 w-3.5" />
-                          Buscar producto
-                        </Label>
-                        <CatalogoSearchInput
-                          onPick={handleCatalogoPickIngreso}
-                          value={ingresoCodigo}
-                          onChange={(v) => {
-                            setIngresoCodigo(v)
-                            const cat = findCatalogoByCodigo(v)
-                            if (cat) {
-                              setIngresoDescripcion(cat.descripcion)
-                              setIngresoUn(cat.un)
-                            }
-                          }}
-                        />
-                      </div>
-
-                      {/* Info del producto seleccionado */}
-                      {ingresoDescripcion && (
-                        <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 p-3 space-y-2">
-                          <div className="flex items-start gap-3">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-[10px] text-muted-foreground uppercase">Código</p>
-                              <p className="font-mono font-bold text-sm text-foreground">{ingresoCodigo}</p>
-                            </div>
-                            <div className="min-w-[60px] text-right">
-                              <p className="text-[10px] text-muted-foreground uppercase">UN</p>
-                              <p className="font-bold text-sm text-foreground">{ingresoUn || '—'}</p>
-                            </div>
-                          </div>
-                          <div>
-                            <p className="text-[10px] text-muted-foreground uppercase">Descripción</p>
-                            <p className="text-sm text-foreground leading-snug">{ingresoDescripcion}</p>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Cantidad y vencimiento */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                            Cantidad ({ingresoUn || '—'})
-                          </Label>
-                          <Input
-                            type="number"
-                            step="any"
-                            min="0.001"
-                            value={ingresoCantidad}
-                            onChange={(e) => setIngresoCantidad(e.target.value)}
-                            placeholder="0"
-                            className="h-12 text-lg font-bold text-center"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                            Vencimiento
-                          </Label>
-                          <Input
-                            type="date"
-                            value={ingresoFVencimiento}
-                            onChange={(e) => setIngresoFVencimiento(e.target.value)}
-                            disabled={ingresoSinVencimiento}
-                            className="h-12 text-sm"
-                          />
-                          <label className="flex items-center gap-1.5 cursor-pointer">
-                            <Checkbox
-                              checked={ingresoSinVencimiento}
-                              onCheckedChange={(v) => setIngresoSinVencimiento(!!v)}
-                            />
-                            <span className="text-[11px] text-muted-foreground">Sin vencimiento</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* Proveedor (solo para LAMINA/STRETCH) */}
-                      {requiereProveedorIngreso(ingresoDescripcion) && (
-                        <div className="space-y-1.5">
-                          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                            Proveedor <span className="text-red-500">*</span>
-                          </Label>
-                          <Select value={ingresoProveedor} onValueChange={setIngresoProveedor}>
-                            <SelectTrigger className="h-11">
-                              <SelectValue placeholder="Selecciona proveedor" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {PROVEEDORES_INGRESO.map((p) => (
-                                <SelectItem key={p} value={p}>{p}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-
-                      {/* Botón registrar */}
-                      <Button
-                        onClick={doIngreso}
-                        disabled={busyIngreso || !ingresoCodigo.trim() || !ingresoCantidad}
-                        className={`w-full h-12 text-white text-sm font-bold rounded-lg ${ingresoTipo === 'devolucion' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}
-                      >
-                        {busyIngreso ? (
-                          <span className="flex items-center justify-center gap-2">
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Registrando...
-                          </span>
-                        ) : (
-                          <span className="flex items-center justify-center gap-2">
-                            {ingresoTipo === 'devolucion' ? <RotateCcw className="h-4 w-4" /> : <ArrowDownToLine className="h-4 w-4" />}
-                            {ingresoTipo === 'devolucion' ? 'Registrar Devolución' : 'Registrar Ingreso'}
-                          </span>
-                        )}
-                      </Button>
-                    </div>
-                  )}
                 </>
               ) : (
-                /* ── Celda vacía: Formulario de ingreso/devolución ── */
-                <div className="space-y-4">
-                  {/* Indicador vacía + acción */}
-                  <div className={`flex items-center gap-2 rounded-lg px-3 py-2.5 border ${
-                    ingresoTipo === 'devolucion'
-                      ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800'
-                      : 'bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800'
-                  }`}>
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-                      ingresoTipo === 'devolucion' ? 'bg-amber-100 dark:bg-amber-900' : 'bg-green-100 dark:bg-green-900'
-                    }`}>
-                      {ingresoTipo === 'devolucion'
-                        ? <RotateCcw className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                        : <ArrowDownToLine className="h-4 w-4 text-green-600 dark:text-green-400" />}
-                    </div>
-                    <div>
-                      <p className={`text-sm font-semibold ${ingresoTipo === 'devolucion' ? 'text-amber-700 dark:text-amber-300' : 'text-green-700 dark:text-green-300'}`}>
-                        Ubicación vacía
-                      </p>
-                      <p className={`text-xs ${ingresoTipo === 'devolucion' ? 'text-amber-600/70 dark:text-amber-400/70' : 'text-green-600/70 dark:text-green-400/70'}`}>
-                        Registra un ingreso o devolución de mercadería
-                      </p>
-                    </div>
+                /* Ubicación vacía */
+                <div className="space-y-3 py-2">
+                  <div className="flex flex-col items-center gap-2 py-4">
+                    <BoxSelect className="w-8 h-8 text-slate-600" />
+                    <p className="text-slate-500 text-sm">Ubicación vacía</p>
                   </div>
-
-                  {/* Toggle tipo: ingreso / devolución */}
-                  <div className="flex items-center justify-center">
-                    <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
-                      <button
-                        onClick={() => setIngresoTipo('ingreso')}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold transition-all ${
-                          ingresoTipo === 'ingreso'
-                            ? 'bg-green-600 text-white shadow-sm'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        <ArrowDownToLine className="h-3.5 w-3.5" />
-                        Ingreso
-                      </button>
-                      <button
-                        onClick={() => setIngresoTipo('devolucion')}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold transition-all ${
-                          ingresoTipo === 'devolucion'
-                            ? 'bg-amber-600 text-white shadow-sm'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        Devolución
-                      </button>
-                    </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button onClick={() => openIngreso('ingreso')} size="sm" className="gap-1.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white text-xs"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+                    <Button onClick={() => openIngreso('devolucion')} size="sm" className="gap-1.5 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white text-xs"><RotateCcw className="h-3.5 w-3.5" /> Devolución</Button>
                   </div>
-
-                  {/* Búsqueda de producto */}
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                      <Search className="h-3.5 w-3.5" />
-                      Buscar producto
-                    </Label>
-                    <CatalogoSearchInput
-                      onPick={handleCatalogoPickIngreso}
-                      value={ingresoCodigo}
-                      onChange={(v) => {
-                        setIngresoCodigo(v)
-                        const cat = findCatalogoByCodigo(v)
-                        if (cat) {
-                          setIngresoDescripcion(cat.descripcion)
-                          setIngresoUn(cat.un)
-                        }
-                      }}
-                    />
-                  </div>
-
-                  {/* Info del producto seleccionado */}
-                  {ingresoDescripcion && (
-                    <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 p-3 space-y-2">
-                      <div className="flex items-start gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[10px] text-muted-foreground uppercase">Código</p>
-                          <p className="font-mono font-bold text-sm text-foreground">{ingresoCodigo}</p>
-                        </div>
-                        <div className="min-w-[60px] text-right">
-                          <p className="text-[10px] text-muted-foreground uppercase">UN</p>
-                          <p className="font-bold text-sm text-foreground">{ingresoUn || '—'}</p>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-muted-foreground uppercase">Descripción</p>
-                        <p className="text-sm text-foreground leading-snug">{ingresoDescripcion}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Cantidad y vencimiento */}
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Cantidad ({ingresoUn || '—'})
-                        </Label>
-                        <Input
-                          type="number"
-                          step="any"
-                          min="0.001"
-                          value={ingresoCantidad}
-                          onChange={(e) => setIngresoCantidad(e.target.value)}
-                          placeholder="0"
-                          className="h-12 text-lg font-bold text-center"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                          Vencimiento
-                        </Label>
-                        <div className="flex items-center gap-1.5">
-                          <Input
-                            type="date"
-                            value={ingresoFVencimiento}
-                            onChange={(e) => setIngresoFVencimiento(e.target.value)}
-                            disabled={ingresoSinVencimiento}
-                            className="h-12 text-sm"
-                          />
-                        </div>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                          <Checkbox
-                            checked={ingresoSinVencimiento}
-                            onCheckedChange={(v) => setIngresoSinVencimiento(!!v)}
-                          />
-                          <span className="text-[11px] text-muted-foreground">Sin vencimiento</span>
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Proveedor (solo para LAMINA/STRETCH) */}
-                  {requiereProveedorIngreso(ingresoDescripcion) && (
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        Proveedor <span className="text-red-500">*</span>
-                      </Label>
-                      <Select value={ingresoProveedor} onValueChange={setIngresoProveedor}>
-                        <SelectTrigger className="h-11">
-                          <SelectValue placeholder="Selecciona proveedor" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PROVEEDORES_INGRESO.map((p) => (
-                            <SelectItem key={p} value={p}>{p}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-
-                  {/* Botón registrar */}
-                  <Button
-                    onClick={doIngreso}
-                    disabled={busyIngreso || !ingresoCodigo.trim() || !ingresoCantidad}
-                    className={`w-full h-12 text-white text-sm font-bold rounded-lg ${ingresoTipo === 'devolucion' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}
-                  >
-                    {busyIngreso ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Registrando...
-                      </span>
-                    ) : (
-                      <span className="flex items-center justify-center gap-2">
-                        {ingresoTipo === 'devolucion' ? <RotateCcw className="h-4 w-4" /> : <ArrowDownToLine className="h-4 w-4" />}
-                        {ingresoTipo === 'devolucion' ? 'Registrar Devolución' : 'Registrar Ingreso'}
-                      </span>
-                    )}
-                  </Button>
                 </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+              )
+            )}
 
-      {/* ─── Diálogo de confirmación de salida ─── */}
-      <AlertDialog open={!!confirmAction} onOpenChange={(open) => { if (!open) setConfirmAction(null) }}>
-        <AlertDialogContent className="max-w-[95vw] sm:max-w-md">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-base">
-              <ArrowUpFromLine className="h-5 w-5 text-red-500" />
-              {confirmAction?.tipo === 'salida-total' ? 'Retirar todo el stock' : 'Confirmar salida parcial'}
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-4">
-                <p className="text-sm">¿Estás seguro de registrar esta salida?</p>
-                {confirmAction && (
-                  <div className="rounded-xl border-2 border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20 p-4 space-y-3">
-                    {/* Producto */}
-                    <div className="space-y-0.5">
-                      <p className="text-xs text-muted-foreground">Producto</p>
-                      <p className="font-mono font-bold text-sm">{confirmAction.item.codigo}</p>
-                      <p className="text-xs text-muted-foreground">{confirmAction.item.descripcion}</p>
+            {/* ═══════ MODO: INGRESO / DEVOLUCIÓN ═══════ */}
+            {detailMode === 'ingreso' && (
+              <div className="space-y-3">
+                {/* Alerta posición ocupada */}
+                {detail.stock.length > 0 && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                      <span className="text-xs font-bold text-amber-400">Posición ocupada</span>
                     </div>
-
-                    <div className="border-t border-red-200/60 dark:border-red-800/60" />
-
-                    {/* Cantidades */}
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-muted-foreground">Stock actual:</span>
-                        <span className="font-bold text-base">{confirmAction.item.stock} {confirmAction.item.un}</span>
-                      </div>
-                      <div className="flex justify-between items-center rounded-lg bg-red-100 dark:bg-red-900/40 px-3 py-2">
-                        <span className="text-sm font-medium text-red-700 dark:text-red-300">Cantidad a retirar:</span>
-                        <span className="font-bold text-xl text-red-600 dark:text-red-400">{confirmAction.qty} {confirmAction.item.un}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-muted-foreground">Stock después:</span>
-                        <span className={`font-bold text-base ${confirmAction.item.stock - confirmAction.qty === 0 ? 'text-red-600 dark:text-red-400' : 'text-foreground'}`}>
-                          {confirmAction.item.stock - confirmAction.qty} {confirmAction.item.un}
-                        </span>
-                      </div>
+                    <p className="text-[10px] text-slate-400">Esta ubicación ya tiene {detail.stock.length} artículo(s). Se agregará el nuevo producto en la misma posición.</p>
+                    <div className="space-y-1 mt-1">
+                      {detail.stock.map((s, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[10px] bg-slate-800/40 rounded px-2 py-1">
+                          <Package className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                          <span className="font-mono text-sky-400 font-medium">{s.codigo}</span>
+                          <span className="text-slate-500 truncate flex-1">{s.descripcion || ''}</span>
+                          <span className="text-emerald-400 font-bold flex-shrink-0">{s.stock} {s.un}</span>
+                        </div>
+                      ))}
                     </div>
-
-                    {confirmAction.item.stock - confirmAction.qty === 0 && (
-                      <p className="text-xs text-red-500 font-medium bg-red-100 dark:bg-red-900/30 rounded-lg px-2.5 py-1.5">
-                        La ubicación quedará vacía después de esta salida.
-                      </p>
-                    )}
                   </div>
                 )}
+
+                {/* Toggle tipo */}
+                <div className="flex gap-1 p-1 rounded-lg bg-slate-700/40">
+                  <button onClick={() => setIngTipo('ingreso')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1 ${ingTipo === 'ingreso' ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}><ArrowDownToLine className="w-3.5 h-3.5" /> Ingreso</button>
+                  <button onClick={() => setIngTipo('devolucion')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1 ${ingTipo === 'devolucion' ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}><RotateCcw className="w-3.5 h-3.5" /> Devolución</button>
+                </div>
+                <p className="text-[10px] text-slate-500">Ubicación: <span className="text-sky-400 font-mono">B{detail.bloque} T{detail.torre} P{detail.piso} Pos {detail.posicion}</span></p>
+
+                {/* Búsqueda de artículo por código o descripción */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-slate-400">Buscar artículo (código o descripción) *</Label>
+                  <CatalogoSearchInput
+                    onPick={handleCatalogoPick}
+                    value={ingCodigo}
+                    onChange={(val) => {
+                      setIngCodigo(val)
+                      // If user clears or types manually, don't auto-clear descripcion/un
+                      // They might be editing manually
+                    }}
+                  />
+                </div>
+
+                {/* Descripción y UN (auto-llenados, pero editables) */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">Descripción</Label><Input value={ingDescripcion} onChange={e => setIngDescripcion(e.target.value)} placeholder="Auto o manual" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">UN</Label><Input value={ingUn} onChange={e => setIngUn(e.target.value)} placeholder="KG" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+                </div>
+
+                {/* Cantidad */}
+                <div className="space-y-1"><Label className="text-[10px] text-slate-400">Cantidad *</Label><Input type="number" step="any" min="0.001" value={ingCantidad} onChange={e => setIngCantidad(e.target.value)} placeholder="0" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+
+                {/* Fecha de vencimiento + botón Sin Fecha */}
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] text-slate-400">Fecha de vencimiento</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="date"
+                      value={ingSinFecha ? '' : ingFVenc}
+                      onChange={e => { setIngFVenc(e.target.value); if (e.target.value) setIngSinFecha(false) }}
+                      disabled={ingSinFecha}
+                      className="flex-1 h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50 disabled:opacity-40"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { setIngSinFecha(!ingSinFecha); if (!ingSinFecha) setIngFVenc('') }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all border flex-shrink-0 ${
+                        ingSinFecha
+                          ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                          : 'bg-slate-700/30 border-slate-600/30 text-slate-400 hover:text-slate-300 hover:border-slate-500/40'
+                      }`}
+                    >
+                      <CalendarOff className="w-3.5 h-3.5" />
+                      {ingSinFecha ? 'Sin fecha' : 'Sin fecha'}
+                    </button>
+                  </div>
+                  {ingSinFecha && <p className="text-[10px] text-purple-400/80 italic">El artículo no tiene fecha de vencimiento</p>}
+                </div>
+
+                {/* Proveedor — solo si es LÁMINA o STRETCH (excepto ETIQUETA LAMINA) */}
+                {showProveedor && (
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-purple-400 font-semibold">Proveedor *</Label>
+                    <Select value={ingProveedor} onValueChange={setIngProveedor}>
+                      <SelectTrigger className="h-8 bg-slate-700/50 border-purple-500/30 text-slate-200 text-xs">
+                        <SelectValue placeholder="Seleccionar proveedor..." />
+                      </SelectTrigger>
+                      <SelectContent className="bg-slate-800 border-slate-600/40">
+                        {PROVEEDORES_FILM.map((p) => (
+                          <SelectItem key={p} value={p} className="text-slate-300 focus:bg-slate-700">{p}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>
+                  <Button onClick={doIngreso} disabled={actionBusy} size="sm" className={`flex-1 gap-1.5 text-white text-xs ${ingTipo === 'ingreso' ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700' : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700'}`}>{actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : ingTipo === 'ingreso' ? <><ArrowDownToLine className="h-3.5 w-3.5" /> Registrar</> : <><RotateCcw className="h-3.5 w-3.5" /> Registrar</>}</Button>
+                </div>
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col gap-2 sm:flex-row">
-            <AlertDialogCancel className="w-full sm:w-auto h-11">No, cancelar</AlertDialogCancel>
-            <Button
-              onClick={(e) => { e.preventDefault(); doSalida() }}
-              disabled={busyAction}
-              className="w-full sm:w-auto h-11 bg-red-600 hover:bg-red-700 text-white font-bold text-sm"
-            >
-              {busyAction ? (
-                <span className="flex items-center justify-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Procesando...
-                </span>
-              ) : (
-                'Sí, confirmar salida'
-              )}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            )}
+
+            {/* ═══════ MODO: SALIDA ═══════ */}
+            {detailMode === 'salida' && salItem && (
+              <div className="space-y-3">
+                {/* Selector de artículo si hay múltiples */}
+                {detail.stock.length > 1 && (
+                  <div className="rounded-lg border border-slate-600/20 bg-slate-700/20 p-2">
+                    <p className="text-[10px] text-slate-400 mb-1.5 font-medium">Selecciona el artículo a dar salida:</p>
+                    <div className="space-y-1">
+                      {detail.stock.map((s, i) => (
+                        <button key={i} onClick={() => { setSalidaIdx(i); setSalidaCantidad(salidaTotal ? String(s.stock) : ''); }}
+                          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${i === salidaIdx ? 'bg-red-500/15 border border-red-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>
+                          <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0" style={{ borderColor: i === salidaIdx ? '#f87171' : '#475569', backgroundColor: i === salidaIdx ? '#ef4444' : 'transparent' }}>
+                            {i === salidaIdx && <div className="w-2 h-2 rounded-full bg-white" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-xs text-sky-400">{s.codigo}</span>
+                              {s.proveedor && <span className="text-[8px] font-semibold text-purple-400 bg-purple-400/10 px-1.5 py-px rounded">{s.proveedor}</span>}
+                            </div>
+                            {s.descripcion && <p className="text-[10px] text-slate-400 truncate">{s.descripcion}</p>}
+                          </div>
+                          <span className="font-bold text-emerald-400 text-xs flex-shrink-0">{s.stock} <span className="text-slate-500 font-normal">{s.un}</span></span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 space-y-1.5">
+                  <div className="flex justify-between text-xs"><span className="text-slate-400">Producto:</span><span className="text-slate-200 font-mono">{salItem.codigo}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-slate-400">Descripción:</span><span className="text-slate-300 truncate ml-2">{salItem.descripcion || '—'}</span></div>
+                  {salItem.proveedor && <div className="flex justify-between text-xs"><span className="text-slate-400">Proveedor:</span><span className="text-purple-400 font-medium">{salItem.proveedor}</span></div>}
+                  {salItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className={salItem.fVencimiento < new Date().toISOString().slice(0, 10) ? 'text-red-400 font-semibold' : 'text-slate-300'}>{salItem.fVencimiento}</span></div>}
+                  {!salItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+                  <div className="flex justify-between text-xs"><span className="text-slate-400">Stock actual:</span><span className="text-emerald-400 font-bold">{salItem.stock} {salItem.un}</span></div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-slate-400">
+                    {salidaTotal ? 'Salida total' : 'Cantidad a salir'} *
+                    {!salidaTotal && <span className="text-slate-600 ml-1">(máx: {salItem.stock})</span>}
+                  </Label>
+                  <Input type="number" step="any" min="0.001" max={salItem.stock} value={salidaCantidad}
+                    onChange={e => setSalidaCantidad(e.target.value)}
+                    disabled={salidaTotal}
+                    className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-red-500/50 disabled:opacity-50" />
+                </div>
+                {!salidaTotal && (
+                  <p className="text-[10px] text-slate-500">Saldrán {salidaCantidad || '0'} de {salItem.stock} {salItem.un} — quedarán {Math.max(0, salItem.stock - (parseFloat(salidaCantidad) || 0))} {salItem.un}</p>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>
+                  <Button onClick={doSalida} disabled={actionBusy} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-red-500 to-red-600 text-white text-xs">
+                    {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><ArrowUpFromLine className="h-3.5 w-3.5" /> Confirmar salida</>}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* ═══════ MODO: TRANSFERIR ═══════ */}
+            {detailMode === 'transferir' && trItem && (
+              <div className="space-y-3">
+                {/* Info del producto */}
+                <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-1.5">
+                  <div className="flex justify-between text-xs"><span className="text-slate-400">Producto:</span><span className="text-slate-200 font-mono">{trItem.codigo}</span></div>
+                  <div className="flex justify-between text-xs"><span className="text-slate-400">Descripción:</span><span className="text-slate-300">{trItem.descripcion || '—'}</span></div>
+                  {trItem.proveedor && <div className="flex justify-between text-xs"><span className="text-slate-400">Proveedor:</span><span className="text-purple-400 font-medium">{trItem.proveedor}</span></div>}
+                  {trItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className={trItem.fVencimiento < new Date().toISOString().slice(0, 10) ? 'text-red-400 font-semibold' : 'text-slate-300'}>{trItem.fVencimiento}</span></div>}
+                  {!trItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+                  <div className="flex justify-between text-xs"><span className="text-slate-400">Stock origen:</span><span className="text-emerald-400 font-bold">{trItem.stock} {trItem.un}</span></div>
+                </div>
+
+                {/* Origen */}
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Origen</p>
+                <div className="rounded-lg border border-slate-600/20 bg-slate-700/30 px-3 py-2 text-xs text-slate-300 font-mono">
+                  B{detail.bloque} · T{detail.torre} · P{detail.piso} · Pos {detail.posicion}
+                </div>
+
+                {/* Flecha */}
+                <div className="flex justify-center"><ArrowRightLeft className="w-4 h-4 text-sky-400" /></div>
+
+                {/* Destino */}
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Destino</p>
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-slate-500">Bloque</Label>
+                    <Select value={trDestBloque} onValueChange={v => { setTrDestBloque(v); setTrDestTorre(''); setTrDestPos('') }}>
+                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+                      <SelectContent className="bg-slate-800 border-slate-600/40">{BLOQUES.map(b => <SelectItem key={b} value={b} className="text-slate-300 focus:bg-slate-700">{b}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-slate-500">Torre</Label>
+                    <Select value={trDestTorre} onValueChange={setTrDestTorre} disabled={!trDestBloque}>
+                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+                      <SelectContent className="bg-slate-800 border-slate-600/40">{trTorres.map(t => <SelectItem key={t} value={t} className="text-slate-300 focus:bg-slate-700">{t}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-slate-500">Piso</Label>
+                    <Select value={trDestPiso} onValueChange={setTrDestPiso} disabled={!trDestBloque}>
+                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+                      <SelectContent className="bg-slate-800 border-slate-600/40">{PISOS.map(p => <SelectItem key={p} value={p} className="text-slate-300 focus:bg-slate-700">{p}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-slate-500">Pos</Label>
+                    <Select value={trDestPos} onValueChange={setTrDestPos} disabled={!trDestBloque}>
+                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+                      <SelectContent className="bg-slate-800 border-slate-600/40">{trPositions.map(p => <SelectItem key={p} value={p} className="text-slate-300 focus:bg-slate-700">{p}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Cantidad */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-slate-400">Cantidad a transferir *</Label>
+                  <Input type="number" step="any" min="0.001" value={trCantidad} onChange={e => setTrCantidad(e.target.value)}
+                    className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" />
+                </div>
+
+                {/* Ajuste automático */}
+                {trTieneAjuste && (
+                  <div className={`rounded-lg border p-2.5 space-y-1.5 ${trExcede ? 'border-amber-500/30 bg-amber-500/5' : 'border-sky-500/30 bg-sky-500/5'}`}>
+                    <div className="flex items-center gap-1.5">
+                      <AlertTriangle className={`w-3.5 h-3.5 ${trExcede ? 'text-amber-400' : 'text-sky-400'}`} />
+                      <span className={`text-[10px] font-bold ${trExcede ? 'text-amber-400' : 'text-sky-400'}`}>
+                        {trExcede ? 'Ajuste positivo' : 'Ajuste negativo'}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      {trExcede
+                        ? `Se registrará un ingreso de ${Math.abs(trDiferencia)} ${trItem.un} en origen para cubrir la diferencia.`
+                        : `Se registrará una salida de ${Math.abs(trDiferencia)} ${trItem.un} en origen para corregir el excedente.`}
+                    </p>
+                    <div className="flex gap-2 text-[10px]">
+                      <span className="text-slate-500">Origen: {trItem.stock} → {trQtyNum} {trItem.un}</span>
+                      <span className={`${trExcede ? 'text-amber-400' : 'text-sky-400'}`}>[{trDiferencia > 0 ? '+' : ''}{Math.abs(trDiferencia)} ajuste]</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500">Destino: +{trQtyNum} {trItem.un}</p>
+                  </div>
+                )}
+
+                {/* Múltiples artículos - selector */}
+                {detail.stock.length > 1 && (
+                  <div className="rounded-lg border border-slate-600/20 bg-slate-700/20 p-2">
+                    <p className="text-[10px] text-slate-400 mb-1.5">Esta posición tiene {detail.stock.length} artículos. Se está transfiriendo:</p>
+                    <div className="space-y-1">
+                      {detail.stock.map((s, i) => (
+                        <button key={i} onClick={() => { setTrIdx(i); setTrCantidad(String(s.stock)) }}
+                          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${i === trIdx ? 'bg-blue-500/15 border border-blue-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>
+                          <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0" style={{ borderColor: i === trIdx ? '#60a5fa' : '#475569', backgroundColor: i === trIdx ? '#3b82f6' : 'transparent' }}>
+                            {i === trIdx && <div className="w-2 h-2 rounded-full bg-white" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-xs text-sky-400">{s.codigo}</span>
+                              {s.proveedor && <span className="text-[8px] font-semibold text-purple-400 bg-purple-400/10 px-1 py-px rounded">{s.proveedor}</span>}
+                            </div>
+                            {s.descripcion && <p className="text-[10px] text-slate-400 truncate">{s.descripcion}</p>}
+                          </div>
+                          <span className="font-bold text-emerald-400 text-xs flex-shrink-0">{s.stock} <span className="text-slate-500 font-normal">{s.un}</span></span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>
+                  <Button onClick={doTransferir} disabled={actionBusy || !trDestBloque || !trDestTorre || !trDestPiso || !trDestPos || trQtyNum <= 0} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-sky-500 to-blue-600 text-white text-xs">
+                    {actionBusy ? <Loader2 className="h-3.5 h-3.5 animate-spin" /> : <><CheckCircle2 className="h-3.5 w-3.5" /> Confirmar traslado</>}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>)}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -3,17 +3,26 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   addMovimiento,
-  calcularStockUbicacion,
   stockEnUbicacion,
   type Movimiento,
   type TipoMovimiento,
   type StockEnUbicacion,
+  type Turno,
 } from '@/lib/rackly/kardex'
 import { calcularTurno } from '@/lib/rackly/turno'
-import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
+import { BLOQUES, PISOS, PROVEEDORES_FILM } from '@/lib/rackly/constants'
+import { torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
 import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
 import { useAuth } from '@/hooks/useAuth'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
+import {
+  requiereProveedor,
+  formatDate,
+  isExpired,
+  isExpiringSoon,
+  extractError,
+  impactoStock,
+} from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -45,15 +54,8 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, RotateCcw } from 'lucide-react'
+import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, TriangleAlert, MapPin, Package, X } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
-
-const PROVEEDORES_FILM = ['INCOMIN', 'DAMAR', 'DIAMAND', 'NEOPACK', 'SOLPACK', 'ITS']
-
-function requiereProveedor(descripcion: string): boolean {
-  const upper = descripcion.toUpperCase()
-  return upper.includes('LAMINA') || upper.includes('STRETCH')
-}
 
 type Props = {
   tipo: TipoMovimiento
@@ -62,20 +64,18 @@ type Props = {
 
 export function MovimientoForm({ tipo, onCreated }: Props) {
   const { perfil } = useAuth()
-  const [turno, setTurno] = useState(calcularTurno())
+  const [turno, setTurno] = useState<Turno>(calcularTurno())
 
   useEffect(() => {
     const interval = setInterval(() => setTurno(calcularTurno()), 60000)
     return () => clearInterval(interval)
   }, [])
 
-  if (tipo === 'ingreso') {
-    return <IngresoForm turno={turno} onCreated={onCreated} perfil={perfil!} />
+  if (tipo === 'salida') {
+    return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil!} />
   }
-  if (tipo === 'devolucion') {
-    return <DevolucionForm turno={turno} onCreated={onCreated} perfil={perfil!} />
-  }
-  return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil!} />
+  // ingreso y devolucion usan el mismo formulario, solo cambia el tipo
+  return <IngresoForm turno={turno} onCreated={onCreated} perfil={perfil!} tipo={tipo} />
 }
 
 /* ═══════════════════════════════════════════
@@ -85,10 +85,12 @@ function IngresoForm({
   turno,
   onCreated,
   perfil,
+  tipo = 'ingreso',
 }: {
-  turno: string
+  turno: Turno
   onCreated: (movs: Movimiento[]) => void
   perfil: { id: string; nombre: string; correo: string }
+  tipo?: TipoMovimiento
 }) {
   const [bloque, setBloque] = useState('')
   const [torre, setTorre] = useState('')
@@ -103,6 +105,7 @@ function IngresoForm({
   const [proveedor, setProveedor] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmData, setConfirmData] = useState<StockEnUbicacion[] | null>(null)
+  const [salidaBusy, setSalidaBusy] = useState<string | null>(null)
 
   const torres = torresDeBloque(bloque)
   const posiciones = posicionesDeBloque(bloque)
@@ -130,16 +133,16 @@ function IngresoForm({
     }
     setBusy(true)
     try {
-      const stock = await calcularStockUbicacion(codigo, bloque, torre, piso, posicion)
-      if (stock > 0) {
-        const details = await stockEnUbicacion(bloque, torre, piso, posicion)
+      // Verificar si CUALQUIER producto existe en esta posición
+      const details = await stockEnUbicacion(bloque, torre, piso, posicion)
+      if (details.length > 0) {
         setConfirmData(details)
         setBusy(false)
         return
       }
       await doInsert(qty)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = extractError(err)
       toast.error('Error al verificar stock', { description: message })
       setBusy(false)
     }
@@ -148,7 +151,7 @@ function IngresoForm({
   async function doInsert(qty: number) {
     try {
       const movs = await addMovimiento({
-        tipo: 'ingreso',
+        tipo,
         bloque,
         torre,
         piso,
@@ -164,22 +167,16 @@ function IngresoForm({
         usuarioCorreo: perfil.correo,
         proveedor: proveedor || undefined,
       })
-      toast.success('Ingreso registrado')
-      // Limpiar todo el formulario
-      setBloque('')
-      setTorre('')
-      setPiso('')
-      setPosicion('')
+      toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
       setCodigo('')
       setDescripcion('')
       setUn('')
       setCantidad('')
       setFVencimiento('')
-      setSinVencimiento(false)
       setProveedor('')
       onCreated(movs)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = extractError(err)
       toast.error('Error al registrar ingreso', { description: message })
     } finally {
       setBusy(false)
@@ -187,13 +184,67 @@ function IngresoForm({
     }
   }
 
+  // Dar salida a un producto desde el alerta de ubicación ocupada
+  async function handleSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
+    setSalidaBusy(stockItem.codigo)
+    try {
+      const movs = await addMovimiento({
+        tipo: 'salida',
+        bloque,
+        torre,
+        piso,
+        posicion,
+        codigo: stockItem.codigo,
+        descripcion: stockItem.descripcion,
+        un: stockItem.un,
+        cantidad: stockItem.stock,
+        fVencimiento: stockItem.fVencimiento ?? '',
+        turno,
+        usuarioId: perfil.id,
+        usuarioNombre: perfil.nombre,
+        usuarioCorreo: perfil.correo,
+        proveedor: stockItem.proveedor,
+      })
+      toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
+      onCreated(movs)
+      // Refrescar datos del alerta
+      const updated = await stockEnUbicacion(bloque, torre, piso, posicion)
+      if (updated.length > 0) {
+        setConfirmData(updated)
+      } else {
+        setConfirmData(null)
+        // Ya no hay productos, hacer el ingreso directamente
+        await doInsert(parseFloat(cantidad))
+      }
+    } catch (err: unknown) {
+      const message = extractError(err)
+      toast.error('Error al dar salida', { description: message })
+    } finally {
+      setSalidaBusy(null)
+    }
+  }
+
   return (
     <>
-      <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-800">
-        <ArrowDownToLine className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+      <div className={`flex items-center gap-2 mb-4 p-3 rounded-lg border ${
+        tipo === 'devolucion'
+          ? 'bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800'
+          : 'bg-green-50 dark:bg-green-950/40 border-green-200 dark:border-green-800'
+      }`}>
+        {tipo === 'devolucion' ? (
+          <ArrowRightLeft className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0" />
+        ) : (
+          <ArrowDownToLine className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+        )}
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-green-700 dark:text-green-300">Ingreso de mercadería</p>
-          <p className="text-xs text-green-600/80 dark:text-green-400/70">Turno: {turno}</p>
+          <p className={`text-sm font-semibold ${
+            tipo === 'devolucion'
+              ? 'text-orange-700 dark:text-orange-300'
+              : 'text-green-700 dark:text-green-300'
+          }`}>
+            {tipo === 'devolucion' ? 'Ingreso por devolución' : 'Ingreso de mercadería'}
+          </p>
+          <p className="text-xs text-muted-foreground">Turno: {turno}</p>
         </div>
       </div>
 
@@ -204,7 +255,7 @@ function IngresoForm({
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Bloque</Label>
               <Select value={bloque} onValueChange={(v) => { setBloque(v); setTorre(''); setPiso(''); setPosicion('') }}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Bloque" /></SelectTrigger>
+                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Bloque" /></SelectTrigger>
                 <SelectContent>
                   {BLOQUES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
                 </SelectContent>
@@ -213,7 +264,7 @@ function IngresoForm({
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Torre</Label>
               <Select value={torre} onValueChange={setTorre} disabled={!bloque}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Torre" /></SelectTrigger>
+                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Torre" /></SelectTrigger>
                 <SelectContent>
                   {torres.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                 </SelectContent>
@@ -222,7 +273,7 @@ function IngresoForm({
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Piso</Label>
               <Select value={piso} onValueChange={setPiso} disabled={!bloque}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Piso" /></SelectTrigger>
+                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Piso" /></SelectTrigger>
                 <SelectContent>
                   {PISOS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                 </SelectContent>
@@ -231,7 +282,7 @@ function IngresoForm({
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Posición</Label>
               <Select value={posicion} onValueChange={setPosicion} disabled={!bloque}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Pos." /></SelectTrigger>
+                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Pos." /></SelectTrigger>
                 <SelectContent>
                   {posiciones.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                 </SelectContent>
@@ -304,307 +355,152 @@ function IngresoForm({
           )}
         </div>
 
-        <Button type="submit" disabled={busy} className="w-full h-11 bg-green-600 hover:bg-green-700 text-white text-sm font-medium sm:w-auto">
+        <Button type="submit" disabled={busy} className={`w-full h-11 text-white text-sm font-medium sm:w-auto ${
+          tipo === 'devolucion'
+            ? 'bg-orange-600 hover:bg-orange-700'
+            : 'bg-green-600 hover:bg-green-700'
+        }`}>
           {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-          Registrar Ingreso
+          {tipo === 'devolucion' ? 'Registrar Devolución' : 'Registrar Ingreso'}
         </Button>
       </form>
 
+      {/* ═══ DIÁLOGO DE CONFIRMACIÓN — Ubicación Ocupada ═══ */}
       <AlertDialog open={!!confirmData} onOpenChange={() => setConfirmData(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Ubicación ocupada</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta posición ya tiene stock. ¿Deseas agregar de todas formas?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {confirmData && confirmData.length > 0 && (
-            <div className="my-2">
-              <Table>
-                <TableBody>
-                  {confirmData.map((s, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="font-mono">{s.codigo}</TableCell>
-                      <TableCell>{s.descripcion}</TableCell>
-                      <TableCell className="text-right">{s.stock}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => doInsert(parseFloat(cantidad))}>
-              Confirmar ingreso
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
-  )
-}
-
-/* ═══════════════════════════════════════════
-   DEVOLUCIÓN FORM — Similar a ingreso pero clasificado como devolución
-   ═══════════════════════════════════════════ */
-function DevolucionForm({
-  turno,
-  onCreated,
-  perfil,
-}: {
-  turno: string
-  onCreated: (movs: Movimiento[]) => void
-  perfil: { id: string; nombre: string; correo: string }
-}) {
-  const [bloque, setBloque] = useState('')
-  const [torre, setTorre] = useState('')
-  const [piso, setPiso] = useState('')
-  const [posicion, setPosicion] = useState('')
-  const [codigo, setCodigo] = useState('')
-  const [descripcion, setDescripcion] = useState('')
-  const [un, setUn] = useState('')
-  const [cantidad, setCantidad] = useState('')
-  const [fVencimiento, setFVencimiento] = useState('')
-  const [sinVencimiento, setSinVencimiento] = useState(false)
-  const [proveedor, setProveedor] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [confirmData, setConfirmData] = useState<StockEnUbicacion[] | null>(null)
-
-  const torres = torresDeBloque(bloque)
-  const posiciones = posicionesDeBloque(bloque)
-
-  function handleCatalogoPick(item: CatalogoItem) {
-    setCodigo(item.codigo)
-    setDescripcion(item.descripcion)
-    setUn(item.un)
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!bloque || !torre || !piso || !posicion || !codigo.trim() || !cantidad) {
-      toast.error('Completa todos los campos requeridos')
-      return
-    }
-    if (requiereProveedor(descripcion) && !proveedor) {
-      toast.error('Selecciona un proveedor para este producto')
-      return
-    }
-    const qty = parseFloat(cantidad)
-    if (isNaN(qty) || qty <= 0) {
-      toast.error('La cantidad debe ser mayor a 0')
-      return
-    }
-    setBusy(true)
-    try {
-      const stock = await calcularStockUbicacion(codigo, bloque, torre, piso, posicion)
-      if (stock > 0) {
-        const details = await stockEnUbicacion(bloque, torre, piso, posicion)
-        setConfirmData(details)
-        setBusy(false)
-        return
-      }
-      await doInsert(qty)
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
-      toast.error('Error al verificar stock', { description: message })
-      setBusy(false)
-    }
-  }
-
-  async function doInsert(qty: number) {
-    try {
-      const movs = await addMovimiento({
-        tipo: 'devolucion',
-        bloque,
-        torre,
-        piso,
-        posicion,
-        codigo,
-        descripcion,
-        un,
-        cantidad: qty,
-        fVencimiento: sinVencimiento ? '' : fVencimiento,
-        turno,
-        usuarioId: perfil.id,
-        usuarioNombre: perfil.nombre,
-        usuarioCorreo: perfil.correo,
-        proveedor: proveedor || undefined,
-      })
-      toast.success('Devolución registrada')
-      // Limpiar todo el formulario
-      setBloque('')
-      setTorre('')
-      setPiso('')
-      setPosicion('')
-      setCodigo('')
-      setDescripcion('')
-      setUn('')
-      setCantidad('')
-      setFVencimiento('')
-      setSinVencimiento(false)
-      setProveedor('')
-      onCreated(movs)
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
-      toast.error('Error al registrar devolución', { description: message })
-    } finally {
-      setBusy(false)
-      setConfirmData(null)
-    }
-  }
-
-  return (
-    <>
-      <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800">
-        <RotateCcw className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">Devolución desde línea de producción</p>
-          <p className="text-xs text-amber-600/80 dark:text-amber-400/70">Producto que retorna de producción al kardex. Turno: {turno}</p>
-        </div>
-      </div>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="space-y-1">
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Ubicación</Label>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Bloque</Label>
-              <Select value={bloque} onValueChange={(v) => { setBloque(v); setTorre(''); setPiso(''); setPosicion('') }}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Bloque" /></SelectTrigger>
-                <SelectContent>
-                  {BLOQUES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Torre</Label>
-              <Select value={torre} onValueChange={setTorre} disabled={!bloque}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Torre" /></SelectTrigger>
-                <SelectContent>
-                  {torres.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Piso</Label>
-              <Select value={piso} onValueChange={setPiso} disabled={!bloque}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Piso" /></SelectTrigger>
-                <SelectContent>
-                  {PISOS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Posición</Label>
-              <Select value={posicion} onValueChange={setPosicion} disabled={!bloque}>
-                <SelectTrigger className="h-10"><SelectValue placeholder="Pos." /></SelectTrigger>
-                <SelectContent>
-                  {posiciones.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1 col-span-2 sm:col-span-1">
-              <Label className="text-xs text-muted-foreground">Turno</Label>
-              <Input value={turno} readOnly className="h-10 bg-muted text-sm" />
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-1">
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Producto</Label>
-          <CatalogoSearchInput
-            onPick={handleCatalogoPick}
-            value={codigo}
-            onChange={(v) => {
-              setCodigo(v)
-              const cat = findCatalogoByCodigo(v)
-              if (cat) {
-                setDescripcion(cat.descripcion)
-                setUn(cat.un)
-              }
-            }}
-          />
-        </div>
-
-        {descripcion && (
-          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 p-3 space-y-2 transition-all">
-            <div className="flex items-start gap-3 flex-wrap">
-              <div className="min-w-0 flex-1">
-                <p className="text-xs text-muted-foreground">Descripción</p>
-                <p className="text-sm font-medium truncate">{descripcion}</p>
+        <AlertDialogContent className="max-w-lg p-0 overflow-hidden">
+          {/* Header con gradiente */}
+          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 px-6 py-5 text-white">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+                <TriangleAlert className="h-6 w-6 text-white" />
               </div>
-              <div className="min-w-[60px]">
-                <p className="text-xs text-muted-foreground">UN</p>
-                <p className="text-sm font-medium">{un || '—'}</p>
+              <div>
+                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+                  Ubicación Ocupada
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-amber-100 text-sm mt-0.5">
+                  Esta posición ya tiene stock registrado. Revisa el detalle.
+                </AlertDialogDescription>
               </div>
             </div>
           </div>
-        )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <div className="space-y-1 col-span-2 sm:col-span-1">
-            <Label className="text-xs text-muted-foreground">Cantidad</Label>
-            <Input type="number" step="any" min="0.001" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0" className="h-10" />
-          </div>
-          <div className="space-y-1 col-span-2 sm:col-span-1">
-            <Label className="text-xs text-muted-foreground">F. Vencimiento</Label>
-            <div className="flex items-center gap-1.5">
-              <Input type="date" value={fVencimiento} onChange={(e) => setFVencimiento(e.target.value)} disabled={sinVencimiento} className="h-10" />
-              <Checkbox checked={sinVencimiento} onCheckedChange={(v) => setSinVencimiento(!!v)} />
+          {/* Contenido scrolleable */}
+          <div className="max-h-[60vh] overflow-y-auto">
+            {/* Ubicación destino */}
+            <div className="px-6 pt-4 pb-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ubicación destino</p>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground bg-slate-50 dark:bg-slate-900 rounded-lg px-3 py-2.5">
+                <MapPin className="h-4 w-4 text-orange-500 flex-shrink-0" />
+                <span className="font-mono font-medium text-slate-700 dark:text-slate-300">
+                  Bloque {bloque} · Torre {torre} · Piso {piso} · Pos {posicion}
+                </span>
+              </div>
             </div>
-          </div>
-          {requiereProveedor(descripcion) && (
-            <div className="space-y-1 col-span-2">
-              <Label className="text-xs text-muted-foreground font-medium">Proveedor <span className="text-red-500">*</span></Label>
-              <Select value={proveedor} onValueChange={setProveedor}>
-                <SelectTrigger className="h-10">
-                  <SelectValue placeholder="Selecciona proveedor" />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROVEEDORES_FILM.map((p) => (
-                    <SelectItem key={p} value={p}>{p}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+
+            {/* Producto que se desea ingresar */}
+            <div className="px-6 pb-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Producto a {tipo === 'devolucion' ? 'devolver' : 'ingresar'}</p>
+              <div className="rounded-xl border-2 border-dashed border-green-300 dark:border-green-700 bg-green-50/60 dark:bg-green-950/20 p-3 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-mono font-bold text-sm text-green-800 dark:text-green-300">{codigo}</span>
+                    <span className="text-[10px] text-green-700/60 dark:text-green-400/60 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded">{un || '—'}</span>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <ArrowDownToLine className="h-3.5 w-3.5 text-green-600" />
+                    <span className="font-bold text-green-700 dark:text-green-300">+{cantidad}</span>
+                  </div>
+                </div>
+                {descripcion && (
+                  <p className="text-xs text-green-700/70 dark:text-green-400/70 truncate">{descripcion}</p>
+                )}
+                {fVencimiento && !sinVencimiento && (
+                  <p className="text-[10px] text-muted-foreground">Venc: {fVencimiento}</p>
+                )}
+              </div>
             </div>
-          )}
-        </div>
 
-        <Button type="submit" disabled={busy} className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium sm:w-auto">
-          {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-          Registrar Devolución
-        </Button>
-      </form>
+            {/* Separador */}
+            {confirmData && confirmData.length > 0 && (
+              <div className="px-6 pb-2">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Stock actual en esta ubicación</span>
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+                </div>
+              </div>
+            )}
 
-      <AlertDialog open={!!confirmData} onOpenChange={() => setConfirmData(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Ubicación ocupada</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta posición ya tiene stock. ¿Deseas agregar la devolución de todas formas?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {confirmData && confirmData.length > 0 && (
-            <div className="my-2">
-              <Table>
-                <TableBody>
+            {/* Productos existentes en la ubicación */}
+            {confirmData && confirmData.length > 0 && (
+              <div className="px-6 pb-4">
+                <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">
+                  {confirmData.length} producto{confirmData.length !== 1 ? 's' : ''} encontrado{confirmData.length !== 1 ? 's' : ''}
+                </p>
+                <div className="space-y-2">
                   {confirmData.map((s, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="font-mono">{s.codigo}</TableCell>
-                      <TableCell>{s.descripcion}</TableCell>
-                      <TableCell className="text-right">{s.stock}</TableCell>
-                    </TableRow>
+                    <div
+                      key={`${s.codigo}-${i}`}
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="w-9 h-9 rounded-lg bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <Package className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-semibold text-sm text-slate-800 dark:text-slate-200">{s.codigo}</span>
+                            <span className="text-[10px] text-muted-foreground bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{s.un}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground truncate mt-0.5">{s.descripcion}</p>
+                          <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
+                            <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{s.stock} {s.un}</span>
+                            {s.fVencimiento && <span>Venc: {s.fVencimiento}</span>}
+                            {s.proveedor && <span>Prov: {s.proveedor}</span>}
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSalidaDesdeAlerta(s)}
+                          disabled={salidaBusy === s.codigo}
+                          className="h-9 px-3 text-xs font-semibold border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 hover:border-red-300 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300 dark:hover:border-red-700 flex-shrink-0 gap-1.5 self-center"
+                        >
+                          {salidaBusy === s.codigo ? (
+                            <><Loader2 className="h-3 w-3 animate-spin" /> Procesando...</>
+                          ) : (
+                            <><ArrowUpFromLine className="h-3 w-3" /> Dar Salida</>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
                   ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => doInsert(parseFloat(cantidad))}>
-              Confirmar devolución
-            </AlertDialogAction>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-2 italic">
+                  Presiona "Dar Salida" para retirar productos que ya no están físicamente en esta ubicación.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Botones de acción */}
+          <AlertDialogFooter className="px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2">
+            <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium border-slate-300 dark:border-slate-600">
+              Cancelar
+            </AlertDialogCancel>
+            <Button
+              onClick={(e) => { e.preventDefault(); doInsert(parseFloat(cantidad)) }}
+              disabled={busy}
+              className="flex-1 h-11 rounded-lg text-sm font-bold bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-md shadow-green-600/20 gap-2"
+            >
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowDownToLine className="h-4 w-4" />
+              )}
+              {tipo === 'devolucion' ? 'Confirmar Devolución' : 'Confirmar Ingreso'}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -622,7 +518,7 @@ function SalidaForm({
   onCreated,
   perfil,
 }: {
-  turno: string
+  turno: Turno
   onCreated: (movs: Movimiento[]) => void
   perfil: { id: string; nombre: string; correo: string }
 }) {
@@ -660,7 +556,7 @@ function SalidaForm({
         const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
         const current = locMap.get(key)
         if (current) {
-          current.stock += (m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado') ? m.cantidad : -m.cantidad
+          current.stock += impactoStock(m.tipo, m.cantidad)
         } else {
           locMap.set(key, {
             bloque: m.bloque,
@@ -670,22 +566,20 @@ function SalidaForm({
             codigo: m.codigo,
             descripcion: m.descripcion,
             un: m.un,
-            stock: (m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado') ? m.cantidad : -m.cantidad,
+            stock: impactoStock(m.tipo, m.cantidad),
             fVencimiento: m.fVencimiento || undefined,
             proveedor: m.proveedor,
           })
         }
       }
       const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
-        // Ordenar por vencimiento más próximo primero (sin fecha van al final)
-        .sort((a, b) => {
-          const fA = a.fVencimiento || ''
-          const fB = b.fVencimiento || ''
-          if (!fA && !fB) return 0
-          if (!fA) return 1
-          if (!fB) return -1
-          return fA.localeCompare(fB)
-        })
+      // Ordenar: vencimiento más próximo primero, sin fecha al final
+      results.sort((a, b) => {
+        if (a.fVencimiento && b.fVencimiento) return (a.fVencimiento || '').localeCompare(b.fVencimiento || '')
+        if (a.fVencimiento) return -1
+        if (b.fVencimiento) return 1
+        return 0
+      })
       setLocations(results)
       setProductoDesc(desc)
       setProductoUn(un)
@@ -776,7 +670,7 @@ function SalidaForm({
       setQtyMap({})
       onCreated(result)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = extractError(err)
       toast.error('Error al registrar salida', { description: message })
     } finally {
       setBusy(false)
@@ -835,18 +729,16 @@ function SalidaForm({
       {/* Tabla de ubicaciones */}
       {locations.length > 0 && !loading && (
         <div className="overflow-x-auto">
-          <Table>
+          <Table className="min-w-[800px]">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-16 text-center">Bloque</TableHead>
                 <TableHead className="w-16 text-center">Torre</TableHead>
                 <TableHead className="w-16 text-center">Piso</TableHead>
                 <TableHead className="w-20 text-center">Posición</TableHead>
-                <TableHead className="w-28 text-center">Vencimiento</TableHead>
                 <TableHead className="text-right">Stock</TableHead>
-                {(productoDesc && requiereProveedor(productoDesc)) && (
-                  <TableHead className="w-28">Proveedor</TableHead>
-                )}
+                <TableHead className="w-32">F. Vencimiento</TableHead>
+                <TableHead className="w-28">Proveedor</TableHead>
                 <TableHead className="w-36">Cantidad salida</TableHead>
                 <TableHead className="w-44">Acción</TableHead>
               </TableRow>
@@ -860,26 +752,23 @@ function SalidaForm({
                     <TableCell className="text-center font-medium">{loc.torre}</TableCell>
                     <TableCell className="text-center font-medium">{loc.piso}</TableCell>
                     <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
-                    <TableCell className="text-center">{loc.fVencimiento ? (() => {
-                      const dias = Math.ceil((new Date(loc.fVencimiento).getTime() - Date.now()) / 86400000)
-                      return (
-                        <Badge variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'} className={dias <= 0 ? '' : dias <= 15 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}>
-                          {loc.fVencimiento} <span className="ml-1 opacity-70">({dias <= 0 ? 'vencido' : `${dias}d`})</span>
-                        </Badge>
-                      )
-                    })() : <span className="text-xs text-muted-foreground">—</span>}</TableCell>
                     <TableCell className="text-right font-bold">{loc.stock}</TableCell>
-                    {(productoDesc && requiereProveedor(productoDesc)) && (
-                      <TableCell>
-                        {loc.proveedor ? (
-                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
-                            {loc.proveedor}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                    )}
+                    <TableCell>
+                      {loc.fVencimiento ? (
+                        <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{formatDate(loc.fVencimiento)}</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {loc.proveedor ? (
+                        <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                          {loc.proveedor}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Input
                         type="number"
@@ -972,6 +861,20 @@ function SalidaForm({
                         {confirmState.loc.stock - confirmState.qtyNum} {confirmState.loc.un}
                       </span>
                     </div>
+                    {confirmState.loc.fVencimiento && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">F. Vencimiento:</span>
+                        <span className={`font-medium ${isExpired(confirmState.loc.fVencimiento) ? 'text-red-600' : isExpiringSoon(confirmState.loc.fVencimiento) ? 'text-amber-600' : ''}`}>
+                          {formatDate(confirmState.loc.fVencimiento)}
+                        </span>
+                      </div>
+                    )}
+                    {confirmState.loc.proveedor && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Proveedor:</span>
+                        <span className="font-medium">{confirmState.loc.proveedor}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

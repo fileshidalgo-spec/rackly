@@ -223,7 +223,7 @@ export async function listarBloquesDeColumna(
     .select('bloque_id, piso_bloques(*)')
     .eq('columna_id', columnaId)
   if (error) throw error
-  return ((data ?? []) as { bloque_id: string; piso_bloques: Bloque }[]).map(
+  return ((data ?? []) as unknown as { bloque_id: string; piso_bloques: Bloque }[]).map(
     (r) => r.piso_bloques
   )
 }
@@ -399,7 +399,7 @@ export async function calcularStockNivel(
 
   const stockMap = new Map<string, number>()
   for (const d of data ?? []) {
-    const det = d as {
+    const det = d as unknown as {
       cantidad: number
       bloque_id: string
       movimiento_id: string

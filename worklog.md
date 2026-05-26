@@ -1,156 +1,102 @@
 ---
-Task ID: 1
+Task ID: JHIA11.10
+Agent: main
+Task: Agregar UP Data en tab Descarga - subir archivo Excel con stock por posición
+
+Work Log:
+- Analicé la estructura del app RACKLY (tabs, auth, kardex.ts, DescargaTab existente)
+- Leí la imagen subida por el usuario mostrando formato de Excel esperado (código, descripción, bloque, torre, piso, pos, cantidad)
+- Añadí `addMovimientosBatch()` en `kardex.ts` para inserts masivos con batch de 500 filas y fallback a insert individual
+- Añadí tipo `UploadStockRow` en `kardex.ts`
+- Rediseñé `DescargaTab.tsx` con dos sub-secciones: "Descargar" (ya existente) y "UP Data" (nueva)
+- UP Data incluye: auto-detección de columnas, preview tabla, confirmación, barra de progreso, errores detallados
+- Build exitoso sin errores TypeScript
+- Deploy a Cloudflare Pages exitoso: https://49f6101a.rackly.pages.dev
+- Git commit: JHIA11.10
+
+Stage Summary:
+- Archivos modificados: `src/lib/rackly/kardex.ts`, `src/components/rackly/kardex/DescargaTab.tsx`
+- Nueva funcionalidad: Subir Excel con stock por posición desde tab Descarga > UP Data
+- Columnas obligatorias: Código, Bloque, Torre, Piso, Posición, Cantidad
+- Columnas opcionales: Descripción, UN, Vencimiento, Proveedor
+- Crea movimientos de "ingreso" automáticos con usuario y turno actuales
+
+---
+Task ID: JHIA11.14
+Agent: Main
+Task: Revisar estado de despliegue y verificar errores + consulta sobre 5S y mapas de integración
+
+Work Log:
+- Push 7 commits pendientes a GitHub (JHIA11.10 hasta JHIA11.14)
+- Build exitoso sin errores (Next.js 16.1.3 Turbopack)
+- Deploy a Cloudflare Pages exitoso (JHIA11.14 - commit 55393b0)
+- Búsqueda en codebase: NO hay implementación de 5S ni mapas de integración
+- Solo existe imagen de referencia: download/RACKLY_Mapa_5S_JHIA6.png
+- La app tiene 12 tabs en 2 vistas (Racks + Piso), enfocada en gestión de almacén
+
+Stage Summary:
+- Build: ✅ sin errores
+- Deploy: ✅ https://rackly.pages.dev (JHIA11.14)
+- 5S metodología: ❌ No implementada en código
+- Mapas de integración: ❌ No implementados en código
+
+---
+Task ID: JHIA11.15
+Agent: Main
+Task: Aplicar metodologia 5S a RACKLY y crear mapas de integracion
+
+Work Log:
+- Analisis exhaustivo de todo el codebase (~7,000 lineas, 39 archivos)
+- Identificados: 8 duplicaciones de codigo, 5 elementos obsoletos, 1 vulnerabilidad critica (service_role expuesta)
+- Generados 4 mapas visuales PNG (Arquitectura, Flujo de Datos, Integracion, 5S Resumen)
+- Generado documento PDF completo con 12 secciones: analisis 5S completo + mapas integrados + plan de accion
+- Punto de guardado JHIA11.15 creado
+- Push a GitHub y deploy a Cloudflare Pages exitoso
+
+Stage Summary:
+- PDF: /home/z/my-project/download/RACKLY_Documento_5S.pdf
+- Mapas: RACKLY_Mapa_Arquitectura.png, RACKLY_Mapa_FlujoDatos.png, RACKLY_Mapa_Integracion.png, RACKLY_Mapa_5S_Resumen.png
+- Deploy: https://rackly.pages.dev (JHIA11.15)
+- 17 acciones de mejora identificadas y priorizadas
+---
+Task ID: JHIA11.17
 Agent: Main Agent
-Task: Migrate RACKLY warehouse management app from TanStack Start to Next.js 16
+Task: Fix RACKLY user manual PDF - correct Spanish orthography (RAE), add mobile illustrations, make more visual
 
 Work Log:
-- Cloned repository from GitHub (https://github.com/fileshidalgo-spec/cuadraje.git)
-- Analyzed full project structure: 35+ source files, 14 SQL migrations, Supabase integration
-- Identified tech stack: TanStack Start, Vite, Cloudflare Workers, Supabase, shadcn/ui, Tailwind CSS 4
-- Mapped database schema: 12 tables (profiles, user_roles, catalogo, movimientos, piso_* tables), 4 RPCs, 2 roles (admin/operario)
-- Installed dependencies: @supabase/supabase-js, @supabase/ssr, xlsx
-- Created Supabase client configuration for Next.js (client-side browser client with Proxy pattern)
-- Created Supabase types (Database schema mirroring production)
-- Migrated 7 business logic libraries: kardex.ts, catalogo.ts, auth.ts, turno.ts, ubicaciones.ts, piso/api.ts
-- Migrated 2 React hooks: useAuth.tsx (auth context), useMovimientosRealtime.tsx (real-time subscription)
-- Created AuthGate component with login/register, approval, and password change screens
-- Created 8 Kardex Racks components: SesionBar, CatalogoSearchInput, MovimientoForm, StockTab, CatalogoTab, UsuariosTab, DescargaTab, FefoTab, OcupacionTab, TrasladoTab
-- Created 4 Kardex Piso components: SectoresTab, MovimientosTab, ConfiguracionColumnasTab, UpKardexTab
-- Built single-page main app with navigation between Kardex Racks and Kardex Piso views
-- Updated layout.tsx with RACKLY branding and Sonner toaster
-- Fixed ESLint errors (async effects, import styles)
-- Verified dev server running successfully
+- Read existing generate_user_manual.py (1173 lines)
+- Identified multiple Spanish orthography issues: missing tildes on gestión, sesión, contraseña, ubicación, descripción, automáticamente, código, información, más, también, rápido, único, página, pestaña, función, navegación, etc.
+- Generated 10 mobile phone mockup illustrations using z-ai-generate for: login, main tabs, ingreso, salida, traslado, catálogo, stock, ocupación, FEFO, usuarios
+- Completely rewrote the manual script (generate_user_manual.py) with:
+  - All words corrected per Real Academia Española norms (tildes, ñ, accents)
+  - Mobile mockup images alongside text in key sections (1-4, 6-9, 12-13)
+  - Shorter, more direct text for non-readers
+  - Image + text side-by-side layout using ReportLab Tables
+  - 10pt font for body (smaller, more visual), 11pt for steps
+  - APA format maintained (Times New Roman, 1-inch margins, headers)
+  - Color-coded callout boxes (tips, warnings, notes)
+  - Professional tables with dark headers
 
 Stage Summary:
-- Successfully migrated entire application from TanStack Start to Next.js 16
-- All business logic preserved (kardex, catalog, auth, piso management)
-- Supabase integration working with existing database
-- Single-page app architecture with tab-based navigation
-- 0 ESLint errors in new code (all warnings are from old cuadraje/ directory)
-- App accessible at / route with RACKLY branding
-
+- Generated PDF: /home/z/my-project/download/RACKLY_Manual_de_Usuario.pdf (1.2MB)
+- 10 mobile mockup images in /home/z/my-project/download/manual_imgs/
+- All Spanish orthography corrected per RAE
+- Visual layout with phone mockups for intuitive understanding
 ---
-Task ID: 2
+Task ID: JHIA11.17-fix
 Agent: Main Agent
-Task: Fix confirmation dialog for salida and add realtime updates to SalidaForm
+Task: Fix PDF manual - callout overlap, Chinese text in mockups, RAE/APA compliance
 
 Work Log:
-- Analyzed current MovimientoForm.tsx - confirmation dialog code already existed from previous commit
-- Identified that AlertDialogAction from Radix UI auto-closes dialog, potentially causing race conditions with handleConfirm
-- Changed AlertDialogAction to a regular Button for the confirm action in SalidaLocationCard
-- Added Supabase realtime subscription to SalidaForm so locations auto-refresh when movements are registered from other devices
-- Extracted location search logic into reusable `refreshLocations` callback with useRef for current searchCode
-- Built project successfully with Turbopack
-- Committed and pushed to GitHub to trigger Netlify auto-deploy
+- Regenerated all 10 mobile mockup images with strict "NO TEXT NO Chinese" prompts - now showing clean wireframes with geometric shapes matching actual RACKLY app UI
+- Fixed callout box overlap: wrapped tip/warning/note in KeepTogether with explicit 0.3cm Spacer before and 0.2cm after each callout; increased spaceBefore=14 and spaceAfter=14 in ParagraphStyle
+- Added 0.3cm Spacer before every callout box in the story flow to ensure separation from preceding content
+- Reviewed all Spanish text per RAE: confirmed correct tildes on gestión, sesión, contraseña, ubicación, descripción, automáticamente, código, información, más, también, rápido, único, página, pestaña, función, navegación, devolución, cálculo, vencimiento, análisis, teléfono, Público, índigo, ámbar, de/del contractions
+- APA format verified: Times New Roman (Liberation Serif), 12pt body, 1-inch margins, centered title page, numbered headings, running header
+- Used proper RAE formats: "a. m." / "p. m." with spaces, "1 000" for thousands (RAE recommendation), proper accent marks
 
 Stage Summary:
-- Confirmation dialog for salida parcial/total now uses Button instead of AlertDialogAction to prevent premature dialog close
-- SalidaForm now subscribes to Supabase realtime (postgres_changes on movimientos table) to auto-refresh search results
-- Deployed to https://rackly.netlify.app via GitHub push (auto-deploy)
-
----
-Task ID: 1
-Agent: Main Agent
-Task: Configurar integración Cloudflare Pages + GitHub + Supabase
-
-Work Log:
-- Verificó configuración del proyecto (next.config.ts con output:export, package.json)
-- Removió .env del tracking de git para seguridad
-- Creó wrangler.json para Cloudflare Pages
-- Obtuvo credenciales del usuario (API Token cfat_*, Account ID)
-- Creó proyecto "rackly" en Cloudflare Pages
-- Configuró variables de entorno NEXT_PUBLIC_SUPABASE_* en Cloudflare
-- Build con variables inyectadas y deploy exitoso
-- Creó deploy.sh para pipeline automático (build → git push → cf deploy)
-- Guardó credenciales en .cf.env (excluido de git)
-- Commit y push a GitHub
-
-Stage Summary:
-- App desplegada exitosamente en https://rackly.pages.dev
-- Pipeline configurado: este entorno → GitHub → Cloudflare
-- Script deploy.sh disponible para despliegues automáticos
-- Credenciales seguras (.cf.env en gitignore)
----
-Task ID: 1
-Agent: main
-Task: Mejorar visualización de salida en móvil - tarjetas en lugar de tabla comprimida
-
-Work Log:
-- Analizado el código actual de OcupacionTab.tsx - la tabla de 5 columnas (Código, Stock, Vencim., Salida, Acción) estaba demasiado comprimida en móvil
-- Reemplazada la tabla por tarjetas (cards) en móvil con layout responsivo: `sm:hidden` para tarjetas, `hidden sm:block` para tabla
-- Cada tarjeta móvil muestra: código/descripción + vencimiento, stock disponible destacado, campo de cantidad grande (h-12, text-lg, centrado), botones grandes (h-12) para Salida Parcial y Salida Total
-- Agregado indicador visual rojo si la cantidad ingresada excede el stock
-- Mejorado el diálogo de confirmación: bordes rojos, cantidades más grandes, descripción del producto, aviso si quedará vacía
-- Botones de confirmación ahora son full-width en móvil con h-11 para fácil toque
-- Deploy exitoso a Cloudflare Pages: https://rackly.pages.dev
-
-Stage Summary:
-- Archivo modificado: src/components/rackly/kardex/OcupacionTab.tsx
-- Vista móvil: tarjetas con campos grandes y claros para evitar errores de cantidad
-- Vista desktop: tabla mejorada con placeholder que muestra máximo disponible
-- Diálogo de confirmación mejorado con visualización más clara
-
----
-Task ID: 2
-Agent: main
-Task: Corregir descripciones largas descentradas + selector de artículo para múltiples productos
-
-Work Log:
-- Analizada captura: descripciones largas causaban descentramiento del badge de vencimiento
-- Agregado estado `selectedIdx` para selección de artículo en posiciones con 2+ productos
-- Cambiado `truncate` a `line-clamp-2` para descripciones (máximo 2 líneas con puntos suspensivos)
-- Implementado selector con radio buttons estilizados: código + descripción + stock + vencimiento por artículo
-- Tarjeta de salida solo aparece para el artículo seleccionado (o directamente si es el único)
-- Indicador animado "Toca un artículo arriba para dar salida" cuando no se ha seleccionado
-- Campo de cantidad ahora tiene h-14 con texto de 20px para mayor claridad
-- Despliegue exitoso a https://rackly.pages.dev
-
-Stage Summary:
-- Archivo: src/components/rackly/kardex/OcupacionTab.tsx
-- Descripciones con line-clamp-2 evitan descentramiento
-- Selector de artículos con check azul cuando hay 2+ productos
-- Formulario de salida compacto solo para el seleccionado
-
----
-Task ID: 3
-Agent: main
-Task: Agregar ingreso en celdas vacías con búsqueda por código/descripción
-
-Work Log:
-- Agregados estados para formulario de ingreso: codigo, descripcion, un, cantidad, fVencimiento, sinVencimiento, proveedor, busyIngreso
-- Importados CatalogoSearchInput, findCatalogoByCodigo, CatalogoItem, Label, Checkbox, Search icon
-- Implementada función doIngreso() que registra movimiento tipo 'ingreso' en la ubicación de la celda
-- Reemplazado mensaje "Ubicación vacía" con formulario completo:
-  - Barra verde indicadora "Registra un ingreso de mercadería"
-  - CatalogoSearchInput para buscar por código o descripción
-  - Tarjeta con código, UN y descripción del producto seleccionado
-  - Campo de cantidad grande (h-12, text-lg) con UN dinámica
-  - Fecha de vencimiento + checkbox "Sin vencimiento"
-  - Selector de proveedor condicional (LAMINA/STRETCH)
-  - Botón "Registrar Ingreso" verde grande
-- Al registrar ingreso, se limpia el formulario y se refresca el detalle y mapa
-- Build exitoso, deploy a https://rackly.pages.dev
-
-Stage Summary:
-- Archivo: src/components/rackly/kardex/OcupacionTab.tsx
-- Flujo: Tocar celda verde (vacía) → Dialog con formulario de ingreso → Buscar producto → Ingresar cantidad y vencimiento → Registrar
-- La ubicación se pre-llena automáticamente desde la celda seleccionada
-
----
-Task ID: 1
-Agent: main
-Task: Auto-clear all form fields after movement registration (ingreso, devolucion, salida, traslado)
-
-Work Log:
-- Read MovimientoForm.tsx, CatalogoSearchInput.tsx, TrasladoTab.tsx, page.tsx
-- Identified root cause: CatalogoSearchInput internal `query` state not syncing when parent clears `value` prop
-- Fixed CatalogoSearchInput.tsx: added useEffect to sync internal query/results/show when value prop changes
-- Fixed IngresoForm.doInsert: added clearing of bloque, torre, piso, posicion, sinVencimiento
-- Fixed DevolucionForm.doInsert: added clearing of bloque, torre, piso, posicion, sinVencimiento
-- SalidaForm and TrasladoTab already cleared all fields properly
-- Built and deployed to Cloudflare Pages
-
-Stage Summary:
-- CatalogoSearchInput now syncs its internal state with the value prop
-- All 4 movement types (ingreso, devolucion, salida, traslado) now clear ALL fields after successful registration
-- Deployed to https://rackly.pages.dev
+- Updated PDF: /home/z/my-project/download/RACKLY_Manual_de_Usuario.pdf (1022KB)
+- All 10 mockup images regenerated as clean wireframes (no text, no Chinese)
+- Callout boxes no longer overlap with text
+- RAE orthography and APA format verified

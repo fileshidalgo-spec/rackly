@@ -128,8 +128,10 @@ export async function calcularStockUbicacion(
     .eq('posicion', posicion)
   if (error) throw error
   return (data ?? []).reduce(
-    (s: number, r: { tipo: string; cantidad: number }) =>
-      s + impactoStock(r.tipo, r.cantidad),
+    (s: number, r: { tipo: string; cantidad: unknown }) => {
+      const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
+      return s + impactoStock(r.tipo, qty)
+    },
     0
   )
 }
@@ -352,8 +354,9 @@ export async function deleteAllMovimientos(): Promise<{ deleted: boolean; error?
   // Obtener todos los IDs
   const allIds: string[] = []
   let from = 0
+  let iterations = 0
   const BATCH = 1000
-  while (true) {
+  while (iterations++ < MAX_ITERATIONS) {
     const { data, error } = await admin
       .from('movimientos')
       .select('id')

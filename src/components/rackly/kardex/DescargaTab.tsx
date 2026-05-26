@@ -53,22 +53,20 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
       const locMap = new Map<string, Record<string, unknown>>()
       for (const m of movs) {
         const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+        const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
         const current = locMap.get(key)
         if (current) {
-          current['Stock'] =
-            (current['Stock'] as number) +
-            (m.tipo === 'ingreso' ? m.cantidad : -m.cantidad)
+          current['Stock'] = (current['Stock'] as number) + delta
         } else {
           locMap.set(key, {
-            Código: m.codigo,
-            Descripción: m.descripcion,
+            'Código': m.codigo,
+            'Descripción': m.descripcion,
             UN: m.un,
             Bloque: m.bloque,
             Torre: m.torre,
             Piso: m.piso,
-            Posición: m.posicion,
-            Stock:
-              m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
+            'Posición': m.posicion,
+            Stock: delta,
           })
         }
       }

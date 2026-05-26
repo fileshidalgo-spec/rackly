@@ -235,7 +235,7 @@ export function OcupacionTab() {
         proveedor: showProveedor ? ingProveedor : undefined,
       })
       toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
-      await refreshDetail(); refreshData(); setDetailMode('view')
+      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
   }
 
@@ -254,7 +254,7 @@ export function OcupacionTab() {
         fVencimiento: item.fVencimiento ?? '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
       })
       toast.success('Salida registrada')
-      await refreshDetail(); refreshData(); setDetailMode('view')
+      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
   }
 
@@ -284,7 +284,7 @@ export function OcupacionTab() {
       }
       await trasladarMovimiento(input)
       toast.success('Traslado registrado')
-      await refreshDetail(); refreshData(); setDetailMode('view')
+      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
   }
 

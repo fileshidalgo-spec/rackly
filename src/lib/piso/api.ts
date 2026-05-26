@@ -1,6 +1,6 @@
 'use client'
 
-import { supabase } from '@/lib/supabase/client'
+import { dataClient } from '@/lib/supabase/client'
 
 export type Sector = {
   id: string
@@ -80,7 +80,7 @@ export type DetalleInput = {
 
 // ---- Sector CRUD ----
 export async function listarSectores(): Promise<Sector[]> {
-  const { data, error } = await supabase
+  const { data, error } = await dataClient
     .from('piso_sectores')
     .select('*')
     .order('nombre')
@@ -96,7 +96,7 @@ export async function crearSector(
   n_posiciones: number,
   n_niveles: number
 ): Promise<Sector[]> {
-  const { error } = await supabase.from('piso_sectores').insert({
+  const { error } = await dataClient.from('piso_sectores').insert({
     nombre,
     prefijo,
     n_columnas,
@@ -109,7 +109,7 @@ export async function crearSector(
 }
 
 export async function eliminarSector(id: string): Promise<Sector[]> {
-  const { error } = await supabase.from('piso_sectores').delete().eq('id', id)
+  const { error } = await dataClient.from('piso_sectores').delete().eq('id', id)
   if (error) throw error
   return listarSectores()
 }
@@ -118,7 +118,7 @@ export async function eliminarSector(id: string): Promise<Sector[]> {
 export async function listarColumnas(
   sectorId: string
 ): Promise<Columna[]> {
-  const { data, error } = await supabase
+  const { data, error } = await dataClient
     .from('piso_columnas')
     .select('*')
     .eq('sector_id', sectorId)
@@ -130,7 +130,7 @@ export async function listarColumnas(
 export async function listarSubcolumnas(
   columnaId: string
 ): Promise<Subcolumna[]> {
-  const { data, error } = await supabase
+  const { data, error } = await dataClient
     .from('piso_subcolumnas')
     .select('*')
     .eq('columna_id', columnaId)
@@ -142,7 +142,7 @@ export async function listarSubcolumnas(
 export async function listarNivelesDeSubcolumna(
   subcolumnaId: string
 ): Promise<{ posicion: Posicion; niveles: Nivel[] }[]> {
-  const { data: posData, error: posErr } = await supabase
+  const { data: posData, error: posErr } = await dataClient
     .from('piso_posiciones')
     .select('*')
     .eq('subcolumna_id', subcolumnaId)
@@ -153,7 +153,7 @@ export async function listarNivelesDeSubcolumna(
   if (posiciones.length === 0) return []
 
   const posIds = posiciones.map((p) => p.id)
-  const { data: nivData, error: nivErr } = await supabase
+  const { data: nivData, error: nivErr } = await dataClient
     .from('piso_niveles')
     .select('*')
     .in('posicion_id', posIds)
@@ -170,7 +170,7 @@ export async function listarNivelesDeSubcolumna(
 
 // ---- Bloques ----
 export async function listarBloques(): Promise<Bloque[]> {
-  const { data, error } = await supabase
+  const { data, error } = await dataClient
     .from('piso_bloques')
     .select('*')
     .order('codigo')
@@ -183,7 +183,7 @@ export async function crearBloque(
   descripcion: string,
   unidad: string
 ): Promise<Bloque[]> {
-  const { error } = await supabase.from('piso_bloques').insert({
+  const { error } = await dataClient.from('piso_bloques').insert({
     codigo: codigo.trim().toUpperCase(),
     descripcion,
     unidad,
@@ -193,8 +193,8 @@ export async function crearBloque(
 }
 
 export async function eliminarBloque(id: string): Promise<Bloque[]> {
-  await supabase.from('piso_columna_bloques').delete().eq('bloque_id', id)
-  const { error } = await supabase.from('piso_bloques').delete().eq('id', id)
+  await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', id)
+  const { error } = await dataClient.from('piso_bloques').delete().eq('id', id)
   if (error) throw error
   return listarBloques()
 }
@@ -202,14 +202,14 @@ export async function eliminarBloque(id: string): Promise<Bloque[]> {
 export async function reemplazarCatalogoBloques(
   items: { codigo: string; descripcion: string; unidad: string }[]
 ): Promise<Bloque[]> {
-  await supabase.from('piso_bloques').delete().neq('id', '')
+  await dataClient.from('piso_bloques').delete().neq('id', '')
   if (items.length === 0) return []
   const rows = items.map((i) => ({
     codigo: i.codigo.trim().toUpperCase(),
     descripcion: i.descripcion,
     unidad: i.unidad,
   }))
-  const { error } = await supabase.from('piso_bloques').insert(rows)
+  const { error } = await dataClient.from('piso_bloques').insert(rows)
   if (error) throw error
   return listarBloques()
 }
@@ -218,7 +218,7 @@ export async function reemplazarCatalogoBloques(
 export async function listarBloquesDeColumna(
   columnaId: string
 ): Promise<Bloque[]> {
-  const { data, error } = await supabase
+  const { data, error } = await dataClient
     .from('piso_columna_bloques')
     .select('bloque_id, piso_bloques(*)')
     .eq('columna_id', columnaId)
@@ -232,7 +232,7 @@ export async function asignarBloqueAColumna(
   bloqueId: string,
   columnaId: string
 ) {
-  const { error } = await supabase
+  const { error } = await dataClient
     .from('piso_columna_bloques')
     .insert({ bloque_id: bloqueId, columna_id: columnaId })
   if (error) throw error
@@ -242,7 +242,7 @@ export async function quitarBloqueDeColumna(
   bloqueId: string,
   columnaId: string
 ) {
-  const { error } = await supabase
+  const { error } = await dataClient
     .from('piso_columna_bloques')
     .delete()
     .eq('bloque_id', bloqueId)
@@ -256,7 +256,7 @@ export async function registrarMovimiento(
   turno: string,
   detalles: DetalleInput[]
 ): Promise<PisoMovimiento> {
-  const { data, error } = await supabase.rpc('piso_registrar_movimiento', {
+  const { data, error } = await dataClient.rpc('piso_registrar_movimiento', {
     _tipo: tipo,
     _turno: turno,
     _detalles: detalles,
@@ -273,7 +273,7 @@ export async function listarMovimientos(
   desde?: string,
   hasta?: string
 ): Promise<MovimientoConDetalles[]> {
-  let query = supabase
+  let query = dataClient
     .from('piso_movimientos')
     .select('*')
     .order('fecha', { ascending: false })
@@ -298,7 +298,7 @@ export async function listarMovimientos(
   if (all.length === 0) return []
 
   const movIds = all.map((m) => m.id)
-  const { data: detData, error: detErr } = await supabase
+  const { data: detData, error: detErr } = await dataClient
     .from('piso_movimiento_detalles')
     .select('*')
     .in('movimiento_id', movIds)
@@ -319,13 +319,13 @@ export async function listarMovimientos(
 
   const [bloquesRes, nivelesRes] = await Promise.all([
     blockIds.length > 0
-      ? supabase
+      ? dataClient
           .from('piso_bloques')
           .select('id, codigo')
           .in('id', blockIds)
       : Promise.resolve({ data: [], error: null }),
     nivelIds.length > 0
-      ? supabase
+      ? dataClient
           .from('piso_niveles')
           .select('id, codigo_ubicacion')
           .in('id', nivelIds)
@@ -353,7 +353,7 @@ export async function listarMovimientos(
   // Filter by sector/columna/bloque if specified
   if (sectorId || columnaId || bloqueId) {
     if (columnaId) {
-      const { data: cols, error: colErr } = await supabase
+      const { data: cols, error: colErr } = await dataClient
         .from('piso_columnas')
         .select('id')
         .eq('sector_id', sectorId ?? columnaId)
@@ -374,7 +374,7 @@ export async function listarMovimientos(
 export async function calcularStockNivel(
   nivelId: string
 ): Promise<{ bloque_codigo: string; cantidad: number }[]> {
-  const { data, error } = await supabase
+  const { data, error } = await dataClient
     .from('piso_movimiento_detalles')
     .select(
       'cantidad, bloque_id, movimiento_id, piso_movimientos!inner(tipo)'
@@ -387,7 +387,7 @@ export async function calcularStockNivel(
   ]
   if (bloquesIds.length === 0) return []
 
-  const { data: bloques } = await supabase
+  const { data: bloques } = await dataClient
     .from('piso_bloques')
     .select('id, codigo')
     .in('id', bloquesIds)

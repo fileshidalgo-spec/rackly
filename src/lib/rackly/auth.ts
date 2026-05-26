@@ -1,6 +1,6 @@
 'use client'
 
-import { supabase } from '@/lib/supabase/client'
+import { supabase, dataClient } from '@/lib/supabase/client'
 
 export type Rol = 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
 
@@ -144,12 +144,12 @@ export async function getPerfilActual(): Promise<Perfil | null> {
   if (!u?.user) return null
 
   const [perfilRes, rolesRes] = await Promise.all([
-    supabase
+    dataClient
       .from('profiles')
       .select('id, correo, nombre, aprobado, must_change_password')
       .eq('id', u.user.id)
       .maybeSingle(),
-    supabase.from('user_roles').select('role').eq('user_id', u.user.id),
+    dataClient.from('user_roles').select('role').eq('user_id', u.user.id),
   ])
 
   if (perfilRes.error) {
@@ -167,7 +167,7 @@ export async function getPerfilActual(): Promise<Perfil | null> {
       (u.user.user_metadata?.nombre as string | undefined)?.trim() ||
       u.user.email?.split('@')[0] ||
       'Usuario'
-    const { data: perfilCreado, error: upsertErr } = await supabase
+    const { data: perfilCreado, error: upsertErr } = await dataClient
       .from('profiles')
       .upsert(
         { id: u.user.id, correo: u.user.email ?? '', nombre, aprobado: false },
@@ -204,11 +204,11 @@ export async function getPerfilActual(): Promise<Perfil | null> {
 
 export async function getTodosLosPerfiles(): Promise<Perfil[]> {
   const [{ data: perfiles }, { data: roles }] = await Promise.all([
-    supabase
+    dataClient
       .from('profiles')
       .select('id, correo, nombre, aprobado, must_change_password')
       .order('nombre'),
-    supabase.from('user_roles').select('user_id, role'),
+    dataClient.from('user_roles').select('user_id, role'),
   ])
   const roleMap = new Map<string, Rol>()
   for (const r of (roles ?? []) as { user_id: string; role: string }[]) {
@@ -229,7 +229,7 @@ export async function cambiarPasswordPropia(nuevaPassword: string) {
   if (error) throw error
   const { data: u } = await supabase.auth.getUser()
   if (u?.user) {
-    await supabase
+    await dataClient
       .from('profiles')
       .update({ must_change_password: false })
       .eq('id', u.user.id)
@@ -237,7 +237,7 @@ export async function cambiarPasswordPropia(nuevaPassword: string) {
 }
 
 export async function cambiarAprobado(userId: string, aprobado: boolean) {
-  const { error } = await supabase
+  const { error } = await dataClient
     .from('profiles')
     .update({ aprobado })
     .eq('id', userId)
@@ -245,16 +245,16 @@ export async function cambiarAprobado(userId: string, aprobado: boolean) {
 }
 
 export async function cambiarRol(userId: string, rol: Rol) {
-  await supabase.from('user_roles').delete().eq('user_id', userId)
-  const { error } = await supabase
+  await dataClient.from('user_roles').delete().eq('user_id', userId)
+  const { error } = await dataClient
     .from('user_roles')
     .insert({ user_id: userId, role: rol })
   if (error) throw error
 }
 
 export async function eliminarPerfil(userId: string) {
-  await supabase.from('user_roles').delete().eq('user_id', userId)
-  const { error } = await supabase
+  await dataClient.from('user_roles').delete().eq('user_id', userId)
+  const { error } = await dataClient
     .from('profiles')
     .delete()
     .eq('id', userId)

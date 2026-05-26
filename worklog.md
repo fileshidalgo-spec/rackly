@@ -142,3 +142,24 @@ Stage Summary:
 - Fix: Todas las operaciones de datos usan service role key (dataClient)
 - Operaciones de autenticación siguen usando anon key (supabase)
 - Deploy: https://rackly.pages.dev - app estática, sin cold starts
+
+---
+Task ID: JHIA11.20
+Agent: main
+Task: Corregir espacios verdes en Ocupación (ubicaciones con artículos mostraban como vacías)
+
+Work Log:
+- Diagnosticado bug: la función RPC `ocupacion_celdas()` en Supabase NO incluía el tipo `traslado` en su cálculo de stock → las ubicaciones que recibieron artículos por traslado mostraban stock=0 (verde)
+- Confirmado: `stockEnUbicacion()` (detalle al hacer click) SÍ incluía traslado, por eso el detalle mostraba correctamente
+- Confirmado: `calcularOcupacion()` (fallback en frontend) SÍ incluía traslado pero tenía un bug secundario: procesaba movimientos en orden DESC y perdía códigos en celdas multi-artículo
+- Reescrita `calcularOcupacion()`: ahora rastrea stock POR CÓDIGO (independiente del orden de procesamiento)
+- Modificado `refreshData()`: ahora usa cálculo directo como método primario (antes usaba el RPC roto)
+- Eliminado import de `fetchOcupacionCeldas` (ya no se usa como primario)
+- Generado SQL de migración `rackly_fix_traslado_rpc.sql` para actualizar ambas funciones RPC
+- Build exitoso, push a GitHub (force push para restaurar estado más reciente)
+
+Stage Summary:
+- Bug corregido: ubicaciones con traslados ahora muestran correctamente como ocupadas (azul)
+- Bug secundario corregido: celdas con múltiples artículos ya no pierden códigos
+- SQL de migración generado para actualizar funciones RPC en Supabase Dashboard
+- Commit: bf24764 - fix(JHIA11.20): corregir espacios verdes en Ocupacion

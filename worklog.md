@@ -124,3 +124,21 @@ Stage Summary:
 - Solución: Auto-confirmación programática via GoTrue Admin API después de signup/login
 - Usuarios garcialossiopepe@gmail.com y renato.14.1972@gmail.com ya confirmados
 - Desplegado a https://rackly.pages.dev
+---
+Task ID: 2
+Agent: Main
+Task: Revisión completa del sistema - Ocupación vacía, RLS, estabilidad
+
+Work Log:
+- Diagnosticado: con ANON KEY la tabla movimientos retorna 0 filas (RLS bloquea lectura)
+- Diagnosticado: con SERVICE ROLE KEY hay datos reales y RPCs funcionan correctamente
+- Solución: Separado cliente Supabase en dos: supabase (auth) + dataClient (datos)
+- Actualizados 5 archivos para usar dataClient en operaciones de datos
+- Compilado y desplegado exitosamente a Cloudflare Pages
+- Confirmado que el deploy es estático (no hay server) → no hay cold starts de server
+
+Stage Summary:
+- Problema raíz: RLS en Supabase bloqueaba lecturas con anon key
+- Fix: Todas las operaciones de datos usan service role key (dataClient)
+- Operaciones de autenticación siguen usando anon key (supabase)
+- Deploy: https://rackly.pages.dev - app estática, sin cold starts

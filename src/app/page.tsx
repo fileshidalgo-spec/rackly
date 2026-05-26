@@ -15,7 +15,7 @@ import { TrasladoTab } from '@/components/rackly/kardex/TrasladoTab'
 import { SectoresTab } from '@/components/rackly/piso/SectoresTab'
 import { MovimientosTab } from '@/components/rackly/piso/MovimientosTab'
 import { ConfiguracionColumnasTab } from '@/components/rackly/piso/ConfiguracionColumnasTab'
-import { UpKardexTab } from '@/components/rackly/piso/UpKardexTab'
+// UpKardexTab eliminado — el catálogo se sincroniza desde Racks
 import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Button } from '@/components/ui/button'
@@ -568,7 +568,6 @@ function RacklyApp() {
             <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none">
               {[
                 { val: 'movimientos', icon: History, label: 'Movimientos', color: 'from-emerald-500 to-green-600' },
-                { val: 'up-kardex', icon: Upload, label: 'UP KARDEX', color: 'from-blue-500 to-indigo-600' },
                 { val: 'sectores', icon: Layers3, label: 'Sectores', color: 'from-violet-500 to-purple-600' },
                 { val: 'columnas', icon: Settings, label: 'Configuración', color: 'from-slate-500 to-slate-700' },
               ].map((tab) => (
@@ -602,22 +601,7 @@ function RacklyApp() {
               </Card>
             </TabsContent>
 
-            <TabsContent value="up-kardex" className="mt-5">
-              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md shadow-blue-500/20">
-                      <Upload className="h-5 w-5 text-white" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">UP KARDEX</CardTitle>
-                      <CardDescription>Carga el catálogo de bloques desde un archivo Excel.</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent><UpKardexTab /></CardContent>
-              </Card>
-            </TabsContent>
+
 
             <TabsContent value="sectores" className="mt-5">
               <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">

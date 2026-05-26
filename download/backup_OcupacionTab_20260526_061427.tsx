@@ -129,18 +129,16 @@ export function OcupacionTab() {
   const [trCantidad, setTrCantidad] = useState('')
 
   // ── Data refresh ──
-  // Primario: calcularOcupacion directo desde movimientos (incluye ingreso/salida/devolucion/traslado)
-  // Fallback: RPC 'ocupacion_celdas' (server-side)
+  // Primario: RPC 'ocupacion_celdas' (server-side, ya corregido con SQL para incluir traslado)
+  // Fallback: calcularOcupacion directo desde movimientos
   const refreshData = useCallback(async () => {
     try {
-      // Cálculo directo desde movimientos — siempre incluye todos los tipos
-      const movs = await fetchMovimientos()
-      if (mountedRef.current) setOcupacion(calcularOcupacion(movs))
+      const celdas = await fetchOcupacionCeldas()
+      if (mountedRef.current) setOcupacion(celdas)
     } catch {
-      // Fallback al RPC si falla la carga de movimientos
       try {
-        const celdas = await fetchOcupacionCeldas()
-        if (mountedRef.current) setOcupacion(celdas)
+        const movs = await fetchMovimientos()
+        if (mountedRef.current) setOcupacion(calcularOcupacion(movs))
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Error'
         if (mountedRef.current) toast.error('Error al cargar ocupación', { description: msg })

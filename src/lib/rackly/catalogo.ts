@@ -118,11 +118,55 @@ export async function mergeCatalogo(nuevos: CatalogoItem[]): Promise<CatalogoIte
   }))
   const { error } = await dataClient.from('catalogo').upsert(rows, { onConflict: 'codigo' })
   if (error) throw error
+  // Sincronizar: también upsert a piso_bloques
+  await syncToPisoBloques(nuevos)
   return fetchCatalogo()
 }
 
 export async function clearCatalogo(): Promise<CatalogoItem[]> {
   const { error } = await dataClient.from('catalogo').delete().neq('codigo', '')
   if (error) throw error
+  // Sincronizar: también limpiar piso_bloques
+  await clearPisoBloques()
   return fetchCatalogo()
 }
+
+// ═══ Sincronización con piso_bloques ═══
+// Cuando se actualiza el catálogo de Racks, los cambios se replican a piso_bloques
+// para que la sección Piso tenga los mismos códigos disponibles.
+
+async function syncToPisoBloques(items: CatalogoItem[]): Promise<void> {
+  if (items.length === 0) return
+  const rows = items.map((i) => ({
+    codigo: i.codigo.trim().toUpperCase(),
+    descripcion: i.descripcion,
+    unidad: i.un,
+  }))
+  const { error } = await dataClient.from('piso_bloques').upsert(rows, { onConflict: 'codigo' })
+  if (error) console.error('Error sync to piso_bloques:', error.message)
+}
+
+async function removeFromPisoBloques(codigo: string): Promise<void> {
+  const target = codigo.trim().toUpperCase()
+  // Buscar el bloque por código para obtener su ID
+  const { data: bloque } = await dataClient
+    .from('piso_bloques')
+    .select('id')
+    .eq('codigo', target)
+    .maybeSingle()
+  if (!bloque) return
+  const bloqueId = (bloque as { id: string }).id
+  // Eliminar asignaciones de columna primero (FK constraint)
+  await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', bloqueId)
+  // Luego eliminar el bloque
+  await dataClient.from('piso_bloques').delete().eq('id', bloqueId)
+}
+
+async function clearPisoBloques(): Promise<void> {
+  // Eliminar asignaciones de columna primero (FK constraint)
+  await dataClient.from('piso_columna_bloques').delete().neq('bloque_id', '')
+  // Luego eliminar todos los bloques
+  await dataClient.from('piso_bloques').delete().neq('id', '')
+}
+
+export { syncToPisoBloques, removeFromPisoBloques, clearPisoBloques }

@@ -963,5 +963,24 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
     }
   } catch (err) { console.error('[Piso] Error en búsqueda catalogo:', err) }
 
+  // 3. No encontrado en ninguna tabla — auto-crear en piso_bloques con info mínima
+  try {
+    console.log('[Piso] Bloque no encontrado en ninguna tabla, auto-creando:', target)
+    const { data: inserted, error: insertErr } = await dataClient
+      .from('piso_bloques')
+      .insert({ codigo: target, descripcion: '', unidad: 'KG' })
+      .select('id')
+      .single()
+    if (!insertErr && inserted) {
+      return {
+        id: (inserted as { id: string }).id,
+        codigo: target,
+        descripcion: '',
+        unidad: 'KG',
+      }
+    }
+    console.warn('[Piso] Auto-crear piso_bloques falló:', insertErr)
+  } catch (err) { console.warn('[Piso] Error auto-creando bloque:', err) }
+
   return null
 }

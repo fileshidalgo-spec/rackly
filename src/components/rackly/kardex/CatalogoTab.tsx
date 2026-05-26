@@ -7,6 +7,8 @@ import {
   parseCatalogoExcelRows,
   mergeCatalogo,
   clearCatalogo,
+  syncToPisoBloques,
+  removeFromPisoBloques,
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
 import { useAuth } from '@/hooks/useAuth'
@@ -192,6 +194,13 @@ export function CatalogoTab() {
         if (error) throw error
         toast.success('Ítem agregado')
       }
+      // Sincronizar con piso_bloques
+      await syncToPisoBloques([{
+        codigo: formCodigo.trim().toUpperCase(),
+        un: formUn.trim(),
+        descripcion: formDesc.trim(),
+        stock_big_magic: formSBM ? parseFloat(formSBM) || 0 : 0,
+      }])
       const data = await fetchCatalogo()
       setCatalogo(data)
       setShowAdd(false)
@@ -213,6 +222,8 @@ export function CatalogoTab() {
         .delete()
         .eq('codigo', deleteTarget)
       if (error) throw error
+      // Sincronizar: también eliminar de piso_bloques
+      await removeFromPisoBloques(deleteTarget)
       const data = await fetchCatalogo()
       setCatalogo(data)
       setDeleteTarget(null)

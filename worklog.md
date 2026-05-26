@@ -163,3 +163,32 @@ Stage Summary:
 - Bug secundario corregido: celdas con múltiples artículos ya no pierden códigos
 - SQL de migración generado para actualizar funciones RPC en Supabase Dashboard
 - Commit: bf24764 - fix(JHIA11.20): corregir espacios verdes en Ocupacion
+
+---
+Task ID: JHIA11.21
+Agent: main
+Task: Hardening completo - 19 correcciones de estabilidad para operación 24/7
+
+Work Log:
+- Auditoría completa de la app encontró 19 puntos de falla
+- Creado ErrorBoundary global (layout.tsx) - captura errores sin pantalla blanca
+- Corregido FEFO tab: stock no incluía traslado/devolución
+- Corregido DescargaTab Excel: stock export sin traslado/devolución
+- Corregido calcularStockUbicacion: NUMERIC coercion string→number
+- Corregido deleteAllMovimientos: agregado MAX_ITERATIONS (loop infinito)
+- Corregido getTodosLosPerfiles: error checking en queries
+- Corregido cambiarRol/eliminarPerfil: error check en deletes previos
+- Corregido OcupacionTab: mountedRef check post-async operations
+- Corregido formatDate/isExpired/isExpiringSoon: validación isNaN
+- Corregido signOut() en AuthGate: try/catch
+- Corregido catalogo.ts: parseFloat seguro para stock_big_magic
+- Instaladas dependencias faltantes para build limpio
+- Build exitoso, deploy a Cloudflare Pages: d5f88f59
+
+Stage Summary:
+- 19 correcciones de estabilidad aplicadas y desplegadas
+- App ahora tiene Error Boundary global que captura errores sin crash
+- Todas las funciones de stock son consistentes (ingreso/devolucion/traslado = +, salida = -)
+- Todos los NUMERIC de PostgreSQL se convierten correctamente a number
+- Todos los loops tienen guards anti-infinitos
+- Todas las operaciones async protegen contra unmount

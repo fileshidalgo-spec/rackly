@@ -387,15 +387,24 @@ export async function calcularStockNivel(
   ]
   if (bloquesIds.length === 0) return []
 
-  const { data: bloques } = await dataClient
-    .from('piso_bloques')
-    .select('id, codigo')
-    .in('id', bloquesIds)
-
   const bloqueMap = new Map<string, string>()
-  ;((bloques ?? []) as { id: string; codigo: string }[]).forEach((b) =>
-    bloqueMap.set(b.id, b.codigo)
-  )
+  // Buscar en piso_bloques (solo IDs reales, no virtuales)
+  const realIds = bloquesIds.filter((id) => !id.startsWith('cat_'))
+  if (realIds.length > 0) {
+    const { data: bloques } = await dataClient
+      .from('piso_bloques')
+      .select('id, codigo')
+      .in('id', realIds)
+    ;((bloques ?? []) as { id: string; codigo: string }[]).forEach((b) =>
+      bloqueMap.set(b.id, b.codigo)
+    )
+  }
+  // Para IDs virtuales de catálogo, extraer código del ID
+  for (const id of bloquesIds) {
+    if (id.startsWith('cat_') && !bloqueMap.has(id)) {
+      bloqueMap.set(id, id.replace('cat_', ''))
+    }
+  }
 
   const stockMap = new Map<string, number>()
   for (const d of data ?? []) {
@@ -533,13 +542,21 @@ export async function cargarPosicionesSector(
   // 6. Obtener códigos de bloques
   const bloqueIdsSet = [...new Set(stockPorNivel.map((s) => s.bloque_id))]
   let bloqueMap = new Map<string, string>()
-  if (bloqueIdsSet.length > 0) {
+  // Buscar IDs reales en piso_bloques
+  const realBloqueIds = bloqueIdsSet.filter((id) => !id.startsWith('cat_'))
+  if (realBloqueIds.length > 0) {
     const { data: bloqData } = await dataClient
       .from('piso_bloques')
       .select('id, codigo')
-      .in('id', bloqueIdsSet)
+      .in('id', realBloqueIds)
     for (const b of (bloqData ?? []) as { id: string; codigo: string }[]) {
       bloqueMap.set(b.id, b.codigo)
+    }
+  }
+  // Para IDs virtuales, extraer código del formato cat_CODIGO
+  for (const id of bloqueIdsSet) {
+    if (id.startsWith('cat_')) {
+      bloqueMap.set(id, id.replace('cat_', ''))
     }
   }
 
@@ -635,18 +652,44 @@ export async function stockDetallePosicion(
   const bloqueIds = [...stockMap.keys()].filter((id) => (stockMap.get(id) ?? 0) > 0)
   if (bloqueIds.length === 0) return []
 
-  const { data: bloqData } = await dataClient
-    .from('piso_bloques')
-    .select('id, codigo, descripcion, unidad')
-    .in('id', bloqueIds)
+  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
 
-  return ((bloqData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]).map((b) => ({
-    bloque_id: b.id,
-    bloque_codigo: b.codigo,
-    bloque_descripcion: b.descripcion ?? '',
-    bloque_unidad: b.unidad ?? 'KG',
-    cantidad: Math.round((stockMap.get(b.id) ?? 0) * 1000) / 1000,
-  }))
+  // Buscar en piso_bloques (solo IDs reales)
+  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_'))
+  if (realIds.length > 0) {
+    const { data: bloqData } = await dataClient
+      .from('piso_bloques')
+      .select('id, codigo, descripcion, unidad')
+      .in('id', realIds)
+    for (const b of (bloqData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
+      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
+    }
+  }
+  // Para IDs virtuales, buscar en catalogo
+  const virtualIds = bloqueIds.filter((id) => id.startsWith('cat_'))
+  if (virtualIds.length > 0) {
+    const codes = virtualIds.map((id) => id.replace('cat_', ''))
+    const { data: catData } = await dataClient
+      .from('catalogo')
+      .select('codigo, descripcion, un')
+      .in('codigo', codes)
+    for (const c of (catData ?? []) as { codigo: string; descripcion: string; un: string }[]) {
+      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+    }
+  }
+
+  return bloqueIds
+    .filter((id) => bloqueInfoMap.has(id))
+    .map((id) => {
+      const info = bloqueInfoMap.get(id)!
+      return {
+        bloque_id: id,
+        bloque_codigo: info.codigo,
+        bloque_descripcion: info.descripcion,
+        bloque_unidad: info.unidad || 'KG',
+        cantidad: Math.round((stockMap.get(id) ?? 0) * 1000) / 1000,
+      }
+    })
 }
 
 /**
@@ -808,18 +851,106 @@ export async function obtenerPrimerNivel(posicionId: string): Promise<string | n
 }
 
 /**
- * Lista bloques disponibles para selección (catálogo sincronizado desde Racks).
+ * Lista bloques disponibles para selección.
+ * Busca en piso_bloques PRIMERO y luego en catalogo (Racks) como respaldo.
+ * Fusiona ambos resultados sin duplicar por código.
  */
 export async function listarBloquesParaSelect(): Promise<{ id: string; codigo: string; descripcion: string; unidad: string }[]> {
-  const { data, error } = await dataClient
-    .from('piso_bloques')
-    .select('id, codigo, descripcion, unidad')
-    .order('codigo')
-  if (error) throw error
-  return ((data ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]).map((b) => ({
-    id: b.id,
-    codigo: b.codigo,
-    descripcion: b.descripcion ?? '',
-    unidad: b.unidad ?? 'KG',
-  }))
+  const results: { id: string; codigo: string; descripcion: string; unidad: string }[] = []
+  const seen = new Map<string, boolean>()
+
+  // 1. piso_bloques (tabla local de Piso)
+  try {
+    const { data } = await dataClient
+      .from('piso_bloques')
+      .select('id, codigo, descripcion, unidad')
+      .order('codigo')
+    for (const b of (data ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
+      const code = (b.codigo ?? '').trim().toUpperCase()
+      if (code && !seen.has(code)) {
+        seen.set(code, true)
+        results.push({
+          id: b.id,
+          codigo: code,
+          descripcion: b.descripcion ?? '',
+          unidad: b.unidad ?? '',
+        })
+      }
+    }
+  } catch { /* ok */ }
+
+  // 2. catalogo (tabla de Racks como respaldo)
+  try {
+    const { data } = await dataClient
+      .from('catalogo')
+      .select('codigo, descripcion, un')
+      .order('codigo')
+    for (const c of (data ?? []) as { codigo: string; descripcion: string; un: string }[]) {
+      const code = (c.codigo ?? '').trim().toUpperCase()
+      if (code && !seen.has(code)) {
+        seen.set(code, true)
+        results.push({
+          id: `cat_${code}`, // ID virtual para items del catálogo de Racks
+          codigo: code,
+          descripcion: c.descripcion ?? '',
+          unidad: c.un ?? '',
+        })
+      }
+    }
+  } catch { /* ok */ }
+
+  return results
+}
+
+/**
+ * Busca un bloque por código exacto. Busca en piso_bloques primero, luego en catalogo.
+ * Si lo encuentra en catalogo pero no en piso_bloques, lo crea automáticamente.
+ */
+export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: string; codigo: string; descripcion: string; unidad: string } | null> {
+  const target = codigo.trim().toUpperCase()
+  if (!target) return null
+
+  // 1. Buscar en piso_bloques
+  try {
+    const { data } = await dataClient
+      .from('piso_bloques')
+      .select('id, codigo, descripcion, unidad')
+      .eq('codigo', target)
+      .limit(1)
+    if (data && data.length > 0) {
+      const b = data[0] as { id: string; codigo: string; descripcion: string; unidad: string }
+      return { id: b.id, codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' }
+    }
+  } catch { /* ok */ }
+
+  // 2. Buscar en catalogo (Racks)
+  try {
+    const { data } = await dataClient
+      .from('catalogo')
+      .select('codigo, descripcion, un')
+      .eq('codigo', target)
+      .limit(1)
+    if (data && data.length > 0) {
+      const c = data[0] as { codigo: string; descripcion: string; un: string }
+      // Auto-crear en piso_bloques para futuro uso
+      try {
+        const { data: inserted } = await dataClient
+          .from('piso_bloques')
+          .insert({ codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+          .select('id')
+          .single()
+        if (inserted) {
+          return {
+            id: (inserted as { id: string }).id,
+            codigo: c.codigo,
+            descripcion: c.descripcion ?? '',
+            unidad: c.un ?? '',
+          }
+        }
+      } catch { /* upsert falló, usar ID virtual */ }
+      return { id: `cat_${c.codigo}`, codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' }
+    }
+  } catch { /* ok */ }
+
+  return null
 }

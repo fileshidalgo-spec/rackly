@@ -7,6 +7,7 @@ import {
   stockDetallePosicion,
   obtenerPrimerNivel,
   listarBloquesParaSelect,
+  buscarBloquePorCodigo,
   registrarIngresoPosicion,
   registrarSalidaPosicion,
   registrarTrasladoPosicion,
@@ -51,9 +52,8 @@ export function PisoSectoresTab() {
   } | null>(null)
   const [mode, setMode] = useState<ActionMode>('view')
 
-  // Ingreso state
-  const [ingBloques, setIngBloques] = useState<{ bloque_id: string; cantidad: string }[]>([{ bloque_id: '', cantidad: '' }])
-  const [ingSearch, setIngSearch] = useState('')
+  // Ingreso state — formato: código input → autorellena descripción/unidad → cantidad manual
+  const [ingRows, setIngRows] = useState<{ bloque_id: string; codigo: string; descripcion: string; unidad: string; cantidad: string }[]>([{ bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '' }])
 
   // Salida state
   const [salItems, setSalItems] = useState<{ bloque_id: string; cantidad: string }[]>([])
@@ -62,12 +62,12 @@ export function PisoSectoresTab() {
   const [trDestPos, setTrDestPos] = useState<PosicionConStock | null>(null)
   const [trItems, setTrItems] = useState<{ bloque_id: string; cantidad: string }[]>([])
 
-  // Devolución state
-  const [devBloques, setDevBloques] = useState<{ bloque_id: string; cantidad: string }[]>([{ bloque_id: '', cantidad: '' }])
-  const [devSearch, setDevSearch] = useState('')
+  // Devolución state — formato: código input → autorellena descripción/unidad → cantidad manual
+  const [devRows, setDevRows] = useState<{ bloque_id: string; codigo: string; descripcion: string; unidad: string; cantidad: string }[]>([{ bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '' }])
 
   // Catálogo
   const [bloquesCatalogo, setBloquesCatalogo] = useState<BloqueOption[]>([])
+  const [searchingCode, setSearchingCode] = useState<string | null>(null) // 'ing-0', 'dev-0', etc.
 
   // Cargar sectores
   const loadSectores = useCallback(async () => {
@@ -107,22 +107,21 @@ export function PisoSectoresTab() {
   useEffect(() => { mountedRef.current = true; loadSectores(); loadPosiciones(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadPosiciones, loadBloques])
   useEffect(() => { if (sectorFilter !== 'all') loadPosiciones() }, [sectorFilter, loadPosiciones])
 
-  // Filtrar catálogo por búsqueda (código o descripción)
+  // Filtrar catálogo para autocomplete en formularios
   const filteredCatalogo = useMemo(() => {
-    const q = ingSearch.trim().toLowerCase()
-    if (!q) return bloquesCatalogo
-    return bloquesCatalogo.filter((b) =>
-      b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q)
-    )
-  }, [bloquesCatalogo, ingSearch])
-
-  const filteredCatalogoDev = useMemo(() => {
-    const q = devSearch.trim().toLowerCase()
-    if (!q) return bloquesCatalogo
-    return bloquesCatalogo.filter((b) =>
-      b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q)
-    )
-  }, [bloquesCatalogo, devSearch])
+    // Get current search code from whichever mode is active
+    if (mode === 'ingreso' && ingRows.length > 0) {
+      const q = ingRows[0].codigo.trim().toLowerCase()
+      if (!q) return bloquesCatalogo.slice(0, 50)
+      return bloquesCatalogo.filter((b) => b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q))
+    }
+    if (mode === 'devolucion' && devRows.length > 0) {
+      const q = devRows[0].codigo.trim().toLowerCase()
+      if (!q) return bloquesCatalogo.slice(0, 50)
+      return bloquesCatalogo.filter((b) => b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q))
+    }
+    return bloquesCatalogo
+  }, [bloquesCatalogo, mode, ingRows, devRows])
 
   // Agrupar posiciones por columna → subcolumna
   const posPorSubcol = new Map<string, PosicionConStock[]>()
@@ -169,8 +168,7 @@ export function PisoSectoresTab() {
   }
 
   function openIngreso() {
-    setIngBloques([{ bloque_id: '', cantidad: '' }])
-    setIngSearch('')
+    setIngRows([{ bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '' }])
     setMode('ingreso')
   }
 
@@ -186,41 +184,75 @@ export function PisoSectoresTab() {
   }
 
   function openDevolucion() {
-    setDevBloques([{ bloque_id: '', cantidad: '' }])
-    setDevSearch('')
+    setDevRows([{ bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '' }])
     setMode('devolucion')
   }
 
-  // Auto-fill cuando se selecciona un bloque en ingreso
-  function onIngresoSelectBloque(i: number, bloqueId: string) {
-    const updated = [...ingBloques]
-    updated[i].bloque_id = bloqueId
-    setIngBloques(updated)
+  // ── Auto-buscar bloque por código al escribir ──
+  async function handleCodeInput(prefix: 'ing' | 'dev', idx: number, value: string) {
+    const upper = value.trim().toUpperCase()
+    if (prefix === 'ing') {
+      const updated = [...ingRows]
+      updated[idx] = { ...updated[idx], codigo: upper, bloque_id: upper ? updated[idx].bloque_id : '', descripcion: '', unidad: '' }
+      setIngRows(updated)
+    } else {
+      const updated = [...devRows]
+      updated[idx] = { ...updated[idx], codigo: upper, bloque_id: upper ? updated[idx].bloque_id : '', descripcion: '', unidad: '' }
+      setDevRows(updated)
+    }
+    if (upper.length < 2) return
+    setSearchingCode(`${prefix}-${idx}`)
+    const bloque = await buscarBloquePorCodigo(upper)
+    if (bloque) {
+      if (prefix === 'ing') {
+        setIngRows((prev) => {
+          const u = [...prev]
+          u[idx] = { bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad, cantidad: u[idx].cantidad }
+          return u
+        })
+      } else {
+        setDevRows((prev) => {
+          const u = [...prev]
+          u[idx] = { bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad, cantidad: u[idx].cantidad }
+          return u
+        })
+      }
+    }
+    setSearchingCode(null)
   }
 
-  // Auto-fill cuando se selecciona un bloque en devolución
-  function onDevSelectBloque(i: number, bloqueId: string) {
-    const updated = [...devBloques]
-    updated[i].bloque_id = bloqueId
-    setDevBloques(updated)
+  function onSelectFromCatalog(prefix: 'ing' | 'dev', idx: number, bloque: BloqueOption) {
+    if (prefix === 'ing') {
+      setIngRows((prev) => {
+        const u = [...prev]
+        u[idx] = { bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad, cantidad: u[idx].cantidad }
+        return u
+      })
+    } else {
+      setDevRows((prev) => {
+        const u = [...prev]
+        u[idx] = { bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad, cantidad: u[idx].cantidad }
+        return u
+      })
+    }
   }
 
-  function addIngresoRow() { setIngBloques([...ingBloques, { bloque_id: '', cantidad: '' }]) }
-  function removeIngresoRow(i: number) { setIngBloques(ingBloques.filter((_, idx) => idx !== i)) }
-  function updateIngresoRow(i: number, field: 'bloque_id' | 'cantidad', value: string) {
-    const updated = [...ingBloques]; updated[i][field] = value; setIngBloques(updated)
+  function addIngresoRow() { setIngRows([...ingRows, { bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '' }]) }
+  function removeIngresoRow(i: number) { setIngRows(ingRows.filter((_, idx) => idx !== i)) }
+  function updateIngresoCantidad(i: number, value: string) {
+    const updated = [...ingRows]; updated[i].cantidad = value; setIngRows(updated)
   }
 
-  function addDevRow() { setDevBloques([...devBloques, { bloque_id: '', cantidad: '' }]) }
-  function removeDevRow(i: number) { setDevBloques(devBloques.filter((_, idx) => idx !== i)) }
-  function updateDevRow(i: number, field: 'bloque_id' | 'cantidad', value: string) {
-    const updated = [...devBloques]; updated[i][field] = value; setDevBloques(updated)
+  function addDevRow() { setDevRows([...devRows, { bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '' }]) }
+  function removeDevRow(i: number) { setDevRows(devRows.filter((_, idx) => idx !== i)) }
+  function updateDevCantidad(i: number, value: string) {
+    const updated = [...devRows]; updated[i].cantidad = value; setDevRows(updated)
   }
 
   async function doIngreso() {
     if (!detail || !perfil) return
-    const validRows = ingBloques.filter((r) => r.bloque_id && r.cantidad)
-    if (validRows.length === 0) { toast.error('Agrega al menos un artículo'); return }
+    const validRows = ingRows.filter((r) => r.bloque_id && r.cantidad)
+    if (validRows.length === 0) { toast.error('Agrega al menos un artículo con código y cantidad'); return }
     for (const r of validRows) {
       if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad inválida'); return }
     }
@@ -278,8 +310,8 @@ export function PisoSectoresTab() {
 
   async function doDevolucion() {
     if (!detail || !perfil) return
-    const validRows = devBloques.filter((r) => r.bloque_id && r.cantidad)
-    if (validRows.length === 0) { toast.error('Agrega al menos un artículo'); return }
+    const validRows = devRows.filter((r) => r.bloque_id && r.cantidad)
+    if (validRows.length === 0) { toast.error('Agrega al menos un artículo con código y cantidad'); return }
     for (const r of validRows) {
       if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad inválida'); return }
     }
@@ -500,34 +532,58 @@ export function PisoSectoresTab() {
                     <p className="text-[10px] font-bold text-amber-400">Posición con {detail.stock.length} artículo(s). Se agregará el nuevo.</p>
                   </div>
                 )}
-                <div className="space-y-2">
-                  <p className="text-xs font-bold text-slate-300">Artículos a ingresar:</p>
-                  {ingBloques.map((row, i) => (
-                    <div key={i} className="flex gap-2 items-end">
-                      <div className="flex-1 relative">
-                        <Label className="text-[10px] text-slate-500">Buscar código / descripción</Label>
+                <p className="text-xs font-bold text-slate-300">Escribe el código y se autocompletará:</p>
+                {ingRows.map((row, i) => (
+                  <div key={i} className="rounded-lg border border-emerald-500/20 bg-slate-800/50 p-3 space-y-2">
+                    {/* Fila principal: Código + Descripción + UN + Cantidad */}
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-4">
+                        <Label className="text-[10px] text-emerald-400 font-semibold">Código</Label>
                         <div className="relative">
-                          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-500" />
-                          <input type="text" value={ingSearch} onChange={(e) => setIngSearch(e.target.value)} placeholder="Escribe para buscar..."
-                            className="w-full h-8 rounded-md border border-slate-700 text-xs bg-slate-800 text-white placeholder-slate-500 pl-7 pr-2 focus:outline-none focus:ring-2 focus:ring-sky-500/50 mb-1" />
+                          <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} placeholder="Escribe código..."
+                            className={`w-full h-9 rounded-md border text-xs bg-slate-900 text-white placeholder-slate-600 px-2 font-mono focus:outline-none focus:ring-2 ${row.bloque_id ? 'border-emerald-500/50 ring-emerald-500/30' : 'border-slate-700 focus:ring-emerald-500/50'}`} />
+                          {searchingCode === `ing-${i}` && (
+                            <div className="absolute right-2 top-1/2 -translate-y-1/2"><Loader2 className="h-3 w-3 animate-spin text-emerald-400" /></div>
+                          )}
                         </div>
-                        <select value={row.bloque_id} onChange={(e) => onIngresoSelectBloque(i, e.target.value)}
-                          className="w-full h-8 rounded-md border border-slate-700 text-xs bg-slate-800 text-white px-2 focus:outline-none focus:ring-2 focus:ring-sky-500/50">
-                          <option value="">Seleccionar...</option>
-                          {filteredCatalogo.map((b) => <option key={b.id} value={b.id}>{b.codigo} — {b.descripcion || b.unidad}</option>)}
-                        </select>
+                        {/* Dropdown de sugerencias si no hay match exacto */}
+                        {!row.bloque_id && row.codigo.length >= 1 && (
+                          <div className="max-h-28 overflow-y-auto rounded-md border border-slate-700 bg-slate-900 mt-1">
+                            {filteredCatalogo.filter((b) => !ingRows.some((r, ri) => ri !== i && r.bloque_id === b.id)).slice(0, 8).map((b) => (
+                              <button key={b.id} onClick={() => onSelectFromCatalog('ing', i, b)}
+                                className="w-full text-left px-2 py-1.5 text-xs hover:bg-slate-700 text-slate-300 border-b border-slate-800 last:border-0 transition-colors">
+                                <span className="font-mono text-emerald-400">{b.codigo}</span>
+                                <span className="text-slate-500 ml-1">— {b.descripcion || b.unidad}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <div className="w-24">
-                        <Label className="text-[10px] text-slate-500">Cantidad</Label>
-                        <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateIngresoRow(i, 'cantidad', e.target.value)}
-                          className="h-8 text-xs bg-slate-800 border-slate-700 text-white focus:ring-sky-500/50" placeholder="0" />
+                      <div className="col-span-4">
+                        <Label className="text-[10px] text-slate-500">Descripción</Label>
+                        <input type="text" value={row.descripcion} readOnly placeholder="Se autocompleta..."
+                          className="w-full h-9 rounded-md border border-slate-700 text-xs bg-slate-850 text-slate-400 px-2 cursor-default" />
                       </div>
-                      <button onClick={() => removeIngresoRow(i)} className="p-1.5 rounded hover:bg-red-900/50 text-slate-500 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <div className="col-span-2">
+                        <Label className="text-[10px] text-slate-500">UN</Label>
+                        <input type="text" value={row.unidad} readOnly placeholder="—"
+                          className="w-full h-9 rounded-md border border-slate-700 text-xs bg-slate-850 text-slate-400 px-2 text-center cursor-default" />
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-[10px] text-sky-400 font-semibold">Cantidad</Label>
+                        <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateIngresoCantidad(i, e.target.value)}
+                          className="h-9 text-xs bg-slate-900 border-sky-500/40 text-white focus:ring-sky-500/50 font-bold" placeholder="0" autoFocus />
+                      </div>
                     </div>
-                  ))}
-                  <button onClick={addIngresoRow} className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300"><Plus className="h-3.5 w-3.5" /> Agregar otro artículo</button>
-                </div>
-                <div className="flex gap-2">
+                    {ingRows.length > 1 && (
+                      <div className="flex justify-end">
+                        <button onClick={() => removeIngresoRow(i)} className="p-1 rounded hover:bg-red-900/50 text-slate-600 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <button onClick={addIngresoRow} className="flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300"><Plus className="h-3.5 w-3.5" /> Agregar otro artículo</button>
+                <div className="flex gap-2 pt-1">
                   <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700 text-slate-400 hover:bg-slate-800">Cancelar</Button>
                   <Button onClick={doIngreso} disabled={busy} size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowDownToLine className="h-3.5 w-3.5" />} Registrar ingreso</Button>
                 </div>
@@ -595,13 +651,67 @@ export function PisoSectoresTab() {
                 <div className="rounded-lg border border-amber-500/30 bg-amber-950/50 p-2">
                   <p className="text-[10px] font-bold text-amber-400">Registra artículos devueltos a esta posición.</p>
                 </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-bold text-slate-300">Artículos a devolver:</p>
-                  {devBloques.map((row, i) => (
-                    <div key={i} className="flex gap-2 items-end">
-                      <div className="flex-1 relative">
-                        <Label className="text-[10px] text-slate-500">Buscar código / descripción</Label>
+                <p className="text-xs font-bold text-slate-300">Escribe el código y se autocompletará:</p>
+                {devRows.map((row, i) => (
+                  <div key={i} className="rounded-lg border border-amber-500/20 bg-slate-800/50 p-3 space-y-2">
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-4">
+                        <Label className="text-[10px] text-amber-400 font-semibold">Código</Label>
                         <div className="relative">
+                          <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('dev', i, e.target.value)} placeholder="Escribe código..."
+                            className={`w-full h-9 rounded-md border text-xs bg-slate-900 text-white placeholder-slate-600 px-2 font-mono focus:outline-none focus:ring-2 ${row.bloque_id ? 'border-amber-500/50 ring-amber-500/30' : 'border-slate-700 focus:ring-amber-500/50'}`} />
+                          {searchingCode === `dev-${i}` && (
+                            <div className="absolute right-2 top-1/2 -translate-y-1/2"><Loader2 className="h-3 w-3 animate-spin text-amber-400" /></div>
+                          )}
+                        </div>
+                        {!row.bloque_id && row.codigo.length >= 1 && (
+                          <div className="max-h-28 overflow-y-auto rounded-md border border-slate-700 bg-slate-900 mt-1">
+                            {filteredCatalogo.filter((b) => !devRows.some((r, ri) => ri !== i && r.bloque_id === b.id)).slice(0, 8).map((b) => (
+                              <button key={b.id} onClick={() => onSelectFromCatalog('dev', i, b)}
+                                className="w-full text-left px-2 py-1.5 text-xs hover:bg-slate-700 text-slate-300 border-b border-slate-800 last:border-0 transition-colors">
+                                <span className="font-mono text-amber-400">{b.codigo}</span>
+                                <span className="text-slate-500 ml-1">— {b.descripcion || b.unidad}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-4">
+                        <Label className="text-[10px] text-slate-500">Descripción</Label>
+                        <input type="text" value={row.descripcion} readOnly placeholder="Se autocompleta..."
+                          className="w-full h-9 rounded-md border border-slate-700 text-xs bg-slate-850 text-slate-400 px-2 cursor-default" />
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-[10px] text-slate-500">UN</Label>
+                        <input type="text" value={row.unidad} readOnly placeholder="—"
+                          className="w-full h-9 rounded-md border border-slate-700 text-xs bg-slate-850 text-slate-400 px-2 text-center cursor-default" />
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-[10px] text-amber-400 font-semibold">Cantidad</Label>
+                        <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateDevCantidad(i, e.target.value)}
+                          className="h-9 text-xs bg-slate-900 border-amber-500/40 text-white focus:ring-amber-500/50 font-bold" placeholder="0" autoFocus />
+                      </div>
+                    </div>
+                    {devRows.length > 1 && (
+                      <div className="flex justify-end">
+                        <button onClick={() => removeDevRow(i)} className="p-1 rounded hover:bg-red-900/50 text-slate-600 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <button onClick={addDevRow} className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300"><Plus className="h-3.5 w-3.5" /> Agregar otro artículo</button>
+                <div className="flex gap-2 pt-1">
+                  <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700 text-slate-400 hover:bg-slate-800">Cancelar</Button>
+                  <Button onClick={doDevolucion} disabled={busy} size="sm" className="gap-1 bg-amber-600 hover:bg-amber-700 text-white text-xs">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Registrar devolución</Button>
+                </div>
+              </div>
+            )}
+          </>)}
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
                           <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-500" />
                           <input type="text" value={devSearch} onChange={(e) => setDevSearch(e.target.value)} placeholder="Escribe para buscar..."
                             className="w-full h-8 rounded-md border border-slate-700 text-xs bg-slate-800 text-white placeholder-slate-500 pl-7 pr-2 focus:outline-none focus:ring-2 focus:ring-amber-500/50 mb-1" />

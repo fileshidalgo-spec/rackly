@@ -861,10 +861,11 @@ export async function listarBloquesParaSelect(): Promise<{ id: string; codigo: s
 
   // 1. piso_bloques (tabla local de Piso)
   try {
-    const { data } = await dataClient
+    const { data, error } = await dataClient
       .from('piso_bloques')
       .select('id, codigo, descripcion, unidad')
       .order('codigo')
+    if (error) console.error('[Piso] Error consultando piso_bloques:', error.message)
     for (const b of (data ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
       const code = (b.codigo ?? '').trim().toUpperCase()
       if (code && !seen.has(code)) {
@@ -877,14 +878,16 @@ export async function listarBloquesParaSelect(): Promise<{ id: string; codigo: s
         })
       }
     }
-  } catch { /* ok */ }
+    console.log(`[Piso] piso_bloques: ${(data ?? []).length} items cargados`)
+  } catch (err) { console.error('[Piso] Error en piso_bloques:', err) }
 
   // 2. catalogo (tabla de Racks como respaldo)
   try {
-    const { data } = await dataClient
+    const { data, error } = await dataClient
       .from('catalogo')
       .select('codigo, descripcion, un')
       .order('codigo')
+    if (error) console.error('[Piso] Error consultando catalogo:', error.message)
     for (const c of (data ?? []) as { codigo: string; descripcion: string; un: string }[]) {
       const code = (c.codigo ?? '').trim().toUpperCase()
       if (code && !seen.has(code)) {
@@ -897,7 +900,8 @@ export async function listarBloquesParaSelect(): Promise<{ id: string; codigo: s
         })
       }
     }
-  } catch { /* ok */ }
+    console.log(`[Piso] catalogo (respaldo): ${(data ?? []).length} items, total merge: ${results.length}`)
+  } catch (err) { console.error('[Piso] Error en catalogo:', err) }
 
   return results
 }
@@ -912,26 +916,30 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
 
   // 1. Buscar en piso_bloques
   try {
-    const { data } = await dataClient
+    const { data, error } = await dataClient
       .from('piso_bloques')
       .select('id, codigo, descripcion, unidad')
       .eq('codigo', target)
       .limit(1)
+    if (error) console.error('[Piso] Error buscando en piso_bloques:', error.message)
     if (data && data.length > 0) {
       const b = data[0] as { id: string; codigo: string; descripcion: string; unidad: string }
+      console.log('[Piso] Bloque encontrado en piso_bloques:', b.codigo)
       return { id: b.id, codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' }
     }
-  } catch { /* ok */ }
+  } catch (err) { console.error('[Piso] Error en búsqueda piso_bloques:', err) }
 
   // 2. Buscar en catalogo (Racks)
   try {
-    const { data } = await dataClient
+    const { data, error } = await dataClient
       .from('catalogo')
       .select('codigo, descripcion, un')
       .eq('codigo', target)
       .limit(1)
+    if (error) console.error('[Piso] Error buscando en catalogo:', error.message)
     if (data && data.length > 0) {
       const c = data[0] as { codigo: string; descripcion: string; un: string }
+      console.log('[Piso] Bloque encontrado en catalogo:', c.codigo)
       // Auto-crear en piso_bloques para futuro uso
       try {
         const { data: inserted } = await dataClient
@@ -947,10 +955,10 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
             unidad: c.un ?? '',
           }
         }
-      } catch { /* upsert falló, usar ID virtual */ }
+      } catch (insertErr) { console.warn('[Piso] Auto-create piso_bloques falló, usando ID virtual:', insertErr) }
       return { id: `cat_${c.codigo}`, codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' }
     }
-  } catch { /* ok */ }
+  } catch (err) { console.error('[Piso] Error en búsqueda catalogo:', err) }
 
   return null
 }

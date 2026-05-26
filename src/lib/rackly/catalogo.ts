@@ -164,9 +164,17 @@ async function removeFromPisoBloques(codigo: string): Promise<void> {
 
 async function clearPisoBloques(): Promise<void> {
   // Eliminar asignaciones de columna primero (FK constraint)
-  await dataClient.from('piso_columna_bloques').delete().neq('bloque_id', '')
+  const { data: colBloques } = await dataClient.from('piso_columna_bloques').select('bloque_id')
+  if (colBloques && colBloques.length > 0) {
+    const ids = (colBloques as { bloque_id: string }[]).map(b => b.bloque_id)
+    await dataClient.from('piso_columna_bloques').delete().in('bloque_id', ids)
+  }
   // Luego eliminar todos los bloques
-  await dataClient.from('piso_bloques').delete().neq('id', '')
+  const { data: allBloques } = await dataClient.from('piso_bloques').select('id')
+  if (allBloques && allBloques.length > 0) {
+    const ids = (allBloques as { id: string }[]).map(b => b.id)
+    await dataClient.from('piso_bloques').delete().in('id', ids)
+  }
 }
 
 export { syncToPisoBloques, removeFromPisoBloques, clearPisoBloques }

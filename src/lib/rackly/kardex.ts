@@ -47,7 +47,7 @@ function fromRow(r: Record<string, unknown>): Movimiento {
     codigo: r.codigo as string,
     descripcion: r.descripcion as string,
     un: r.un as string,
-    cantidad: r.cantidad as number,
+    cantidad: typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0,
     fVencimiento: (r.f_vencimiento as string) ?? '',
     fModificacion: r.f_modificacion as string,
     turno: r.turno as Turno,

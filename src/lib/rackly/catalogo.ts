@@ -22,7 +22,7 @@ export async function fetchCatalogo(): Promise<CatalogoItem[]> {
     codigo: String(r.codigo ?? ''),
     un: String(r.un ?? ''),
     descripcion: String(r.descripcion ?? ''),
-    stock_big_magic: Number(r.stock_big_magic ?? 0),
+    stock_big_magic: parseFloat(String(r.stock_big_magic ?? '0')) || 0,
   }))
   _cacheLoaded = true
   return _cache

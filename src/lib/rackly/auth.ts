@@ -203,18 +203,22 @@ export async function getPerfilActual(): Promise<Perfil | null> {
 }
 
 export async function getTodosLosPerfiles(): Promise<Perfil[]> {
-  const [{ data: perfiles }, { data: roles }] = await Promise.all([
+  const [perfilesRes, rolesRes] = await Promise.all([
     dataClient
       .from('profiles')
       .select('id, correo, nombre, aprobado, must_change_password')
       .order('nombre'),
     dataClient.from('user_roles').select('user_id, role'),
   ])
+  if (perfilesRes.error) throw perfilesRes.error
+  if (rolesRes.error) throw rolesRes.error
+  const perfiles = perfilesRes.data ?? []
+  const roles = rolesRes.data ?? []
   const roleMap = new Map<string, Rol>()
-  for (const r of (roles ?? []) as { user_id: string; role: string }[]) {
+  for (const r of roles as { user_id: string; role: string }[]) {
     roleMap.set(r.user_id, r.role as Rol)
   }
-  return (perfiles ?? []).map((p: Record<string, unknown>) => ({
+  return perfiles.map((p: Record<string, unknown>) => ({
     id: p.id as string,
     correo: p.correo as string,
     nombre: p.nombre as string,
@@ -245,7 +249,8 @@ export async function cambiarAprobado(userId: string, aprobado: boolean) {
 }
 
 export async function cambiarRol(userId: string, rol: Rol) {
-  await dataClient.from('user_roles').delete().eq('user_id', userId)
+  const { error: delErr } = await dataClient.from('user_roles').delete().eq('user_id', userId)
+  if (delErr) throw delErr
   const { error } = await dataClient
     .from('user_roles')
     .insert({ user_id: userId, role: rol })
@@ -253,7 +258,8 @@ export async function cambiarRol(userId: string, rol: Rol) {
 }
 
 export async function eliminarPerfil(userId: string) {
-  await dataClient.from('user_roles').delete().eq('user_id', userId)
+  const { error: delErr } = await dataClient.from('user_roles').delete().eq('user_id', userId)
+  if (delErr) throw delErr
   const { error } = await dataClient
     .from('profiles')
     .delete()

@@ -178,7 +178,7 @@ function SetNewPasswordScreen({
       // Limpiar el hash de la URL
       window.location.hash = ''
       toast.success('Contraseña actualizada correctamente')
-      await signOut()
+      try { await signOut() } catch { /* ok */ }
       await onDone()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
@@ -312,7 +312,7 @@ function ForceChangePasswordScreen({
               variant="ghost"
               className="w-full"
               onClick={async () => {
-                await signOut()
+                try { await signOut() } catch { /* ok */ }
                 await onDone()
               }}
             >

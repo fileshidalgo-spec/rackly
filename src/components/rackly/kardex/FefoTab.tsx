@@ -90,28 +90,18 @@ export function FefoTab() {
     }>()
 
     for (const m of movs) {
-      if (m.tipo !== 'ingreso') continue
-      const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+      const key = `${m.codigo}||${m.fVencimiento || ''}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+      const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
       const existing = locMap.get(key)
       if (existing) {
-        existing.stock += m.cantidad
-        if (m.fVencimiento && (!existing.fVencimiento || m.fVencimiento < existing.fVencimiento)) {
-          existing.fVencimiento = m.fVencimiento
-        }
-      } else {
+        existing.stock += delta
+      } else if (delta > 0) {
         locMap.set(key, {
           codigo: m.codigo, descripcion: m.descripcion, un: m.un,
           bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
-          stock: m.cantidad, fVencimiento: m.fVencimiento || '', proveedor: m.proveedor || undefined,
+          stock: delta, fVencimiento: m.fVencimiento || '', proveedor: m.proveedor || undefined,
         })
       }
-    }
-
-    for (const m of movs) {
-      if (m.tipo !== 'salida') continue
-      const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-      const existing = locMap.get(key)
-      if (existing) existing.stock -= m.cantidad
     }
 
     const items: FefoItem[] = []

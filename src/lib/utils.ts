@@ -23,6 +23,7 @@ export function impactoStock(tipo: string, cantidad: number): number {
 export function formatDate(dateStr: string): string {
   if (!dateStr) return ''
   const d = new Date(dateStr + 'T00:00:00')
+  if (isNaN(d.getTime())) return ''
   return d.toLocaleDateString(LOCALE, { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
@@ -45,6 +46,7 @@ export function isExpired(dateStr: string): boolean {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const d = new Date(dateStr + 'T00:00:00')
+  if (isNaN(d.getTime())) return false
   return d < today
 }
 
@@ -54,6 +56,7 @@ export function isExpiringSoon(dateStr: string, days = 30): boolean {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const d = new Date(dateStr + 'T00:00:00')
+  if (isNaN(d.getTime())) return false
   const diff = (d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
   return diff >= 0 && diff <= days
 }

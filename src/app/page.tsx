@@ -12,10 +12,10 @@ import { DescargaTab } from '@/components/rackly/kardex/DescargaTab'
 import { FefoTab } from '@/components/rackly/kardex/FefoTab'
 import { OcupacionTab } from '@/components/rackly/kardex/OcupacionTab'
 import { TrasladoTab } from '@/components/rackly/kardex/TrasladoTab'
-import { SectoresTab } from '@/components/rackly/piso/SectoresTab'
+import { SectoresConfigTab } from '@/components/rackly/piso/SectoresTab'
 import { MovimientosTab } from '@/components/rackly/piso/MovimientosTab'
+import { PisoSectoresTab } from '@/components/rackly/piso/PisoSectoresTab'
 import { ConfiguracionColumnasTab } from '@/components/rackly/piso/ConfiguracionColumnasTab'
-// UpKardexTab eliminado — el catálogo se sincroniza desde Racks
 import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Button } from '@/components/ui/button'
@@ -568,8 +568,8 @@ function RacklyApp() {
             <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none">
               {[
                 { val: 'movimientos', icon: History, label: 'Movimientos', color: 'from-emerald-500 to-green-600' },
-                { val: 'sectores', icon: Layers3, label: 'Sectores', color: 'from-violet-500 to-purple-600' },
-                { val: 'columnas', icon: Settings, label: 'Configuración', color: 'from-slate-500 to-slate-700' },
+                { val: 'sectores', icon: Layers3, label: 'Sectores', color: 'from-sky-500 to-blue-600' },
+                { val: 'config', icon: Settings, label: 'Configuración', color: 'from-slate-500 to-slate-700' },
               ].map((tab) => (
                 <TabsTrigger
                   key={tab.val}
@@ -604,23 +604,10 @@ function RacklyApp() {
 
 
             <TabsContent value="sectores" className="mt-5">
-              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-md shadow-violet-500/20">
-                      <Layers3 className="h-5 w-5 text-white" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg">Sectores</CardTitle>
-                      <CardDescription>Administra los sectores del almacén de piso.</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent><SectoresTab /></CardContent>
-              </Card>
+              <PisoSectoresTab />
             </TabsContent>
 
-            <TabsContent value="columnas" className="mt-5">
+            <TabsContent value="config" className="mt-5">
               <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
                 <CardHeader className="pb-3">
                   <div className="flex items-center gap-3">
@@ -628,12 +615,12 @@ function RacklyApp() {
                       <Settings className="h-5 w-5 text-white" />
                     </div>
                     <div>
-                      <CardTitle className="text-lg">Configuración de columnas</CardTitle>
-                      <CardDescription>Asigna bloques a columnas y administra el catálogo.</CardDescription>
+                      <CardTitle className="text-lg">Configuración</CardTitle>
+                      <CardDescription>Administra sectores, columnas y asignación de bloques.</CardDescription>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><ConfiguracionColumnasTab /></CardContent>
+                <CardContent><SectoresConfigTab /></CardContent>
               </Card>
             </TabsContent>
           </Tabs>

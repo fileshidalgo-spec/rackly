@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { Plus, Trash2, RefreshCw, Layers3 } from 'lucide-react'
 
-export function SectoresTab() {
+export function SectoresConfigTab() {
   const { perfil } = useAuth()
   const [sectores, setSectores] = useState<Sector[]>([])
   const [loading, setLoading] = useState(false)

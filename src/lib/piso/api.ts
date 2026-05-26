@@ -283,10 +283,11 @@ export async function listarMovimientos(
   if (desde) query = query.gte('fecha', desde)
   if (hasta) query = query.lte('fecha', hasta + 'T23:59:59')
   const PAGE_SIZE = 500
+  const MAX_PAGES = 100
   let all: PisoMovimiento[] = []
   let from = 0
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  let pages = 0
+  while (pages++ < MAX_PAGES) {
     const to = from + PAGE_SIZE - 1
     const { data, error } = await query.range(from, to)
     if (error) throw error
@@ -421,7 +422,8 @@ export async function calcularStockNivel(
       bloque,
       current +
         (det.piso_movimientos.tipo === 'ingreso' ||
-        det.piso_movimientos.tipo === 'stock_inicial'
+        det.piso_movimientos.tipo === 'stock_inicial' ||
+        det.piso_movimientos.tipo === 'devolucion'
           ? det.cantidad
           : -det.cantidad)
     )
@@ -516,7 +518,7 @@ export async function cargarPosicionesSector(
       piso_movimientos: { tipo: string }
     }[]) {
       const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
-      const delta = (d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial')
+      const delta = (d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial' || d.piso_movimientos.tipo === 'devolucion')
         ? qty : -qty
       if (delta === 0) continue
 
@@ -643,7 +645,7 @@ export async function stockDetallePosicion(
     bloque_id: string; cantidad: unknown; piso_movimientos: { tipo: string }
   }[]) {
     const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
-    const delta = (d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial')
+    const delta = (d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial' || d.piso_movimientos.tipo === 'devolucion')
       ? qty : -qty
     const current = stockMap.get(d.bloque_id) ?? 0
     stockMap.set(d.bloque_id, current + delta)

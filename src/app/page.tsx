@@ -592,7 +592,7 @@ function RacklyApp() {
                     </div>
                     <div>
                       <CardTitle className="text-lg text-white">Movimientos</CardTitle>
-                      <CardDescription className="text-slate-400">Registra ingresos, salidas y devoluciones por nivel.</CardDescription>
+                      <CardDescription className="text-slate-400">Historial de todos los movimientos registrados. Los movimientos se realizan desde Sectores.</CardDescription>
                     </div>
                   </div>
                 </CardHeader>

@@ -1,5 +1,9 @@
-export const BLOQUES = Array.from({ length: 9 }, (_, i) => String(i + 1))
-export const PISOS = Array.from({ length: 4 }, (_, i) => String(i + 1))
+import { BLOQUES, PISOS } from './constants'
+
+export { BLOQUES, PISOS }
+
+export const TORRES = ['1', '2']
+export const POSICIONES = Array.from({ length: 20 }, (_, i) => String(i + 1))
 
 type ConfigBloque = { torres: number; posiciones: number }
 
@@ -27,22 +31,9 @@ export function posicionesDeBloque(bloque: string): string[] {
   return Array.from({ length: cfg.posiciones }, (_, i) => String(i + 1))
 }
 
-export const TORRES = ['1', '2']
-export const POSICIONES = Array.from({ length: 20 }, (_, i) => String(i + 1))
-
 export function totalCeldas(): number {
   return BLOQUES.reduce((acc, b) => {
     const cfg = CONFIG[b]
     return acc + cfg.torres * PISOS.length * cfg.posiciones
   }, 0)
-}
-
-export function totalCeldasBloque(bloque: string): number {
-  const cfg = CONFIG[bloque]
-  if (!cfg) return 0
-  return cfg.torres * PISOS.length * cfg.posiciones
-}
-
-export function configBloque(bloque: string): ConfigBloque | undefined {
-  return CONFIG[bloque]
 }

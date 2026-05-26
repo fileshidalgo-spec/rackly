@@ -13,9 +13,8 @@ import {
   type Sector,
   type Columna,
   type Subcolumna,
-  calcularTurno,
 } from '@/lib/piso/api'
-import { calcularTurno as calcTurnoKardex } from '@/lib/rackly/turno'
+import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -37,7 +36,7 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
-import { Loader2, ArrowDownToLine, ArrowUpFromLine, History } from 'lucide-react'
+import { Loader2, ArrowDownToLine, ArrowUpFromLine, History, Filter, X } from 'lucide-react'
 
 export function MovimientosTab() {
   return (
@@ -140,7 +139,7 @@ function IngresoRapido() {
         bloque_id: bloqueId,
         cantidad: qty,
       }))
-      await registrarMovimiento('ingreso', calcTurnoKardex(), detalles)
+      await registrarMovimiento('ingreso', calcularTurno(), detalles)
       toast.success(`Ingreso registrado en ${detalles.length} nivel(es)`)
       setSelectedLevels(new Set())
       setCantidad('')
@@ -342,7 +341,7 @@ function SalidaMasiva() {
         bloque_id: bloqueId,
         cantidad,
       }))
-      await registrarMovimiento('salida', calcTurnoKardex(), detalles)
+      await registrarMovimiento('salida', calcularTurno(), detalles)
       toast.success(`Salida registrada en ${detalles.length} nivel(es)`)
       setSelectedLevels(new Map())
     } catch (err: unknown) {
@@ -445,8 +444,11 @@ function SalidaMasiva() {
 function Historial() {
   const [sectores, setSectores] = useState<Sector[]>([])
   const [sectorId, setSectorId] = useState('')
-  const [movimientos, setMovimientos] = useState<{ id: string; numero_operacion: number; tipo: string; fecha: string; turno: string; usuario_nombre: string | null; detalles: { bloque_codigo?: string; cantidad: number }[] }[]>([])
+  const [movimientos, setMovimientos] = useState<{ id: string; numero_operacion: number; tipo: string; fecha: string; turno: string; usuario_nombre: string | null; usuario_id: string | null; detalles: { bloque_codigo?: string; cantidad: number }[] }[]>([])
   const [loading, setLoading] = useState(false)
+  const [filtroUsuario, setFiltroUsuario] = useState('')
+  const [filtroTipo, setFiltroTipo] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
 
   useEffect(() => {
     listarSectores().then(setSectores).catch(() => {})
@@ -463,8 +465,35 @@ function Historial() {
     )
   }, [sectorId])
 
+  // Extraer usuarios únicos y tipos únicos de los movimientos cargados
+  const usuariosUnicos = [...new Set(movimientos.map((m) => m.usuario_nombre).filter(Boolean))] as string[]
+  const tiposUnicos = [...new Set(movimientos.map((m) => m.tipo))] as string[]
+
+  // Filtrar movimientos según los filtros seleccionados
+  const movimientosFiltrados = movimientos.filter((m) => {
+    if (filtroUsuario && m.usuario_nombre !== filtroUsuario) return false
+    if (filtroTipo && m.tipo !== filtroTipo) return false
+    return true
+  })
+
+  const tieneFiltrosActivos = filtroUsuario !== '' || filtroTipo !== ''
+
+  function limpiarFiltros() {
+    setFiltroUsuario('')
+    setFiltroTipo('')
+  }
+
+  const TIPO_BADGE: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+    ingreso: 'default',
+    salida: 'destructive',
+    devolucion: 'secondary',
+    traslado: 'outline',
+    stock_inicial: 'secondary',
+  }
+
   return (
     <div className="space-y-4">
+      {/* Sector selector */}
       <div className="space-y-1 max-w-xs">
         <label className="text-sm font-medium">Sector</label>
         <Select value={sectorId} onValueChange={setSectorId}>
@@ -475,9 +504,76 @@ function Historial() {
         </Select>
       </div>
 
+      {/* Barra de filtros */}
+      {movimientos.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Button
+              variant={showFilters ? 'secondary' : 'outline'}
+              size="sm"
+              className="gap-2"
+              onClick={() => setShowFilters(!showFilters)}
+            >
+              <Filter className="h-4 w-4" />
+              Filtros
+              {tieneFiltrosActivos && (
+                <Badge variant="default" className="ml-1 h-5 min-w-[20px] px-1.5">
+                  {(filtroUsuario ? 1 : 0) + (filtroTipo ? 1 : 0)}
+                </Badge>
+              )}
+            </Button>
+            {tieneFiltrosActivos && (
+              <Button variant="ghost" size="sm" className="gap-1 text-muted-foreground" onClick={limpiarFiltros}>
+                <X className="h-3 w-3" />
+                Limpiar
+              </Button>
+            )}
+            {tieneFiltrosActivos && (
+              <span className="text-xs text-muted-foreground">
+                {movimientosFiltrados.length} de {movimientos.length} movimientos
+              </span>
+            )}
+          </div>
+
+          {showFilters && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 border rounded-lg bg-muted/30">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Usuario</label>
+                <Select value={filtroUsuario} onValueChange={(v) => setFiltroUsuario(v === '__all__' ? '' : v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Todos los usuarios" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Todos los usuarios</SelectItem>
+                    {usuariosUnicos.map((u) => (
+                      <SelectItem key={u} value={u}>{u}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Tipo de movimiento</label>
+                <Select value={filtroTipo} onValueChange={(v) => setFiltroTipo(v === '__all__' ? '' : v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Todos los tipos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">Todos los tipos</SelectItem>
+                    {tiposUnicos.map((t) => (
+                      <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tabla de movimientos */}
       {loading ? (
         <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
-      ) : movimientos.length > 0 ? (
+      ) : movimientosFiltrados.length > 0 ? (
         <Table>
           <TableHeader>
             <TableRow>
@@ -490,12 +586,12 @@ function Historial() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {movimientos.slice(0, 50).map((m) => (
+            {movimientosFiltrados.slice(0, 50).map((m) => (
               <TableRow key={m.id}>
                 <TableCell className="font-mono">{m.numero_operacion}</TableCell>
                 <TableCell>{new Date(m.fecha).toLocaleString()}</TableCell>
                 <TableCell>
-                  <Badge variant={m.tipo === 'ingreso' ? 'default' : 'destructive'}>{m.tipo}</Badge>
+                  <Badge variant={TIPO_BADGE[m.tipo] ?? 'outline'} className="capitalize">{m.tipo}</Badge>
                 </TableCell>
                 <TableCell>{m.turno}</TableCell>
                 <TableCell>
@@ -512,7 +608,13 @@ function Historial() {
           </TableBody>
         </Table>
       ) : sectorId ? (
-        <p className="text-muted-foreground text-center py-8">Sin movimientos</p>
+        tieneFiltrosActivos ? (
+          <p className="text-muted-foreground text-center py-8">
+            No se encontraron movimientos con los filtros aplicados
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-center py-8">Sin movimientos</p>
+        )
       ) : (
         <p className="text-muted-foreground text-center py-8">Selecciona un sector</p>
       )}

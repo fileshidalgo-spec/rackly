@@ -331,19 +331,19 @@ export type Database = {
         Row: {
           created_at: string
           id: string
-          role: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
+          role: 'admin' | 'operario'
           user_id: string
         }
         Insert: {
           created_at?: string
           id?: string
-          role: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
+          role: 'admin' | 'operario'
           user_id: string
         }
         Update: {
           created_at?: string
           id?: string
-          role?: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
+          role?: 'admin' | 'operario'
           user_id?: string
         }
         Relationships: []
@@ -354,7 +354,7 @@ export type Database = {
     }
     Functions: {
       has_role: {
-        Args: { _role: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'; _user_id: string }
+        Args: { _role: 'admin' | 'operario'; _user_id: string }
         Returns: boolean
       }
       ocupacion_celdas: {
@@ -405,7 +405,7 @@ export type Database = {
       }
     }
     Enums: {
-      app_role: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
+      app_role: 'admin' | 'operario'
     }
     CompositeTypes: {
       [_ in never]: never

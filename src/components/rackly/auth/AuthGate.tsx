@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import {
   signIn,
@@ -39,6 +39,34 @@ import {
   Mail,
 } from 'lucide-react'
 import { toast } from 'sonner'
+
+/* ─── Utilidades de validación ─── */
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const MAX_EMAIL_LENGTH = 254 // RFC 5321
+const MAX_NOMBRE_LENGTH = 200
+
+function validarEmail(email: string): string | null {
+  if (!email.trim()) return 'Ingresa tu correo electrónico'
+  if (email.length > MAX_EMAIL_LENGTH) return 'El correo es demasiado largo (máx. 254 caracteres)'
+  if (!EMAIL_REGEX.test(email)) return 'El formato del correo no es válido (ej: usuario@empresa.com)'
+  return null
+}
+
+function esErrorRateLimit(message: string): boolean {
+  const lower = message.toLowerCase()
+  return lower.includes('rate limit') ||
+    lower.includes('too many') ||
+    lower.includes('throttl') ||
+    lower.includes('seguridad') ||
+    lower.includes('espera') ||
+    lower.includes('intenta')
+}
+
+function esErrorCorreoExistente(message: string): boolean {
+  return message.toLowerCase().includes('already registered') ||
+    message.toLowerCase().includes('already been registered') ||
+    message.toLowerCase().includes('user already exists')
+}
 
 /* ─── Componente auxiliar: campo contraseña con toggle de visibilidad ─── */
 function PasswordInput({
@@ -96,7 +124,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   // Si viene del link de recuperación de contraseña, mostrar formulario
   if (passwordRecovery) {
-    return <SetNewPasswordScreen onDone={() => { clearPasswordRecovery(); refresh() }} />
+    return <SetNewPasswordScreen onDone={async () => { clearPasswordRecovery(); return await refresh() }} />
   }
 
   if (!perfil) return <LoginScreen onSuccess={refresh} />
@@ -114,7 +142,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 function SetNewPasswordScreen({
   onDone,
 }: {
-  onDone: () => Promise<void>
+  onDone: () => Promise<Perfil | null>
 }) {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -214,7 +242,7 @@ function SetNewPasswordScreen({
 function ForceChangePasswordScreen({
   onDone,
 }: {
-  onDone: () => Promise<void>
+  onDone: () => Promise<Perfil | null>
 }) {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -303,7 +331,7 @@ function PendingApprovalScreen({
   onRefresh,
 }: {
   nombre: string
-  onRefresh: () => Promise<void>
+  onRefresh: () => Promise<Perfil | null>
 }) {
   const [busy, setBusy] = useState(false)
   return (
@@ -379,7 +407,14 @@ function ForgotPasswordScreen({
       })
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
-      toast.error('No se pudo enviar el correo', { description: message })
+      if (esErrorRateLimit(message)) {
+        toast.error('Demasiados intentos', {
+          description: 'Por seguridad, espera 60 segundos antes de solicitar otro enlace.',
+          duration: 8000,
+        })
+      } else {
+        toast.error('No se pudo enviar el correo', { description: message })
+      }
     } finally {
       setBusy(false)
     }
@@ -483,11 +518,21 @@ function LoginScreen({
   const [password, setPassword] = useState('')
   const [nombre, setNombre] = useState('')
   const [busy, setBusy] = useState(false)
+  const [cooldown, setCooldown] = useState(0)
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     if (!correo.trim() || !password) {
       toast.error('Ingresa correo y contraseña')
+      return
+    }
+    const emailError = validarEmail(correo)
+    if (emailError) {
+      toast.error(emailError)
+      return
+    }
+    if (cooldown > 0) {
+      toast.error(`Espera ${cooldown} segundos antes de intentar de nuevo`)
       return
     }
     setBusy(true)
@@ -503,7 +548,15 @@ function LoginScreen({
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
-      toast.error('Error al iniciar sesión', { description: message })
+      if (esErrorRateLimit(message)) {
+        toast.error('Demasiados intentos', {
+          description: 'Por seguridad, espera 60 segundos antes de intentar de nuevo.',
+          duration: 8000,
+        })
+        setCooldown(60)
+      } else {
+        toast.error('Error al iniciar sesión', { description: message })
+      }
     } finally {
       setBusy(false)
     }
@@ -511,12 +564,25 @@ function LoginScreen({
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault()
-    if (!correo.trim() || !password || !nombre.trim()) {
-      toast.error('Completa todos los campos')
+    if (!nombre.trim()) {
+      toast.error('Ingresa tu nombre completo')
+      return
+    }
+    if (nombre.trim().length > MAX_NOMBRE_LENGTH) {
+      toast.error('El nombre es demasiado largo (máx. 200 caracteres)')
+      return
+    }
+    const emailError = validarEmail(correo)
+    if (emailError) {
+      toast.error(emailError)
       return
     }
     if (password.length < 6) {
       toast.error('La contraseña debe tener al menos 6 caracteres')
+      return
+    }
+    if (cooldown > 0) {
+      toast.error(`Espera ${cooldown} segundos antes de intentar de nuevo`)
       return
     }
     setBusy(true)
@@ -541,19 +607,18 @@ function LoginScreen({
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : 'Error desconocido'
-      const msg = message.toLowerCase()
-      if (msg.includes('already registered') || msg.includes('already been registered')) {
+      if (esErrorCorreoExistente(message)) {
         toast.info('Esta cuenta ya existe', {
           description:
             'Inicia sesión con ese correo; si aún no accedes, un administrador debe aprobarla.',
         })
         setTab('login')
-      } else if (msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('too many requests')) {
-        toast.warning('Demasiados intentos', {
-          description:
-            'Se ha excedido el límite de correos. Espera unos minutos (5-10 min) y vuelve a intentar. Si el problema persiste, contacta al administrador.',
+      } else if (esErrorRateLimit(message)) {
+        toast.error('Demasiados intentos de registro', {
+          description: 'Por seguridad, espera 60 segundos antes de crear otra cuenta o intentar de nuevo.',
           duration: 8000,
         })
+        setCooldown(60)
       } else {
         toast.error('No se pudo crear la cuenta', { description: message })
       }
@@ -561,6 +626,13 @@ function LoginScreen({
       setBusy(false)
     }
   }
+
+  // Cooldown para prevenir intentos repetidos
+  useEffect(() => {
+    if (cooldown <= 0) return
+    const timer = setTimeout(() => setCooldown(c => c - 1), 1000)
+    return () => clearTimeout(timer)
+  }, [cooldown])
 
   // Vista de recuperar contraseña
   if (view === 'forgot') {
@@ -613,8 +685,8 @@ function LoginScreen({
                     autoComplete="current-password"
                   />
                 </div>
-                <Button type="submit" className="w-full" disabled={busy}>
-                  {busy ? 'Ingresando…' : 'Ingresar'}
+                <Button type="submit" className="w-full" disabled={busy || cooldown > 0}>
+                  {cooldown > 0 ? `Espera ${cooldown}s` : busy ? 'Ingresando…' : 'Ingresar'}
                 </Button>
                 {/* Link de recuperar contraseña */}
                 <div className="text-center">
@@ -661,8 +733,8 @@ function LoginScreen({
                     autoComplete="new-password"
                   />
                 </div>
-                <Button type="submit" className="w-full" disabled={busy}>
-                  {busy ? 'Creando…' : 'Crear cuenta'}
+                <Button type="submit" className="w-full" disabled={busy || cooldown > 0}>
+                  {cooldown > 0 ? `Espera ${cooldown}s` : busy ? 'Creando…' : 'Crear cuenta'}
                 </Button>
               </form>
             </TabsContent>

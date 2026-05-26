@@ -1,15 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import {
   fetchMovimientos,
   type Movimiento,
   eliminarUbicacion,
 } from '@/lib/rackly/kardex'
-import { findCatalogoByCodigo, fetchCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
-import { CatalogoSearchInput } from './CatalogoSearchInput'
+import { findCatalogoByCodigo, fetchCatalogo, isCatalogoLoaded } from '@/lib/rackly/catalogo'
+import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -20,102 +19,93 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
-import { Trash2, PackageSearch, Loader2, Warehouse } from 'lucide-react'
-
-type LocStock = {
-  bloque: string
-  torre: string
-  piso: string
-  posicion: string
-  ingresos: number
-  salidas: number
-  devoluciones: number
-  traslados: number
-  stock: number
-  descripcion: string
-  un: string
-  proveedor?: string
-  fVencimiento: string
-}
+import { Search, Trash2, PackageSearch } from 'lucide-react'
 
 export function StockTab() {
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [codigo, setCodigo] = useState('')
-  const [descripcion, setDescripcion] = useState('')
-  const [un, setUn] = useState('')
+  const [stock, setStock] = useState<
+    {
+      bloque: string
+      torre: string
+      piso: string
+      posicion: string
+      stock: number
+      descripcion: string
+      un: string
+      proveedor?: string
+      fVencimiento: string
+    }[]
+  >([])
   const [loading, setLoading] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState<{
-    bloque: string
-    torre: string
-    piso: string
-    posicion: string
-    stock: number
-    unStr: string
-  } | null>(null)
-  const [busyDelete, setBusyDelete] = useState(false)
-  const [catalogoItem, setCatalogoItem] = useState<CatalogoItem | null>(null)
+  const [stockBM, setStockBM] = useState<number | null>(null)
 
-  const load = useCallback(async () => {
-    try {
-      const data = await fetchMovimientos()
-      setMovs(data)
-    } catch {
-      // silencioso — se reintentará con el polling
+  useMovimientosRealtime(setMovs)
+
+  // Cargar catálogo al montar para garantizar que Big Magic siempre funcione
+  useEffect(() => {
+    if (!isCatalogoLoaded()) {
+      fetchCatalogo().catch(() => {})
     }
   }, [])
 
+  // Buscar stock_big_magic del catálogo cuando cambia el código
   useEffect(() => {
-    setLoading(true)
-    load().finally(() => setLoading(false))
-  }, [load])
+    async function lookupBM() {
+      const code = codigo.trim().toUpperCase()
+      if (!code) {
+        setStockBM(null)
+        return
+      }
+      try {
+        // Siempre aseguramos que el catálogo esté cargado
+        if (!isCatalogoLoaded()) {
+          await fetchCatalogo()
+        }
+        const cat = findCatalogoByCodigo(code)
+        setStockBM(cat ? cat.stock_big_magic : 0)
+      } catch {
+        setStockBM(0)
+      }
+    }
+    lookupBM()
+  }, [codigo])
 
-  // Polling cada 8 segundos
-  useEffect(() => {
-    const interval = setInterval(load, 8000)
-    return () => clearInterval(interval)
-  }, [load])
-
-  // Calcular stock por ubicación
-  const stockLocations: LocStock[] = (() => {
+  const stockData = (() => {
     if (!codigo.trim() || movs.length === 0) return []
     const code = codigo.trim().toUpperCase()
-    const locMap = new Map<string, LocStock>()
+    const locMap = new Map<
+      string,
+      {
+        bloque: string
+        torre: string
+        piso: string
+        posicion: string
+        stock: number
+        descripcion: string
+        un: string
+        proveedor?: string
+        fVencimiento: string
+      }
+    >()
     const relevant = movs.filter((m) => m.codigo === code)
     for (const m of relevant) {
       const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
       const current = locMap.get(key)
       if (current) {
-        if (m.tipo === 'ingreso') current.ingresos += m.cantidad
-        else if (m.tipo === 'devolucion') current.devoluciones += m.cantidad
-        else if (m.tipo === 'traslado') current.traslados += m.cantidad
-        else if (m.tipo === 'salida') current.salidas += m.cantidad
-        current.stock += (m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado') ? m.cantidad : -m.cantidad
+        current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+        // Mantener la fecha de vencimiento más próxima (más antigua)
         if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
           current.fVencimiento = m.fVencimiento
         }
       } else {
-        const isPositive = m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado'
         locMap.set(key, {
           bloque: m.bloque,
           torre: m.torre,
           piso: m.piso,
           posicion: m.posicion,
-          ingresos: m.tipo === 'ingreso' ? m.cantidad : 0,
-          salidas: m.tipo === 'salida' ? m.cantidad : 0,
-          devoluciones: m.tipo === 'devolucion' ? m.cantidad : 0,
-          traslados: m.tipo === 'traslado' ? m.cantidad : 0,
-          stock: isPositive ? m.cantidad : -m.cantidad,
+          stock: ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad,
           descripcion: m.descripcion,
           un: m.un,
           proveedor: m.proveedor || undefined,
@@ -123,300 +113,169 @@ export function StockTab() {
         })
       }
     }
+    // Ordenar: vencimiento más próximo primero, sin fecha al final
     return Array.from(locMap.values())
       .filter((l) => l.stock > 0)
       .sort((a, b) => {
-        if (!a.fVencimiento && !b.fVencimiento) return 0
-        if (!a.fVencimiento) return 1
-        if (!b.fVencimiento) return -1
-        return a.fVencimiento.localeCompare(b.fVencimiento)
+        if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
+        if (a.fVencimiento) return -1
+        if (b.fVencimiento) return 1
+        return 0
       })
   })()
 
-  const totalStock = stockLocations.reduce((s, l) => s + l.stock, 0)
-  const totalIngresos = stockLocations.reduce((s, l) => s + l.ingresos, 0)
-  const totalSalidas = stockLocations.reduce((s, l) => s + l.salidas, 0)
-  const totalDevoluciones = stockLocations.reduce((s, l) => s + l.devoluciones, 0)
-  const totalTraslados = stockLocations.reduce((s, l) => s + l.traslados, 0)
+  useEffect(() => {
+    setStock(stockData)
+  }, [stockData])
 
-  function handleCatalogoPick(item: { codigo: string; descripcion: string; un: string; stockBigMagic?: number }) {
-    setCodigo(item.codigo)
-    setDescripcion(item.descripcion)
-    setUn(item.un)
-    setCatalogoItem(item as CatalogoItem)
-  }
-
-  function handleCodigoChange(val: string) {
-    setCodigo(val)
-    const cat = findCatalogoByCodigo(val.trim())
-    if (cat) {
-      setDescripcion(cat.descripcion)
-      setUn(cat.un)
-      setCatalogoItem(cat)
-    } else {
-      // Try to find from existing movimientos
-      const upper = val.trim().toUpperCase()
-      const match = movs.find((m) => m.codigo === upper)
-      if (match) {
-        setDescripcion(match.descripcion)
-        setUn(match.un)
-      } else if (!val.trim()) {
-        setDescripcion('')
-        setUn('')
-      }
-    }
-  }
-
-  async function doDelete() {
-    if (!confirmDelete) return
-    setBusyDelete(true)
+  async function handleDelete(
+    bloque: string,
+    torre: string,
+    piso: string,
+    posicion: string
+  ) {
+    if (!confirm('¿Eliminar todos los movimientos de esta ubicación?')) return
     try {
-      const next = await eliminarUbicacion(codigo.trim().toUpperCase(), confirmDelete.bloque, confirmDelete.torre, confirmDelete.piso, confirmDelete.posicion)
+      const next = await eliminarUbicacion(codigo, bloque, torre, piso, posicion)
       setMovs(next)
       toast.success('Ubicación eliminada')
-      setConfirmDelete(null)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
       toast.error('No se pudo eliminar', { description: message })
-    } finally {
-      setBusyDelete(false)
     }
   }
 
   return (
-    <div className="space-y-5">
-      {/* ─── Header ─── */}
-      <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <Warehouse className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-          <h2 className="text-lg font-bold text-foreground">Ubicación por código</h2>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Stock = ingresos + devoluciones + traslados − salidas, agrupado por bloque, torre, piso y posición. Las ubicaciones con stock 0 se eliminan automáticamente.
-        </p>
-      </div>
-
-      {/* ─── Búsqueda ─── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Buscar (código o descripción)</Label>
-          <CatalogoSearchInput
-            onPick={handleCatalogoPick}
-            value={codigo}
-            onChange={handleCodigoChange}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Producto</Label>
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            value={descripcion ? `${un ? un + ' — ' : ''}${descripcion}` : ''}
-            readOnly
-            placeholder="Busca un producto arriba..."
-            className="bg-muted/50 cursor-default"
+            value={codigo}
+            onChange={(e) => setCodigo(e.target.value)}
+            placeholder="Buscar por código..."
+            className="pl-9"
           />
         </div>
       </div>
 
-      {/* ─── Loading ─── */}
-      {loading && (
-        <div className="flex items-center justify-center py-4">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">Cargando movimientos...</span>
-        </div>
-      )}
-
-      {/* ─── Resumen superior ─── */}
-      {!loading && stockLocations.length > 0 && (
-        <div className="rounded-lg border bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 p-4">
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-4 text-center">
-            <div>
-              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stockLocations.length}</p>
-              <p className="text-xs text-muted-foreground">Ubicaciones encontradas</p>
+      {/* Card de Stock Big Magic — siempre visible al buscar un código */}
+      {codigo.trim() && stockBM !== null && (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+              <span className="text-amber-600 dark:text-amber-400 font-bold text-xs">BM</span>
             </div>
             <div>
-              <p className="text-2xl font-bold text-green-600 dark:text-green-400">{totalIngresos.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">Total Ingresos</p>
+              <p className="text-xs text-amber-600/80 dark:text-amber-400/80 font-medium">Stock Big Magic</p>
+              <p className="text-xs text-muted-foreground">Stock disponible en sistema Big Magic</p>
             </div>
-            <div>
-              <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{totalDevoluciones.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">Total Devoluciones</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-red-600 dark:text-red-400">{totalSalidas.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">Total Salidas</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-blue-500 dark:text-blue-400">{totalTraslados.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">Traslados</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-foreground">{totalStock.toLocaleString()} <span className="text-sm font-normal text-muted-foreground">{un}</span></p>
-              <p className="text-xs text-muted-foreground font-semibold">Stock Disponible</p>
-            </div>
-            {catalogoItem && (
-              <div>
-                <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{catalogoItem.stockBigMagic.toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">Stock Big Magic</p>
-              </div>
-            )}
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{stockBM}</p>
           </div>
         </div>
       )}
 
-      {/* ─── Tabla de ubicaciones ─── */}
-      {!loading && stockLocations.length > 0 && (
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-16 text-center">Bloque</TableHead>
-                <TableHead className="w-16 text-center">Torre</TableHead>
-                <TableHead className="w-16 text-center">Piso</TableHead>
-                <TableHead className="w-20 text-center">Posición</TableHead>
-                <TableHead className="w-28 text-center">Vencimiento</TableHead>
-                <TableHead className="text-right">Ingresos</TableHead>
-                <TableHead className="text-right">Devoluciones</TableHead>
-                <TableHead className="text-right">Traslados</TableHead>
-                <TableHead className="text-right">Salidas</TableHead>
-                <TableHead className="text-right font-bold">Stock</TableHead>
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {stockLocations.map((s, i) => (
-                <TableRow key={i}>
-                  <TableCell className="text-center font-medium">{s.bloque}</TableCell>
-                  <TableCell className="text-center font-medium">{s.torre}</TableCell>
-                  <TableCell className="text-center font-medium">{s.piso}</TableCell>
-                  <TableCell className="text-center font-medium">{s.posicion}</TableCell>
-                  <TableCell className="text-center">
-                    {s.fVencimiento ? (() => {
-                      const dias = Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
-                      return (
-                        <Badge variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'} className={dias <= 0 ? '' : dias <= 15 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}>
-                          {s.fVencimiento} <span className="ml-1 opacity-70">({dias <= 0 ? 'vencido' : `${dias}d`})</span>
-                        </Badge>
-                      )
-                    })() : <span className="text-xs text-muted-foreground">—</span>}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {s.ingresos > 0 ? (
-                      <span className="text-green-600 dark:text-green-400 font-medium">+{s.ingresos.toLocaleString()}</span>
-                    ) : (
-                      <span className="text-muted-foreground">0</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {s.devoluciones > 0 ? (
-                      <span className="text-amber-600 dark:text-amber-400 font-medium">+{s.devoluciones.toLocaleString()}</span>
-                    ) : (
-                      <span className="text-muted-foreground">0</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {s.traslados > 0 ? (
-                      <span className="text-blue-500 dark:text-blue-400 font-medium">+{s.traslados.toLocaleString()}</span>
-                    ) : (
-                      <span className="text-muted-foreground">0</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {s.salidas > 0 ? (
-                      <span className="text-red-600 dark:text-red-400 font-medium">-{s.salidas.toLocaleString()}</span>
-                    ) : (
-                      <span className="text-muted-foreground">0</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right font-bold">
-                    <Badge variant="default" className="text-sm px-2.5 py-0.5">{s.stock.toLocaleString()}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-red-600"
-                      onClick={() => setConfirmDelete({
-                        bloque: s.bloque,
-                        torre: s.torre,
-                        piso: s.piso,
-                        posicion: s.posicion,
-                        stock: s.stock,
-                        unStr: s.un,
-                      })}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TableCell>
+      {stock.length > 0 ? (
+        <div className="space-y-3">
+          <div className="overflow-x-auto">
+            <Table className="min-w-[700px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Bloque</TableHead>
+                  <TableHead>Torre</TableHead>
+                  <TableHead>Piso</TableHead>
+                  <TableHead>Posición</TableHead>
+                  <TableHead>Descripción</TableHead>
+                  <TableHead>UN</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead>Vencimiento</TableHead>
+                  <TableHead className="text-right">Stock</TableHead>
+                  <TableHead className="w-12"></TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+              </TableHeader>
+              <TableBody>
+                {stock.map((s, i) => {
+                  const hoy = new Date(new Date().toDateString())
+                  const fVen = s.fVencimiento ? new Date(s.fVencimiento + 'T00:00:00') : null
+                  const diffDias = fVen ? (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24) : null
+                  const vencido = diffDias !== null && diffDias < 0
+                  const naranja = !vencido && diffDias !== null && diffDias <= 15
+                  const azul = !vencido && !naranja && diffDias !== null && diffDias <= 30
+                  const verde = !vencido && !naranja && !azul
 
-      {/* ─── Sin stock ─── */}
-      {!loading && stockLocations.length === 0 && codigo.trim() && (
+                  const badgeClass = vencido
+                    ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+                    : naranja
+                    ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
+                    : azul
+                    ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+                    : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
+
+                  return (
+                    <TableRow key={i}>
+                      <TableCell>{s.bloque}</TableCell>
+                      <TableCell>{s.torre}</TableCell>
+                      <TableCell>{s.piso}</TableCell>
+                      <TableCell>{s.posicion}</TableCell>
+                      <TableCell>{s.descripcion}</TableCell>
+                      <TableCell>{s.un}</TableCell>
+                      <TableCell>
+                        {s.proveedor ? (
+                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                            {s.proveedor}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {s.fVencimiento ? (
+                          <Badge variant="outline" className={`font-semibold ${badgeClass}`}>
+                            {s.fVencimiento}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-medium">
+                        <Badge variant="default">{s.stock}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() =>
+                            handleDelete(s.bloque, s.torre, s.piso, s.posicion)
+                          }
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          {/* Total sum */}
+          <div className="flex justify-end">
+            <Badge variant="outline" className="text-sm px-3 py-1">
+              Total stock: <span className="font-bold ml-1">{stock.reduce((sum, s) => sum + s.stock, 0)}</span>
+            </Badge>
+          </div>
+        </div>
+      ) : codigo.trim() ? (
         <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
           <PackageSearch className="h-5 w-5" />
-          <span>Sin stock para &quot;{codigo}&quot;</span>
+          <span>Sin stock en RACKLY para &quot;{codigo}&quot;</span>
         </div>
-      )}
-
-      {/* ─── Sin búsqueda ─── */}
-      {!loading && !codigo.trim() && (
-        <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
-          <PackageSearch className="h-5 w-5" />
-          <span>Escribe un código o descripción para ver el stock por ubicación.</span>
-        </div>
-      )}
-
-      {/* ─── Nota inferior ─── */}
-      {!loading && stockLocations.length > 0 && (
-        <p className="text-xs text-muted-foreground text-center">
-          Las ubicaciones con stock 0 se eliminan automáticamente para evitar saturación.
+      ) : (
+        <p className="text-muted-foreground text-center py-8">
+          Escribe un código para ver el stock por ubicación.
         </p>
       )}
-
-      {/* ─── Dialog de confirmación para eliminar ─── */}
-      <AlertDialog open={!!confirmDelete} onOpenChange={(open) => { if (!open) setConfirmDelete(null) }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Eliminar ubicación?</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3">
-                <p>Se eliminarán todos los movimientos de esta ubicación para el código <strong>{codigo}</strong>.</p>
-                {confirmDelete && (
-                  <div className="rounded-lg border bg-muted/50 p-3 space-y-1.5 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Ubicación:</span>
-                      <span className="font-medium">B-{confirmDelete.bloque} T-{confirmDelete.torre} P-{confirmDelete.piso} Pos-{confirmDelete.posicion}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Stock actual:</span>
-                      <span className="font-medium">{confirmDelete.stock} {confirmDelete.unStr}</span>
-                    </div>
-                  </div>
-                )}
-                <p className="text-red-600 font-medium">Esta acción no se puede deshacer.</p>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <Button
-              onClick={(e) => { e.preventDefault(); doDelete() }}
-              disabled={busyDelete}
-              className="bg-red-600 hover:bg-red-700 text-white"
-            >
-              {busyDelete ? (
-                <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Eliminando...</>
-              ) : (
-                'Sí, eliminar'
-              )}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   )
 }

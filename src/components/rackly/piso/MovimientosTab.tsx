@@ -1,27 +1,11 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import {
-  listarSectores,
-  listarColumnas,
-  listarSubcolumnas,
-  listarNivelesDeSubcolumna,
-  listarBloques,
-  listarBloquesDeColumna,
-  listarBloquesParaSelect,
-  registrarMovimiento,
-  registrarDevolucionPosicion,
-  calcularStockNivel,
-  type Sector,
-  type Columna,
-  type Subcolumna,
-} from '@/lib/piso/api'
-import { calcularTurno } from '@/lib/rackly/turno'
-import { useAuth } from '@/hooks/useAuth'
+import { listarMovimientos, type Sector } from '@/lib/piso/api'
+import { Badge } from '@/components/ui/badge'
+import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
@@ -37,681 +21,415 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { toast } from 'sonner'
-import { Loader2, ArrowDownToLine, ArrowUpFromLine, History, Filter, X, RotateCcw, Search, Plus, Trash2, Package } from 'lucide-react'
+import { Loader2, Filter, X, ArrowDownToLine, ArrowUpFromLine, RotateCcw, ArrowLeftRight, BarChart3, Search } from 'lucide-react'
 
 export function MovimientosTab() {
-  return (
-    <Tabs defaultValue="ingreso" className="w-full">
-      <TabsList className="grid w-full grid-cols-4 bg-slate-800 border border-slate-700">
-        <TabsTrigger value="ingreso" className="gap-2 data-[state=active]:bg-emerald-600 data-[state=active]:text-white text-slate-400">
-          <ArrowDownToLine className="h-4 w-4" /> Ingreso
-        </TabsTrigger>
-        <TabsTrigger value="salida" className="gap-2 data-[state=active]:bg-red-600 data-[state=active]:text-white text-slate-400">
-          <ArrowUpFromLine className="h-4 w-4" /> Salida
-        </TabsTrigger>
-        <TabsTrigger value="devolucion" className="gap-2 data-[state=active]:bg-amber-600 data-[state=active]:text-white text-slate-400">
-          <RotateCcw className="h-4 w-4" /> Devolución
-        </TabsTrigger>
-        <TabsTrigger value="historial" className="gap-2 data-[state=active]:bg-sky-600 data-[state=active]:text-white text-slate-400">
-          <History className="h-4 w-4" /> Historial
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="ingreso" className="mt-4">
-        <IngresoRapido />
-      </TabsContent>
-      <TabsContent value="salida" className="mt-4">
-        <SalidaMasiva />
-      </TabsContent>
-      <TabsContent value="devolucion" className="mt-4">
-        <DevolucionRapida />
-      </TabsContent>
-      <TabsContent value="historial" className="mt-4">
-        <Historial />
-      </TabsContent>
-    </Tabs>
-  )
-}
-
-function IngresoRapido() {
-  const { perfil } = useAuth()
-  const [sectores, setSectores] = useState<Sector[]>([])
-  const [sectorId, setSectorId] = useState('')
-  const [columnas, setColumnas] = useState<Columna[]>([])
-  const [columnaId, setColumnaId] = useState('')
-  const [subcolumnas, setSubcolumnas] = useState<Subcolumna[]>([])
-  const [selectedLevels, setSelectedLevels] = useState<Set<string>>(new Set())
-  const [bloqueId, setBloqueId] = useState('')
-  const [bloques, setBloques] = useState<{ id: string; codigo: string }[]>([])
-  const [bloqueSearch, setBloqueSearch] = useState('')
-  const [cantidad, setCantidad] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [gridData, setGridData] = useState<{
-    posicion: { numero: number }
-    niveles: { id: string; numero: number; codigo_ubicacion: string | null }[]
-  }[]>([])
-
-  const [allBloques, setAllBloques] = useState<{ id: string; codigo: string; descripcion: string }[]>([])
-
-  useEffect(() => {
-    listarSectores().then(setSectores).catch(() => {})
-    listarBloquesParaSelect().then((b) => setAllBloques(b.map((x) => ({ id: x.id, codigo: x.codigo, descripcion: x.descripcion })))).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    if (!sectorId) return
-    listarColumnas(sectorId).then(setColumnas).catch(() => {})
-  }, [sectorId])
-
-  useEffect(() => {
-    if (!columnaId) return
-    listarSubcolumnas(columnaId).then(setSubcolumnas).catch(() => {})
-    listarBloquesDeColumna(columnaId).then(setBloques).catch(() => {})
-  }, [columnaId])
-
-  useEffect(() => {
-    if (subcolumnas.length === 0) { setGridData([]); return }
-    Promise.all(subcolumnas.map((sc) => listarNivelesDeSubcolumna(sc.id)))
-      .then((results) => { setGridData(results.flat()) })
-      .catch(() => {})
-  }, [subcolumnas])
-
-  // Filtrar bloques por búsqueda
-  const filteredBloques = useMemo(() => {
-    const q = bloqueSearch.trim().toLowerCase()
-    if (!q) return bloques
-    return bloques.filter((b) => b.codigo.toLowerCase().includes(q))
-  }, [bloques, bloqueSearch])
-
-  function toggleLevel(nivelId: string) {
-    setSelectedLevels((prev) => {
-      const next = new Set(prev)
-      if (next.has(nivelId)) next.delete(nivelId)
-      else next.add(nivelId)
-      return next
-    })
-  }
-
-  async function handleIngreso() {
-    if (!bloqueId || selectedLevels.size === 0 || !cantidad || !perfil) {
-      toast.error('Selecciona bloque, niveles y cantidad')
-      return
-    }
-    const qty = parseFloat(cantidad)
-    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
-    setBusy(true)
-    try {
-      const detalles = Array.from(selectedLevels).map((nivelId) => ({
-        nivel_id: nivelId, bloque_id: bloqueId, cantidad: qty,
-      }))
-      await registrarMovimiento('ingreso', calcularTurno(), detalles)
-      toast.success(`Ingreso registrado en ${detalles.length} nivel(es)`)
-      setSelectedLevels(new Set()); setCantidad('')
-    } catch (err: unknown) {
-      toast.error('Error al registrar', { description: err instanceof Error ? err.message : '' })
-    } finally { setBusy(false) }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <Label className="text-xs text-slate-400">Sector</Label>
-          <Select value={sectorId} onValueChange={(v) => { setSectorId(v); setColumnaId('') }}>
-            <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Sector" /></SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {sectores.map((s) => <SelectItem key={s.id} value={s.id} className="text-white focus:bg-slate-700">{s.nombre}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-slate-400">Columna</Label>
-          <Select value={columnaId} onValueChange={setColumnaId} disabled={!sectorId}>
-            <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Columna" /></SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {columnas.map((c) => <SelectItem key={c.id} value={c.id} className="text-white focus:bg-slate-700">{c.letra}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-slate-400">Bloque</Label>
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-500" />
-            <input type="text" value={bloqueSearch} onChange={(e) => setBloqueSearch(e.target.value)} placeholder="Buscar..."
-              className="w-full h-8 rounded-md border border-slate-700 text-xs bg-slate-800 text-white placeholder-slate-500 pl-7 pr-2 mb-1 focus:outline-none focus:ring-2 focus:ring-emerald-500/50" />
-          </div>
-          <Select value={bloqueId} onValueChange={setBloqueId} disabled={bloques.length === 0}>
-            <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Bloque" /></SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {filteredBloques.map((b) => <SelectItem key={b.id} value={b.id} className="text-white focus:bg-slate-700">{b.codigo}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      <div className="space-y-1">
-        <Label className="text-xs text-slate-400">Cantidad</Label>
-        <Input type="number" step="any" min="0.001" value={cantidad} onChange={(e) => setCantidad(e.target.value)}
-          placeholder="Cantidad para todos los niveles seleccionados" className="max-w-xs bg-slate-800 border-slate-700 text-white focus:ring-emerald-500/50" />
-      </div>
-
-      {gridData.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm text-slate-400">Selecciona niveles (haz clic en las celdas). Seleccionados: {selectedLevels.size}</p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {subcolumnas.map((sc, scIdx) => (
-              <div key={sc.id} className="border border-slate-700 rounded-lg p-3 bg-slate-800/50">
-                <p className="text-sm font-medium text-slate-300 mb-2">{sc.codigo}</p>
-                {gridData
-                  .filter((_, idx) => idx >= scIdx && idx < scIdx + 1)
-                  .map((g, gi) => (
-                    <div key={gi} className="flex flex-wrap gap-1 mb-1">
-                      <span className="text-xs text-slate-500 w-6">P{g.posicion.numero}</span>
-                      {g.niveles.map((n) => (
-                        <button key={n.id} type="button"
-                          className={`w-8 h-8 rounded text-xs font-medium transition-colors ${
-                            selectedLevels.has(n.id)
-                              ? 'bg-emerald-600 text-white shadow-sm'
-                              : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
-                          }`}
-                          onClick={() => toggleLevel(n.id)}
-                          title={n.codigo_ubicacion || `Nivel ${n.numero}`}>
-                          {n.numero}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <Button onClick={handleIngreso} disabled={busy || selectedLevels.size === 0}
-        className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
-        Registrar ingreso ({selectedLevels.size} niveles)
-      </Button>
-    </div>
-  )
-}
-
-function SalidaMasiva() {
-  const { perfil } = useAuth()
-  const [sectores, setSectores] = useState<Sector[]>([])
-  const [sectorId, setSectorId] = useState('')
-  const [columnas, setColumnas] = useState<Columna[]>([])
-  const [columnaId, setColumnaId] = useState('')
-  const [subcolumnas, setSubcolumnas] = useState<Subcolumna[]>([])
-  const [bloqueId, setBloqueId] = useState('')
-  const [bloques, setBloques] = useState<{ id: string; codigo: string }[]>([])
-  const [bloqueSearch, setBloqueSearch] = useState('')
-  const [selectedLevels, setSelectedLevels] = useState<Map<string, number>>(new Map())
-  const [busy, setBusy] = useState(false)
-  const [gridData, setGridData] = useState<{
-    posicion: { numero: number }
-    niveles: { id: string; numero: number; codigo_ubicacion: string | null }[]
-  }[]>([])
-  const [stockData, setStockData] = useState<Map<string, { bloque_codigo: string; cantidad: number }[]>>(new Map())
-
-  useEffect(() => {
-    listarSectores().then(setSectores).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    if (!sectorId) return
-    listarColumnas(sectorId).then(setColumnas).catch(() => {})
-  }, [sectorId])
-
-  useEffect(() => {
-    if (!columnaId) return
-    Promise.all([listarSubcolumnas(columnaId), listarBloquesDeColumna(columnaId)])
-      .then(([subs, blqs]) => { setSubcolumnas(subs); setBloques(blqs) }).catch(() => {})
-  }, [columnaId])
-
-  useEffect(() => {
-    if (subcolumnas.length === 0) { setGridData([]); return }
-    Promise.all(subcolumnas.map((sc) => listarNivelesDeSubcolumna(sc.id)))
-      .then((results) => {
-        setGridData(results.flat())
-        const allNiveles = results.flat().flatMap((r) => r.niveles)
-        allNiveles.forEach((n) => {
-          calcularStockNivel(n.id).then((stock) => { setStockData((prev) => new Map(prev).set(n.id, stock)) }).catch(() => {})
-        })
-      }).catch(() => {})
-  }, [subcolumnas])
-
-  const filteredBloques = useMemo(() => {
-    const q = bloqueSearch.trim().toLowerCase()
-    if (!q) return bloques
-    return bloques.filter((b) => b.codigo.toLowerCase().includes(q))
-  }, [bloques, bloqueSearch])
-
-  function toggleLevel(nivelId: string, availableQty: number) {
-    setSelectedLevels((prev) => {
-      const next = new Map(prev)
-      if (next.has(nivelId)) next.delete(nivelId)
-      else next.set(nivelId, availableQty)
-      return next
-    })
-  }
-
-  async function handleSalida() {
-    if (!bloqueId || selectedLevels.size === 0 || !perfil) { toast.error('Selecciona bloque y niveles'); return }
-    setBusy(true)
-    try {
-      const detalles = Array.from(selectedLevels.entries()).map(([nivelId, cantidad]) => ({
-        nivel_id: nivelId, bloque_id: bloqueId, cantidad,
-      }))
-      await registrarMovimiento('salida', calcularTurno(), detalles)
-      toast.success(`Salida registrada en ${detalles.length} nivel(es)`)
-      setSelectedLevels(new Map())
-    } catch (err: unknown) {
-      toast.error('Error al registrar', { description: err instanceof Error ? err.message : '' })
-    } finally { setBusy(false) }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <Label className="text-xs text-slate-400">Sector</Label>
-          <Select value={sectorId} onValueChange={(v) => { setSectorId(v); setColumnaId('') }}>
-            <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Sector" /></SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {sectores.map((s) => <SelectItem key={s.id} value={s.id} className="text-white focus:bg-slate-700">{s.nombre}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-slate-400">Columna</Label>
-          <Select value={columnaId} onValueChange={setColumnaId} disabled={!sectorId}>
-            <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Columna" /></SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {columnas.map((c) => <SelectItem key={c.id} value={c.id} className="text-white focus:bg-slate-700">{c.letra}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-slate-400">Bloque</Label>
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-500" />
-            <input type="text" value={bloqueSearch} onChange={(e) => setBloqueSearch(e.target.value)} placeholder="Buscar..."
-              className="w-full h-8 rounded-md border border-slate-700 text-xs bg-slate-800 text-white placeholder-slate-500 pl-7 pr-2 mb-1 focus:outline-none focus:ring-2 focus:ring-red-500/50" />
-          </div>
-          <Select value={bloqueId} onValueChange={setBloqueId} disabled={bloques.length === 0}>
-            <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Bloque" /></SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {filteredBloques.map((b) => <SelectItem key={b.id} value={b.id} className="text-white focus:bg-slate-700">{b.codigo}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {gridData.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm text-slate-400">Selecciona niveles con stock. Seleccionados: {selectedLevels.size}</p>
-          <div className="grid gap-2">
-            {subcolumnas.map((sc, scIdx) => (
-              <div key={sc.id} className="border border-slate-700 rounded-lg p-3 bg-slate-800/50">
-                <p className="text-sm font-medium text-slate-300 mb-2">{sc.codigo}</p>
-                <div className="flex flex-wrap gap-1">
-                  {gridData.slice(scIdx, scIdx + 1).flatMap((g) =>
-                    g.niveles.map((n) => {
-                      const stock = stockData.get(n.id) || []
-                      const blockStock = stock.find((s) => s.bloque_codigo === bloques.find((b) => b.id === bloqueId)?.codigo)
-                      const qty = blockStock?.cantidad || 0
-                      const hasStock = qty > 0
-                      const isSelected = selectedLevels.has(n.id)
-                      return (
-                        <button key={n.id} type="button" disabled={!hasStock}
-                          className={`w-10 h-10 rounded text-xs font-medium transition-colors ${
-                            isSelected ? 'bg-red-600 text-white'
-                            : hasStock ? 'bg-slate-700 hover:bg-slate-600 text-slate-300'
-                            : 'bg-slate-800 text-slate-600 cursor-not-allowed'
-                          }`}
-                          onClick={() => hasStock && toggleLevel(n.id, qty)}
-                          title={`N${n.numero} - Stock: ${qty}`}>
-                          <div>{n.numero}</div>
-                          <div className="text-[10px]">{qty}</div>
-                        </button>
-                      )
-                    })
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <Button onClick={handleSalida} disabled={busy || selectedLevels.size === 0}
-        className="gap-2 bg-red-600 hover:bg-red-700 text-white">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUpFromLine className="h-4 w-4" />}
-        Registrar salida ({selectedLevels.size} niveles)
-      </Button>
-    </div>
-  )
-}
-
-function DevolucionRapida() {
-  const { perfil } = useAuth()
-  const [sectores, setSectores] = useState<Sector[]>([])
-  const [sectorId, setSectorId] = useState('')
-  const [columnas, setColumnas] = useState<Columna[]>([])
-  const [columnaId, setColumnaId] = useState('')
-  const [subcolumnas, setSubcolumnas] = useState<Subcolumna[]>([])
-  const [selectedLevels, setSelectedLevels] = useState<Set<string>>(new Set())
-  const [bloqueId, setBloqueId] = useState('')
-  const [bloques, setBloques] = useState<{ id: string; codigo: string }[]>([])
-  const [bloqueSearch, setBloqueSearch] = useState('')
-  const [cantidad, setCantidad] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [gridData, setGridData] = useState<{
-    posicion: { numero: number }
-    niveles: { id: string; numero: number; codigo_ubicacion: string | null }[]
-  }[]>([])
-
-  useEffect(() => {
-    listarSectores().then(setSectores).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    if (!sectorId) return
-    listarColumnas(sectorId).then(setColumnas).catch(() => {})
-  }, [sectorId])
-
-  useEffect(() => {
-    if (!columnaId) return
-    listarSubcolumnas(columnaId).then(setSubcolumnas).catch(() => {})
-    listarBloquesDeColumna(columnaId).then(setBloques).catch(() => {})
-  }, [columnaId])
-
-  useEffect(() => {
-    if (subcolumnas.length === 0) { setGridData([]); return }
-    Promise.all(subcolumnas.map((sc) => listarNivelesDeSubcolumna(sc.id)))
-      .then((results) => { setGridData(results.flat()) })
-      .catch(() => {})
-  }, [subcolumnas])
-
-  const filteredBloques = useMemo(() => {
-    const q = bloqueSearch.trim().toLowerCase()
-    if (!q) return bloques
-    return bloques.filter((b) => b.codigo.toLowerCase().includes(q))
-  }, [bloques, bloqueSearch])
-
-  function toggleLevel(nivelId: string) {
-    setSelectedLevels((prev) => {
-      const next = new Set(prev)
-      if (next.has(nivelId)) next.delete(nivelId)
-      else next.add(nivelId)
-      return next
-    })
-  }
-
-  async function handleDevolucion() {
-    if (!bloqueId || selectedLevels.size === 0 || !cantidad || !perfil) {
-      toast.error('Selecciona bloque, niveles y cantidad')
-      return
-    }
-    const qty = parseFloat(cantidad)
-    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
-    setBusy(true)
-    try {
-      const detalles = Array.from(selectedLevels).map((nivelId) => ({
-        nivel_id: nivelId, bloque_id: bloqueId, cantidad: qty,
-      }))
-      await registrarDevolucionPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
-      toast.success(`Devolución registrada en ${detalles.length} nivel(es)`)
-      setSelectedLevels(new Set()); setCantidad('')
-    } catch (err: unknown) {
-      toast.error('Error al registrar', { description: err instanceof Error ? err.message : '' })
-    } finally { setBusy(false) }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="rounded-lg border border-amber-500/30 bg-amber-950/30 p-3">
-        <p className="text-xs text-amber-400"><strong>Devolución:</strong> Registra artículos que regresan al almacén. Selecciona ubicación y bloque.</p>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <Label className="text-xs text-slate-400">Sector</Label>
-          <Select value={sectorId} onValueChange={(v) => { setSectorId(v); setColumnaId('') }}>
-            <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Sector" /></SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {sectores.map((s) => <SelectItem key={s.id} value={s.id} className="text-white focus:bg-slate-700">{s.nombre}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-slate-400">Columna</Label>
-          <Select value={columnaId} onValueChange={setColumnaId} disabled={!sectorId}>
-            <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Columna" /></SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {columnas.map((c) => <SelectItem key={c.id} value={c.id} className="text-white focus:bg-slate-700">{c.letra}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-slate-400">Bloque</Label>
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-500" />
-            <input type="text" value={bloqueSearch} onChange={(e) => setBloqueSearch(e.target.value)} placeholder="Buscar código..."
-              className="w-full h-8 rounded-md border border-slate-700 text-xs bg-slate-800 text-white placeholder-slate-500 pl-7 pr-2 mb-1 focus:outline-none focus:ring-2 focus:ring-amber-500/50" />
-          </div>
-          <Select value={bloqueId} onValueChange={setBloqueId} disabled={bloques.length === 0}>
-            <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Bloque" /></SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {filteredBloques.map((b) => <SelectItem key={b.id} value={b.id} className="text-white focus:bg-slate-700">{b.codigo}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      <div className="space-y-1">
-        <Label className="text-xs text-slate-400">Cantidad</Label>
-        <Input type="number" step="any" min="0.001" value={cantidad} onChange={(e) => setCantidad(e.target.value)}
-          placeholder="Cantidad para todos los niveles seleccionados" className="max-w-xs bg-slate-800 border-slate-700 text-white focus:ring-amber-500/50" />
-      </div>
-
-      {gridData.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm text-slate-400">Selecciona niveles. Seleccionados: {selectedLevels.size}</p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {subcolumnas.map((sc, scIdx) => (
-              <div key={sc.id} className="border border-slate-700 rounded-lg p-3 bg-slate-800/50">
-                <p className="text-sm font-medium text-slate-300 mb-2">{sc.codigo}</p>
-                {gridData
-                  .filter((_, idx) => idx >= scIdx && idx < scIdx + 1)
-                  .map((g, gi) => (
-                    <div key={gi} className="flex flex-wrap gap-1 mb-1">
-                      <span className="text-xs text-slate-500 w-6">P{g.posicion.numero}</span>
-                      {g.niveles.map((n) => (
-                        <button key={n.id} type="button"
-                          className={`w-8 h-8 rounded text-xs font-medium transition-colors ${
-                            selectedLevels.has(n.id)
-                              ? 'bg-amber-600 text-white shadow-sm'
-                              : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
-                          }`}
-                          onClick={() => toggleLevel(n.id)}
-                          title={n.codigo_ubicacion || `Nivel ${n.numero}`}>
-                          {n.numero}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <Button onClick={handleDevolucion} disabled={busy || selectedLevels.size === 0}
-        className="gap-2 bg-amber-600 hover:bg-amber-700 text-white">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-        Registrar devolución ({selectedLevels.size} niveles)
-      </Button>
-    </div>
-  )
-}
-
-function Historial() {
-  const [sectores, setSectores] = useState<Sector[]>([])
-  const [sectorId, setSectorId] = useState('')
-  const [movimientos, setMovimientos] = useState<{ id: string; numero_operacion: number; tipo: string; fecha: string; turno: string; usuario_nombre: string | null; usuario_id: string | null; detalles: { bloque_codigo?: string; cantidad: number }[] }[]>([])
-  const [loading, setLoading] = useState(false)
-  const [filtroUsuario, setFiltroUsuario] = useState('')
-  const [filtroTipo, setFiltroTipo] = useState('')
+  const [movimientos, setMovimientos] = useState<
+    {
+      id: string
+      numero_operacion: number
+      tipo: string
+      fecha: string
+      turno: string
+      usuario_id: string | null
+      usuario_nombre: string | null
+      usuario_correo: string | null
+      detalles: { bloque_codigo?: string; cantidad: number; nivel_codigo?: string }[]
+    }[]
+  >([])
+  const [loading, setLoading] = useState(true)
   const [showFilters, setShowFilters] = useState(false)
+  const [filtroTipo, setFiltroTipo] = useState<string>('')
+  const [filtroUsuario, setFiltroUsuario] = useState<string>('')
+  const [filtroDesde, setFiltroDesde] = useState<string>('')
+  const [filtroHasta, setFiltroHasta] = useState<string>('')
+  const [filtroTexto, setFiltroTexto] = useState<string>('')
 
+  // Load all movements on mount
   useEffect(() => {
-    listarSectores().then(setSectores).catch(() => {})
+    listarMovimientos()
+      .then(setMovimientos)
+      .catch(() => {
+        setMovimientos([])
+      })
+      .finally(() => setLoading(false))
   }, [])
 
-  useEffect(() => {
-    if (!sectorId) return
-    setLoading(true)
-    import('@/lib/piso/api').then(({ listarMovimientos }) =>
-      listarMovimientos(sectorId)
-        .then(setMovimientos)
-        .catch(() => toast.error('Error al cargar historial'))
-        .finally(() => setLoading(false))
-    )
-  }, [sectorId])
+  // Extract unique users from loaded data
+  const usuariosUnicos = useMemo(() => {
+    return [...new Set(movimientos.map((m) => m.usuario_nombre).filter(Boolean))] as string[]
+  }, [movimientos])
 
-  const usuariosUnicos = [...new Set(movimientos.map((m) => m.usuario_nombre).filter(Boolean))] as string[]
-  const tiposUnicos = [...new Set(movimientos.map((m) => m.tipo))] as string[]
+  // Filter movements
+  const movimientosFiltrados = useMemo(() => {
+    return movimientos.filter((m) => {
+      if (filtroTipo && m.tipo !== filtroTipo) return false
+      if (filtroUsuario && m.usuario_nombre !== filtroUsuario) return false
 
-  const movimientosFiltrados = movimientos.filter((m) => {
-    if (filtroUsuario && m.usuario_nombre !== filtroUsuario) return false
-    if (filtroTipo && m.tipo !== filtroTipo) return false
-    return true
-  })
+      if (filtroDesde) {
+        const fechaMov = new Date(m.fecha)
+        const desde = new Date(filtroDesde + 'T00:00:00')
+        if (fechaMov < desde) return false
+      }
+      if (filtroHasta) {
+        const fechaMov = new Date(m.fecha)
+        const hasta = new Date(filtroHasta + 'T23:59:59')
+        if (fechaMov > hasta) return false
+      }
 
-  const tieneFiltrosActivos = filtroUsuario !== '' || filtroTipo !== ''
+      if (filtroTexto.trim()) {
+        const q = filtroTexto.trim().toLowerCase()
+        const matchesOp = String(m.numero_operacion).includes(q)
+        const matchesUser = (m.usuario_nombre ?? '').toLowerCase().includes(q)
+        const matchesDetalle = m.detalles.some(
+          (d) => (d.bloque_codigo ?? '').toLowerCase().includes(q) || String(d.cantidad).includes(q)
+        )
+        if (!matchesOp && !matchesUser && !matchesDetalle) return false
+      }
 
-  function limpiarFiltros() { setFiltroUsuario(''); setFiltroTipo('') }
+      return true
+    })
+  }, [movimientos, filtroTipo, filtroUsuario, filtroDesde, filtroHasta, filtroTexto])
+
+  // Summary counts
+  const conteos = useMemo(() => {
+    const total = movimientosFiltrados.length
+    const ingreso = movimientosFiltrados.filter((m) => m.tipo === 'ingreso').length
+    const salida = movimientosFiltrados.filter((m) => m.tipo === 'salida').length
+    const devolucion = movimientosFiltrados.filter((m) => m.tipo === 'devolucion').length
+    const traslado = movimientosFiltrados.filter((m) => m.tipo === 'traslado').length
+    return { total, ingreso, salida, devolucion, traslado }
+  }, [movimientosFiltrados])
+
+  const tieneFiltrosActivos =
+    filtroTipo !== '' || filtroUsuario !== '' || filtroDesde !== '' || filtroHasta !== '' || filtroTexto.trim() !== ''
+
+  function limpiarFiltros() {
+    setFiltroTipo('')
+    setFiltroUsuario('')
+    setFiltroDesde('')
+    setFiltroHasta('')
+    setFiltroTexto('')
+  }
 
   function getTipoBadge(tipo: string): string {
     switch (tipo) {
-      case 'ingreso': return 'bg-emerald-600 text-white'
-      case 'salida': return 'bg-red-600 text-white'
-      case 'devolucion': return 'bg-amber-600 text-white'
-      case 'traslado': return 'bg-blue-600 text-white'
-      default: return 'bg-slate-700 text-slate-300'
+      case 'ingreso':
+        return 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
+      case 'salida':
+        return 'bg-red-600/20 text-red-400 border border-red-500/30'
+      case 'devolucion':
+        return 'bg-amber-600/20 text-amber-400 border border-amber-500/30'
+      case 'traslado':
+        return 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+      default:
+        return 'bg-slate-700 text-slate-300 border border-slate-600'
+    }
+  }
+
+  function getTipoIcon(tipo: string) {
+    switch (tipo) {
+      case 'ingreso':
+        return <ArrowDownToLine className="h-3 w-3" />
+      case 'salida':
+        return <ArrowUpFromLine className="h-3 w-3" />
+      case 'devolucion':
+        return <RotateCcw className="h-3 w-3" />
+      case 'traslado':
+        return <ArrowLeftRight className="h-3 w-3" />
+      default:
+        return null
+    }
+  }
+
+  function formatFecha(fecha: string): string {
+    try {
+      const d = new Date(fecha)
+      return d.toLocaleDateString('es-PE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }) + ' ' + d.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
+    } catch {
+      return fecha
     }
   }
 
   return (
     <div className="space-y-4">
-      <div className="space-y-1 max-w-xs">
-        <Label className="text-xs text-slate-400">Sector</Label>
-        <Select value={sectorId} onValueChange={setSectorId}>
-          <SelectTrigger className="bg-slate-800 border-slate-700 text-white"><SelectValue placeholder="Seleccionar sector" /></SelectTrigger>
-          <SelectContent className="bg-slate-800 border-slate-700">
-            {sectores.map((s) => <SelectItem key={s.id} value={s.id} className="text-white focus:bg-slate-700">{s.nombre}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {movimientos.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Button variant={showFilters ? 'secondary' : 'outline'} size="sm" className="gap-2 border-slate-700 text-slate-400"
-              onClick={() => setShowFilters(!showFilters)}>
-              <Filter className="h-4 w-4" /> Filtros
-              {tieneFiltrosActivos && (
-                <Badge className="ml-1 h-5 min-w-[20px] px-1.5 bg-sky-600">{(filtroUsuario ? 1 : 0) + (filtroTipo ? 1 : 0)}</Badge>
-              )}
-            </Button>
-            {tieneFiltrosActivos && (
-              <Button variant="ghost" size="sm" className="gap-1 text-slate-400" onClick={limpiarFiltros}>
-                <X className="h-3 w-3" /> Limpiar
-              </Button>
-            )}
-            {tieneFiltrosActivos && (
-              <span className="text-xs text-slate-400">{movimientosFiltrados.length} de {movimientos.length} movimientos</span>
-            )}
-          </div>
-
-          {showFilters && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 border border-slate-700 rounded-lg bg-slate-800/50">
-              <div className="space-y-1">
-                <Label className="text-xs text-slate-400">Usuario</Label>
-                <Select value={filtroUsuario} onValueChange={(v) => setFiltroUsuario(v === '__all__' ? '' : v)}>
-                  <SelectTrigger className="bg-slate-800 border-slate-700 text-white">
-                    <SelectValue placeholder="Todos los usuarios" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-slate-800 border-slate-700">
-                    <SelectItem value="__all__" className="text-white focus:bg-slate-700">Todos los usuarios</SelectItem>
-                    {usuariosUnicos.map((u) => <SelectItem key={u} value={u} className="text-white focus:bg-slate-700">{u}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-slate-400">Tipo de movimiento</Label>
-                <Select value={filtroTipo} onValueChange={(v) => setFiltroTipo(v === '__all__' ? '' : v)}>
-                  <SelectTrigger className="bg-slate-800 border-slate-700 text-white">
-                    <SelectValue placeholder="Todos los tipos" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-slate-800 border-slate-700">
-                    <SelectItem value="__all__" className="text-white focus:bg-slate-700">Todos los tipos</SelectItem>
-                    {tiposUnicos.map((t) => <SelectItem key={t} value={t} className="text-white focus:bg-slate-700 capitalize">{t}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
+      {/* ── Summary cards ── */}
+      {!loading && movimientos.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-3 flex items-center gap-3">
+            <div className="rounded-md bg-slate-700 p-2">
+              <BarChart3 className="h-4 w-4 text-slate-300" />
             </div>
-          )}
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Total</p>
+              <p className="text-lg font-bold text-white">{conteos.total}</p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/20 p-3 flex items-center gap-3">
+            <div className="rounded-md bg-emerald-600/20 p-2">
+              <ArrowDownToLine className="h-4 w-4 text-emerald-400" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Ingresos</p>
+              <p className="text-lg font-bold text-emerald-400">{conteos.ingreso}</p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-red-500/20 bg-red-950/20 p-3 flex items-center gap-3">
+            <div className="rounded-md bg-red-600/20 p-2">
+              <ArrowUpFromLine className="h-4 w-4 text-red-400" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Salidas</p>
+              <p className="text-lg font-bold text-red-400">{conteos.salida}</p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-amber-500/20 bg-amber-950/20 p-3 flex items-center gap-3">
+            <div className="rounded-md bg-amber-600/20 p-2">
+              <RotateCcw className="h-4 w-4 text-amber-400" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Devoluciones</p>
+              <p className="text-lg font-bold text-amber-400">{conteos.devolucion}</p>
+            </div>
+          </div>
+          <div className="rounded-lg border border-blue-500/20 bg-blue-950/20 p-3 flex items-center gap-3">
+            <div className="rounded-md bg-blue-600/20 p-2">
+              <ArrowLeftRight className="h-4 w-4 text-blue-400" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Traslados</p>
+              <p className="text-lg font-bold text-blue-400">{conteos.traslado}</p>
+            </div>
+          </div>
         </div>
       )}
 
-      {loading ? (
-        <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
-      ) : movimientosFiltrados.length > 0 ? (
-        <div className="rounded-xl border border-slate-700 overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-slate-800 border-slate-700 hover:bg-slate-800">
-                <TableHead className="text-slate-400 font-semibold text-xs uppercase">N° Op</TableHead>
-                <TableHead className="text-slate-400 font-semibold text-xs uppercase">Fecha</TableHead>
-                <TableHead className="text-slate-400 font-semibold text-xs uppercase">Tipo</TableHead>
-                <TableHead className="text-slate-400 font-semibold text-xs uppercase">Turno</TableHead>
-                <TableHead className="text-slate-400 font-semibold text-xs uppercase">Detalles</TableHead>
-                <TableHead className="text-slate-400 font-semibold text-xs uppercase">Usuario</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {movimientosFiltrados.slice(0, 50).map((m) => (
-                <TableRow key={m.id} className="border-slate-700 hover:bg-slate-800/50">
-                  <TableCell className="font-mono text-slate-300">{m.numero_operacion}</TableCell>
-                  <TableCell className="text-slate-300">{new Date(m.fecha).toLocaleString()}</TableCell>
-                  <TableCell>
-                    <Badge className={`${getTipoBadge(m.tipo)} capitalize border-0 text-xs`}>{m.tipo}</Badge>
-                  </TableCell>
-                  <TableCell className="text-slate-300">{m.turno}</TableCell>
-                  <TableCell>
-                    {m.detalles.slice(0, 3).map((d, i) => (
-                      <span key={i} className="text-xs text-slate-300 mr-2">{d.bloque_codigo}: {d.cantidad}</span>
-                    ))}
-                    {m.detalles.length > 3 && <span className="text-xs text-slate-500">+{m.detalles.length - 3}</span>}
-                  </TableCell>
-                  <TableCell className="text-slate-300">{m.usuario_nombre || '—'}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+      {/* ── Toolbar: search + filters toggle ── */}
+      {!loading && movimientos.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+          {/* Search input */}
+          <div className="relative flex-1 w-full max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+            <Input
+              type="text"
+              value={filtroTexto}
+              onChange={(e) => setFiltroTexto(e.target.value)}
+              placeholder="Buscar por N° Op, usuario, bloque..."
+              className="pl-9 bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:ring-emerald-500/30 focus:border-emerald-500/50"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant={showFilters ? 'secondary' : 'outline'}
+              size="sm"
+              className="gap-2 border-slate-700 text-slate-400 bg-slate-800 hover:bg-slate-700 hover:text-white"
+              onClick={() => setShowFilters(!showFilters)}
+            >
+              <Filter className="h-4 w-4" />
+              Filtros
+              {tieneFiltrosActivos && (
+                <Badge className="ml-1 h-5 min-w-[20px] px-1.5 bg-sky-600 text-white border-0">
+                  {(filtroTipo ? 1 : 0) + (filtroUsuario ? 1 : 0) + (filtroDesde ? 1 : 0) + (filtroHasta ? 1 : 0)}
+                </Badge>
+              )}
+            </Button>
+
+            {tieneFiltrosActivos && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1 text-slate-400 hover:text-white hover:bg-slate-800"
+                onClick={limpiarFiltros}
+              >
+                <X className="h-3 w-3" />
+                Limpiar
+              </Button>
+            )}
+
+            {tieneFiltrosActivos && (
+              <span className="text-xs text-slate-500">
+                {movimientosFiltrados.length} de {movimientos.length}
+              </span>
+            )}
+          </div>
         </div>
-      ) : sectorId ? (
-        tieneFiltrosActivos ? (
-          <p className="text-slate-400 text-center py-8">No se encontraron movimientos con los filtros aplicados</p>
-        ) : (
-          <p className="text-slate-400 text-center py-8">Sin movimientos</p>
-        )
-      ) : (
-        <p className="text-slate-400 text-center py-8">Selecciona un sector</p>
+      )}
+
+      {/* ── Filter panel ── */}
+      {showFilters && !loading && movimientos.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-4 border border-slate-700 rounded-lg bg-slate-800/50">
+          {/* Type filter */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-400 font-medium">Tipo de movimiento</Label>
+            <Select value={filtroTipo} onValueChange={(v) => setFiltroTipo(v === '__all__' ? '' : v)}>
+              <SelectTrigger className="bg-slate-800 border-slate-700 text-white">
+                <SelectValue placeholder="Todos los tipos" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-800 border-slate-700">
+                <SelectItem value="__all__" className="text-white focus:bg-slate-700">Todos los tipos</SelectItem>
+                <SelectItem value="ingreso" className="text-emerald-400 focus:bg-slate-700">
+                  <span className="flex items-center gap-2"><ArrowDownToLine className="h-3 w-3" /> Ingreso</span>
+                </SelectItem>
+                <SelectItem value="salida" className="text-red-400 focus:bg-slate-700">
+                  <span className="flex items-center gap-2"><ArrowUpFromLine className="h-3 w-3" /> Salida</span>
+                </SelectItem>
+                <SelectItem value="devolucion" className="text-amber-400 focus:bg-slate-700">
+                  <span className="flex items-center gap-2"><RotateCcw className="h-3 w-3" /> Devolución</span>
+                </SelectItem>
+                <SelectItem value="traslado" className="text-blue-400 focus:bg-slate-700">
+                  <span className="flex items-center gap-2"><ArrowLeftRight className="h-3 w-3" /> Traslado</span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* User filter */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-400 font-medium">Usuario</Label>
+            <Select value={filtroUsuario} onValueChange={(v) => setFiltroUsuario(v === '__all__' ? '' : v)}>
+              <SelectTrigger className="bg-slate-800 border-slate-700 text-white">
+                <SelectValue placeholder="Todos los usuarios" />
+              </SelectTrigger>
+              <SelectContent className="bg-slate-800 border-slate-700">
+                <SelectItem value="__all__" className="text-white focus:bg-slate-700">Todos los usuarios</SelectItem>
+                {usuariosUnicos.map((u) => (
+                  <SelectItem key={u} value={u} className="text-white focus:bg-slate-700">{u}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Date from */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-400 font-medium">Fecha desde</Label>
+            <Input
+              type="date"
+              value={filtroDesde}
+              onChange={(e) => setFiltroDesde(e.target.value)}
+              className="bg-slate-800 border-slate-700 text-white focus:ring-emerald-500/30 focus:border-emerald-500/50 [color-scheme:dark]"
+            />
+          </div>
+
+          {/* Date to */}
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-400 font-medium">Fecha hasta</Label>
+            <Input
+              type="date"
+              value={filtroHasta}
+              onChange={(e) => setFiltroHasta(e.target.value)}
+              className="bg-slate-800 border-slate-700 text-white focus:ring-emerald-500/30 focus:border-emerald-500/50 [color-scheme:dark]"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Loading state ── */}
+      {loading && (
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+          <p className="text-sm text-slate-500">Cargando movimientos...</p>
+        </div>
+      )}
+
+      {/* ── Empty state ── */}
+      {!loading && movimientos.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <div className="rounded-full bg-slate-800 p-4 border border-slate-700">
+            <BarChart3 className="h-8 w-8 text-slate-600" />
+          </div>
+          <p className="text-sm text-slate-500">No hay movimientos registrados</p>
+        </div>
+      )}
+
+      {/* ── Filtered empty state ── */}
+      {!loading && movimientos.length > 0 && movimientosFiltrados.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 gap-3">
+          <div className="rounded-full bg-slate-800 p-4 border border-slate-700">
+            <Search className="h-8 w-8 text-slate-600" />
+          </div>
+          <p className="text-sm text-slate-500">No se encontraron movimientos con los filtros aplicados</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-800"
+            onClick={limpiarFiltros}
+          >
+            <X className="h-3 w-3" />
+            Limpiar filtros
+          </Button>
+        </div>
+      )}
+
+      {/* ── Table ── */}
+      {!loading && movimientosFiltrados.length > 0 && (
+        <div className="rounded-xl border border-slate-700 overflow-hidden">
+          <div className="max-h-[600px] overflow-y-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-slate-800 border-b border-slate-700 hover:bg-slate-800 sticky top-0 z-10">
+                  <TableHead className="text-slate-400 font-semibold text-xs uppercase w-[80px]">N° Op</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-xs uppercase w-[160px]">Fecha</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-xs uppercase w-[120px]">Tipo</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-xs uppercase w-[70px]">Turno</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-xs uppercase">Detalles</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-xs uppercase w-[160px]">Usuario</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {movimientosFiltrados.map((m) => (
+                  <TableRow
+                    key={m.id}
+                    className="border-b border-slate-700/50 hover:bg-slate-800/60 transition-colors"
+                  >
+                    <TableCell className="font-mono text-sm text-slate-200 font-medium">
+                      #{m.numero_operacion}
+                    </TableCell>
+                    <TableCell className="text-sm text-slate-300">
+                      {formatFecha(m.fecha)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={`${getTipoBadge(m.tipo)} capitalize text-xs font-medium gap-1 border-0`}>
+                        {getTipoIcon(m.tipo)}
+                        {m.tipo}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-slate-300 text-center">
+                      {m.turno}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1.5">
+                        {m.detalles.slice(0, 5).map((d, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 text-xs bg-slate-800 border border-slate-700 rounded-md px-2 py-0.5 text-slate-300"
+                          >
+                            <span className="text-slate-400">{d.bloque_codigo || '—'}</span>
+                            <span className="text-emerald-400 font-medium">×{d.cantidad}</span>
+                          </span>
+                        ))}
+                        {m.detalles.length > 5 && (
+                          <span className="text-xs text-slate-500 self-center">
+                            +{m.detalles.length - 5} más
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-slate-300">
+                      {m.usuario_nombre || (
+                        <span className="text-slate-600">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
       )}
     </div>
   )

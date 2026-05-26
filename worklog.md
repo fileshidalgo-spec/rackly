@@ -239,3 +239,40 @@ Stage Summary:
 - Root cause: `piso_bloques` was empty and silent error handling masked issues
 - Fixed by syncing data + adding proper error logging + improving autocomplete UX
 - Deployed successfully to Cloudflare Pages
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Agregar fecha de vencimiento, visualizacion 3D, UI moderna, Movimientos solo lectura
+
+Work Log:
+- Creada migracion SQL para agregar columna `fecha_vencimiento` (date) a `piso_movimiento_detalles`
+- Actualizado `api.ts`: `registrarIngresoPosicion()` y `registrarDevolucionPosicion()` ahora aceptan `fecha_vencimiento` en detalles
+- Reescrito completo `PisoSectoresTab.tsx` (953 lineas):
+  - Visualizacion 3D con CSS perspective/transforms (rotateX, boxShadow multi-capa, gradient overlays)
+  - Cada posicion tiene apariencia de caja/estante con profundidad
+  - Columnas con efecto de panel lateral con acento gradiente
+  - Campo de fecha de vencimiento con boton "Sin vencimiento" toggle en ingreso y devolucion
+  - Glassmorphism en dialogos (backdrop-blur, fondos semitransparentes)
+  - Stat cards con decoraciones de esquina y hover animations
+  - Patron de fondo sutil con grid de puntos
+  - Boton refresh con animacion de rotacion
+  - Corregidas clases Tailwind dinamicas (reemplazadas con ternarios condicionales)
+- Reescrito completo `MovimientosTab.tsx` (436 lineas):
+  - Eliminados formularios de Ingreso/Salida/Devolucion (solo lectura ahora)
+  - Carga automatica de TODOS los movimientos al montar
+  - Tarjetas de resumen con conteos por tipo (Total, Ingresos, Salidas, Devoluciones, Traslados)
+  - Busqueda de texto completo (N Op, usuario, bloque)
+  - Panel de filtros avanzados (tipo, usuario, rango de fechas)
+  - Tabla moderna con badges de color por tipo y sticky header
+- Actualizado `page.tsx`: descripcion de tab Movimientos ahora indica que es solo lectura
+- Build exitoso sin errores TypeScript
+- Deploy a Cloudflare Pages: https://3d32848d.rackly.pages.dev
+
+Stage Summary:
+- Fecha de vencimiento agregada a ingresos y devoluciones con toggle "Sin vencimiento"
+- Visualizacion 3D del rack con perspectiva, sombras y efectos de profundidad
+- UI modernizada con glassmorphism, gradientes y animaciones suaves
+- Tab Movimientos ahora es solo lectura (historial de todos los movimientos)
+- SQL migration saved at: /home/z/my-project/download/rackly_fecha_vencimiento.sql
+- Deployed: https://3d32848d.rackly.pages.dev

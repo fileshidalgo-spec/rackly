@@ -76,6 +76,7 @@ export type DetalleInput = {
   nivel_id: string
   bloque_id: string
   cantidad: number
+  fecha_vencimiento?: string | null
 }
 
 // ---- Sector CRUD ----
@@ -701,7 +702,7 @@ export async function registrarIngresoPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detalles: { nivel_id: string; bloque_id: string; cantidad: number }[]
+  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
 ): Promise<void> {
   // Crear cabecera
   const { data: movData, error: movErr } = await dataClient
@@ -719,6 +720,7 @@ export async function registrarIngresoPosicion(
       nivel_id: d.nivel_id,
       bloque_id: d.bloque_id,
       cantidad: d.cantidad,
+      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
     }))
     const { error: detErr } = await dataClient
       .from('piso_movimiento_detalles')
@@ -768,7 +770,7 @@ export async function registrarDevolucionPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detalles: { nivel_id: string; bloque_id: string; cantidad: number }[]
+  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
 ): Promise<void> {
   const { data: movData, error: movErr } = await dataClient
     .from('piso_movimientos')
@@ -784,6 +786,7 @@ export async function registrarDevolucionPosicion(
       nivel_id: d.nivel_id,
       bloque_id: d.bloque_id,
       cantidad: d.cantidad,
+      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
     }))
     const { error: detErr } = await dataClient
       .from('piso_movimiento_detalles')

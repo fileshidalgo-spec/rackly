@@ -1,6 +1,6 @@
 'use client'
 
-import { supabase } from '@/lib/supabase/client'
+import { dataClient } from '@/lib/supabase/client'
 import { PAGE_SIZE, MAX_ITERATIONS, MOVIMIENTOS_ENTRADA, TURNO_DIA, TURNO_NOCHE } from './constants'
 import { impactoStock } from '@/lib/utils'
 
@@ -65,7 +65,7 @@ export async function fetchMovimientos(): Promise<Movimiento[]> {
   while (iterations < MAX_ITERATIONS) {
     iterations++
     const to = from + PAGE_SIZE - 1
-    const { data, error } = await supabase
+    const { data, error } = await dataClient
       .from('movimientos')
       .select('*')
       .order('f_modificacion', { ascending: false })
@@ -83,7 +83,7 @@ export async function fetchMovimientos(): Promise<Movimiento[]> {
 export async function addMovimiento(
   m: Omit<Movimiento, 'id' | 'fModificacion'>
 ): Promise<Movimiento[]> {
-  const { error } = await supabase.from('movimientos').insert({
+  const { error } = await dataClient.from('movimientos').insert({
     tipo: m.tipo,
     bloque: m.bloque,
     torre: m.torre,
@@ -105,7 +105,7 @@ export async function addMovimiento(
 }
 
 export async function deleteMovimiento(id: string): Promise<Movimiento[]> {
-  const { error } = await supabase.from('movimientos').delete().eq('id', id)
+  const { error } = await dataClient.from('movimientos').delete().eq('id', id)
   if (error) throw error
   return fetchMovimientos()
 }
@@ -118,7 +118,7 @@ export async function calcularStockUbicacion(
   posicion: string
 ): Promise<number> {
   const target = codigo.trim().toUpperCase()
-  const { data, error } = await supabase
+  const { data, error } = await dataClient
     .from('movimientos')
     .select('tipo, cantidad')
     .eq('codigo', target)
@@ -159,7 +159,7 @@ export async function stockEnUbicacion(
     const MAX_PAGES = 10 // máximo 10,000 movimientos por ubicación
 
     for (let page = 0; page < MAX_PAGES; page++) {
-      const { data, error } = await supabase
+      const { data, error } = await dataClient
         .from('movimientos')
         .select('*')
         .eq('bloque', bloque)
@@ -231,7 +231,7 @@ export async function stockEnUbicacion(
   } catch {
     // Fallback al RPC original si falla la consulta directa
     try {
-      const { data, error } = await supabase.rpc('stock_en_ubicacion', {
+      const { data, error } = await dataClient.rpc('stock_en_ubicacion', {
         _bloque: bloque,
         _torre: torre,
         _piso: piso,
@@ -254,7 +254,7 @@ export async function stockEnUbicacion(
 }
 
 export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
-  const { data, error } = await supabase.rpc('ocupacion_celdas')
+  const { data, error } = await dataClient.rpc('ocupacion_celdas')
   if (error) throw error
   return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
     bloque: String(r.bloque ?? ''),
@@ -313,7 +313,7 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       }]
     : []
 
-  const { error } = await supabase.from('movimientos').insert([
+  const { error } = await dataClient.from('movimientos').insert([
     ...ajuste,
     {
       ...base,
@@ -465,7 +465,7 @@ export async function eliminarUbicacion(
   posicion: string
 ): Promise<Movimiento[]> {
   const target = codigo.trim().toUpperCase()
-  const { error } = await supabase
+  const { error } = await dataClient
     .from('movimientos')
     .delete()
     .eq('codigo', target)

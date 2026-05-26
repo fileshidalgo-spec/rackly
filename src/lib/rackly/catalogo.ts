@@ -1,6 +1,6 @@
 'use client'
 
-import { supabase } from '@/lib/supabase/client'
+import { dataClient } from '@/lib/supabase/client'
 
 export type CatalogoItem = {
   codigo: string
@@ -13,7 +13,7 @@ let _cache: CatalogoItem[] = []
 let _cacheLoaded = false
 
 export async function fetchCatalogo(): Promise<CatalogoItem[]> {
-  const { data, error } = await supabase
+  const { data, error } = await dataClient
     .from('catalogo')
     .select('codigo, un, descripcion, stock_big_magic')
     .order('codigo')
@@ -116,13 +116,13 @@ export async function mergeCatalogo(nuevos: CatalogoItem[]): Promise<CatalogoIte
     stock_big_magic: i.stock_big_magic ?? 0,
     updated_at: new Date().toISOString(),
   }))
-  const { error } = await supabase.from('catalogo').upsert(rows, { onConflict: 'codigo' })
+  const { error } = await dataClient.from('catalogo').upsert(rows, { onConflict: 'codigo' })
   if (error) throw error
   return fetchCatalogo()
 }
 
 export async function clearCatalogo(): Promise<CatalogoItem[]> {
-  const { error } = await supabase.from('catalogo').delete().neq('codigo', '')
+  const { error } = await dataClient.from('catalogo').delete().neq('codigo', '')
   if (error) throw error
   return fetchCatalogo()
 }

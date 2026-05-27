@@ -170,13 +170,34 @@ export async function stockEnUbicacion(
 let rpcDisponible: boolean | null = null
 
 export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
-  // ─── Estrategia 1: RPC server-side (escalable, sin límite) ───
+  // ─── Estrategia 1: RPC server-side (escalable, con paginación) ───
   if (rpcDisponible !== false) {
     try {
-      const { data, error } = await supabase.rpc('ocupacion_celdas')
-      if (!error && Array.isArray(data)) {
+      const PAGE_SIZE = 1000
+      const rpcAll: Record<string, unknown>[] = []
+      let from = 0
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const to = from + PAGE_SIZE - 1
+        const { data, error } = await supabase
+          .rpc('ocupacion_celdas')
+          .range(from, to)
+        if (error) {
+          // Si la función no existe, marcar como no disponible
+          if (error.message?.includes('does not exist') || error.code === '42883') {
+            rpcDisponible = false
+          }
+          break
+        }
+        const rows = data ?? []
+        rpcAll.push(...(rows as Record<string, unknown>[]))
+        if (rows.length < PAGE_SIZE) break
+        from += PAGE_SIZE
+      }
+      // Si se obtuvieron datos válidos por RPC, usarlos
+      if (rpcDisponible !== false && rpcAll.length > 0) {
         rpcDisponible = true
-        return data.map((r: Record<string, unknown>) => ({
+        return rpcAll.map((r) => ({
           bloque: String(r.bloque ?? ''),
           torre: String(r.torre ?? ''),
           piso: String(r.piso ?? ''),
@@ -184,10 +205,6 @@ export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
           stock: Number(r.stock ?? 0),
           codigos: Array.isArray(r.codigos) ? r.codigos.map((c: unknown) => String(c)) : [],
         }))
-      }
-      // Si el error es que la función no existe, marcar como no disponible
-      if (error?.message?.includes('does not exist') || error?.code === '42883') {
-        rpcDisponible = false
       }
     } catch {
       rpcDisponible = false

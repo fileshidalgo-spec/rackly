@@ -519,15 +519,7 @@ function RacklyApp() {
             </TabsList>
 
             <TabsContent value="movimientos" className="mt-6 md:mt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Movimientos</CardTitle>
-                  <CardDescription>
-                    Registra ingresos y salidas por nivel. Turnos: Día 07:45-19:45, Noche 19:45-07:45.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent><MovimientosTab /></CardContent>
-              </Card>
+              <MovimientosTab />
             </TabsContent>
 
             <TabsContent value="sectores" className="mt-6 md:mt-4">

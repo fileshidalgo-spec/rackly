@@ -36,6 +36,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Card,
+  CardContent,
+} from '@/components/ui/card'
 import { toast } from 'sonner'
 import {
   Loader2,
@@ -55,24 +59,6 @@ import {
   RefreshCw,
 } from 'lucide-react'
 
-const C = {
-  bgDeep: '#0a0a2e',
-  bgCard: '#10103a',
-  bgElevated: '#1a1a4e',
-  borderBlue: '#303060',
-  textWhite: '#f0f0f0',
-  textLight: '#80c0ff',
-  textMuted: '#8090c0',
-  textDark: '#5060a0',
-  occupied: '#0060f0',
-  occupiedLight: '#2090f0',
-  multi: '#f09000',
-  multiLight: '#ffc040',
-  emptyLight: '#40c090',
-  destructive: '#b91c1c',
-  success: '#00884a',
-}
-
 /* ═══════════════════════════════════════════
    HELPERS
    ═══════════════════════════════════════════ */
@@ -83,11 +69,16 @@ function fmtFecha(fecha: string): string {
   return d.toLocaleString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-function tipoBadge(tipo: string) {
-  if (tipo === 'ingreso' || tipo === 'stock_inicial') {
-    return { label: tipo === 'ingreso' ? 'Ingreso' : 'Stock Inicial', bg: `${C.success}22`, color: C.emptyLight, border: `${C.success}44` }
-  }
-  return { label: 'Salida', bg: `${C.destructive}22`, color: C.multiLight, border: `${C.destructive}44` }
+function tipoBadgeVariant(tipo: string) {
+  if (tipo === 'ingreso') return 'default' as const
+  if (tipo === 'stock_inicial') return 'secondary' as const
+  return 'destructive' as const
+}
+
+function tipoBadgeLabel(tipo: string) {
+  if (tipo === 'ingreso') return 'Ingreso'
+  if (tipo === 'stock_inicial') return 'Stock Inicial'
+  return 'Salida'
 }
 
 /* ═══════════════════════════════════════════
@@ -95,9 +86,6 @@ function tipoBadge(tipo: string) {
    ═══════════════════════════════════════════ */
 
 export function MovimientosTab() {
-  const { perfil } = useAuth()
-
-  // ─── Historial ───
   const [allMovs, setAllMovs] = useState<MovimientoConDetalles[]>([])
   const [loading, setLoading] = useState(true)
   const [busyExport, setBusyExport] = useState(false)
@@ -186,7 +174,6 @@ export function MovimientosTab() {
     for (const m of source) { for (const d of m.detalles) { if (d.bloque_codigo) { codigoVol.set(d.bloque_codigo, (codigoVol.get(d.bloque_codigo) || 0) + (m.tipo === 'salida' ? -d.cantidad : d.cantidad)) } } }
     const topCodigos = [...codigoVol.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
 
-    // Top usuarios
     const usuarioOps = new Map<string, number>()
     for (const m of source) { if (m.usuario_nombre) usuarioOps.set(m.usuario_nombre, (usuarioOps.get(m.usuario_nombre) || 0) + 1) }
     const topUsuarios = [...usuarioOps.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
@@ -230,8 +217,8 @@ export function MovimientosTab() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-3">
-        <Loader2 className="h-8 w-8 animate-spin" style={{ color: C.textLight }} />
-        <p className="text-sm" style={{ color: C.textMuted }}>Cargando movimientos...</p>
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Cargando movimientos...</p>
       </div>
     )
   }
@@ -240,292 +227,300 @@ export function MovimientosTab() {
     <div className="space-y-4">
 
       {/* ═══ DASHBOARD ═══ */}
-      <div className="rounded-xl p-4 space-y-4" style={{ background: `linear-gradient(135deg, ${C.bgElevated}, ${C.bgDeep})`, border: `1px solid ${C.borderBlue}` }}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5" style={{ color: C.textLight }} />
-            <span className="text-sm font-bold" style={{ color: C.textLight }}>Dashboard de Movimientos</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => load()} className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors" style={{ color: C.textLight, background: `${C.borderBlue}44` }} title="Recargar datos">
-              <RefreshCw className="h-3 w-3" /> Actualizar
-            </button>
-            <button onClick={() => setShowDashboard(!showDashboard)} className="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition-colors" style={{ color: C.textLight, background: `${C.borderBlue}44` }}>
-              {showDashboard ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-              {showDashboard ? 'Ocultar' : 'Mostrar'}
-            </button>
-          </div>
-        </div>
-
-        {showDashboard && (
-          <>
-            {/* KPIs */}
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-              {[
-                { icon: History, label: 'Total Ops', value: dashboard.totalMovs, color: C.textLight },
-                { icon: ArrowDownToLine, label: 'Ingresos', value: dashboard.ingresos, color: C.emptyLight },
-                { icon: ArrowUpFromLine, label: 'Salidas', value: dashboard.salidas, color: C.multiLight },
-                { icon: Package, label: 'Códigos', value: dashboard.codigosUniq, color: C.occupiedLight },
-                { icon: Users, label: 'Usuarios', value: dashboard.usuariosUniq, color: C.textMuted },
-                { icon: TrendingUp, label: 'Unidades', value: dashboard.totalUnidades.toLocaleString(), color: C.textWhite },
-              ].map((kpi, i) => (
-                <div key={i} className="rounded-lg p-3 text-center" style={{ background: `${C.bgDeep}88`, border: `1px solid ${C.borderBlue}44` }}>
-                  <kpi.icon className="h-5 w-5 mx-auto mb-1.5" style={{ color: kpi.color }} />
-                  <p className="text-xl font-bold leading-none" style={{ color: kpi.color }}>{kpi.value}</p>
-                  <p className="text-[10px] mt-1" style={{ color: C.textDark }}>{kpi.label}</p>
-                </div>
-              ))}
+      <Card>
+        <CardContent className="p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-blue-600" />
+              <span className="text-sm font-bold text-foreground">Dashboard de Movimientos</span>
             </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => load()} className="h-7 text-xs gap-1">
+                <RefreshCw className="h-3 w-3" /> Actualizar
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setShowDashboard(!showDashboard)} className="h-7 text-xs gap-1">
+                {showDashboard ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                {showDashboard ? 'Ocultar' : 'Mostrar'}
+              </Button>
+            </div>
+          </div>
 
-            {/* Gráficos lado a lado */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {/* Barras últimos 7 días */}
-              <div className="rounded-lg p-3" style={{ background: `${C.bgDeep}88`, border: `1px solid ${C.borderBlue}44` }}>
-                <p className="text-xs font-semibold mb-3" style={{ color: C.textMuted }}>Actividad — Últimos 7 días</p>
-                <div className="flex items-end gap-1.5 h-28">
-                  {dashboard.ultimos7.map((d, i) => (
-                    <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
-                      <div className="w-full flex gap-0.5 items-end h-20">
-                        <div className="flex-1 rounded-t transition-all" style={{ background: C.success, height: `${(d.ingresos / dashboard.maxBar) * 100}%`, minHeight: d.ingresos > 0 ? 2 : 0 }} title={`Ingresos: ${d.ingresos}`} />
-                        <div className="flex-1 rounded-t transition-all" style={{ background: C.destructive, height: `${(d.salidas / dashboard.maxBar) * 100}%`, minHeight: d.salidas > 0 ? 2 : 0 }} title={`Salidas: ${d.salidas}`} />
+          {showDashboard && (
+            <>
+              {/* KPIs */}
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {[
+                  { icon: History, label: 'Total Ops', value: dashboard.totalMovs, color: 'text-blue-600', bg: 'bg-blue-50' },
+                  { icon: ArrowDownToLine, label: 'Ingresos', value: dashboard.ingresos, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                  { icon: ArrowUpFromLine, label: 'Salidas', value: dashboard.salidas, color: 'text-red-500', bg: 'bg-red-50' },
+                  { icon: Package, label: 'Códigos', value: dashboard.codigosUniq, color: 'text-violet-600', bg: 'bg-violet-50' },
+                  { icon: Users, label: 'Usuarios', value: dashboard.usuariosUniq, color: 'text-amber-600', bg: 'bg-amber-50' },
+                  { icon: TrendingUp, label: 'Unidades', value: dashboard.totalUnidades.toLocaleString(), color: 'text-indigo-600', bg: 'bg-indigo-50' },
+                ].map((kpi, i) => (
+                  <div key={i} className={`rounded-lg p-3 text-center ${kpi.bg}`}>
+                    <kpi.icon className={`h-5 w-5 mx-auto mb-1 ${kpi.color}`} />
+                    <p className={`text-xl font-bold leading-none ${kpi.color}`}>{kpi.value}</p>
+                    <p className="text-[10px] mt-1 text-muted-foreground font-medium">{kpi.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Gráficos lado a lado */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {/* Barras últimos 7 días */}
+                <div className="rounded-lg border p-4">
+                  <p className="text-xs font-semibold mb-3 text-foreground">Actividad — Últimos 7 días</p>
+                  <div className="flex items-end gap-1.5 h-28">
+                    {dashboard.ultimos7.map((d, i) => (
+                      <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                        <div className="w-full flex gap-0.5 items-end h-20">
+                          <div className="flex-1 rounded-t transition-all bg-emerald-500" style={{ height: `${(d.ingresos / dashboard.maxBar) * 100}%`, minHeight: d.ingresos > 0 ? 2 : 0 }} title={`Ingresos: ${d.ingresos}`} />
+                          <div className="flex-1 rounded-t transition-all bg-red-400" style={{ height: `${(d.salidas / dashboard.maxBar) * 100}%`, minHeight: d.salidas > 0 ? 2 : 0 }} title={`Salidas: ${d.salidas}`} />
+                        </div>
+                        <span className="text-[9px] leading-tight text-center text-muted-foreground">{d.fecha.split(',')[0]}</span>
                       </div>
-                      <span className="text-[8px] leading-tight text-center" style={{ color: C.textDark }}>{d.fecha.split(',')[0]}</span>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-4 mt-3 justify-center">
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Ingresos
+                    </span>
+                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-red-400" /> Salidas
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-4 mt-2 justify-center">
-                  <span className="flex items-center gap-1 text-[10px]" style={{ color: C.textDark }}>
-                    <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C.success }} /> Ingresos
-                  </span>
-                  <span className="flex items-center gap-1 text-[10px]" style={{ color: C.textDark }}>
-                    <span className="w-2.5 h-2.5 rounded-sm" style={{ background: C.destructive }} /> Salidas
-                  </span>
-                </div>
-              </div>
 
-              {/* Top 5 códigos + Top 5 usuarios */}
-              <div className="space-y-3">
-                {dashboard.topCodigos.length > 0 && (
-                  <div className="rounded-lg p-3" style={{ background: `${C.bgDeep}88`, border: `1px solid ${C.borderBlue}44` }}>
-                    <p className="text-xs font-semibold mb-2" style={{ color: C.textMuted }}>Top 5 códigos por volumen</p>
-                    <div className="space-y-1.5">
-                      {dashboard.topCodigos.map(([codigo, vol], i) => {
-                        const maxVol = Math.max(Math.abs(dashboard.topCodigos[0][1]), 1)
-                        const pct = Math.min((Math.abs(vol) / maxVol) * 100, 100)
-                        return (
-                          <div key={codigo} className="flex items-center gap-2">
-                            <span className="text-[10px] w-4 text-right font-bold" style={{ color: C.textDark }}>{i + 1}</span>
-                            <span className="font-mono text-xs w-16 shrink-0" style={{ color: C.textLight }}>{codigo}</span>
-                            <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: `${C.borderBlue}44` }}>
-                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: vol >= 0 ? C.occupied : C.multi }} />
+                {/* Top 5 códigos + Top 5 usuarios */}
+                <div className="space-y-3">
+                  {dashboard.topCodigos.length > 0 && (
+                    <div className="rounded-lg border p-4">
+                      <p className="text-xs font-semibold mb-3 text-foreground">Top 5 códigos por volumen</p>
+                      <div className="space-y-2">
+                        {dashboard.topCodigos.map(([codigo, vol], i) => {
+                          const maxVol = Math.max(Math.abs(dashboard.topCodigos[0][1]), 1)
+                          const pct = Math.min((Math.abs(vol) / maxVol) * 100, 100)
+                          return (
+                            <div key={codigo} className="flex items-center gap-2">
+                              <span className="text-xs w-4 text-right font-bold text-muted-foreground">{i + 1}</span>
+                              <span className="font-mono text-sm w-20 shrink-0 font-semibold text-foreground">{codigo}</span>
+                              <div className="flex-1 h-2.5 rounded-full bg-muted overflow-hidden">
+                                <div className={`h-full rounded-full ${vol >= 0 ? 'bg-blue-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className={`text-xs w-16 text-right font-bold ${vol >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                {vol >= 0 ? '+' : ''}{vol.toLocaleString()}
+                              </span>
                             </div>
-                            <span className="text-[10px] w-16 text-right font-bold" style={{ color: vol >= 0 ? C.emptyLight : C.multiLight }}>
-                              {vol >= 0 ? '+' : ''}{vol.toLocaleString()}
-                            </span>
-                          </div>
-                        )
-                      })}
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
-                {dashboard.topUsuarios.length > 0 && (
-                  <div className="rounded-lg p-3" style={{ background: `${C.bgDeep}88`, border: `1px solid ${C.borderBlue}44` }}>
-                    <p className="text-xs font-semibold mb-2" style={{ color: C.textMuted }}>Top 5 usuarios por operaciones</p>
-                    <div className="space-y-1.5">
-                      {dashboard.topUsuarios.map(([nombre, ops], i) => {
-                        const maxOps = Math.max(dashboard.topUsuarios[0][1], 1)
-                        const pct = Math.min((ops / maxOps) * 100, 100)
-                        return (
-                          <div key={nombre} className="flex items-center gap-2">
-                            <span className="text-[10px] w-4 text-right font-bold" style={{ color: C.textDark }}>{i + 1}</span>
-                            <span className="text-xs w-20 shrink-0 truncate" style={{ color: C.textLight }}>{nombre}</span>
-                            <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: `${C.borderBlue}44` }}>
-                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: C.occupiedLight }} />
+                  )}
+                  {dashboard.topUsuarios.length > 0 && (
+                    <div className="rounded-lg border p-4">
+                      <p className="text-xs font-semibold mb-3 text-foreground">Top 5 usuarios por operaciones</p>
+                      <div className="space-y-2">
+                        {dashboard.topUsuarios.map(([nombre, ops], i) => {
+                          const maxOps = Math.max(dashboard.topUsuarios[0][1], 1)
+                          const pct = Math.min((ops / maxOps) * 100, 100)
+                          return (
+                            <div key={nombre} className="flex items-center gap-2">
+                              <span className="text-xs w-4 text-right font-bold text-muted-foreground">{i + 1}</span>
+                              <span className="text-sm w-24 shrink-0 truncate font-medium text-foreground">{nombre}</span>
+                              <div className="flex-1 h-2.5 rounded-full bg-muted overflow-hidden">
+                                <div className="h-full rounded-full bg-violet-500" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="text-xs w-10 text-right font-bold text-foreground">{ops}</span>
                             </div>
-                            <span className="text-[10px] w-10 text-right font-bold" style={{ color: C.textLight }}>{ops}</span>
-                          </div>
-                        )
-                      })}
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
-          </>
-        )}
-      </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ═══ FILTROS + EXPORTAR ═══ */}
-      <div className="rounded-xl p-4 space-y-3" style={{ background: C.bgElevated, border: `1px solid ${C.borderBlue}` }}>
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <Search className="h-4 w-4" style={{ color: C.textLight }} />
-            <span className="text-sm font-bold" style={{ color: C.textLight }}>Filtrar movimientos</span>
-            {tieneFiltros && (
-              <Badge className="text-[10px]" style={{ background: C.occupied, color: C.textWhite }}>
-                {movsFiltrados.length} resultado{movsFiltrados.length !== 1 ? 's' : ''}
-              </Badge>
-            )}
+      <Card>
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-bold text-foreground">Filtrar movimientos</span>
+              {tieneFiltros && (
+                <Badge variant="secondary" className="text-xs">
+                  {movsFiltrados.length} resultado{movsFiltrados.length !== 1 ? 's' : ''}
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {tieneFiltros && (
+                <Button variant="ghost" size="sm" onClick={clearFiltros} className="h-8 text-xs gap-1 text-muted-foreground hover:text-foreground">
+                  <FilterX className="h-3.5 w-3.5" /> Limpiar
+                </Button>
+              )}
+              <Button onClick={handleExport} disabled={busyExport || movsFiltrados.length === 0} size="sm" className="h-8 text-xs gap-2">
+                {busyExport ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                Exportar Excel ({movsFiltrados.length})
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {tieneFiltros && (
-              <button onClick={clearFiltros} className="flex items-center gap-1 text-xs transition-colors hover:opacity-80" style={{ color: C.multiLight }}>
-                <FilterX className="h-3 w-3" /> Limpiar
-              </button>
-            )}
-            <Button onClick={handleExport} disabled={busyExport || movsFiltrados.length === 0} variant="outline" className="gap-2 h-8 text-xs" style={{ borderColor: C.success, color: C.emptyLight }}>
-              {busyExport ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-              Exportar Excel ({movsFiltrados.length})
-            </Button>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Usuario</Label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar usuario..."
+                  value={filtroUsuario}
+                  onChange={(e) => setFiltroUsuario(e.target.value)}
+                  className="pl-8 h-9 text-sm"
+                  list="piso-usuarios-list"
+                />
+                <datalist id="piso-usuarios-list">
+                  {usuariosUnicos.map((u) => <option key={u} value={u} />)}
+                </datalist>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Código</Label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar código..."
+                  value={filtroCodigo}
+                  onChange={(e) => setFiltroCodigo(e.target.value)}
+                  className="pl-8 h-9 text-sm font-mono"
+                  list="piso-codigos-list"
+                />
+                <datalist id="piso-codigos-list">
+                  {codigosUnicos.map((c) => <option key={c} value={c} />)}
+                </datalist>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Tipo de movimiento</Label>
+              <Select value={filtroTipo} onValueChange={setFiltroTipo}>
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="ingreso">Ingreso</SelectItem>
+                  <SelectItem value="stock_inicial">Stock Inicial</SelectItem>
+                  <SelectItem value="salida">Salida</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="space-y-1">
-            <Label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Usuario</Label>
-            <Input
-              placeholder="Buscar usuario..."
-              value={filtroUsuario}
-              onChange={(e) => setFiltroUsuario(e.target.value)}
-              className="h-9 text-xs"
-              style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
-              list="piso-usuarios-list"
-            />
-            <datalist id="piso-usuarios-list">
-              {usuariosUnicos.map((u) => <option key={u} value={u} />)}
-            </datalist>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Código</Label>
-            <Input
-              placeholder="Buscar código..."
-              value={filtroCodigo}
-              onChange={(e) => setFiltroCodigo(e.target.value)}
-              className="h-9 text-xs font-mono"
-              style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
-              list="piso-codigos-list"
-            />
-            <datalist id="piso-codigos-list">
-              {codigosUnicos.map((c) => <option key={c} value={c} />)}
-            </datalist>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Tipo de movimiento</Label>
-            <Select value={filtroTipo} onValueChange={setFiltroTipo}>
-              <SelectTrigger className="h-9 text-xs" style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}>
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                <SelectItem value="ingreso">Ingreso</SelectItem>
-                <SelectItem value="stock_inicial">Stock Inicial</SelectItem>
-                <SelectItem value="salida">Salida</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {/* ═══ TABLA DE MOVIMIENTOS ═══ */}
       {movsFiltrados.length > 0 ? (
-        <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${C.borderBlue}` }}>
-          <div className="p-3 flex items-center justify-between" style={{ background: C.bgElevated }}>
-            <span className="text-xs font-semibold" style={{ color: C.textMuted }}>
-              Historial de movimientos
-              {tieneFiltros && <span style={{ color: C.textLight }}> — {movsFiltrados.length} de {allMovs.length}</span>}
-            </span>
-            <span className="text-[10px]" style={{ color: C.textDark }}>
-              {movsFiltrados.length > 100 ? 'Primeros 100 mostrados — exporta todos con Excel' : `${movsFiltrados.length} registro(s)`}
-            </span>
-          </div>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow style={{ background: C.bgElevated }}>
-                  <TableHead className="text-xs" style={{ color: C.textLight }}>N° Op</TableHead>
-                  <TableHead className="text-xs" style={{ color: C.textLight }}>Fecha</TableHead>
-                  <TableHead className="text-xs" style={{ color: C.textLight }}>Tipo</TableHead>
-                  <TableHead className="text-xs" style={{ color: C.textLight }}>Turno</TableHead>
-                  <TableHead className="text-xs" style={{ color: C.textLight }}>Bloques (cant)</TableHead>
-                  <TableHead className="text-xs hidden sm:table-cell" style={{ color: C.textLight }}>Niveles</TableHead>
-                  <TableHead className="text-xs" style={{ color: C.textLight }}>Usuario</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {movsFiltrados.slice(0, 100).map((m) => {
-                  const badge = tipoBadge(m.tipo)
-                  return (
-                    <TableRow key={m.id} style={{ borderBottom: `1px solid ${C.borderBlue}44` }}>
-                      <TableCell className="font-mono text-xs" style={{ color: C.textWhite }}>{m.numero_operacion}</TableCell>
-                      <TableCell className="text-xs" style={{ color: C.textMuted }}>{fmtFecha(m.fecha)}</TableCell>
+        <Card>
+          <CardContent className="p-0">
+            <div className="px-4 py-3 flex items-center justify-between border-b">
+              <span className="text-sm font-semibold text-foreground">
+                Historial de movimientos
+                {tieneFiltros && <span className="text-muted-foreground"> — {movsFiltrados.length} de {allMovs.length}</span>}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {movsFiltrados.length > 100 ? 'Primeros 100 — exporta todos con Excel' : `${movsFiltrados.length} registro(s)`}
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">N° Op</TableHead>
+                    <TableHead className="text-xs">Fecha</TableHead>
+                    <TableHead className="text-xs">Tipo</TableHead>
+                    <TableHead className="text-xs">Turno</TableHead>
+                    <TableHead className="text-xs">Bloques (cant)</TableHead>
+                    <TableHead className="text-xs hidden sm:table-cell">Niveles</TableHead>
+                    <TableHead className="text-xs">Usuario</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {movsFiltrados.slice(0, 100).map((m) => (
+                    <TableRow key={m.id}>
+                      <TableCell className="font-mono text-sm font-medium">{m.numero_operacion}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{fmtFecha(m.fecha)}</TableCell>
                       <TableCell>
-                        <Badge style={{ background: badge.bg, color: badge.color, border: `1px solid ${badge.border}` }} className="text-[10px]">
-                          {badge.label}
+                        <Badge variant={tipoBadgeVariant(m.tipo)} className="text-xs">
+                          {tipoBadgeLabel(m.tipo)}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs" style={{ color: C.textMuted }}>{m.turno}</TableCell>
+                      <TableCell className="text-sm">{m.turno}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {m.detalles.slice(0, 4).map((d, i) => (
-                            <span key={i} className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ background: `${C.borderBlue}44`, color: C.textLight }}>
+                            <span key={i} className="text-xs font-mono px-1.5 py-0.5 rounded bg-muted font-medium">
                               {d.bloque_codigo}:{d.cantidad}
                             </span>
                           ))}
-                          {m.detalles.length > 4 && <span className="text-[10px] self-center" style={{ color: C.textDark }}>+{m.detalles.length - 4}</span>}
+                          {m.detalles.length > 4 && <span className="text-xs text-muted-foreground">+{m.detalles.length - 4}</span>}
                         </div>
                       </TableCell>
                       <TableCell className="hidden sm:table-cell">
-                        <span className="text-[10px] font-mono" style={{ color: C.textDark }}>
+                        <span className="text-xs font-mono text-muted-foreground">
                           {m.detalles.slice(0, 2).map((d) => d.nivel_codigo || '').filter(Boolean).join(', ')}
                           {m.detalles.length > 2 && '...'}
                         </span>
                       </TableCell>
-                      <TableCell className="text-xs" style={{ color: C.textMuted }}>{m.usuario_nombre || '—'}</TableCell>
+                      <TableCell className="text-sm">{m.usuario_nombre || '—'}</TableCell>
                     </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </div>
-          {movsFiltrados.length > 100 && (
-            <div className="p-2 text-center" style={{ background: C.bgElevated }}>
-              <p className="text-xs" style={{ color: C.textDark }}>Mostrando los primeros 100 de {movsFiltrados.length} movimientos. Exporta todos con el boton de Excel.</p>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
-          )}
-        </div>
+            {movsFiltrados.length > 100 && (
+              <div className="px-4 py-2 text-center border-t">
+                <p className="text-xs text-muted-foreground">Mostrando los primeros 100 de {movsFiltrados.length} movimientos. Exporta todos con el botón de Excel.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       ) : (
-        <div className="text-center py-10 space-y-2 rounded-xl" style={{ background: C.bgElevated, border: `1px solid ${C.borderBlue}44` }}>
-          <Search className="h-8 w-8 mx-auto" style={{ color: C.textDark }} />
-          <p className="text-sm" style={{ color: C.textMuted }}>
-            {tieneFiltros ? 'No se encontraron movimientos con los filtros aplicados' : allMovs.length === 0 ? 'No hay movimientos registrados' : 'Todos los movimientos están disponibles'}
-          </p>
-          {tieneFiltros && (
-            <button onClick={clearFiltros} className="text-xs underline" style={{ color: C.textLight }}>
-              Limpiar filtros
-            </button>
-          )}
-        </div>
+        <Card>
+          <CardContent className="py-12 text-center space-y-2">
+            <Search className="h-8 w-8 mx-auto text-muted-foreground/40" />
+            <p className="text-sm text-muted-foreground">
+              {tieneFiltros ? 'No se encontraron movimientos con los filtros aplicados' : allMovs.length === 0 ? 'No hay movimientos registrados' : 'Todos los movimientos están disponibles'}
+            </p>
+            {tieneFiltros && (
+              <Button variant="link" size="sm" onClick={clearFiltros} className="text-xs">
+                Limpiar filtros
+              </Button>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* ═══ REGISTRAR MOVIMIENTO ═══ */}
-      <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${C.borderBlue}` }}>
+      <Card>
         <button
           onClick={() => setShowRegistro(!showRegistro)}
-          className="w-full flex items-center justify-between p-4 transition-colors"
-          style={{ background: C.bgElevated }}
+          className="w-full flex items-center justify-between p-4 transition-colors hover:bg-muted/50 rounded-lg"
         >
           <div className="flex items-center gap-2">
-            <PlusCircle className="h-5 w-5" style={{ color: C.emptyLight }} />
-            <span className="text-sm font-bold" style={{ color: C.textLight }}>Registrar movimiento</span>
+            <PlusCircle className="h-5 w-5 text-emerald-600" />
+            <span className="text-sm font-bold text-foreground">Registrar movimiento</span>
           </div>
-          {showRegistro ? <ChevronUp className="h-4 w-4" style={{ color: C.textDark }} /> : <ChevronDown className="h-4 w-4" style={{ color: C.textDark }} />}
+          {showRegistro ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </button>
 
         {showRegistro && (
-          <div className="p-4 space-y-4" style={{ background: `${C.bgElevated}88` }}>
+          <div className="px-4 pb-4">
             <RegistroMovimiento onRegistered={load} />
           </div>
         )}
-      </div>
+      </Card>
     </div>
   )
 }
@@ -535,38 +530,28 @@ export function MovimientosTab() {
    ═══════════════════════════════════════════ */
 
 function RegistroMovimiento({ onRegistered }: { onRegistered: () => void }) {
-  const { perfil } = useAuth()
   const [modo, setModo] = useState<'ingreso' | 'salida'>('ingreso')
 
   return (
     <div className="space-y-4">
       {/* Selector Ingreso / Salida */}
       <div className="flex gap-2">
-        <button
+        <Button
+          variant={modo === 'ingreso' ? 'default' : 'outline'}
           onClick={() => setModo('ingreso')}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
-          style={{
-            background: modo === 'ingreso' ? C.success : `${C.borderBlue}44`,
-            color: C.textWhite,
-            border: `1px solid ${modo === 'ingreso' ? C.success : C.borderBlue}`,
-          }}
+          className={modo === 'ingreso' ? 'bg-emerald-600 hover:bg-emerald-700 gap-2' : 'gap-2'}
         >
           <ArrowDownToLine className="h-4 w-4" /> Ingreso
-        </button>
-        <button
+        </Button>
+        <Button
+          variant={modo === 'salida' ? 'default' : 'outline'}
           onClick={() => setModo('salida')}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
-          style={{
-            background: modo === 'salida' ? C.destructive : `${C.borderBlue}44`,
-            color: C.textWhite,
-            border: `1px solid ${modo === 'salida' ? C.destructive : C.borderBlue}`,
-          }}
+          className={modo === 'salida' ? 'bg-red-600 hover:bg-red-700 gap-2' : 'gap-2'}
         >
           <ArrowUpFromLine className="h-4 w-4" /> Salida
-        </button>
+        </Button>
       </div>
 
-      {/* Formulario según modo */}
       {modo === 'ingreso' ? (
         <IngresoForm onRegistered={onRegistered} />
       ) : (
@@ -633,50 +618,52 @@ function IngresoForm({ onRegistered }: { onRegistered: () => void }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="space-y-1">
-          <label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Sector</label>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Sector</Label>
           <Select value={sectorId} onValueChange={(v) => { setSectorId(v); setColumnaId('') }}>
-            <SelectTrigger className="h-9 text-xs" style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}><SelectValue placeholder="Sector" /></SelectTrigger>
+            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sector" /></SelectTrigger>
             <SelectContent>{sectores.map((s) => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <div className="space-y-1">
-          <label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Columna</label>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Columna</Label>
           <Select value={columnaId} onValueChange={setColumnaId} disabled={!sectorId}>
-            <SelectTrigger className="h-9 text-xs" style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}><SelectValue placeholder="Columna" /></SelectTrigger>
+            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Columna" /></SelectTrigger>
             <SelectContent>{columnas.map((c) => <SelectItem key={c.id} value={c.id}>{c.letra}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <div className="space-y-1">
-          <label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Bloque</label>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Bloque</Label>
           <Select value={bloqueId} onValueChange={setBloqueId} disabled={bloques.length === 0}>
-            <SelectTrigger className="h-9 text-xs" style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}><SelectValue placeholder="Bloque" /></SelectTrigger>
+            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Bloque" /></SelectTrigger>
             <SelectContent>{bloques.map((b) => <SelectItem key={b.id} value={b.id}>{b.codigo}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <div className="space-y-1">
-          <label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Cantidad</label>
-          <Input type="number" step="any" min="0.001" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0" className="h-9 text-xs" style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }} />
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Cantidad</Label>
+          <Input type="number" step="any" min="0.001" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0" className="h-9 text-sm" />
         </div>
       </div>
 
       {gridData.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs" style={{ color: C.textMuted }}>Selecciona niveles (clic en celdas). Seleccionados: <span style={{ color: C.textLight }}>{selectedLevels.size}</span></p>
+          <p className="text-sm text-muted-foreground">
+            Selecciona niveles (clic en celdas). Seleccionados: <span className="font-bold text-foreground">{selectedLevels.size}</span>
+          </p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {subcolumnas.map((sc, scIdx) => (
-              <div key={sc.id} className="rounded-lg p-3" style={{ background: C.bgDeep, border: `1px solid ${C.borderBlue}44` }}>
-                <p className="text-xs font-medium mb-2" style={{ color: C.textWhite }}>{sc.codigo}</p>
+              <div key={sc.id} className="rounded-lg border p-3 bg-muted/30">
+                <p className="text-xs font-bold mb-2 text-foreground">{sc.codigo}</p>
                 {gridData.slice(scIdx, scIdx + 1).map((g, gi) => (
                   <div key={gi} className="flex flex-wrap gap-1 mb-1">
-                    <span className="text-[10px] w-6" style={{ color: C.textDark }}>P{g.posicion.numero}</span>
+                    <span className="text-xs w-6 font-medium text-muted-foreground">P{g.posicion.numero}</span>
                     {g.niveles.map((n) => (
-                      <button key={n.id} type="button" className="w-9 h-9 rounded text-xs font-medium transition-all"
+                      <button key={n.id} type="button" className="w-9 h-9 rounded-md text-xs font-bold transition-all border-2"
                         style={{
-                          background: selectedLevels.has(n.id) ? C.success : `${C.borderBlue}88`,
-                          color: selectedLevels.has(n.id) ? C.textWhite : C.textLight,
-                          border: selectedLevels.has(n.id) ? `2px solid ${C.emptyLight}` : '2px solid transparent',
-                          boxShadow: selectedLevels.has(n.id) ? `0 0 8px ${C.success}44` : 'none',
+                          background: selectedLevels.has(n.id) ? '#059669' : 'white',
+                          color: selectedLevels.has(n.id) ? 'white' : '#334155',
+                          borderColor: selectedLevels.has(n.id) ? '#047857' : '#e2e8f0',
+                          boxShadow: selectedLevels.has(n.id) ? '0 0 0 3px #05966933' : 'none',
                         }}
                         onClick={() => toggleLevel(n.id)} title={n.codigo_ubicacion || `Nivel ${n.numero}`}>
                         {n.numero}
@@ -690,7 +677,7 @@ function IngresoForm({ onRegistered }: { onRegistered: () => void }) {
         </div>
       )}
 
-      <Button onClick={handleIngreso} disabled={busy || selectedLevels.size === 0 || !cantidad || !bloqueId} className="gap-2" style={{ background: C.success, color: C.textWhite }}>
+      <Button onClick={handleIngreso} disabled={busy || selectedLevels.size === 0 || !cantidad || !bloqueId} className="gap-2 bg-emerald-600 hover:bg-emerald-700">
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
         Registrar ingreso ({selectedLevels.size} nivel{selectedLevels.size !== 1 ? 'es' : ''})
       </Button>
@@ -758,24 +745,24 @@ function SalidaForm({ onRegistered }: { onRegistered: () => void }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Sector</label>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Sector</Label>
           <Select value={sectorId} onValueChange={setSectorId}>
-            <SelectTrigger className="h-9 text-xs" style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}><SelectValue placeholder="Sector" /></SelectTrigger>
+            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sector" /></SelectTrigger>
             <SelectContent>{sectores.map((s) => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <div className="space-y-1">
-          <label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Columna</label>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Columna</Label>
           <Select value={columnaId} onValueChange={setColumnaId} disabled={!sectorId}>
-            <SelectTrigger className="h-9 text-xs" style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}><SelectValue placeholder="Columna" /></SelectTrigger>
+            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Columna" /></SelectTrigger>
             <SelectContent>{columnas.map((c) => <SelectItem key={c.id} value={c.id}>{c.letra}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <div className="space-y-1">
-          <label className="text-[10px] uppercase font-semibold tracking-wider" style={{ color: C.textDark }}>Bloque</label>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Bloque</Label>
           <Select value={bloqueId} onValueChange={setBloqueId} disabled={bloques.length === 0}>
-            <SelectTrigger className="h-9 text-xs" style={{ background: C.bgDeep, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}><SelectValue placeholder="Bloque" /></SelectTrigger>
+            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Bloque" /></SelectTrigger>
             <SelectContent>{bloques.map((b) => <SelectItem key={b.id} value={b.id}>{b.codigo}</SelectItem>)}</SelectContent>
           </Select>
         </div>
@@ -783,14 +770,14 @@ function SalidaForm({ onRegistered }: { onRegistered: () => void }) {
 
       {gridData.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs" style={{ color: C.textMuted }}>
-            Selecciona niveles con stock disponible. Seleccionados: <span style={{ color: C.textLight }}>{selectedLevels.size}</span>
-            {bloqueCodigo && <span> — Bloque: <span className="font-mono" style={{ color: C.textLight }}>{bloqueCodigo}</span></span>}
+          <p className="text-sm text-muted-foreground">
+            Selecciona niveles con stock. Seleccionados: <span className="font-bold text-foreground">{selectedLevels.size}</span>
+            {bloqueCodigo && <span> — Bloque: <span className="font-mono font-bold text-foreground">{bloqueCodigo}</span></span>}
           </p>
           <div className="grid gap-2">
             {subcolumnas.map((sc, scIdx) => (
-              <div key={sc.id} className="rounded-lg p-3" style={{ background: C.bgDeep, border: `1px solid ${C.borderBlue}44` }}>
-                <p className="text-xs font-medium mb-2" style={{ color: C.textWhite }}>{sc.codigo}</p>
+              <div key={sc.id} className="rounded-lg border p-3 bg-muted/30">
+                <p className="text-xs font-bold mb-2 text-foreground">{sc.codigo}</p>
                 <div className="flex flex-wrap gap-1">
                   {gridData.slice(scIdx, scIdx + 1).flatMap((g) =>
                     g.niveles.map((n) => {
@@ -800,13 +787,14 @@ function SalidaForm({ onRegistered }: { onRegistered: () => void }) {
                       const hasStock = qty > 0
                       const isSelected = selectedLevels.has(n.id)
                       return (
-                        <button key={n.id} type="button" disabled={!hasStock} className="w-11 h-11 rounded text-xs font-medium transition-all"
+                        <button key={n.id} type="button" disabled={!hasStock} className="w-11 h-11 rounded-md text-xs font-bold transition-all border-2"
                           style={{
-                            background: isSelected ? C.destructive : hasStock ? `${C.occupied}22` : `${C.borderBlue}44`,
-                            color: isSelected ? C.textWhite : hasStock ? C.occupiedLight : C.textDark,
+                            background: isSelected ? '#dc2626' : hasStock ? 'white' : '#f1f5f9',
+                            color: isSelected ? 'white' : hasStock ? '#334155' : '#94a3b8',
+                            borderColor: isSelected ? '#b91c1c' : hasStock ? '#e2e8f0' : '#e2e8f0',
+                            boxShadow: isSelected ? '0 0 0 3px #dc262633' : 'none',
                             cursor: hasStock ? 'pointer' : 'not-allowed',
-                            border: isSelected ? `2px solid ${C.multiLight}` : '2px solid transparent',
-                            boxShadow: isSelected ? `0 0 8px ${C.destructive}44` : 'none',
+                            opacity: hasStock ? 1 : 0.5,
                           }}
                           onClick={() => hasStock && toggleLevel(n.id, qty)} title={`N${n.numero} - Stock: ${qty}`}>
                           <div>{n.numero}</div><div className="text-[10px]">{qty}</div>
@@ -821,7 +809,7 @@ function SalidaForm({ onRegistered }: { onRegistered: () => void }) {
         </div>
       )}
 
-      <Button onClick={handleSalida} disabled={busy || selectedLevels.size === 0 || !bloqueId} className="gap-2" style={{ background: C.destructive, color: C.textWhite }}>
+      <Button onClick={handleSalida} disabled={busy || selectedLevels.size === 0 || !bloqueId} className="gap-2 bg-red-600 hover:bg-red-700">
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUpFromLine className="h-4 w-4" />}
         Registrar salida ({selectedLevels.size} nivel{selectedLevels.size !== 1 ? 'es' : ''})
       </Button>

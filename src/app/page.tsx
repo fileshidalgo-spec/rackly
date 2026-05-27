@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { AuthGate } from '@/components/rackly/auth/AuthGate'
 import { SesionBar } from '@/components/rackly/kardex/SesionBar'
@@ -16,9 +16,17 @@ import { PisoSectoresTab } from '@/components/rackly/piso/PisoSectoresTab'
 import { MovimientosTab } from '@/components/rackly/piso/MovimientosTab'
 import { ConfiguracionColumnasTab } from '@/components/rackly/piso/ConfiguracionColumnasTab'
 import { UpKardexTab } from '@/components/rackly/piso/UpKardexTab'
-import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
+import { deleteMovimiento, type Movimiento, type TipoMovimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Card,
   CardContent,
@@ -56,6 +64,8 @@ import {
   Settings,
   Upload,
   RotateCcw,
+  Search,
+  FilterX,
 } from 'lucide-react'
 
 function fmtCantidad(n: number) {
@@ -73,10 +83,49 @@ function RacklyApp() {
   const [view, setView] = useState<'racks' | 'piso'>('racks')
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [expandMovs, setExpandMovs] = useState(false)
+  const [filtroCodigo, setFiltroCodigo] = useState('')
+  const [filtroUsuario, setFiltroUsuario] = useState('')
+  const [filtroTipo, setFiltroTipo] = useState<string>('todos')
+  const tieneFiltros = filtroCodigo.trim() !== '' || filtroUsuario.trim() !== '' || filtroTipo !== 'todos'
 
   useMovimientosRealtime(setMovs)
 
   const esAdmin = perfil?.rol === 'admin'
+
+  // Lista única de usuarios para el filtro
+  const usuariosUnicos = useMemo(() => {
+    const set = new Set<string>()
+    for (const m of movs) {
+      if (m.usuarioNombre) set.add(m.usuarioNombre)
+    }
+    return Array.from(set).sort()
+  }, [movs])
+
+  // Movimientos filtrados
+  const movsFiltrados = useMemo(() => {
+    let data = movs
+    if (filtroCodigo.trim()) {
+      const q = filtroCodigo.trim().toUpperCase()
+      data = data.filter((m) => m.codigo.toUpperCase().includes(q))
+    }
+    if (filtroUsuario.trim()) {
+      const q = filtroUsuario.trim().toUpperCase()
+      data = data.filter((m) =>
+        (m.usuarioNombre || '').toUpperCase().includes(q) ||
+        (m.usuarioCorreo || '').toUpperCase().includes(q)
+      )
+    }
+    if (filtroTipo !== 'todos') {
+      data = data.filter((m) => m.tipo === filtroTipo)
+    }
+    return data
+  }, [movs, filtroCodigo, filtroUsuario, filtroTipo])
+
+  function limpiarFiltros() {
+    setFiltroCodigo('')
+    setFiltroUsuario('')
+    setFiltroTipo('todos')
+  }
 
   async function handleDelete(id: string) {
     if (!esAdmin) {
@@ -211,16 +260,78 @@ function RacklyApp() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Movimientos registrados</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                      Movimientos registrados
+                      {tieneFiltros && (
+                        <Badge variant="secondary" className="text-xs">
+                          {movsFiltrados.length} resultado{movsFiltrados.length !== 1 ? 's' : ''}
+                        </Badge>
+                      )}
+                    </CardTitle>
+                    {tieneFiltros && (
+                      <Button variant="ghost" size="sm" onClick={limpiarFiltros} className="gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                        <FilterX className="h-3.5 w-3.5" />
+                        Limpiar filtros
+                      </Button>
+                    )}
+                  </div>
                   <CardDescription>
                     {movs.length === 0
                       ? 'Aún no hay movimientos.'
-                      : expandMovs
-                        ? `Mostrando ${movs.length} movimiento(s).`
-                        : `Mostrando los últimos ${Math.min(5, movs.length)} de ${movs.length}.`}
+                      : tieneFiltros
+                        ? `Filtrados: ${movsFiltrados.length} de ${movs.length} movimiento(s).`
+                        : expandMovs
+                          ? `Mostrando ${movs.length} movimiento(s).`
+                          : `Mostrando los últimos ${Math.min(5, movs.length)} de ${movs.length}.`}
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
+                  {/* ─── Filtros ─── */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* Filtro por código */}
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        value={filtroCodigo}
+                        onChange={(e) => setFiltroCodigo(e.target.value)}
+                        placeholder="Filtrar por código..."
+                        className="pl-9 h-9 text-sm"
+                      />
+                    </div>
+
+                    {/* Filtro por usuario */}
+                    <div className="relative">
+                      <Users className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        value={filtroUsuario}
+                        onChange={(e) => setFiltroUsuario(e.target.value)}
+                        placeholder="Filtrar por usuario..."
+                        className="pl-9 h-9 text-sm"
+                        list="usuarios-list"
+                      />
+                      <datalist id="usuarios-list">
+                        {usuariosUnicos.map((u) => (
+                          <option key={u} value={u} />
+                        ))}
+                      </datalist>
+                    </div>
+
+                    {/* Filtro por tipo */}
+                    <Select value={filtroTipo} onValueChange={setFiltroTipo}>
+                      <SelectTrigger className="h-9 text-sm">
+                        <SelectValue placeholder="Tipo de movimiento" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="todos">Todos los tipos</SelectItem>
+                        <SelectItem value="ingreso">Ingreso</SelectItem>
+                        <SelectItem value="salida">Salida</SelectItem>
+                        <SelectItem value="devolucion">Devolución</SelectItem>
+                        <SelectItem value="traslado">Traslado</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
@@ -242,7 +353,10 @@ function RacklyApp() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(expandMovs ? movs : movs.slice(0, 5)).map((m) => (
+                        {(expandMovs || tieneFiltros
+                          ? movsFiltrados
+                          : movsFiltrados.slice(0, 5)
+                        ).map((m) => (
                           <TableRow key={m.id}>
                             <TableCell>
                               <Badge variant={m.tipo === 'salida' ? 'destructive' : m.tipo === 'traslado' ? 'outline' : m.tipo === 'devolucion' ? 'outline' : 'default'} className={m.tipo === 'traslado' ? 'border-blue-400 text-blue-700 dark:text-blue-400' : m.tipo === 'devolucion' ? 'border-amber-400 text-amber-700 dark:text-amber-400' : ''}>
@@ -274,16 +388,29 @@ function RacklyApp() {
                             )}
                           </TableRow>
                         ))}
+                        {movsFiltrados.length === 0 && movs.length > 0 && (
+                          <TableRow>
+                            <TableCell colSpan={esAdmin ? 13 : 12} className="text-center py-8 text-muted-foreground">
+                              <div className="flex flex-col items-center gap-1.5">
+                                <Search className="h-5 w-5 text-muted-foreground/50" />
+                                <p className="text-sm">No se encontraron movimientos con los filtros aplicados</p>
+                                <Button variant="link" size="sm" onClick={limpiarFiltros} className="text-xs">
+                                  Limpiar filtros
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
                       </TableBody>
                     </Table>
                   </div>
-                  {movs.length > 5 && (
+                  {!tieneFiltros && movsFiltrados.length > 5 && (
                     <div className="mt-3 flex justify-center">
                       <Button variant="outline" size="sm" onClick={() => setExpandMovs((v) => !v)} className="gap-2">
                         {expandMovs ? (
                           <><ChevronUp className="h-4 w-4" /> Mostrar menos</>
                         ) : (
-                          <><ChevronDown className="h-4 w-4" /> Expandir ({movs.length - 5} más)</>
+                          <><ChevronDown className="h-4 w-4" /> Expandir ({movsFiltrados.length - 5} más)</>
                         )}
                       </Button>
                     </div>

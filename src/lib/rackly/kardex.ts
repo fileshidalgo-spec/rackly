@@ -166,8 +166,35 @@ export async function stockEnUbicacion(
   }))
 }
 
+// Flag en memoria: una vez que el RPC funciona, ya no se intenta el fallback
+let rpcDisponible: boolean | null = null
+
 export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
-  // Consultar TODOS los movimientos con paginación (límite default de Supabase: 1000)
+  // ─── Estrategia 1: RPC server-side (escalable, sin límite) ───
+  if (rpcDisponible !== false) {
+    try {
+      const { data, error } = await supabase.rpc('ocupacion_celdas')
+      if (!error && Array.isArray(data)) {
+        rpcDisponible = true
+        return data.map((r: Record<string, unknown>) => ({
+          bloque: String(r.bloque ?? ''),
+          torre: String(r.torre ?? ''),
+          piso: String(r.piso ?? ''),
+          posicion: String(r.posicion ?? ''),
+          stock: Number(r.stock ?? 0),
+          codigos: Array.isArray(r.codigos) ? r.codigos.map((c: unknown) => String(c)) : [],
+        }))
+      }
+      // Si el error es que la función no existe, marcar como no disponible
+      if (error?.message?.includes('does not exist') || error?.code === '42883') {
+        rpcDisponible = false
+      }
+    } catch {
+      rpcDisponible = false
+    }
+  }
+
+  // ─── Estrategia 2: Fallback client-side (compatible, con paginación) ───
   const PAGE_SIZE = 1000
   const all: Record<string, unknown>[] = []
   let from = 0
@@ -185,8 +212,7 @@ export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
     from += PAGE_SIZE
   }
 
-  // Calcular stock por celda usando la misma lógica que calcularStockUbicacion:
-  // Positivo = ingreso, devolucion, traslado | Negativo = salida
+  // Calcular stock por celda
   const cellMap = new Map<string, { stock: number; codigos: Set<string> }>()
   for (const row of all) {
     const bloque = String(row.bloque ?? '')
@@ -212,7 +238,6 @@ export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
     }
   }
 
-  // Retornar todas las celdas que tienen movimientos (ocupadas y vacías)
   return Array.from(cellMap.entries()).map(([key, val]) => {
     const [bloque, torre, piso, posicion] = key.split('-')
     return {

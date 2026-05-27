@@ -402,42 +402,71 @@ export function OcupacionTab() {
     try {
       const XLSX = await import('xlsx')
 
+      // Bloques a exportar (respetar el filtro activo)
+      const bloquesAExportar = bloqueFilter === 'all' ? BLOQUES : BLOQUES.filter((b) => b === bloqueFilter)
+      const reporteFiltrado = bloqueFilter === 'all' ? reporte : reporte.filter((r) => r.bloque === bloqueFilter)
+
+      // Calcular totales del filtro activo
+      const filtroTotal = {
+        totalPosiciones: reporteFiltrado.reduce((s, r) => s + r.totalPosiciones, 0),
+        totalOcupadas: reporteFiltrado.reduce((s, r) => s + r.ocupadas, 0),
+        totalVacias: reporteFiltrado.reduce((s, r) => s + r.vacias, 0),
+        porcentaje: '0.0' as string,
+      }
+      filtroTotal.porcentaje = filtroTotal.totalPosiciones > 0
+        ? ((filtroTotal.totalOcupadas / filtroTotal.totalPosiciones) * 100).toFixed(1)
+        : '0.0'
+
       // Sheet 1: Reporte por bloque
-      const repData = reporte.map((r) => ({
+      const repData = reporteFiltrado.map((r) => ({
         Bloque: r.bloque,
         'Total Posiciones': r.totalPosiciones,
         Ocupadas: r.ocupadas,
         Vacías: r.vacias,
         'Ocupación %': `${r.porcentaje}%`,
       }))
-      // Agregar fila total
       repData.push({
         Bloque: 'TOTAL',
-        'Total Posiciones': reporteTotal.totalPosiciones,
-        Ocupadas: reporteTotal.totalOcupadas,
-        Vacías: reporteTotal.totalVacias,
-        'Ocupación %': `${reporteTotal.porcentaje}%`,
+        'Total Posiciones': filtroTotal.totalPosiciones,
+        Ocupadas: filtroTotal.totalOcupadas,
+        Vacías: filtroTotal.totalVacias,
+        'Ocupación %': `${filtroTotal.porcentaje}%`,
       })
       const ws1 = XLSX.utils.json_to_sheet(repData)
-      XLSX.utils.book_append_sheet(XLSX.utils.book_new(), ws1, 'Reporte')
 
-      // Sheet 2: Detalle de celdas
-      const celdaData = ocupacion.map((o) => ({
-        Bloque: o.bloque,
-        Torre: o.torre,
-        Piso: o.piso,
-        Posición: o.posicion,
-        Stock: o.stock,
-        Códigos: o.codigos.join(', '),
-        Estado: o.stock > 0 ? 'Ocupado' : 'Vacío',
-      }))
+      // Sheet 2: Detalle de celdas — TODAS las posiciones del almacén (ocupadas + vacías)
+      const celdaData: { Bloque: string; Torre: string; Piso: string; Posición: string; Stock: number; Códigos: string; Estado: string }[] = []
+      for (const bloque of bloquesAExportar) {
+        const torres = torresDeBloque(bloque)
+        const posiciones = posicionesDeBloque(bloque)
+        for (const torre of torres) {
+          for (const piso of PISOS) {
+            for (const pos of posiciones) {
+              const cell = occMap.get(`${bloque}-${torre}-${piso}-${pos}`)
+              const stock = cell ? cell.stock : 0
+              celdaData.push({
+                Bloque: bloque,
+                Torre: torre,
+                Piso: piso,
+                Posición: pos,
+                Stock: stock,
+                Códigos: cell ? cell.codigos.join(', ') : '',
+                Estado: stock > 0 ? 'Ocupado' : 'Vacío',
+              })
+            }
+          }
+        }
+      }
       const ws2 = XLSX.utils.json_to_sheet(celdaData)
+
+      // Generar archivo
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws1, 'Reporte')
       XLSX.utils.book_append_sheet(wb, ws2, 'Detalle Celdas')
 
       const fecha = new Date().toISOString().slice(0, 10)
-      XLSX.writeFile(wb, `RACKLY_Ocupacion_${fecha}.xlsx`)
+      const sufijo = bloqueFilter === 'all' ? 'General' : `Bloque_${bloqueFilter}`
+      XLSX.writeFile(wb, `RACKLY_Ocupacion_${sufijo}_${fecha}.xlsx`)
       toast.success('Reporte exportado')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'

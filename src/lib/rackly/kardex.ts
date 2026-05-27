@@ -240,6 +240,8 @@ export type TrasladoInput = {
   usuarioCorreo?: string
   fVencimiento?: string
   proveedor?: string
+  /** Si la cantidad es menor al stock, poner el origen en 0 generando una salida de ajuste por la diferencia */
+  ajustarOrigenACero?: boolean
 }
 
 export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[]> {
@@ -273,7 +275,21 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
     })
   }
 
-  // Salida en origen por la cantidad total trasladada
+  // Si la cantidad es menor al stock y el usuario eligió ajustar origen a cero,
+  // generar una salida de ajuste por la diferencia (el excedente que queda en origen).
+  if (t.ajustarOrigenACero && diferencia < 0) {
+    rows.push({
+      ...base,
+      tipo: 'salida',
+      cantidad: Math.abs(diferencia),
+      bloque: t.origen.bloque,
+      torre: t.origen.torre,
+      piso: t.origen.piso,
+      posicion: t.origen.posicion,
+    })
+  }
+
+  // Salida en origen por la cantidad trasladada
   rows.push({
     ...base,
     tipo: 'salida',

@@ -63,16 +63,18 @@ export function FefoTab() {
       }
     >()
 
+    // Calcular stock por ubicación: ingreso, devolucion, traslado = positivo; salida = negativo
     for (const m of movs) {
-      if (m.tipo !== 'ingreso') continue
+      if (m.tipo === 'traslado') continue // Los traslados no tienen vencimiento propio para FEFO
       const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+      const isPositive = m.tipo === 'ingreso' || m.tipo === 'devolucion'
       const existing = locMap.get(key)
       if (existing) {
-        existing.stock += m.cantidad
-        if (m.fVencimiento && (!existing.fVencimiento || m.fVencimiento < existing.fVencimiento)) {
+        existing.stock += isPositive ? m.cantidad : -m.cantidad
+        if (isPositive && m.fVencimiento && (!existing.fVencimiento || m.fVencimiento < existing.fVencimiento)) {
           existing.fVencimiento = m.fVencimiento
         }
-      } else {
+      } else if (isPositive) {
         locMap.set(key, {
           codigo: m.codigo,
           descripcion: m.descripcion,
@@ -85,16 +87,19 @@ export function FefoTab() {
           fVencimiento: m.fVencimiento || '',
           proveedor: m.proveedor || undefined,
         })
-      }
-    }
-
-    // Restar salidas
-    for (const m of movs) {
-      if (m.tipo !== 'salida') continue
-      const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-      const existing = locMap.get(key)
-      if (existing) {
-        existing.stock -= m.cantidad
+      } else if (m.tipo === 'salida') {
+        locMap.set(key, {
+          codigo: m.codigo,
+          descripcion: m.descripcion,
+          un: m.un,
+          bloque: m.bloque,
+          torre: m.torre,
+          piso: m.piso,
+          posicion: m.posicion,
+          stock: -m.cantidad,
+          fVencimiento: '',
+          proveedor: m.proveedor || undefined,
+        })
       }
     }
 

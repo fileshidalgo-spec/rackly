@@ -175,3 +175,37 @@ Stage Summary:
 - It was caused by missing Supabase environment variables in `.env`
 - App is now deployed and accessible at https://56d04bad.rackly.pages.dev (also via https://rackly.pages.dev custom domain)
 - PisoSectoresTab with 3D navy design is intact and will render when user navigates to the Sectores tab
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Revisión completa de la sección RACKS - verificar funcionamiento y corregir bugs
+
+Work Log:
+- Verificada conectividad con Supabase: DNS resuelve correctamente, API REST responde HTTP 200, RPCs (ocupacion_celdas, stock_en_ubicacion) funcionan con datos reales
+- URL correcta en .env y bundle: owjryvcrhpmgtkkdcrkm.supabase.co
+- Revisión completa de todos los 10 componentes de Kardex Racks:
+  1. MovimientoForm.tsx (IngresoForm, DevolucionForm, SalidaForm) ✅
+  2. OcupacionTab.tsx (mapa visual, detalle, salida, ingreso en celda vacía) ✅
+  3. StockTab.tsx (stock por ubicación, eliminación) ✅
+  4. CatalogoTab.tsx (importar Excel, pegar datos) ✅
+  5. TrasladoTab.tsx (traslado entre ubicaciones) ✅
+  6. DescargaTab.tsx (exportar Excel) - BUG ENCONTRADO Y CORREGIDO
+  7. FefoTab.tsx (control vencimientos) - BUG ENCONTRADO Y CORREGIDO
+  8. UsuariosTab.tsx (gestión usuarios, roles, contraseñas) ✅
+  9. SesionBar.tsx (barra de sesión) ✅
+  10. CatalogoSearchInput.tsx (búsqueda de catálogo) ✅
+- Verificadas librerías: kardex.ts, auth.ts, catalogo.ts, ubicaciones.ts, turno.ts
+- Verificados hooks: useAuth.tsx, useMovimientosRealtime.tsx
+- Build exitoso sin errores de compilación
+- Deploy a Cloudflare Pages: https://9e1d4652.rackly.pages.dev
+
+Bugs encontrados y corregidos:
+1. DescargaTab.tsx: El cálculo de stock en la hoja "Stock Actual" del Excel exportado solo contaba `ingreso` como positivo, ignorando `devolucion` y `traslado`. Corregido para usar la misma lógica que calcularStockUbicacion().
+2. FefoTab.tsx: El cálculo de stock para FEFO solo contaba `ingreso` como positivo y `salida` como negativo, ignorando `devolucion`. Corregido para incluir `devolucion` como stock positivo (los traslados se excluyen del FEFO ya que no tienen vencimiento propio).
+
+Stage Summary:
+- Toda la sección RACKS está funcional y desplegada
+- 2 bugs de cálculo de stock corregidos en DescargaTab y FefoTab
+- Conectividad con Supabase verificada (DNS, API, RPCs, datos)
+- Deploy exitoso: https://rackly.pages.dev

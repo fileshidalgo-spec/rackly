@@ -43,11 +43,12 @@ export function DescargaTab() {
       const locMap = new Map<string, Record<string, unknown>>()
       for (const m of movs) {
         const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+        const isPositive = m.tipo === 'ingreso' || m.tipo === 'devolucion' || m.tipo === 'traslado'
         const current = locMap.get(key)
         if (current) {
           current['Stock'] =
             (current['Stock'] as number) +
-            (m.tipo === 'ingreso' ? m.cantidad : -m.cantidad)
+            (isPositive ? m.cantidad : -m.cantidad)
         } else {
           locMap.set(key, {
             Código: m.codigo,
@@ -57,8 +58,7 @@ export function DescargaTab() {
             Torre: m.torre,
             Piso: m.piso,
             Posición: m.posicion,
-            Stock:
-              m.tipo === 'ingreso' ? m.cantidad : -m.cantidad,
+            Stock: isPositive ? m.cantidad : -m.cantidad,
           })
         }
       }

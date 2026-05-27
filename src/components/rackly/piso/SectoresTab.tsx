@@ -11,23 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { Plus, Trash2, RefreshCw, Layers3 } from 'lucide-react'
 
-const C = {
-  bgDeep: '#0a0a2e',
-  bgCard: '#10103a',
-  bgElevated: '#1a1a4e',
-  borderBlue: '#303060',
-  textWhite: '#f0f0f0',
-  textLight: '#80c0ff',
-  textMuted: '#8090c0',
-  textDark: '#5060a0',
-  occupied: '#0060f0',
-  occupiedLight: '#2090f0',
-  multi: '#f09000',
-  multiLight: '#ffc040',
-  emptyLight: '#40c090',
-}
-
-export function SectoresTab() {
+export function SectoresConfigTab() {
   const { perfil } = useAuth()
   const [sectores, setSectores] = useState<Sector[]>([])
   const [loading, setLoading] = useState(false)
@@ -87,137 +71,82 @@ export function SectoresTab() {
   return (
     <div className="space-y-4">
       {perfil?.rol === 'admin' && (
-        <Card style={{ background: C.bgCard, border: `1px solid ${C.borderBlue}` }}>
+        <Card className="border-slate-700 bg-slate-800/80">
           <CardContent className="pt-6">
             <form onSubmit={handleCreate} className="space-y-3">
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <Label style={{ color: C.textMuted }}>Nombre</Label>
-                  <Input
-                    value={form.nombre}
-                    onChange={(e) => setForm({ ...form, nombre: e.target.value })}
-                    placeholder="Nombre del sector"
-                    style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
-                  />
+                  <Label className="text-xs text-slate-400">Nombre</Label>
+                  <Input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })}
+                    placeholder="Nombre del sector" className="bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:ring-sky-500/50" />
                 </div>
                 <div className="space-y-1">
-                  <Label style={{ color: C.textMuted }}>Prefijo</Label>
-                  <Input
-                    value={form.prefijo}
-                    onChange={(e) => setForm({ ...form, prefijo: e.target.value })}
-                    placeholder="A, B, C..."
-                    maxLength={3}
-                    style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
-                  />
+                  <Label className="text-xs text-slate-400">Prefijo</Label>
+                  <Input value={form.prefijo} onChange={(e) => setForm({ ...form, prefijo: e.target.value })}
+                    placeholder="A, B, C..." maxLength={3} className="bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:ring-sky-500/50" />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <Label style={{ color: C.textMuted }}>Columnas</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={26}
-                      value={form.n_columnas}
+                    <Label className="text-xs text-slate-400">Columnas</Label>
+                    <Input type="number" min={1} max={26} value={form.n_columnas}
                       onChange={(e) => setForm({ ...form, n_columnas: parseInt(e.target.value) || 1 })}
-                      style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
-                    />
+                      className="bg-slate-800 border-slate-700 text-white focus:ring-sky-500/50" />
                   </div>
                   <div className="space-y-1">
-                    <Label style={{ color: C.textMuted }}>Subcol</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={9}
-                      value={form.n_subcolumnas}
+                    <Label className="text-xs text-slate-400">Subcol</Label>
+                    <Input type="number" min={1} max={9} value={form.n_subcolumnas}
                       onChange={(e) => setForm({ ...form, n_subcolumnas: parseInt(e.target.value) || 1 })}
-                      style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
-                    />
+                      className="bg-slate-800 border-slate-700 text-white focus:ring-sky-500/50" />
                   </div>
                   <div className="space-y-1">
-                    <Label style={{ color: C.textMuted }}>Posiciones</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={99}
-                      value={form.n_posiciones}
+                    <Label className="text-xs text-slate-400">Posiciones</Label>
+                    <Input type="number" min={1} max={99} value={form.n_posiciones}
                       onChange={(e) => setForm({ ...form, n_posiciones: parseInt(e.target.value) || 1 })}
-                      style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
-                    />
+                      className="bg-slate-800 border-slate-700 text-white focus:ring-sky-500/50" />
                   </div>
                   <div className="space-y-1">
-                    <Label style={{ color: C.textMuted }}>Niveles</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={20}
-                      value={form.n_niveles}
+                    <Label className="text-xs text-slate-400">Niveles</Label>
+                    <Input type="number" min={1} max={20} value={form.n_niveles}
                       onChange={(e) => setForm({ ...form, n_niveles: parseInt(e.target.value) || 1 })}
-                      style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
-                    />
+                      className="bg-slate-800 border-slate-700 text-white focus:ring-sky-500/50" />
                   </div>
                 </div>
               </div>
-              <Button
-                type="submit"
-                className="gap-2"
-                style={{ background: C.occupied, color: C.textWhite }}
-              >
-                <Plus className="h-4 w-4" />
-                Crear sector
+              <Button type="submit" className="gap-2 bg-sky-600 hover:bg-sky-700 text-white">
+                <Plus className="h-4 w-4" /> Crear sector
               </Button>
             </form>
           </CardContent>
         </Card>
       )}
 
-      <Button
-        onClick={load}
-        variant="outline"
-        size="sm"
-        className="gap-2"
-        style={{ borderColor: C.borderBlue, color: C.textLight }}
-      >
-        <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-        Actualizar
+      <Button onClick={load} variant="outline" size="sm"
+        className="gap-2 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700">
+        <RefreshCw className="h-4 w-4" /> Actualizar
       </Button>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {sectores.map((s) => (
-          <Card key={s.id} style={{ background: C.bgCard, border: `1px solid ${C.borderBlue}` }}>
+          <Card key={s.id} className="border-slate-700 bg-slate-800/80">
             <CardContent className="pt-4 flex items-start justify-between">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <Layers3 className="h-4 w-4" style={{ color: C.occupied }} />
-                  <span className="font-medium" style={{ color: C.textWhite }}>{s.nombre}</span>
+                  <Layers3 className="h-4 w-4 text-sky-400" />
+                  <span className="font-medium text-white">{s.nombre}</span>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  <Badge style={{ background: `${C.occupied}22`, color: C.occupied, border: `1px solid ${C.occupied}44` }}>
-                    {s.prefijo}
-                  </Badge>
-                  <Badge style={{ background: `${C.borderBlue}88`, color: C.textLight, border: `1px solid ${C.borderBlue}` }}>
-                    {s.n_columnas}col
-                  </Badge>
-                  <Badge style={{ background: `${C.borderBlue}88`, color: C.textLight, border: `1px solid ${C.borderBlue}` }}>
-                    {s.n_subcolumnas}sub
-                  </Badge>
-                  <Badge style={{ background: `${C.borderBlue}88`, color: C.textLight, border: `1px solid ${C.borderBlue}` }}>
-                    {s.n_posiciones}pos
-                  </Badge>
-                  <Badge style={{ background: `${C.borderBlue}88`, color: C.textLight, border: `1px solid ${C.borderBlue}` }}>
-                    {s.n_niveles}niv
-                  </Badge>
+                  <Badge className="bg-sky-600 text-white border-0">{s.prefijo}</Badge>
+                  <Badge variant="outline" className="border-slate-600 text-slate-400">{s.n_columnas}col</Badge>
+                  <Badge variant="outline" className="border-slate-600 text-slate-400">{s.n_subcolumnas}sub</Badge>
+                  <Badge variant="outline" className="border-slate-600 text-slate-400">{s.n_posiciones}pos</Badge>
+                  <Badge variant="outline" className="border-slate-600 text-slate-400">{s.n_niveles}niv</Badge>
                 </div>
-                <p className="text-xs" style={{ color: C.textDark }}>
+                <p className="text-xs text-slate-500">
                   {s.n_columnas * s.n_subcolumnas * s.n_posiciones * s.n_niveles} ubicaciones
                 </p>
               </div>
               {perfil?.rol === 'admin' && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleDelete(s.id)}
-                  style={{ color: '#b91c1c' }}
-                >
+                <Button variant="ghost" size="icon" onClick={() => handleDelete(s.id)} className="text-slate-500 hover:text-red-400 hover:bg-red-900/30">
                   <Trash2 className="h-4 w-4" />
                 </Button>
               )}

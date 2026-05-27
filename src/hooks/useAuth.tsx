@@ -13,7 +13,7 @@ import { getPerfilActual, type Perfil } from '@/lib/rackly/auth'
 type AuthCtx = {
   perfil: Perfil | null
   loading: boolean
-  refresh: () => Promise<void>
+  refresh: () => Promise<Perfil | null>
   passwordRecovery: boolean
   clearPasswordRecovery: () => void
 }
@@ -21,7 +21,7 @@ type AuthCtx = {
 const Ctx = createContext<AuthCtx>({
   perfil: null,
   loading: true,
-  refresh: async () => {},
+  refresh: async () => null,
   passwordRecovery: false,
   clearPasswordRecovery: () => {},
 })

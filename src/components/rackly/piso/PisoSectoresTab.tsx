@@ -48,6 +48,8 @@ import {
   MapPin,
   FileSpreadsheet,
   Plus,
+  Calendar,
+  User,
 } from 'lucide-react'
 
 // ─── Color Palette ───────────────────────────────────────
@@ -249,6 +251,7 @@ export function PisoSectoresTab() {
     bloqueId: string
     cantidad: number
     destinoPosId?: string
+    fecha_vencimiento?: string | null
     autoCreate?: { codigo: string; descripcion: string; unidad: string }
   }) {
     if (!selectedPos || !perfil) return
@@ -270,24 +273,28 @@ export function PisoSectoresTab() {
       const primerNivel = await obtenerPrimerNivel(selectedPos.posicionId)
       if (!primerNivel) throw new Error('Posición sin niveles')
 
+      const usuarioId = perfil?.id ?? null
+      const usuarioNombre = perfil?.nombre ?? null
+      const usuarioCorreo = perfil?.correo ?? null
+
       if (params.tipo === 'traslado' && params.destinoPosId) {
         const destinoNivel = await obtenerPrimerNivel(params.destinoPosId)
         if (!destinoNivel) throw new Error('Posición destino sin niveles')
 
         // Register salida from origin
         await registrarMovimiento('salida', turno, [
-          { nivel_id: primerNivel, bloque_id: finalBloqueId, cantidad: params.cantidad },
-        ])
+          { nivel_id: primerNivel, bloque_id: finalBloqueId, cantidad: params.cantidad, fecha_vencimiento: params.fecha_vencimiento },
+        ], usuarioId, usuarioNombre, usuarioCorreo)
         // Register ingreso to destination
         await registrarMovimiento('ingreso', turno, [
-          { nivel_id: destinoNivel, bloque_id: finalBloqueId, cantidad: params.cantidad },
-        ])
+          { nivel_id: destinoNivel, bloque_id: finalBloqueId, cantidad: params.cantidad, fecha_vencimiento: params.fecha_vencimiento },
+        ], usuarioId, usuarioNombre, usuarioCorreo)
         toast.success('Traslado registrado')
       } else {
         const movTipo = params.tipo === 'devolucion' ? 'ingreso' : params.tipo
         await registrarMovimiento(movTipo, turno, [
-          { nivel_id: primerNivel, bloque_id: finalBloqueId, cantidad: params.cantidad },
-        ])
+          { nivel_id: primerNivel, bloque_id: finalBloqueId, cantidad: params.cantidad, fecha_vencimiento: params.fecha_vencimiento },
+        ], usuarioId, usuarioNombre, usuarioCorreo)
         toast.success(`${params.tipo.charAt(0).toUpperCase() + params.tipo.slice(1)} registrado`)
       }
 
@@ -851,105 +858,45 @@ function PositionDetailContent({
     bloqueId: string
     cantidad: number
     destinoPosId?: string
+    fecha_vencimiento?: string | null
     autoCreate?: { codigo: string; descripcion: string; unidad: string }
   }) => void
 }) {
-  const isMulti = posicion.bloques.length > 1
   const isEmpty = posicion.stock === 0
-  const statusColor = isEmpty ? C.emptyLight : isMulti ? C.multi : C.occupied
-  const statusLabel = isEmpty ? 'Vacío' : isMulti ? 'Múltiple' : 'Ocupado'
 
   return (
     <>
+      {/* ── Header ── */}
       <DialogHeader>
-        <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{
-              background: `${statusColor}22`,
-              border: `1px solid ${statusColor}44`,
-              color: statusColor,
-            }}
-          >
-            <MapPin className="h-5 w-5" />
-          </div>
-          <div>
-            <DialogTitle style={{ color: C.textWhite }}>
-              {posicion.columnaLetra} - {posicion.subcolumnaCodigo} - Pos. {posicion.posicionNumero}
-            </DialogTitle>
-            <DialogDescription style={{ color: C.textMuted }}>
-              {posicion.bloques.length} artículo{posicion.bloques.length !== 1 ? 's' : ''} · Stock: {fmtQty(posicion.stock)}
-            </DialogDescription>
-          </div>
-          <Badge
-            className="ml-auto"
-            style={{
-              background: `${statusColor}22`,
-              color: statusColor,
-              border: `1px solid ${statusColor}44`,
-            }}
-          >
-            {statusLabel}
-          </Badge>
-        </div>
+        <DialogTitle style={{ color: C.textWhite }}>
+          Detalle de Ubicacion
+        </DialogTitle>
+        <DialogDescription style={{ color: C.textMuted }}>
+          Productos en esta posicion, ordenados por vencimiento mas proximo.
+        </DialogDescription>
       </DialogHeader>
 
-      {/* ── Stock Detail ── */}
+      {/* ── Location Info ── */}
+      <div className="grid grid-cols-3 gap-2 my-3">
+        {[
+          { label: 'COLUMNA', value: posicion.columnaLetra },
+          { label: 'SUBCOLUMNA', value: posicion.subcolumnaCodigo },
+          { label: 'POSICION', value: posicion.posicionNumero.toString() },
+        ].map((item) => (
+          <div key={item.label} className="rounded-lg p-2 text-center" style={{ background: C.bgElevated, border: `1px solid ${C.borderBlue}44` }}>
+            <p className="text-[10px] font-semibold tracking-wider" style={{ color: C.textDark }}>{item.label}</p>
+            <p className="text-base font-bold mt-0.5" style={{ color: C.textWhite }}>{item.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Product List ── */}
       {detailLoading ? (
-        <div className="flex justify-center py-6">
+        <div className="flex justify-center py-8">
           <Loader2 className="h-6 w-6 animate-spin" style={{ color: C.textLight }} />
         </div>
-      ) : detailStock.length > 0 ? (
-        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-          {detailStock.map((d, i) => (
-            <div
-              key={`${d.bloque_id}-${d.nivel_numero}-${i}`}
-              className="flex items-center justify-between p-3 rounded-lg"
-              style={{ background: C.bgElevated, border: `1px solid ${C.borderBlue}44` }}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-sm font-medium" style={{ color: C.textWhite }}>
-                    {d.bloque_codigo}
-                  </span>
-                  <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: `${C.occupied}22`, color: C.textLight }}>
-                    N{d.nivel_numero}
-                  </span>
-                </div>
-                {d.bloque_descripcion && (
-                  <p className="text-xs truncate mt-0.5" style={{ color: C.textMuted }}>
-                    {d.bloque_descripcion}
-                  </p>
-                )}
-              </div>
-              <div className="text-right ml-3 shrink-0">
-                <p className="text-sm font-bold tabular-nums" style={{ color: C.textWhite }}>
-                  {fmtQty(d.cantidad)}
-                </p>
-                <p className="text-xs" style={{ color: C.textDark }}>{d.bloque_unidad}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-6">
-          <Box className="h-8 w-8 mx-auto mb-2" style={{ color: C.textDark }} />
-          <p className="text-sm" style={{ color: C.textMuted }}>Posición vacía — registra un ingreso</p>
-        </div>
-      )}
-
-      {/* ── Operation Buttons ── */}
-      {operation === 'none' && (
-        <div className="grid grid-cols-2 gap-2 mt-4 pt-4" style={{ borderTop: `1px solid ${C.borderBlue}44` }}>
-          <OpButton icon={<ArrowDownToLine className="h-4 w-4" />} label="Ingreso" color="#00884a" onClick={() => setOperation('ingreso')} />
-          <OpButton icon={<ArrowUpFromLine className="h-4 w-4" />} label="Salida" color="#b91c1c" onClick={() => setOperation('salida')} disabled={isEmpty} />
-          <OpButton icon={<ArrowRightLeft className="h-4 w-4" />} label="Traslado" color={C.occupied} onClick={() => setOperation('traslado')} disabled={isEmpty} />
-          <OpButton icon={<RotateCcw className="h-4 w-4" />} label="Devolución" color={C.multi} onClick={() => setOperation('devolucion')} />
-        </div>
-      )}
-
-      {/* ── Operation Form ── */}
-      {operation !== 'none' && (
+      ) : operation !== 'none' ? (
+        /* Show operation form */
         <OperationForm
           tipo={operation}
           posicion={posicion}
@@ -958,8 +905,181 @@ function PositionDetailContent({
           onSubmit={onSubmit}
           onCancel={() => setOperation('none')}
         />
+      ) : detailStock.length > 0 ? (
+        <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+          {detailStock.map((d, i) => (
+            <ProductDetailCard
+              key={`${d.bloque_id}-${d.fecha_vencimiento || 'none'}-${i}`}
+              detail={d}
+              index={i}
+              onSalida={(cantidad) => setOperation('salida')}
+              onSalidaTodo={(cantidad) => {
+                // Pre-fill salida with full quantity
+                setOperation('salida')
+              }}
+              onIngreso={() => setOperation('ingreso')}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-8">
+          <Box className="h-10 w-10 mx-auto mb-3" style={{ color: C.textDark }} />
+          <p className="text-sm" style={{ color: C.textMuted }}>Posicion vacia — registra un ingreso</p>
+        </div>
+      )}
+
+      {/* ── Footer ── */}
+      {operation === 'none' && (
+        <div className="mt-4 pt-3 space-y-3" style={{ borderTop: `1px solid ${C.borderBlue}44` }}>
+          <p className="text-[10px] text-center" style={{ color: C.textDark }}>
+            Las ubicaciones con stock 0 desaparecen automaticamente.
+          </p>
+          {detailStock.length > 0 && (
+            <div className="grid grid-cols-3 gap-2">
+              <OpButton icon={<ArrowDownToLine className="h-3.5 w-3.5" />} label="Ingreso" color="#00884a" onClick={() => setOperation('ingreso')} />
+              <OpButton icon={<ArrowUpFromLine className="h-3.5 w-3.5" />} label="Salida" color="#b91c1c" onClick={() => setOperation('salida')} />
+              <OpButton icon={<ArrowRightLeft className="h-3.5 w-3.5" />} label="Traslado" color={C.occupied} onClick={() => setOperation('traslado')} />
+            </div>
+          )}
+          <button
+            onClick={() => setOperation('ingreso')}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all duration-200 hover:brightness-110"
+            style={{ background: '#00884a', color: '#ffffff', border: 'none' }}
+          >
+            <Plus className="h-4 w-4" />
+            Agregar otro codigo a esta ubicacion
+          </button>
+        </div>
       )}
     </>
+  )
+}
+
+// ─── Product Detail Card ────────────────────────────────
+
+function ProductDetailCard({
+  detail,
+  index,
+  onSalida,
+  onSalidaTodo,
+  onIngreso,
+}: {
+  detail: DetailStock
+  index: number
+  onSalida: (cantidad: number) => void
+  onSalidaTodo: (cantidad: number) => void
+  onIngreso: () => void
+}) {
+  const [cantidad, setCantidad] = useState('')
+
+  function handleSalidaTodo() {
+    onSalidaTodo(detail.cantidad)
+  }
+
+  function handleSalidaCustom() {
+    const qty = parseFloat(cantidad)
+    if (isNaN(qty) || qty <= 0) {
+      toast.error('Cantidad invalida')
+      return
+    }
+    if (qty > detail.cantidad) {
+      toast.error(`Cantidad maxima: ${fmtQty(detail.cantidad)}`)
+      return
+    }
+    onSalida(qty)
+  }
+
+  // Format fecha_vencimiento for display
+  const fvDisplay = detail.fecha_vencimiento
+    ? new Date(detail.fecha_vencimiento + 'T00:00:00').toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    : 'Sin fecha'
+
+  return (
+    <div
+      className="rounded-xl p-3 space-y-2"
+      style={{ background: C.bgElevated, border: `1px solid ${C.borderBlue}44` }}
+    >
+      {/* Row 1: Code + Description + Vencimiento */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-bold" style={{ color: C.textWhite }}>
+              {detail.bloque_codigo}
+            </span>
+          </div>
+          {detail.bloque_descripcion && (
+            <p className="text-xs mt-0.5 leading-snug" style={{ color: C.textMuted }} title={detail.bloque_descripcion}>
+              {detail.bloque_descripcion}
+            </p>
+          )}
+        </div>
+        <span
+          className="text-[10px] px-2 py-0.5 rounded-full shrink-0 font-medium"
+          style={{
+            background: detail.fecha_vencimiento ? 'rgba(239,68,68,0.15)' : 'rgba(100,100,100,0.15)',
+            color: detail.fecha_vencimiento ? '#f87171' : C.textDark,
+          }}
+        >
+          {fvDisplay}
+        </span>
+      </div>
+
+      {/* Row 2: Metadata (fecha + usuario) */}
+      <div className="flex items-center gap-4 text-[11px]" style={{ color: C.textDark }}>
+        <span className="flex items-center gap-1">
+          <Calendar className="h-3 w-3" />
+          {fvDisplay}
+        </span>
+        {detail.usuario_nombre && (
+          <span className="flex items-center gap-1">
+            <User className="h-3 w-3" />
+            {detail.usuario_nombre}
+          </span>
+        )}
+      </div>
+
+      {/* Row 3: Quantity badge + Salida buttons */}
+      <div className="flex items-center gap-2">
+        {/* Quantity badge */}
+        <div
+          className="px-3 py-1 rounded-lg text-sm font-bold shrink-0"
+          style={{ background: `${C.occupied}33`, color: C.textLight, border: `1px solid ${C.occupied}44` }}
+        >
+          {fmtQty(detail.cantidad)} {detail.bloque_unidad}
+        </div>
+
+        {/* Custom quantity input */}
+        <input
+          type="number"
+          step="any"
+          min="0.001"
+          value={cantidad}
+          onChange={(e) => setCantidad(e.target.value)}
+          placeholder="Cantidad..."
+          className="flex-1 h-8 text-xs px-2 rounded-lg border-0 focus-visible:ring-1"
+          style={{ background: `${C.bgSurface}`, color: C.textWhite }}
+        />
+
+        {/* Salida button */}
+        <button
+          onClick={handleSalidaCustom}
+          className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all hover:brightness-110 shrink-0"
+          style={{ background: '#b91c1c', color: '#ffffff' }}
+        >
+          <ArrowUpFromLine className="h-3 w-3" />
+          Salida
+        </button>
+
+        {/* Todo button */}
+        <button
+          onClick={handleSalidaTodo}
+          className="flex items-center gap-1 px-2 py-2 rounded-lg text-[10px] font-semibold transition-all hover:brightness-110 shrink-0"
+          style={{ background: '#991b1b', color: '#fca5a5' }}
+        >
+          Todo ({fmtQty(detail.cantidad)})
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -982,7 +1102,7 @@ function OpButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-sm font-medium transition-all duration-200 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed"
+      className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-medium transition-all duration-200 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed"
       style={{
         background: `${color}22`,
         border: `1px solid ${color}44`,
@@ -1014,6 +1134,7 @@ function OperationForm({
     bloqueId: string
     cantidad: number
     destinoPosId?: string
+    fecha_vencimiento?: string | null
     autoCreate?: { codigo: string; descripcion: string; unidad: string }
   }) => void
   onCancel: () => void
@@ -1023,6 +1144,7 @@ function OperationForm({
   const [selectedBloque, setSelectedBloque] = useState<BloqueOption | null>(null)
   const [showAutocomplete, setShowAutocomplete] = useState(false)
   const [cantidad, setCantidad] = useState('')
+  const [fechaVencimiento, setFechaVencimiento] = useState('')
   const [destinoQuery, setDestinoQuery] = useState('')
   const [destinoPos, setDestinoPos] = useState<PosicionConStock | null>(null)
   const [showDestinoList, setShowDestinoList] = useState(false)
@@ -1033,7 +1155,6 @@ function OperationForm({
   const isSalida = tipo === 'salida'
   const isTraslado = tipo === 'traslado'
   const isIngreso = tipo === 'ingreso'
-  const isDevolucion = tipo === 'devolucion'
 
   // For salida/traslado, pre-select the first block from detailStock
   useEffect(() => {
@@ -1080,7 +1201,6 @@ function OperationForm({
             unidad: results.unidad,
           }])
         } else {
-          // Also try listing and filtering client-side
           const all = await listarBloquesParaSelect()
           const upper = q.trim().toUpperCase()
           const filtered = all.filter(
@@ -1113,13 +1233,13 @@ function OperationForm({
     if (busy) return
 
     if (isTraslado && !destinoPos) {
-      toast.error('Selecciona posición destino')
+      toast.error('Selecciona posicion destino')
       return
     }
 
     const qty = parseFloat(cantidad)
     if (isNaN(qty) || qty <= 0) {
-      toast.error('Cantidad inválida')
+      toast.error('Cantidad invalida')
       return
     }
 
@@ -1131,14 +1251,15 @@ function OperationForm({
           bloqueId: selectedBloque.id,
           cantidad: qty,
           destinoPosId: destinoPos?.posicionId,
+          fecha_vencimiento: fechaVencimiento || null,
         })
       } else if (bloqueQuery.trim()) {
-        // Manual code entry — auto-create
         onSubmit({
           tipo,
           bloqueId: '',
           cantidad: qty,
           destinoPosId: destinoPos?.posicionId,
+          fecha_vencimiento: fechaVencimiento || null,
           autoCreate: {
             codigo: bloqueQuery.trim(),
             descripcion: `Creado desde Piso - ${posicion.columnaLetra}${posicion.subcolumnaCodigo}${posicion.posicionNumero}`,
@@ -1146,7 +1267,7 @@ function OperationForm({
           },
         })
       } else {
-        toast.error('Selecciona o ingresa un código de bloque')
+        toast.error('Selecciona o ingresa un codigo de bloque')
       }
     } finally {
       setBusy(false)
@@ -1157,7 +1278,7 @@ function OperationForm({
     ingreso: 'Ingreso',
     salida: 'Salida',
     traslado: 'Traslado',
-    devolucion: 'Devolución',
+    devolucion: 'Devolucion',
   }
   const tipoColors: Record<string, string> = {
     ingreso: '#00884a',
@@ -1168,7 +1289,7 @@ function OperationForm({
   const currentColor = tipoColors[tipo]
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3 mt-4 pt-4" style={{ borderTop: `1px solid ${C.borderBlue}44` }}>
+    <form onSubmit={handleSubmit} className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-semibold" style={{ color: currentColor }}>
           {tipoLabels[tipo]}
@@ -1180,14 +1301,14 @@ function OperationForm({
 
       {/* Block code autocomplete */}
       <div className="relative">
-        <Label className="text-xs" style={{ color: C.textMuted }}>Código de bloque</Label>
+        <Label className="text-xs" style={{ color: C.textMuted }}>Codigo de bloque</Label>
         <div className="relative mt-1">
           <Input
             value={bloqueQuery}
             onChange={(e) => handleBlockSearch(e.target.value)}
             onFocus={() => { if (bloqueQuery.trim()) setShowAutocomplete(true) }}
             onBlur={() => setTimeout(() => setShowAutocomplete(false), 200)}
-            placeholder="Escribe código..."
+            placeholder="Escribe codigo..."
             className="h-9 text-sm rounded-lg border-0 focus-visible:ring-1"
             style={{ background: C.bgElevated, color: C.textWhite, paddingRight: selectedBloque ? '2.5rem' : undefined }}
           />
@@ -1227,7 +1348,6 @@ function OperationForm({
                 <span className="text-xs" style={{ color: C.textDark }}>{opt.unidad}</span>
               </button>
             ))}
-            {/* Fallback: manual entry option */}
             {bloqueQuery.trim() && !bloqueOptions.some((o) => o.codigo.toUpperCase() === bloqueQuery.trim().toUpperCase()) && (
               <button
                 type="button"
@@ -1256,10 +1376,24 @@ function OperationForm({
         )}
         {!selectedBloque && bloqueQuery.trim() && bloqueOptions.length === 0 && (
           <p className="text-xs mt-1" style={{ color: C.multiLight }}>
-            No encontrado — se creará automáticamente al registrar
+            No encontrado — se creara automaticamente al registrar
           </p>
         )}
       </div>
+
+      {/* Fecha de vencimiento (solo para ingreso/devolucion) */}
+      {(isIngreso || tipo === 'devolucion') && (
+        <div>
+          <Label className="text-xs" style={{ color: C.textMuted }}>Fecha de vencimiento (opcional)</Label>
+          <Input
+            type="date"
+            value={fechaVencimiento}
+            onChange={(e) => setFechaVencimiento(e.target.value)}
+            className="h-9 text-sm mt-1 rounded-lg border-0 focus-visible:ring-1"
+            style={{ background: C.bgElevated, color: C.textWhite, colorScheme: 'dark' }}
+          />
+        </div>
+      )}
 
       {/* Quantity */}
       <div>
@@ -1281,7 +1415,7 @@ function OperationForm({
       {/* Destino for traslado */}
       {isTraslado && (
         <div className="relative">
-          <Label className="text-xs" style={{ color: C.textMuted }}>Posición destino</Label>
+          <Label className="text-xs" style={{ color: C.textMuted }}>Posicion destino</Label>
           <Input
             value={destinoQuery}
             onChange={(e) => {
@@ -1331,6 +1465,19 @@ function OperationForm({
       <Button
         type="submit"
         disabled={busy || !cantidad || (isTraslado && !destinoPos)}
+        className="w-full gap-2 rounded-lg font-semibold"
+        style={{
+          background: currentColor,
+          color: '#ffffff',
+          opacity: busy || !cantidad ? 0.5 : 1,
+        }}
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
+        Registrar {tipoLabels[tipo]}
+      </Button>
+    </form>
+  )
+}
         className="w-full h-10 rounded-lg text-sm font-medium gap-2"
         style={{
           background: `${currentColor}dd`,

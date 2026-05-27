@@ -77,6 +77,7 @@ export type DetalleInput = {
   nivel_id: string
   bloque_id: string
   cantidad: number
+  fecha_vencimiento?: string | null
 }
 
 // ---- Visualization types ----
@@ -96,6 +97,9 @@ export type DetailStock = {
   bloque_unidad: string
   cantidad: number
   nivel_numero: number
+  fecha_vencimiento: string | null
+  usuario_nombre: string | null
+  fecha_registro: string | null
 }
 
 export type BloqueOption = {
@@ -281,16 +285,64 @@ export async function quitarBloqueDeColumna(
 export async function registrarMovimiento(
   tipo: string,
   turno: string,
-  detalles: DetalleInput[]
+  detalles: DetalleInput[],
+  usuarioId?: string | null,
+  usuarioNombre?: string | null,
+  usuarioCorreo?: string | null,
 ): Promise<PisoMovimiento> {
-  const { data, error } = await supabase.rpc('piso_registrar_movimiento', {
-    _tipo: tipo,
-    _turno: turno,
-    _detalles: detalles,
-  })
-  if (error) throw error
-  const result = data as unknown[]
-  return result[0] as PisoMovimiento
+  // Check if any detalle has fecha_vencimiento
+  const hasFV = detalles.some((d) => d.fecha_vencimiento)
+
+  if (!hasFV) {
+    // Use the original RPC for backward compatibility
+    const { data, error } = await supabase.rpc('piso_registrar_movimiento', {
+      _tipo: tipo,
+      _turno: turno,
+      _detalles: detalles.map(({ nivel_id, bloque_id, cantidad }) => ({ nivel_id, bloque_id, cantidad })),
+    })
+    if (error) throw error
+    const result = data as unknown[]
+    return result[0] as PisoMovimiento
+  }
+
+  // Direct insert to support fecha_vencimiento
+  // 1. Get next numero_operacion
+  const { data: maxRow } = await supabase
+    .from('piso_movimientos')
+    .select('numero_operacion')
+    .order('numero_operacion', { ascending: false })
+    .limit(1)
+  const nextNum = ((maxRow?.[0]?.numero_operacion ?? 0) as number) + 1
+
+  // 2. Insert movimiento
+  const { data: movData, error: movErr } = await supabase
+    .from('piso_movimientos')
+    .insert({
+      numero_operacion: nextNum,
+      tipo,
+      turno,
+      usuario_id: usuarioId ?? null,
+      usuario_nombre: usuarioNombre ?? null,
+      usuario_correo: usuarioCorreo ?? null,
+    })
+    .select()
+  if (movErr) throw movErr
+  const movimiento = (movData as PisoMovimiento[])[0]
+
+  // 3. Insert detalles with fecha_vencimiento
+  const detRows = detalles.map((d) => ({
+    movimiento_id: movimiento.id,
+    nivel_id: d.nivel_id,
+    bloque_id: d.bloque_id,
+    cantidad: d.cantidad,
+    fecha_vencimiento: d.fecha_vencimiento ?? null,
+  }))
+  const { error: detErr } = await supabase
+    .from('piso_movimiento_detalles')
+    .insert(detRows)
+  if (detErr) throw detErr
+
+  return movimiento
 }
 
 export async function listarMovimientos(
@@ -591,36 +643,63 @@ export async function stockDetallePosicion(posicionId: string): Promise<DetailSt
 
   const nivIds = niveles.map((n) => n.id)
 
-  // Get movement details for these niveles
+  // Get movement details for these niveles (including fecha_vencimiento and movimiento info)
   const { data: detData, error: detErr } = await supabase
     .from('piso_movimiento_detalles')
-    .select('cantidad, bloque_id, movimiento_id, piso_movimientos!inner(tipo)')
+    .select('cantidad, bloque_id, nivel_id, movimiento_id, fecha_vencimiento, piso_movimientos!inner(tipo, usuario_nombre, fecha)')
     .in('nivel_id', nivIds)
   if (detErr) throw detErr
 
-  // Calculate stock per nivel per bloque
-  const nivMap = new Map<string, number>(niveles.map((n) => [n.id, n.numero]))
-  const stockMap = new Map<string, Map<string, number>>()
-
-  for (const d of (detData ?? []) as {
+  type MovDetRow = {
     cantidad: number
     bloque_id: string
     nivel_id: string
     movimiento_id: string
-    piso_movimientos: { tipo: string }
-  }[]) {
-    if (!stockMap.has(d.nivel_id)) stockMap.set(d.nivel_id, new Map())
-    const m = stockMap.get(d.nivel_id)!
-    const cur = m.get(d.bloque_id) ?? 0
+    fecha_vencimiento: string | null
+    piso_movimientos: { tipo: string; usuario_nombre: string | null; fecha: string }
+  }
+  const rows = (detData ?? []) as MovDetRow[]
+
+  // Calculate stock grouped by nivel + bloque + fecha_vencimiento
+  // Key: nivel_id + bloque_id + fecha_vencimiento
+  const stockKeyMap = new Map<string, { nivel_id: string; bloque_id: string; fv: string | null; qty: number; movId: string; usuario: string | null; fecha: string | null }>()
+
+  for (const d of rows) {
+    // Normalize fecha_vencimiento to a consistent key
+    const fvKey = d.fecha_vencimiento || ''
+    const key = `${d.nivel_id}|${d.bloque_id}|${fvKey}`
+
+    const existing = stockKeyMap.get(key)
     const delta =
       d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial'
         ? d.cantidad
         : -d.cantidad
-    m.set(d.bloque_id, cur + delta)
+
+    if (existing) {
+      existing.qty += delta
+      // Track latest ingreso usuario and fecha
+      if ((d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial') && d.cantidad > 0) {
+        if (d.piso_movimientos.fecha && (!existing.fecha || d.piso_movimientos.fecha > existing.fecha)) {
+          existing.usuario = d.piso_movimientos.usuario_nombre
+          existing.fecha = d.piso_movimientos.fecha
+          existing.movId = d.movimiento_id
+        }
+      }
+    } else {
+      stockKeyMap.set(key, {
+        nivel_id: d.nivel_id,
+        bloque_id: d.bloque_id,
+        fv: d.fecha_vencimiento || null,
+        qty: delta,
+        movId: d.movimiento_id,
+        usuario: d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial' ? d.piso_movimientos.usuario_nombre : null,
+        fecha: d.piso_movimientos.fecha,
+      })
+    }
   }
 
   // Get block info
-  const allBloqueIds = [...new Set((detData ?? []).map((d: unknown) => (d as { bloque_id: string }).bloque_id))]
+  const allBloqueIds = [...new Set(rows.map((d) => d.bloque_id))]
   let bloqueInfo = new Map<string, Bloque>()
   if (allBloqueIds.length > 0) {
     const { data: bData } = await supabase
@@ -630,24 +709,36 @@ export async function stockDetallePosicion(posicionId: string): Promise<DetailSt
     ;((bData ?? []) as Bloque[]).forEach((b) => bloqueInfo.set(b.id, b))
   }
 
-  // Build results
+  // Map nivel_id -> numero
+  const nivNumMap = new Map<string, number>(niveles.map((n) => [n.id, n.numero]))
+
+  // Build results — separate entries for different fecha_vencimiento
   const results: DetailStock[] = []
-  for (const niv of niveles) {
-    const nivStock = stockMap.get(niv.id)
-    if (!nivStock) continue
-    for (const [bId, qty] of nivStock) {
-      if (qty <= 0) continue
-      const info = bloqueInfo.get(bId)
-      results.push({
-        bloque_id: bId,
-        bloque_codigo: info?.codigo ?? bId,
-        bloque_descripcion: info?.descripcion ?? '',
-        bloque_unidad: info?.unidad ?? '',
-        cantidad: qty,
-        nivel_numero: niv.numero,
-      })
-    }
+  for (const item of stockKeyMap.values()) {
+    if (item.qty <= 0) continue
+    const info = bloqueInfo.get(item.bloque_id)
+    results.push({
+      bloque_id: item.bloque_id,
+      bloque_codigo: info?.codigo ?? item.bloque_id,
+      bloque_descripcion: info?.descripcion ?? '',
+      bloque_unidad: info?.unidad ?? '',
+      cantidad: item.qty,
+      nivel_numero: nivNumMap.get(item.nivel_id) ?? 0,
+      fecha_vencimiento: item.fv,
+      usuario_nombre: item.usuario,
+      fecha_registro: item.fecha,
+    })
   }
+
+  // Sort: by bloque_codigo, then fecha_vencimiento (null last)
+  results.sort((a, b) => {
+    if (a.bloque_codigo !== b.bloque_codigo) return a.bloque_codigo.localeCompare(b.bloque_codigo)
+    if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+    if (a.fecha_vencimiento) return -1
+    if (b.fecha_vencimiento) return 1
+    return 0
+  })
+
   return results
 }
 

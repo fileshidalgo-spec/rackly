@@ -15,7 +15,6 @@ import { TrasladoTab } from '@/components/rackly/kardex/TrasladoTab'
 import { PisoSectoresTab } from '@/components/rackly/piso/PisoSectoresTab'
 import { MovimientosTab } from '@/components/rackly/piso/MovimientosTab'
 import { ConfiguracionColumnasTab } from '@/components/rackly/piso/ConfiguracionColumnasTab'
-import { UpKardexTab } from '@/components/rackly/piso/UpKardexTab'
 import { deleteMovimiento, type Movimiento, type TipoMovimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Button } from '@/components/ui/button'
@@ -62,7 +61,6 @@ import {
   Layers3,
   History,
   Settings,
-  Upload,
   RotateCcw,
   Search,
   FilterX,
@@ -508,12 +506,9 @@ function RacklyApp() {
         {/* KARDEX PISO VIEW */}
         {view === 'piso' && (
           <Tabs defaultValue="movimientos" className="w-full">
-            <TabsList className="grid w-full grid-cols-2 gap-2 h-auto p-2 rounded-xl md:grid-cols-4 md:gap-1.5 md:h-9 md:p-1">
+            <TabsList className="grid w-full grid-cols-3 gap-2 h-auto p-2 rounded-xl md:grid-cols-3 md:gap-1.5 md:h-9 md:p-1">
               <TabsTrigger value="movimientos" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
                 <History className="h-4 w-4 shrink-0" /> <span>Movimientos</span>
-              </TabsTrigger>
-              <TabsTrigger value="up-kardex" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
-                <Upload className="h-4 w-4 shrink-0" /> <span>UP Kardex</span>
               </TabsTrigger>
               <TabsTrigger value="sectores" className="flex-col gap-1 py-2 px-1 text-[11px] leading-tight border border-border/50 rounded-lg text-center md:flex-row md:gap-1.5 md:text-sm md:py-1">
                 <Layers3 className="h-4 w-4 shrink-0" /> <span>Sectores</span>
@@ -532,18 +527,6 @@ function RacklyApp() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent><MovimientosTab /></CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="up-kardex" className="mt-6 md:mt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>UP KARDEX</CardTitle>
-                  <CardDescription>
-                    Carga el catálogo de bloques desde un archivo Excel.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent><UpKardexTab /></CardContent>
               </Card>
             </TabsContent>
 

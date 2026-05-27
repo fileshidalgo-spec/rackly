@@ -13,6 +13,7 @@ import { FefoTab } from '@/components/rackly/kardex/FefoTab'
 import { OcupacionTab } from '@/components/rackly/kardex/OcupacionTab'
 import { TrasladoTab } from '@/components/rackly/kardex/TrasladoTab'
 import { SectoresTab } from '@/components/rackly/piso/SectoresTab'
+import { PisoSectoresTab } from '@/components/rackly/piso/PisoSectoresTab'
 import { MovimientosTab } from '@/components/rackly/piso/MovimientosTab'
 import { ConfiguracionColumnasTab } from '@/components/rackly/piso/ConfiguracionColumnasTab'
 import { UpKardexTab } from '@/components/rackly/piso/UpKardexTab'
@@ -421,15 +422,7 @@ function RacklyApp() {
             </TabsContent>
 
             <TabsContent value="sectores" className="mt-6 md:mt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Sectores</CardTitle>
-                  <CardDescription>
-                    Administra los sectores del almacén de piso.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent><SectoresTab /></CardContent>
-              </Card>
+              <PisoSectoresTab />
             </TabsContent>
 
             <TabsContent value="columnas" className="mt-6 md:mt-4">

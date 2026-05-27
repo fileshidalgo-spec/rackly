@@ -11,6 +11,22 @@ import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { Plus, Trash2, RefreshCw, Layers3 } from 'lucide-react'
 
+const C = {
+  bgDeep: '#0a0a2e',
+  bgCard: '#10103a',
+  bgElevated: '#1a1a4e',
+  borderBlue: '#303060',
+  textWhite: '#f0f0f0',
+  textLight: '#80c0ff',
+  textMuted: '#8090c0',
+  textDark: '#5060a0',
+  occupied: '#0060f0',
+  occupiedLight: '#2090f0',
+  multi: '#f09000',
+  multiLight: '#ffc040',
+  emptyLight: '#40c090',
+}
+
 export function SectoresTab() {
   const { perfil } = useAuth()
   const [sectores, setSectores] = useState<Sector[]>([])
@@ -71,38 +87,81 @@ export function SectoresTab() {
   return (
     <div className="space-y-4">
       {perfil?.rol === 'admin' && (
-        <Card>
+        <Card style={{ background: C.bgCard, border: `1px solid ${C.borderBlue}` }}>
           <CardContent className="pt-6">
             <form onSubmit={handleCreate} className="space-y-3">
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <Label>Nombre</Label>
-                  <Input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} placeholder="Nombre del sector" />
+                  <Label style={{ color: C.textMuted }}>Nombre</Label>
+                  <Input
+                    value={form.nombre}
+                    onChange={(e) => setForm({ ...form, nombre: e.target.value })}
+                    placeholder="Nombre del sector"
+                    style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
+                  />
                 </div>
                 <div className="space-y-1">
-                  <Label>Prefijo</Label>
-                  <Input value={form.prefijo} onChange={(e) => setForm({ ...form, prefijo: e.target.value })} placeholder="A, B, C..." maxLength={3} />
+                  <Label style={{ color: C.textMuted }}>Prefijo</Label>
+                  <Input
+                    value={form.prefijo}
+                    onChange={(e) => setForm({ ...form, prefijo: e.target.value })}
+                    placeholder="A, B, C..."
+                    maxLength={3}
+                    style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <Label>Columnas</Label>
-                    <Input type="number" min={1} max={26} value={form.n_columnas} onChange={(e) => setForm({ ...form, n_columnas: parseInt(e.target.value) || 1 })} />
+                    <Label style={{ color: C.textMuted }}>Columnas</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={26}
+                      value={form.n_columnas}
+                      onChange={(e) => setForm({ ...form, n_columnas: parseInt(e.target.value) || 1 })}
+                      style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
+                    />
                   </div>
                   <div className="space-y-1">
-                    <Label>Subcol</Label>
-                    <Input type="number" min={1} max={9} value={form.n_subcolumnas} onChange={(e) => setForm({ ...form, n_subcolumnas: parseInt(e.target.value) || 1 })} />
+                    <Label style={{ color: C.textMuted }}>Subcol</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={9}
+                      value={form.n_subcolumnas}
+                      onChange={(e) => setForm({ ...form, n_subcolumnas: parseInt(e.target.value) || 1 })}
+                      style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
+                    />
                   </div>
                   <div className="space-y-1">
-                    <Label>Posiciones</Label>
-                    <Input type="number" min={1} max={99} value={form.n_posiciones} onChange={(e) => setForm({ ...form, n_posiciones: parseInt(e.target.value) || 1 })} />
+                    <Label style={{ color: C.textMuted }}>Posiciones</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={99}
+                      value={form.n_posiciones}
+                      onChange={(e) => setForm({ ...form, n_posiciones: parseInt(e.target.value) || 1 })}
+                      style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
+                    />
                   </div>
                   <div className="space-y-1">
-                    <Label>Niveles</Label>
-                    <Input type="number" min={1} max={20} value={form.n_niveles} onChange={(e) => setForm({ ...form, n_niveles: parseInt(e.target.value) || 1 })} />
+                    <Label style={{ color: C.textMuted }}>Niveles</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={form.n_niveles}
+                      onChange={(e) => setForm({ ...form, n_niveles: parseInt(e.target.value) || 1 })}
+                      style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
+                    />
                   </div>
                 </div>
               </div>
-              <Button type="submit" className="gap-2">
+              <Button
+                type="submit"
+                className="gap-2"
+                style={{ background: C.occupied, color: C.textWhite }}
+              >
                 <Plus className="h-4 w-4" />
                 Crear sector
               </Button>
@@ -111,33 +170,54 @@ export function SectoresTab() {
         </Card>
       )}
 
-      <Button onClick={load} variant="outline" size="sm" className="gap-2">
-        <RefreshCw className="h-4 w-4" />
+      <Button
+        onClick={load}
+        variant="outline"
+        size="sm"
+        className="gap-2"
+        style={{ borderColor: C.borderBlue, color: C.textLight }}
+      >
+        <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
         Actualizar
       </Button>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {sectores.map((s) => (
-          <Card key={s.id}>
+          <Card key={s.id} style={{ background: C.bgCard, border: `1px solid ${C.borderBlue}` }}>
             <CardContent className="pt-4 flex items-start justify-between">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <Layers3 className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">{s.nombre}</span>
+                  <Layers3 className="h-4 w-4" style={{ color: C.occupied }} />
+                  <span className="font-medium" style={{ color: C.textWhite }}>{s.nombre}</span>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  <Badge variant="secondary">{s.prefijo}</Badge>
-                  <Badge variant="outline">{s.n_columnas}col</Badge>
-                  <Badge variant="outline">{s.n_subcolumnas}sub</Badge>
-                  <Badge variant="outline">{s.n_posiciones}pos</Badge>
-                  <Badge variant="outline">{s.n_niveles}niv</Badge>
+                  <Badge style={{ background: `${C.occupied}22`, color: C.occupied, border: `1px solid ${C.occupied}44` }}>
+                    {s.prefijo}
+                  </Badge>
+                  <Badge style={{ background: `${C.borderBlue}88`, color: C.textLight, border: `1px solid ${C.borderBlue}` }}>
+                    {s.n_columnas}col
+                  </Badge>
+                  <Badge style={{ background: `${C.borderBlue}88`, color: C.textLight, border: `1px solid ${C.borderBlue}` }}>
+                    {s.n_subcolumnas}sub
+                  </Badge>
+                  <Badge style={{ background: `${C.borderBlue}88`, color: C.textLight, border: `1px solid ${C.borderBlue}` }}>
+                    {s.n_posiciones}pos
+                  </Badge>
+                  <Badge style={{ background: `${C.borderBlue}88`, color: C.textLight, border: `1px solid ${C.borderBlue}` }}>
+                    {s.n_niveles}niv
+                  </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs" style={{ color: C.textDark }}>
                   {s.n_columnas * s.n_subcolumnas * s.n_posiciones * s.n_niveles} ubicaciones
                 </p>
               </div>
               {perfil?.rol === 'admin' && (
-                <Button variant="ghost" size="icon" onClick={() => handleDelete(s.id)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleDelete(s.id)}
+                  style={{ color: '#b91c1c' }}
+                >
                   <Trash2 className="h-4 w-4" />
                 </Button>
               )}

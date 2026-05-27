@@ -78,6 +78,32 @@ export type DetalleInput = {
   cantidad: number
 }
 
+// ---- Visualization types ----
+export type PosicionConStock = {
+  posicionId: string
+  posicionNumero: number
+  subcolumnaCodigo: string
+  columnaLetra: string
+  stock: number
+  bloques: { bloque_id: string; bloque_codigo: string; cantidad: number }[]
+}
+
+export type DetailStock = {
+  bloque_id: string
+  bloque_codigo: string
+  bloque_descripcion: string
+  bloque_unidad: string
+  cantidad: number
+  nivel_numero: number
+}
+
+export type BloqueOption = {
+  id: string
+  codigo: string
+  descripcion: string
+  unidad: string
+}
+
 // ---- Sector CRUD ----
 export async function listarSectores(): Promise<Sector[]> {
   const { data, error } = await supabase
@@ -420,4 +446,243 @@ export async function calcularStockNivel(
   return Array.from(stockMap.entries())
     .filter(([, qty]) => qty > 0)
     .map(([bloque_codigo, cantidad]) => ({ bloque_codigo, cantidad }))
+}
+
+// ---- Visualization helpers ----
+
+export async function cargarPosicionesSector(sectorId: string): Promise<PosicionConStock[]> {
+  // 1. Get columnas
+  const columnas = await listarColumnas(sectorId)
+  if (columnas.length === 0) return []
+
+  // 2. Get subcolumnas for all columnas in parallel
+  const subcolumnasResults = await Promise.all(columnas.map((c) => listarSubcolumnas(c.id)))
+
+  // Build maps
+  const colMap = new Map<string, Columna>(columnas.map((c) => [c.id, c]))
+  const allSubs = subcolumnasResults.flat()
+  const subMap = new Map<string, Subcolumna>(allSubs.map((s) => [s.id, s]))
+
+  if (allSubs.length === 0) return []
+
+  // 3. Batch fetch all posiciones
+  const subIds = allSubs.map((s) => s.id)
+  const { data: posData, error: posErr } = await supabase
+    .from('piso_posiciones')
+    .select('*')
+    .in('subcolumna_id', subIds)
+    .order('numero')
+  if (posErr) throw posErr
+  const posiciones = (posData ?? []) as Posicion[]
+
+  if (posiciones.length === 0) return []
+
+  // 4. Batch fetch all niveles
+  const posIds = posiciones.map((p) => p.id)
+  const { data: nivData, error: nivErr } = await supabase
+    .from('piso_niveles')
+    .select('*')
+    .in('posicion_id', posIds)
+    .order('numero')
+  if (nivErr) throw nivErr
+  const niveles = (nivData ?? []) as Nivel[]
+
+  if (niveles.length === 0) return []
+
+  // 5. Build position→niveles map
+  const nivByPos = new Map<string, Nivel[]>()
+  for (const n of niveles) {
+    if (!nivByPos.has(n.posicion_id)) nivByPos.set(n.posicion_id, [])
+    nivByPos.get(n.posicion_id)!.push(n)
+  }
+
+  // 6. Batch fetch all movement details for these niveles
+  const allNivelIds = niveles.map((n) => n.id)
+  const { data: movDetData, error: movDetErr } = await supabase
+    .from('piso_movimiento_detalles')
+    .select('cantidad, bloque_id, movimiento_id, piso_movimientos!inner(tipo)')
+    .in('nivel_id', allNivelIds)
+  if (movDetErr) throw movDetErr
+
+  // 7. Build stock per nivel
+  const nivelStockMap = new Map<string, Map<string, number>>()
+  const movDets = (movDetData ?? []) as unknown as {
+    cantidad: number
+    bloque_id: string
+    nivel_id: string
+    movimiento_id: string
+    piso_movimientos: { tipo: string }
+  }[]
+
+  for (const d of movDets) {
+    if (!nivelStockMap.has(d.nivel_id)) nivelStockMap.set(d.nivel_id, new Map())
+    const m = nivelStockMap.get(d.nivel_id)!
+    const cur = m.get(d.bloque_id) ?? 0
+    const delta =
+      d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial'
+        ? d.cantidad
+        : -d.cantidad
+    m.set(d.bloque_id, cur + delta)
+  }
+
+  // 8. Get all block info
+  const bloqueIds = [...new Set(movDets.map((d) => d.bloque_id))]
+  let bloqueInfoMap = new Map<string, { id: string; codigo: string; descripcion: string; unidad: string }>()
+  if (bloqueIds.length > 0) {
+    const { data: bloquesData } = await supabase
+      .from('piso_bloques')
+      .select('id, codigo, descripcion, unidad')
+      .in('id', bloqueIds)
+    ;((bloquesData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]).forEach(
+      (b) => bloqueInfoMap.set(b.id, b)
+    )
+  }
+
+  // 9. Build results
+  const results: PosicionConStock[] = []
+  for (const pos of posiciones) {
+    const sub = subMap.get(pos.subcolumna_id)
+    if (!sub) continue
+    const col = colMap.get(sub.columna_id)
+    if (!col) continue
+
+    const posNiveles = nivByPos.get(pos.id) || []
+    const posBloques = new Map<string, number>()
+    for (const niv of posNiveles) {
+      const nivSt = nivelStockMap.get(niv.id)
+      if (!nivSt) continue
+      for (const [bId, qty] of nivSt) {
+        if (qty > 0) posBloques.set(bId, (posBloques.get(bId) ?? 0) + qty)
+      }
+    }
+
+    const totalStock = Array.from(posBloques.values()).reduce((a, b) => a + b, 0)
+    const bloques = Array.from(posBloques.entries()).map(([bId, qty]) => ({
+      bloque_id: bId,
+      bloque_codigo: bloqueInfoMap.get(bId)?.codigo ?? bId,
+      cantidad: qty,
+    }))
+
+    results.push({
+      posicionId: pos.id,
+      posicionNumero: pos.numero,
+      subcolumnaCodigo: sub.codigo,
+      columnaLetra: col.letra,
+      stock: totalStock,
+      bloques,
+    })
+  }
+
+  return results
+}
+
+export async function stockDetallePosicion(posicionId: string): Promise<DetailStock[]> {
+  // Get all niveles for this position
+  const { data: nivData, error: nivErr } = await supabase
+    .from('piso_niveles')
+    .select('*')
+    .eq('posicion_id', posicionId)
+    .order('numero')
+  if (nivErr) throw nivErr
+  const niveles = (nivData ?? []) as Nivel[]
+  if (niveles.length === 0) return []
+
+  const nivIds = niveles.map((n) => n.id)
+
+  // Get movement details for these niveles
+  const { data: detData, error: detErr } = await supabase
+    .from('piso_movimiento_detalles')
+    .select('cantidad, bloque_id, movimiento_id, piso_movimientos!inner(tipo)')
+    .in('nivel_id', nivIds)
+  if (detErr) throw detErr
+
+  // Calculate stock per nivel per bloque
+  const nivMap = new Map<string, number>(niveles.map((n) => [n.id, n.numero]))
+  const stockMap = new Map<string, Map<string, number>>()
+
+  for (const d of (detData ?? []) as {
+    cantidad: number
+    bloque_id: string
+    nivel_id: string
+    movimiento_id: string
+    piso_movimientos: { tipo: string }
+  }[]) {
+    if (!stockMap.has(d.nivel_id)) stockMap.set(d.nivel_id, new Map())
+    const m = stockMap.get(d.nivel_id)!
+    const cur = m.get(d.bloque_id) ?? 0
+    const delta =
+      d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial'
+        ? d.cantidad
+        : -d.cantidad
+    m.set(d.bloque_id, cur + delta)
+  }
+
+  // Get block info
+  const allBloqueIds = [...new Set((detData ?? []).map((d: unknown) => (d as { bloque_id: string }).bloque_id))]
+  let bloqueInfo = new Map<string, Bloque>()
+  if (allBloqueIds.length > 0) {
+    const { data: bData } = await supabase
+      .from('piso_bloques')
+      .select('*')
+      .in('id', allBloqueIds)
+    ;((bData ?? []) as Bloque[]).forEach((b) => bloqueInfo.set(b.id, b))
+  }
+
+  // Build results
+  const results: DetailStock[] = []
+  for (const niv of niveles) {
+    const nivStock = stockMap.get(niv.id)
+    if (!nivStock) continue
+    for (const [bId, qty] of nivStock) {
+      if (qty <= 0) continue
+      const info = bloqueInfo.get(bId)
+      results.push({
+        bloque_id: bId,
+        bloque_codigo: info?.codigo ?? bId,
+        bloque_descripcion: info?.descripcion ?? '',
+        bloque_unidad: info?.unidad ?? '',
+        cantidad: qty,
+        nivel_numero: niv.numero,
+      })
+    }
+  }
+  return results
+}
+
+export async function obtenerPrimerNivel(posicionId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('piso_niveles')
+    .select('id')
+    .eq('posicion_id', posicionId)
+    .order('numero')
+    .limit(1)
+  if (error) throw error
+  if (!data || data.length === 0) return null
+  return (data[0] as { id: string }).id
+}
+
+export async function listarBloquesParaSelect(): Promise<BloqueOption[]> {
+  const { data, error } = await supabase
+    .from('piso_bloques')
+    .select('id, codigo, descripcion, unidad')
+    .order('codigo')
+  if (error) throw error
+  return ((data ?? []) as Bloque[]).map((b) => ({
+    id: b.id,
+    codigo: b.codigo,
+    descripcion: b.descripcion,
+    unidad: b.unidad,
+  }))
+}
+
+export async function buscarBloquePorCodigo(code: string): Promise<Bloque | null> {
+  const c = code.trim().toUpperCase()
+  const { data, error } = await supabase
+    .from('piso_bloques')
+    .select('*')
+    .eq('codigo', c)
+    .limit(1)
+  if (error) throw error
+  if (!data || data.length === 0) return null
+  return data[0] as Bloque
 }

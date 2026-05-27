@@ -6,14 +6,12 @@ import {
   listarColumnas,
   listarSubcolumnas,
   listarNivelesDeSubcolumna,
-  listarBloques,
   listarBloquesDeColumna,
   registrarMovimiento,
   calcularStockNivel,
   type Sector,
   type Columna,
   type Subcolumna,
-  calcularTurno,
 } from '@/lib/piso/api'
 import { calcularTurno as calcTurnoKardex } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
@@ -39,17 +37,35 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 import { Loader2, ArrowDownToLine, ArrowUpFromLine, History } from 'lucide-react'
 
+const C = {
+  bgDeep: '#0a0a2e',
+  bgCard: '#10103a',
+  bgElevated: '#1a1a4e',
+  borderBlue: '#303060',
+  textWhite: '#f0f0f0',
+  textLight: '#80c0ff',
+  textMuted: '#8090c0',
+  textDark: '#5060a0',
+  occupied: '#0060f0',
+  occupiedLight: '#2090f0',
+  multi: '#f09000',
+  multiLight: '#ffc040',
+  emptyLight: '#40c090',
+  destructive: '#b91c1c',
+  success: '#00884a',
+}
+
 export function MovimientosTab() {
   return (
     <Tabs defaultValue="ingreso" className="w-full">
       <TabsList className="grid w-full grid-cols-3">
-        <TabsTrigger value="ingreso" className="gap-2">
+        <TabsTrigger value="ingreso" className="gap-2" style={{ color: C.textLight }}>
           <ArrowDownToLine className="h-4 w-4" /> Ingreso
         </TabsTrigger>
-        <TabsTrigger value="salida" className="gap-2">
+        <TabsTrigger value="salida" className="gap-2" style={{ color: C.textLight }}>
           <ArrowUpFromLine className="h-4 w-4" /> Salida
         </TabsTrigger>
-        <TabsTrigger value="historial" className="gap-2">
+        <TabsTrigger value="historial" className="gap-2" style={{ color: C.textLight }}>
           <History className="h-4 w-4" /> Historial
         </TabsTrigger>
       </TabsList>
@@ -156,27 +172,33 @@ function IngresoRapido() {
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div className="space-y-1">
-          <label className="text-sm font-medium">Sector</label>
+          <label className="text-sm font-medium" style={{ color: C.textMuted }}>Sector</label>
           <Select value={sectorId} onValueChange={(v) => { setSectorId(v); setColumnaId('') }}>
-            <SelectTrigger><SelectValue placeholder="Sector" /></SelectTrigger>
+            <SelectTrigger style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}>
+              <SelectValue placeholder="Sector" />
+            </SelectTrigger>
             <SelectContent>
               {sectores.map((s) => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">Columna</label>
+          <label className="text-sm font-medium" style={{ color: C.textMuted }}>Columna</label>
           <Select value={columnaId} onValueChange={setColumnaId} disabled={!sectorId}>
-            <SelectTrigger><SelectValue placeholder="Columna" /></SelectTrigger>
+            <SelectTrigger style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}>
+              <SelectValue placeholder="Columna" />
+            </SelectTrigger>
             <SelectContent>
               {columnas.map((c) => <SelectItem key={c.id} value={c.id}>{c.letra}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">Bloque</label>
+          <label className="text-sm font-medium" style={{ color: C.textMuted }}>Bloque</label>
           <Select value={bloqueId} onValueChange={setBloqueId} disabled={bloques.length === 0}>
-            <SelectTrigger><SelectValue placeholder="Bloque" /></SelectTrigger>
+            <SelectTrigger style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}>
+              <SelectValue placeholder="Bloque" />
+            </SelectTrigger>
             <SelectContent>
               {bloques.map((b) => <SelectItem key={b.id} value={b.id}>{b.codigo}</SelectItem>)}
             </SelectContent>
@@ -185,9 +207,7 @@ function IngresoRapido() {
       </div>
 
       <div className="space-y-1">
-        <label className="text-sm font-medium">
-          Cantidad
-        </label>
+        <label className="text-sm font-medium" style={{ color: C.textMuted }}>Cantidad</label>
         <Input
           type="number"
           step="any"
@@ -196,66 +216,55 @@ function IngresoRapido() {
           onChange={(e) => setCantidad(e.target.value)}
           placeholder="Cantidad para todos los niveles seleccionados"
           className="max-w-xs"
+          style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}
         />
       </div>
 
       {gridData.length > 0 && (
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm" style={{ color: C.textMuted }}>
             Selecciona niveles (haz clic en las celdas). Seleccionados: {selectedLevels.size}
           </p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {subcolumnas.map((sc) => {
-              const positions = gridData.filter((g) => {
-                // Match by subcolumna
-                return g.niveles.length > 0
-              })
-              return (
-                <div key={sc.id} className="border rounded-lg p-3">
-                  <p className="text-sm font-medium mb-2">{sc.codigo}</p>
-                  {gridData
-                    .filter((_, idx) => {
-                      // Rough matching by position within subcolumna
-                      const startIdx = subcolumnas.findIndex((s) => s.id === sc.id)
-                      const subData: typeof gridData = []
-                      let count = 0
-                      for (const g of gridData) {
-                        const levelsPerPos = g.niveles.length || 1
-                        if (count >= startIdx * levelsPerPos && count < (startIdx + 1) * levelsPerPos) {
-                          // rough matching
-                        }
-                        count++
-                      }
-                      return idx >= subcolumnas.findIndex((s) => s.id === sc.id) && idx < subcolumnas.findIndex((s) => s.id === sc.id) + 1
-                    })
-                    .map((g, gi) => (
-                      <div key={gi} className="flex flex-wrap gap-1 mb-1">
-                        <span className="text-xs text-muted-foreground w-6">P{g.posicion.numero}</span>
-                        {g.niveles.map((n) => (
-                          <button
-                            key={n.id}
-                            type="button"
-                            className={`w-8 h-8 rounded text-xs font-medium transition-colors ${
-                              selectedLevels.has(n.id)
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-muted hover:bg-accent'
-                            }`}
-                            onClick={() => toggleLevel(n.id)}
-                            title={n.codigo_ubicacion || `Nivel ${n.numero}`}
-                          >
-                            {n.numero}
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                </div>
-              )
-            })}
+            {subcolumnas.map((sc, scIdx) => (
+              <div key={sc.id} className="rounded-lg p-3" style={{ background: C.bgElevated, border: `1px solid ${C.borderBlue}44` }}>
+                <p className="text-sm font-medium mb-2" style={{ color: C.textWhite }}>{sc.codigo}</p>
+                {gridData
+                  .filter((_, idx) => idx >= scIdx && idx < scIdx + 1)
+                  .map((g, gi) => (
+                    <div key={gi} className="flex flex-wrap gap-1 mb-1">
+                      <span className="text-xs w-6" style={{ color: C.textDark }}>P{g.posicion.numero}</span>
+                      {g.niveles.map((n) => (
+                        <button
+                          key={n.id}
+                          type="button"
+                          className="w-8 h-8 rounded text-xs font-medium transition-colors"
+                          style={{
+                            background: selectedLevels.has(n.id)
+                              ? C.occupied
+                              : `${C.borderBlue}88`,
+                            color: selectedLevels.has(n.id) ? C.textWhite : C.textLight,
+                          }}
+                          onClick={() => toggleLevel(n.id)}
+                          title={n.codigo_ubicacion || `Nivel ${n.numero}`}
+                        >
+                          {n.numero}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      <Button onClick={handleIngreso} disabled={busy || selectedLevels.size === 0} className="gap-2">
+      <Button
+        onClick={handleIngreso}
+        disabled={busy || selectedLevels.size === 0}
+        className="gap-2"
+        style={{ background: C.success, color: C.textWhite }}
+      >
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
         Registrar ingreso ({selectedLevels.size} niveles)
       </Button>
@@ -308,7 +317,6 @@ function SalidaMasiva() {
     Promise.all(subcolumnas.map((sc) => listarNivelesDeSubcolumna(sc.id)))
       .then((results) => {
         setGridData(results.flat())
-        // Load stock for all levels
         const allNiveles = results.flat().flatMap((r) => r.niveles)
         allNiveles.forEach((n) => {
           calcularStockNivel(n.id)
@@ -357,27 +365,33 @@ function SalidaMasiva() {
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div className="space-y-1">
-          <label className="text-sm font-medium">Sector</label>
-          <Select value={sectorId} onValueChange={(v) => { setSectorId(v); setColumnaId('') }}>
-            <SelectTrigger><SelectValue placeholder="Sector" /></SelectTrigger>
+          <label className="text-sm font-medium" style={{ color: C.textMuted }}>Sector</label>
+          <Select value={sectorId} onValueChange={setSectorId}>
+            <SelectTrigger style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}>
+              <SelectValue placeholder="Sector" />
+            </SelectTrigger>
             <SelectContent>
               {sectores.map((s) => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">Columna</label>
+          <label className="text-sm font-medium" style={{ color: C.textMuted }}>Columna</label>
           <Select value={columnaId} onValueChange={setColumnaId} disabled={!sectorId}>
-            <SelectTrigger><SelectValue placeholder="Columna" /></SelectTrigger>
+            <SelectTrigger style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}>
+              <SelectValue placeholder="Columna" />
+            </SelectTrigger>
             <SelectContent>
               {columnas.map((c) => <SelectItem key={c.id} value={c.id}>{c.letra}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">Bloque</label>
+          <label className="text-sm font-medium" style={{ color: C.textMuted }}>Bloque</label>
           <Select value={bloqueId} onValueChange={setBloqueId} disabled={bloques.length === 0}>
-            <SelectTrigger><SelectValue placeholder="Bloque" /></SelectTrigger>
+            <SelectTrigger style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}>
+              <SelectValue placeholder="Bloque" />
+            </SelectTrigger>
             <SelectContent>
               {bloques.map((b) => <SelectItem key={b.id} value={b.id}>{b.codigo}</SelectItem>)}
             </SelectContent>
@@ -387,54 +401,62 @@ function SalidaMasiva() {
 
       {gridData.length > 0 && (
         <div className="space-y-2">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm" style={{ color: C.textMuted }}>
             Selecciona niveles con stock. Seleccionados: {selectedLevels.size}
           </p>
           <div className="grid gap-2">
-            {subcolumnas.map((sc, scIdx) => {
-              const startIdx = scIdx
-              const endIdx = scIdx + 1
-              return (
-                <div key={sc.id} className="border rounded-lg p-3">
-                  <p className="text-sm font-medium mb-2">{sc.codigo}</p>
-                  <div className="flex flex-wrap gap-1">
-                    {gridData.slice(startIdx * 1, endIdx * 1).flatMap((g) =>
-                      g.niveles.map((n) => {
-                        const stock = stockData.get(n.id) || []
-                        const blockStock = stock.find((s) => s.bloque_codigo === bloques.find((b) => b.id === bloqueId)?.codigo)
-                        const qty = blockStock?.cantidad || 0
-                        const hasStock = qty > 0
-                        const isSelected = selectedLevels.has(n.id)
-                        return (
-                          <button
-                            key={n.id}
-                            type="button"
-                            disabled={!hasStock}
-                            className={`w-10 h-10 rounded text-xs font-medium transition-colors ${
-                              isSelected
-                                ? 'bg-destructive text-white'
-                                : hasStock
-                                ? 'bg-primary/10 hover:bg-primary/20 text-primary'
-                                : 'bg-muted text-muted-foreground cursor-not-allowed'
-                            }`}
-                            onClick={() => hasStock && toggleLevel(n.id, qty)}
-                            title={`N${n.numero} - Stock: ${qty}`}
-                          >
-                            <div>{n.numero}</div>
-                            <div className="text-[10px]">{qty}</div>
-                          </button>
-                        )
-                      })
-                    )}
-                  </div>
+            {subcolumnas.map((sc, scIdx) => (
+              <div key={sc.id} className="rounded-lg p-3" style={{ background: C.bgElevated, border: `1px solid ${C.borderBlue}44` }}>
+                <p className="text-sm font-medium mb-2" style={{ color: C.textWhite }}>{sc.codigo}</p>
+                <div className="flex flex-wrap gap-1">
+                  {gridData.slice(scIdx, scIdx + 1).flatMap((g) =>
+                    g.niveles.map((n) => {
+                      const stock = stockData.get(n.id) || []
+                      const blockStock = stock.find((s) => s.bloque_codigo === bloques.find((b) => b.id === bloqueId)?.codigo)
+                      const qty = blockStock?.cantidad || 0
+                      const hasStock = qty > 0
+                      const isSelected = selectedLevels.has(n.id)
+                      return (
+                        <button
+                          key={n.id}
+                          type="button"
+                          disabled={!hasStock}
+                          className="w-10 h-10 rounded text-xs font-medium transition-colors"
+                          style={{
+                            background: isSelected
+                              ? C.destructive
+                              : hasStock
+                              ? `${C.occupied}22`
+                              : `${C.borderBlue}44`,
+                            color: isSelected
+                              ? C.textWhite
+                              : hasStock
+                              ? C.occupiedLight
+                              : C.textDark,
+                            cursor: hasStock ? 'pointer' : 'not-allowed',
+                          }}
+                          onClick={() => hasStock && toggleLevel(n.id, qty)}
+                          title={`N${n.numero} - Stock: ${qty}`}
+                        >
+                          <div>{n.numero}</div>
+                          <div className="text-[10px]">{qty}</div>
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
-              )
-            })}
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      <Button onClick={handleSalida} disabled={busy || selectedLevels.size === 0} className="gap-2">
+      <Button
+        onClick={handleSalida}
+        disabled={busy || selectedLevels.size === 0}
+        className="gap-2"
+        style={{ background: C.destructive, color: C.textWhite }}
+      >
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUpFromLine className="h-4 w-4" />}
         Registrar salida ({selectedLevels.size} niveles)
       </Button>
@@ -466,9 +488,11 @@ function Historial() {
   return (
     <div className="space-y-4">
       <div className="space-y-1 max-w-xs">
-        <label className="text-sm font-medium">Sector</label>
+        <label className="text-sm font-medium" style={{ color: C.textMuted }}>Sector</label>
         <Select value={sectorId} onValueChange={setSectorId}>
-          <SelectTrigger><SelectValue placeholder="Seleccionar sector" /></SelectTrigger>
+          <SelectTrigger style={{ background: C.bgElevated, color: C.textWhite, border: `1px solid ${C.borderBlue}` }}>
+            <SelectValue placeholder="Seleccionar sector" />
+          </SelectTrigger>
           <SelectContent>
             {sectores.map((s) => <SelectItem key={s.id} value={s.id}>{s.nombre}</SelectItem>)}
           </SelectContent>
@@ -476,45 +500,57 @@ function Historial() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+        <div className="flex justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin" style={{ color: C.textLight }} />
+        </div>
       ) : movimientos.length > 0 ? (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>N° Op</TableHead>
-              <TableHead>Fecha</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead>Turno</TableHead>
-              <TableHead>Detalles</TableHead>
-              <TableHead>Usuario</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {movimientos.slice(0, 50).map((m) => (
-              <TableRow key={m.id}>
-                <TableCell className="font-mono">{m.numero_operacion}</TableCell>
-                <TableCell>{new Date(m.fecha).toLocaleString()}</TableCell>
-                <TableCell>
-                  <Badge variant={m.tipo === 'ingreso' ? 'default' : 'destructive'}>{m.tipo}</Badge>
-                </TableCell>
-                <TableCell>{m.turno}</TableCell>
-                <TableCell>
-                  {m.detalles.slice(0, 3).map((d, i) => (
-                    <span key={i} className="text-xs mr-2">
-                      {d.bloque_codigo}: {d.cantidad}
-                    </span>
-                  ))}
-                  {m.detalles.length > 3 && <span className="text-xs text-muted-foreground">+{m.detalles.length - 3}</span>}
-                </TableCell>
-                <TableCell>{m.usuario_nombre || '—'}</TableCell>
+        <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${C.borderBlue}` }}>
+          <Table>
+            <TableHeader>
+              <TableRow style={{ background: C.bgElevated }}>
+                <TableHead style={{ color: C.textLight }}>N° Op</TableHead>
+                <TableHead style={{ color: C.textLight }}>Fecha</TableHead>
+                <TableHead style={{ color: C.textLight }}>Tipo</TableHead>
+                <TableHead style={{ color: C.textLight }}>Turno</TableHead>
+                <TableHead style={{ color: C.textLight }}>Detalles</TableHead>
+                <TableHead style={{ color: C.textLight }}>Usuario</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {movimientos.slice(0, 50).map((m) => (
+                <TableRow key={m.id} style={{ borderBottom: `1px solid ${C.borderBlue}44` }}>
+                  <TableCell className="font-mono" style={{ color: C.textWhite }}>{m.numero_operacion}</TableCell>
+                  <TableCell style={{ color: C.textMuted }}>{new Date(m.fecha).toLocaleString()}</TableCell>
+                  <TableCell>
+                    <Badge
+                      style={{
+                        background: m.tipo === 'ingreso' ? `${C.success}22` : `${C.destructive}22`,
+                        color: m.tipo === 'ingreso' ? C.emptyLight : C.multiLight,
+                        border: `1px solid ${m.tipo === 'ingreso' ? `${C.success}44` : `${C.destructive}44`}`,
+                      }}
+                    >
+                      {m.tipo}
+                    </Badge>
+                  </TableCell>
+                  <TableCell style={{ color: C.textMuted }}>{m.turno}</TableCell>
+                  <TableCell>
+                    {m.detalles.slice(0, 3).map((d, i) => (
+                      <span key={i} className="text-xs mr-2" style={{ color: C.textLight }}>
+                        {d.bloque_codigo}: {d.cantidad}
+                      </span>
+                    ))}
+                    {m.detalles.length > 3 && <span className="text-xs" style={{ color: C.textDark }}>+{m.detalles.length - 3}</span>}
+                  </TableCell>
+                  <TableCell style={{ color: C.textMuted }}>{m.usuario_nombre || '—'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       ) : sectorId ? (
-        <p className="text-muted-foreground text-center py-8">Sin movimientos</p>
+        <p className="text-center py-8" style={{ color: C.textMuted }}>Sin movimientos</p>
       ) : (
-        <p className="text-muted-foreground text-center py-8">Selecciona un sector</p>
+        <p className="text-center py-8" style={{ color: C.textMuted }}>Selecciona un sector</p>
       )}
     </div>
   )

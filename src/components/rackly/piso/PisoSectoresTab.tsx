@@ -1478,24 +1478,3 @@ function OperationForm({
     </form>
   )
 }
-        className="w-full h-10 rounded-lg text-sm font-medium gap-2"
-        style={{
-          background: `${currentColor}dd`,
-          color: C.textWhite,
-        }}
-      >
-        {busy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <>
-            {isIngreso && <ArrowDownToLine className="h-4 w-4" />}
-            {isSalida && <ArrowUpFromLine className="h-4 w-4" />}
-            {isTraslado && <ArrowRightLeft className="h-4 w-4" />}
-            {isDevolucion && <RotateCcw className="h-4 w-4" />}
-          </>
-        )}
-        Registrar {tipoLabels[tipo]}
-      </Button>
-    </form>
-  )
-}

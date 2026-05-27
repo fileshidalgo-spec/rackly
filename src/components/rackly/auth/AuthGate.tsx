@@ -503,7 +503,33 @@ function LoginScreen({
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
-      toast.error('Error al iniciar sesión', { description: message })
+      const msg = message.toLowerCase()
+      if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('net::')) {
+        toast.error('Error de conexión', {
+          description: 'No se pudo conectar con el servidor. Verifica tu conexión a internet e intenta de nuevo. Si el problema persiste, espera unos minutos y vuelve a intentar.',
+          duration: 8000,
+        })
+      } else if (msg.includes('invalid login') || msg.includes('invalid credentials') || msg.includes('wrong password')) {
+        toast.error('Credenciales incorrectas', {
+          description: 'El correo o la contraseña no son correctos. Verifica tus datos e intenta de nuevo.',
+        })
+      } else if (msg.includes('email not confirmed') || msg.includes('not confirmed')) {
+        toast.error('Correo no confirmado', {
+          description: 'Debes confirmar tu correo electrónico antes de iniciar sesión. Revisa tu bandeja de entrada y haz clic en el enlace de confirmación.',
+          duration: 8000,
+        })
+      } else if (msg.includes('too many requests') || msg.includes('rate limit')) {
+        toast.warning('Demasiados intentos', {
+          description: 'Se ha excedido el límite de intentos. Espera unos minutos (5-10 min) y vuelve a intentar.',
+          duration: 8000,
+        })
+      } else if (msg.includes('user not found') || msg.includes('no user found')) {
+        toast.error('Usuario no encontrado', {
+          description: 'No existe una cuenta con este correo. Verifica el correo o regístrate como nuevo usuario.',
+        })
+      } else {
+        toast.error('Error al iniciar sesión', { description: message })
+      }
     } finally {
       setBusy(false)
     }

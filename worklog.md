@@ -154,3 +154,24 @@ Stage Summary:
 - CatalogoSearchInput now syncs its internal state with the value prop
 - All 4 movement types (ingreso, devolucion, salida, traslado) now clear ALL fields after successful registration
 - Deployed to https://rackly.pages.dev
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix critical client-side crash - "Application error: a client-side exception has occurred"
+
+Work Log:
+- Read the error screenshot using OCR: identified "@supabase/ssr: Your project's URL and API key are required to create a Supabase client!"
+- Root cause: `.env` file was missing `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` (lost during session context reset)
+- Restored env vars in `.env` with Supabase URL and service role key
+- Removed unused `SectoresTab` import from `page.tsx`
+- Rebuilt the project with `next build` - successful
+- Verified Supabase URL is properly embedded in the static output JS bundle
+- Deployed to Cloudflare Pages: https://56d04bad.rackly.pages.dev
+- Confirmed HTTP 200 response and proper HTML/JS loading
+
+Stage Summary:
+- The crash was NOT caused by the PisoSectoresTab.tsx code changes
+- It was caused by missing Supabase environment variables in `.env`
+- App is now deployed and accessible at https://56d04bad.rackly.pages.dev (also via https://rackly.pages.dev custom domain)
+- PisoSectoresTab with 3D navy design is intact and will render when user navigates to the Sectores tab

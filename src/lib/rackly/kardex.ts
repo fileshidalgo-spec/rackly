@@ -167,16 +167,51 @@ export async function stockEnUbicacion(
 }
 
 export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
-  const { data, error } = await supabase.rpc('ocupacion_celdas')
+  // Consultar todos los movimientos (solo campos necesarios para ocupación)
+  const { data, error } = await supabase
+    .from('movimientos')
+    .select('bloque, torre, piso, posicion, tipo, cantidad, codigo')
   if (error) throw error
-  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
-    bloque: String(r.bloque ?? ''),
-    torre: String(r.torre ?? ''),
-    piso: String(r.piso ?? ''),
-    posicion: String(r.posicion ?? ''),
-    stock: Number(r.stock ?? 0),
-    codigos: Array.isArray(r.codigos) ? (r.codigos as string[]).map(String) : [],
-  }))
+
+  // Calcular stock por celda usando la misma lógica que calcularStockUbicacion:
+  // Positivo = ingreso, devolucion, traslado | Negativo = salida
+  const cellMap = new Map<string, { stock: number; codigos: Set<string> }>()
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    const bloque = String(row.bloque ?? '')
+    const torre = String(row.torre ?? '')
+    const piso = String(row.piso ?? '')
+    const posicion = String(row.posicion ?? '')
+    const tipo = String(row.tipo ?? '')
+    const cantidad = Number(row.cantidad ?? 0)
+    const codigo = String(row.codigo ?? '').trim().toUpperCase()
+
+    const key = `${bloque}-${torre}-${piso}-${posicion}`
+    if (!cellMap.has(key)) {
+      cellMap.set(key, { stock: 0, codigos: new Set() })
+    }
+    const cell = cellMap.get(key)!
+    if (tipo === 'ingreso' || tipo === 'devolucion' || tipo === 'traslado') {
+      cell.stock += cantidad
+    } else if (tipo === 'salida') {
+      cell.stock -= cantidad
+    }
+    if (cell.stock > 0) {
+      cell.codigos.add(codigo)
+    }
+  }
+
+  // Retornar todas las celdas que tienen movimientos (ocupadas y vacías)
+  return Array.from(cellMap.entries()).map(([key, val]) => {
+    const [bloque, torre, piso, posicion] = key.split('-')
+    return {
+      bloque,
+      torre,
+      piso,
+      posicion,
+      stock: val.stock,
+      codigos: [...val.codigos],
+    }
+  })
 }
 
 export type TrasladoInput = {

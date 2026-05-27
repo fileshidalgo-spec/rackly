@@ -53,8 +53,35 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Download, Loader2, MapPin, Building2, Package, Warehouse, FileBarChart, ArrowDownToLine, ArrowUpFromLine, Check, ChevronRight, Search, RotateCcw } from 'lucide-react'
+import { Download, Loader2, MapPin, Building2, Package, Warehouse, FileBarChart, ArrowDownToLine, ArrowUpFromLine, Check, ChevronRight, Search, RotateCcw, CalendarDays, User, Truck } from 'lucide-react'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
+
+/* ═══════════════════════════════════════════
+   HELPERS: Formato de fecha de vencimiento
+   ═══════════════════════════════════════════ */
+
+function fmtVencimiento(fVencimiento?: string): string {
+  if (!fVencimiento) return ''
+  const d = new Date(fVencimiento + 'T00:00:00')
+  if (isNaN(d.getTime())) return fVencimiento
+  const dia = String(d.getDate()).padStart(2, '0')
+  const mes = String(d.getMonth() + 1).padStart(2, '0')
+  const anio = d.getFullYear()
+  return `${dia}/${mes}/${anio}`
+}
+
+function diasVencimiento(fVencimiento?: string): number | null {
+  if (!fVencimiento) return null
+  return Math.ceil((new Date(fVencimiento).getTime() - Date.now()) / 86400000)
+}
+
+function badgeVencimiento(dias: number | null) {
+  if (dias === null) return { label: 'Sin fecha', variant: 'secondary' as const, className: 'text-[10px]' }
+  if (dias <= 0) return { label: `Vencido`, variant: 'destructive' as const, className: 'text-[10px]' }
+  if (dias <= 15) return { label: `${dias}d`, variant: 'outline' as const, className: 'text-[10px] border-orange-300 text-orange-700 dark:text-orange-400' }
+  if (dias <= 30) return { label: `${dias}d`, variant: 'outline' as const, className: 'text-[10px] border-yellow-300 text-yellow-700 dark:text-yellow-400' }
+  return { label: `${dias}d`, variant: 'secondary' as const, className: 'text-[10px]' }
+}
 
 /* ═══════════════════════════════════════════
    TIPO: Reporte por bloque
@@ -893,9 +920,9 @@ export function OcupacionTab() {
                         </p>
                         <div className="space-y-1.5">
                           {detail.stock.map((s, i) => {
-                            const dias = s.fVencimiento
-                              ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
-                              : null
+                            const dias = diasVencimiento(s.fVencimiento)
+                            const badge = badgeVencimiento(dias)
+                            const fechaStr = fmtVencimiento(s.fVencimiento)
                             const isSelected = selectedIdx === i
                             return (
                               <button
@@ -922,19 +949,33 @@ export function OcupacionTab() {
                                   <div className="min-w-0 flex-1">
                                     <p className="font-mono font-bold text-sm text-foreground">{s.codigo}</p>
                                     <p className="text-[11px] text-muted-foreground line-clamp-2 leading-tight">{s.descripcion}</p>
+                                    {/* Fecha de vencimiento + traceabilidad */}
+                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                      {fechaStr ? (
+                                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                          <CalendarDays className="h-2.5 w-2.5" />
+                                          {fechaStr}
+                                        </span>
+                                      ) : null}
+                                      {s.usuarioPrimerNombre ? (
+                                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                          <User className="h-2.5 w-2.5" />
+                                          {s.usuarioPrimerNombre}
+                                        </span>
+                                      ) : null}
+                                      {s.proveedor ? (
+                                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                          <Truck className="h-2.5 w-2.5" />
+                                          {s.proveedor}
+                                        </span>
+                                      ) : null}
+                                    </div>
                                   </div>
                                   <div className="shrink-0 flex flex-col items-end gap-1">
                                     <Badge variant="default" className="text-xs font-bold">{s.stock} {s.un}</Badge>
-                                    {dias !== null ? (
-                                      <Badge
-                                        variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
-                                        className={`text-[10px] ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
-                                      >
-                                        {dias <= 0 ? 'Vencido' : `${dias}d`}
-                                      </Badge>
-                                    ) : (
-                                      <span className="text-[10px] text-muted-foreground">—</span>
-                                    )}
+                                    <Badge variant={badge.variant} className={badge.className}>
+                                      {badge.label}
+                                    </Badge>
                                   </div>
                                 </div>
                               </button>
@@ -951,9 +992,9 @@ export function OcupacionTab() {
                         : selectedIdx === i
                       if (!showCard) return null
 
-                      const dias = s.fVencimiento
-                        ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
-                        : null
+                      const dias = diasVencimiento(s.fVencimiento)
+                      const badge = badgeVencimiento(dias)
+                      const fechaStr = fmtVencimiento(s.fVencimiento)
 
                       return (
                         <div key={i} className="rounded-xl border-2 border-blue-200 dark:border-blue-800 bg-card p-3 space-y-3">
@@ -966,16 +1007,36 @@ export function OcupacionTab() {
                               <p className="font-mono font-bold text-sm text-foreground">{s.codigo}</p>
                               <p className="text-[11px] text-muted-foreground line-clamp-2 leading-tight">{s.descripcion}</p>
                             </div>
-                            {dias !== null ? (
-                              <Badge
-                                variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
-                                className={`shrink-0 ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
-                              >
-                                {dias <= 0 ? 'Vencido' : `${dias}d`}
-                              </Badge>
+                            <Badge variant={badge.variant} className={badge.className}>
+                              {badge.label}
+                            </Badge>
+                          </div>
+
+                          {/* Fecha de vencimiento + traceabilidad */}
+                          <div className="flex items-center gap-3 flex-wrap text-[11px] text-muted-foreground">
+                            {fechaStr ? (
+                              <span className="inline-flex items-center gap-1">
+                                <CalendarDays className="h-3 w-3" />
+                                <span className="font-medium">Venc:</span> {fechaStr}
+                              </span>
                             ) : (
-                              <span className="text-muted-foreground text-xs shrink-0">—</span>
+                              <span className="inline-flex items-center gap-1 text-muted-foreground/60">
+                                <CalendarDays className="h-3 w-3" />
+                                Sin fecha de vencimiento
+                              </span>
                             )}
+                            {s.usuarioPrimerNombre ? (
+                              <span className="inline-flex items-center gap-1">
+                                <User className="h-3 w-3" />
+                                {s.usuarioPrimerNombre}
+                              </span>
+                            ) : null}
+                            {s.proveedor ? (
+                              <span className="inline-flex items-center gap-1">
+                                <Truck className="h-3 w-3" />
+                                {s.proveedor}
+                              </span>
+                            ) : null}
                           </div>
 
                           {/* Stock disponible - grande y claro */}
@@ -1063,9 +1124,9 @@ export function OcupacionTab() {
                   {/* ── Vista tarjetas (desktop) ── */}
                   <div className="hidden sm:block space-y-2">
                     {detail.stock.map((s, i) => {
-                      const dias = s.fVencimiento
-                        ? Math.ceil((new Date(s.fVencimiento).getTime() - Date.now()) / 86400000)
-                        : null
+                      const dias = diasVencimiento(s.fVencimiento)
+                      const badge = badgeVencimiento(dias)
+                      const fechaStr = fmtVencimiento(s.fVencimiento)
                       return (
                         <div key={i} className="rounded-lg border border-blue-200 dark:border-blue-800 bg-card p-2.5 space-y-2 max-w-md mx-auto">
                           {/* Fila 1: código + descripción + vencimiento */}
@@ -1074,19 +1135,41 @@ export function OcupacionTab() {
                               <span className="font-mono font-bold text-xs text-foreground">{s.codigo}</span>
                               <span className="text-[11px] text-muted-foreground ml-1.5">{s.descripcion}</span>
                             </div>
-                            {dias !== null ? (
-                              <Badge
-                                variant={dias <= 0 ? 'destructive' : dias <= 15 ? 'outline' : 'secondary'}
-                                className={`text-[11px] shrink-0 ${dias <= 15 && dias > 0 ? 'border-orange-300 text-orange-700 dark:text-orange-400' : ''}`}
-                              >
-                                {dias <= 0 ? 'Vencido' : `${dias}d`}
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-[11px] shrink-0">—</Badge>
-                            )}
+                            <Badge variant={badge.variant} className={badge.className}>
+                              {badge.label}
+                            </Badge>
                           </div>
 
-                          {/* Fila 2: stock + input + botones */}
+                          {/* Fila 2: fecha + traceabilidad */}
+                          {(fechaStr || s.usuarioPrimerNombre || s.proveedor) && (
+                            <div className="flex items-center gap-3 flex-wrap text-[11px] text-muted-foreground -mt-0.5">
+                              {fechaStr ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <CalendarDays className="h-3 w-3" />
+                                  <span className="font-medium">Venc:</span> {fechaStr}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-muted-foreground/60">
+                                  <CalendarDays className="h-3 w-3" />
+                                  Sin fecha
+                                </span>
+                              )}
+                              {s.usuarioPrimerNombre ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <User className="h-3 w-3" />
+                                  {s.usuarioPrimerNombre}
+                                </span>
+                              ) : null}
+                              {s.proveedor ? (
+                                <span className="inline-flex items-center gap-1">
+                                  <Truck className="h-3 w-3" />
+                                  {s.proveedor}
+                                </span>
+                              ) : null}
+                            </div>
+                          )}
+
+                          {/* Fila 3: stock + input + botones */}
                           <div className="flex items-center gap-2">
                             <div className="shrink-0 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-2.5 py-1.5 text-center min-w-[72px]">
                               <p className="text-base font-bold text-foreground leading-none">{s.stock}</p>

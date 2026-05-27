@@ -1,36 +1,13 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import { fetchMovimientos, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { toast } from 'sonner'
-import {
-  Search,
-  Download,
-  Loader2,
-  Clock,
-  AlertTriangle,
-  ShieldAlert,
-  ShieldCheck,
-  Package,
-  TrendingDown,
-  ArrowUpDown,
-} from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { Search, Download, Loader2, CalendarDays, FilterX } from 'lucide-react'
 
-/* ─── Tipos ─── */
 type FefoItem = {
   codigo: string
   descripcion: string
@@ -46,143 +23,84 @@ type FefoItem = {
   status: 'vigente' | 'proximo' | 'urgente' | 'vencido'
 }
 
-type StatusKey = FefoItem['status']
-
-/* ─── Definición de rangos de vencimiento ─── */
-interface RangoVencimiento {
-  key: StatusKey
-  label: string
-  sublabel: string
-  color: string
-  activeBg: string
-  activeBorder: string
-  iconBg: string
-  hoverBg: string
-  progressColor: string
+// ── Colores explícitos por estado (sin clases dinámicas) ──
+const STATUS_BTN_ACTIVE: Record<string, string> = {
+  vigente: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300',
+  proximo: 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300',
+  urgente: 'bg-amber-500/20 border-amber-500/50 text-amber-300',
+  vencido: 'bg-red-500/20 border-red-500/50 text-red-300',
+}
+const STATUS_BTN_DOT: Record<string, string> = {
+  vigente: 'bg-emerald-400',
+  proximo: 'bg-cyan-400',
+  urgente: 'bg-amber-400',
+  vencido: 'bg-red-400',
+}
+const STATUS_BADGE: Record<string, string> = {
+  vigente: 'bg-emerald-500/25 text-emerald-200 border border-emerald-500/40',
+  proximo: 'bg-cyan-500/25 text-cyan-200 border border-cyan-500/40',
+  urgente: 'bg-amber-500/25 text-amber-200 border border-amber-500/40',
+  vencido: 'bg-red-500/25 text-red-200 border border-red-500/40',
+}
+const STATUS_BADGE_DOT: Record<string, string> = {
+  vigente: 'bg-emerald-300',
+  proximo: 'bg-cyan-300',
+  urgente: 'bg-amber-300',
+  vencido: 'bg-red-300',
+}
+const DIAS_COLOR: Record<string, string> = {
+  vigente: 'text-emerald-300',
+  proximo: 'text-cyan-300',
+  urgente: 'text-amber-300',
+  vencido: 'text-red-300',
 }
 
-const RANGOS: RangoVencimiento[] = [
-  {
-    key: 'vencido',
-    label: 'Vencidos',
-    sublabel: 'Vencido',
-    color: 'text-red-600 dark:text-red-400',
-    activeBg: 'bg-red-50 dark:bg-red-950/50',
-    activeBorder: 'border-red-500 dark:border-red-500',
-    iconBg: 'bg-red-100 dark:bg-red-900/40',
-    hoverBg: 'hover:bg-red-50/80 dark:hover:bg-red-950/30',
-    progressColor: '[&>div]:bg-red-500',
-  },
-  {
-    key: 'urgente',
-    label: '15 días',
-    sublabel: 'Urgente',
-    color: 'text-amber-600 dark:text-amber-400',
-    activeBg: 'bg-amber-50 dark:bg-amber-950/50',
-    activeBorder: 'border-amber-500 dark:border-amber-500',
-    iconBg: 'bg-amber-100 dark:bg-amber-900/40',
-    hoverBg: 'hover:bg-amber-50/80 dark:hover:bg-amber-950/30',
-    progressColor: '[&>div]:bg-amber-500',
-  },
-  {
-    key: 'proximo',
-    label: '30 días',
-    sublabel: 'Próximo',
-    color: 'text-sky-600 dark:text-sky-400',
-    activeBg: 'bg-sky-50 dark:bg-sky-950/50',
-    activeBorder: 'border-sky-500 dark:border-sky-500',
-    iconBg: 'bg-sky-100 dark:bg-sky-900/40',
-    hoverBg: 'hover:bg-sky-50/80 dark:hover:bg-sky-950/30',
-    progressColor: '[&>div]:bg-sky-500',
-  },
-  {
-    key: 'vigente',
-    label: '60+ días',
-    sublabel: 'Vigente',
-    color: 'text-emerald-600 dark:text-emerald-400',
-    activeBg: 'bg-emerald-50 dark:bg-emerald-950/50',
-    activeBorder: 'border-emerald-500 dark:border-emerald-500',
-    iconBg: 'bg-emerald-100 dark:bg-emerald-900/40',
-    hoverBg: 'hover:bg-emerald-50/80 dark:hover:bg-emerald-950/30',
-    progressColor: '[&>div]:bg-emerald-500',
-  },
-]
-
-/* ─── Componente de icono por estado ─── */
-function StatusIcon({ status, className }: { status: StatusKey; className?: string }) {
-  const cls = cn('h-4 w-4', className)
-  switch (status) {
-    case 'vencido':
-      return <ShieldAlert className={cls} />
-    case 'urgente':
-      return <AlertTriangle className={cls} />
-    case 'proximo':
-      return <Clock className={cls} />
-    case 'vigente':
-      return <ShieldCheck className={cls} />
-  }
-}
-
-/* ─── Componente principal ─── */
 export function FefoTab() {
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [search, setSearch] = useState('')
-  const [selectedRango, setSelectedRango] = useState<StatusKey | null>(null)
-  const [sortAsc, setSortAsc] = useState(true)
+  const [fechaDesde, setFechaDesde] = useState('')
+  const [fechaHasta, setFechaHasta] = useState('')
+  const [filtros, setFiltros] = useState({
+    vigente: true,
+    proximo: true,
+    urgente: true,
+    vencido: true,
+  })
   const [busy, setBusy] = useState(false)
 
   useMovimientosRealtime(setMovs)
 
-  /* ─── Calcular datos FEFO ─── */
+  const hasActiveFilters = useMemo(() => {
+    return search.trim() !== '' || fechaDesde !== '' || fechaHasta !== '' ||
+      !filtros.vigente || !filtros.proximo || !filtros.urgente || !filtros.vencido
+  }, [search, fechaDesde, fechaHasta, filtros])
+
+  function clearFilters() {
+    setSearch('')
+    setFechaDesde('')
+    setFechaHasta('')
+    setFiltros({ vigente: true, proximo: true, urgente: true, vencido: true })
+  }
+
   const fefoData = useMemo(() => {
-    const locMap = new Map<
-      string,
-      {
-        codigo: string
-        descripcion: string
-        un: string
-        bloque: string
-        torre: string
-        piso: string
-        posicion: string
-        stock: number
-        fVencimiento: string
-        proveedor?: string
-      }
-    >()
+    const locMap = new Map<string, {
+      codigo: string; descripcion: string; un: string
+      bloque: string; torre: string; piso: string; posicion: string
+      stock: number; fVencimiento: string; proveedor?: string
+    }>()
 
     for (const m of movs) {
-      if (m.tipo !== 'ingreso') continue
-      const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+      const key = `${m.codigo}||${m.fVencimiento || ''}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+      const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
       const existing = locMap.get(key)
       if (existing) {
-        existing.stock += m.cantidad
-        if (m.fVencimiento && (!existing.fVencimiento || m.fVencimiento < existing.fVencimiento)) {
-          existing.fVencimiento = m.fVencimiento
-        }
-      } else {
+        existing.stock += delta
+      } else if (delta > 0) {
         locMap.set(key, {
-          codigo: m.codigo,
-          descripcion: m.descripcion,
-          un: m.un,
-          bloque: m.bloque,
-          torre: m.torre,
-          piso: m.piso,
-          posicion: m.posicion,
-          stock: m.cantidad,
-          fVencimiento: m.fVencimiento || '',
-          proveedor: m.proveedor || undefined,
+          codigo: m.codigo, descripcion: m.descripcion, un: m.un,
+          bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
+          stock: delta, fVencimiento: m.fVencimiento || '', proveedor: m.proveedor || undefined,
         })
-      }
-    }
-
-    // Restar salidas
-    for (const m of movs) {
-      if (m.tipo !== 'salida') continue
-      const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-      const existing = locMap.get(key)
-      if (existing) {
-        existing.stock -= m.cantidad
       }
     }
 
@@ -191,452 +109,193 @@ export function FefoTab() {
     for (const [, loc] of locMap) {
       if (loc.stock <= 0 || !loc.fVencimiento) continue
       const venc = new Date(loc.fVencimiento)
-      const diff = Math.ceil(
-        (venc.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
-      )
+      const diff = Math.ceil((venc.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
       let status: FefoItem['status']
       if (diff < 0) status = 'vencido'
       else if (diff <= 15) status = 'urgente'
       else if (diff <= 30) status = 'proximo'
       else status = 'vigente'
-
-      items.push({
-        ...loc,
-        diasRestantes: diff,
-        status,
-      })
+      items.push({ ...loc, diasRestantes: diff, status })
     }
 
     return items.sort((a, b) => a.diasRestantes - b.diasRestantes)
   }, [movs])
 
-  /* ─── Conteo por rango ─── */
-  const counts = useMemo(
-    () => ({
-      vigente: fefoData.filter((i) => i.status === 'vigente').length,
-      proximo: fefoData.filter((i) => i.status === 'proximo').length,
-      urgente: fefoData.filter((i) => i.status === 'urgente').length,
-      vencido: fefoData.filter((i) => i.status === 'vencido').length,
-    }),
-    [fefoData]
-  )
-
-  const totalItems = fefoData.length
-
-  /* ─── Filtrar y ordenar ─── */
   const filtered = useMemo(() => {
     let data = fefoData
     if (search.trim()) {
       const q = search.trim().toUpperCase()
-      data = data.filter(
-        (i) =>
-          i.codigo.toUpperCase().includes(q) ||
-          i.descripcion.toUpperCase().includes(q)
-      )
+      data = data.filter((i) => i.codigo.toUpperCase().includes(q) || i.descripcion.toUpperCase().includes(q))
     }
-    if (selectedRango) {
-      data = data.filter((i) => i.status === selectedRango)
-    }
-    return sortAsc ? data : [...data].reverse()
-  }, [fefoData, search, selectedRango, sortAsc])
+    if (fechaDesde) data = data.filter((i) => i.fVencimiento >= fechaDesde)
+    if (fechaHasta) data = data.filter((i) => i.fVencimiento <= fechaHasta)
+    return data.filter((i) => filtros[i.status])
+  }, [fefoData, search, fechaDesde, fechaHasta, filtros])
 
-  /* ─── Toggle rango ─── */
-  const toggleRango = useCallback((key: StatusKey) => {
-    setSelectedRango((prev) => (prev === key ? null : key))
-  }, [])
+  const counts = useMemo(() => ({
+    vigente: fefoData.filter((i) => i.status === 'vigente').length,
+    proximo: fefoData.filter((i) => i.status === 'proximo').length,
+    urgente: fefoData.filter((i) => i.status === 'urgente').length,
+    vencido: fefoData.filter((i) => i.status === 'vencido').length,
+  }), [fefoData])
 
-  /* ─── Status badge color ─── */
-  function statusBadge(status: StatusKey) {
-    switch (status) {
-      case 'vigente':
-        return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
-      case 'proximo':
-        return 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300 border-sky-200 dark:border-sky-800'
-      case 'urgente':
-        return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 border-amber-200 dark:border-amber-800'
-      case 'vencido':
-        return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 border-red-200 dark:border-red-800'
-    }
-  }
-
-  function diasBadgeStyle(dias: number) {
-    if (dias < 0) return 'bg-red-500 text-white'
-    if (dias <= 15) return 'bg-amber-500 text-white'
-    if (dias <= 30) return 'bg-sky-500 text-white'
-    return 'bg-emerald-500 text-white'
-  }
-
-  /* ─── Exportar ─── */
   async function handleExport() {
     setBusy(true)
     try {
       const XLSX = await import('xlsx')
       const data = filtered.map((i) => ({
-        Código: i.codigo,
-        Descripción: i.descripcion,
-        Bloque: i.bloque,
-        Torre: i.torre,
-        Piso: i.piso,
-        Posición: i.posicion,
-        UN: i.un,
-        Stock: i.stock,
-        'Días restantes': i.diasRestantes,
-        'F. Vencimiento': i.fVencimiento,
-        Estado: i.status,
+        Código: i.codigo, Descripción: i.descripcion, Bloque: i.bloque, Torre: i.torre,
+        Piso: i.piso, Posición: i.posicion, UN: i.un, Stock: i.stock,
+        'Días restantes': i.diasRestantes, 'F. Vencimiento': i.fVencimiento, Estado: i.status,
       }))
       const ws = XLSX.utils.json_to_sheet(data)
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'FEFO')
-      const fecha = new Date().toISOString().slice(0, 10)
-      XLSX.writeFile(wb, `RACKLY_FEFO_${fecha}.xlsx`)
+      XLSX.writeFile(wb, `RACKLY_FEFO_${new Date().toISOString().slice(0, 10)}.xlsx`)
       toast.success('FEFO exportado')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
-      toast.error('Error al exportar', { description: message })
-    } finally {
-      setBusy(false)
-    }
+      toast.error('Error al exportar', { description: err instanceof Error ? err.message : 'Error' })
+    } finally { setBusy(false) }
   }
 
   return (
-    <div className="space-y-5">
-      {/* ─── Encabezado con búsqueda y exportar ─── */}
+    <div className="space-y-4">
+      {/* ═══ BARRA DE BÚSQUEDA ═══ */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar código o descripción..."
-            className="pl-9 h-10 bg-background"
+            className="pl-9 h-9 bg-slate-800 border-slate-600/50 text-white text-sm placeholder:text-slate-500 focus:border-sky-400"
           />
         </div>
-        <Button
-          onClick={handleExport}
-          disabled={busy || filtered.length === 0}
-          variant="outline"
-          className="gap-2 h-10"
-        >
-          {busy ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Download className="h-4 w-4" />
-          )}
+        <Button onClick={handleExport} disabled={busy} variant="outline"
+          className="h-9 gap-2 border-slate-600/50 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white text-sm font-medium">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           Exportar
         </Button>
       </div>
 
-      {/* ─── Botones de rango de vencimiento ─── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {RANGOS.map((rango) => {
-          const isActive = selectedRango === rango.key
-          const count = counts[rango.key]
-          const pct = totalItems > 0 ? (count / totalItems) * 100 : 0
-
-          return (
-            <button
-              key={rango.key}
-              type="button"
-              onClick={() => toggleRango(rango.key)}
-              className={cn(
-                'group relative flex flex-col items-start gap-2 rounded-xl border-2 p-4 transition-all duration-200 cursor-pointer text-left',
-                isActive
-                  ? cn(rango.activeBg, rango.activeBorder, 'shadow-md scale-[1.02]')
-                  : cn(
-                      'border-border/60 bg-card hover:border-border',
-                      rango.hoverBg
-                    )
-              )}
-            >
-              {/* Indicador activo */}
-              {isActive && (
-                <div className="absolute top-2 right-2">
-                  <div
-                    className={cn(
-                      'h-2.5 w-2.5 rounded-full animate-pulse',
-                      rango.key === 'vencido'
-                        ? 'bg-red-500'
-                        : rango.key === 'urgente'
-                          ? 'bg-amber-500'
-                          : rango.key === 'proximo'
-                            ? 'bg-sky-500'
-                            : 'bg-emerald-500'
-                    )}
-                  />
-                </div>
-              )}
-
-              <div className="flex items-center gap-2.5">
-                <div
-                  className={cn(
-                    'flex items-center justify-center h-9 w-9 rounded-lg transition-colors',
-                    rango.iconBg
-                  )}
-                >
-                  <StatusIcon
-                    status={rango.key}
-                    className={cn(rango.color)}
-                  />
-                </div>
-                <div className="flex flex-col">
-                  <span className={cn('text-sm font-bold leading-tight', rango.color)}>
-                    {rango.label}
-                  </span>
-                  <span className="text-xs text-muted-foreground leading-tight">
-                    {rango.sublabel}
-                  </span>
-                </div>
-              </div>
-
-              <div className="w-full space-y-1.5">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-2xl font-extrabold tabular-nums">
-                    {count}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {pct.toFixed(0)}%
-                  </span>
-                </div>
-                <Progress
-                  value={pct}
-                  className={cn('h-1.5', rango.progressColor)}
-                />
-              </div>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* ─── Barra de información y control ─── */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Package className="h-4 w-4" />
-          <span>
-            <strong className="text-foreground">{filtered.length}</strong> de{' '}
-            {totalItems} artículos
-          </span>
-          {selectedRango && (
-            <Badge
-              variant="outline"
-              className="ml-1 text-xs gap-1"
-            >
-              {RANGOS.find((r) => r.key === selectedRango)?.sublabel}
-              <button
-                type="button"
-                onClick={() => setSelectedRango(null)}
-                className="ml-0.5 hover:text-foreground transition-colors"
-                aria-label="Limpiar filtro"
-              >
-                ×
-              </button>
-            </Badge>
+      {/* ═══ RANGO DE FECHAS + LIMPIAR FILTROS ═══ */}
+      <div className="rounded-xl border border-slate-600/30 bg-slate-800/50 p-3 space-y-3">
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-sky-400" />
+            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Rango de vencimiento</span>
+          </div>
+          <div className="flex items-center gap-2 flex-1 flex-wrap">
+            <span className="text-xs font-medium text-slate-400">Desde</span>
+            <Input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)}
+              className="h-9 w-[150px] bg-slate-700/60 border-slate-600/50 text-white text-sm focus:border-sky-400" />
+            <span className="text-slate-500 text-lg">→</span>
+            <span className="text-xs font-medium text-slate-400">Hasta</span>
+            <Input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)}
+              className="h-9 w-[150px] bg-slate-700/60 border-slate-600/50 text-white text-sm focus:border-sky-400" />
+          </div>
+          {hasActiveFilters && (
+            <Button onClick={clearFilters} variant="outline" size="sm"
+              className="h-9 gap-1.5 border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 hover:text-rose-200 text-xs font-bold">
+              <FilterX className="w-4 h-4" />
+              Limpiar filtros
+            </Button>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-1.5 text-muted-foreground"
-          onClick={() => setSortAsc((a) => !a)}
-        >
-          <ArrowUpDown className="h-3.5 w-3.5" />
-          {sortAsc ? 'Ascendente' : 'Descendente'}
-        </Button>
-      </div>
 
-      {/* ─── Tabla de datos ─── */}
-      <div className="rounded-xl border border-border/60 overflow-hidden">
-        <div className="overflow-x-auto max-h-[480px] overflow-y-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/40 hover:bg-muted/40">
-                <TableHead className="text-xs font-semibold uppercase tracking-wider">
-                  Código
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider">
-                  Descripción
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider">
-                  Ubicación
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider text-right">
-                  Stock
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider">
-                  Proveedor
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider">
-                  Vencimiento
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider text-center">
-                  Días
-                </TableHead>
-                <TableHead className="text-xs font-semibold uppercase tracking-wider text-center">
-                  Estado
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((item, i) => {
-                const ubicacion = `${item.bloque}-${item.torre}-${item.piso}-${item.posicion}`
-                return (
-                  <TableRow
-                    key={i}
-                    className="group transition-colors hover:bg-muted/30"
-                  >
-                    <TableCell className="font-mono text-xs font-semibold">
-                      {item.codigo}
-                    </TableCell>
-                    <TableCell className="text-sm max-w-[200px] truncate">
-                      {item.descripcion}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="font-mono text-xs">
-                        {ubicacion}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-bold tabular-nums">
-                      {item.stock}
-                      <span className="ml-1 text-xs font-normal text-muted-foreground">
-                        {item.un}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      {item.proveedor ? (
-                        <Badge
-                          variant="outline"
-                          className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold text-xs"
-                        >
-                          {item.proveedor}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {item.fVencimiento}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <span
-                        className={cn(
-                          'inline-flex items-center justify-center min-w-[44px] px-2 py-0.5 rounded-full text-xs font-bold tabular-nums',
-                          diasBadgeStyle(item.diasRestantes)
-                        )}
-                      >
-                        {item.diasRestantes}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <span
-                        className={cn(
-                          'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border',
-                          statusBadge(item.status)
-                        )}
-                      >
-                        <StatusIcon status={item.status} className="h-3 w-3" />
-                        {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-              {filtered.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={8}
-                    className="text-center text-muted-foreground py-12"
-                  >
-                    <div className="flex flex-col items-center gap-2">
-                      <Package className="h-8 w-8 text-muted-foreground/40" />
-                      <p className="text-sm">Sin resultados</p>
-                      {selectedRango && (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedRango(null)}
-                          className="text-xs text-primary hover:underline"
-                        >
-                          Limpiar filtro
-                        </button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </div>
-
-      {/* ─── Resumen inferior con barras ─── */}
-      {totalItems > 0 && (
-        <div className="rounded-xl border border-border/60 bg-card p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <TrendingDown className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Distribución de vencimiento
-            </span>
-          </div>
-          <div className="flex h-3 rounded-full overflow-hidden bg-muted">
-            {RANGOS.map((rango) => {
-              const count = counts[rango.key]
-              if (count === 0) return null
-              const pct = (count / totalItems) * 100
-              const barColor =
-                rango.key === 'vencido'
-                  ? 'bg-red-500'
-                  : rango.key === 'urgente'
-                    ? 'bg-amber-500'
-                    : rango.key === 'proximo'
-                      ? 'bg-sky-500'
-                      : 'bg-emerald-500'
-              return (
-                <div
-                  key={rango.key}
-                  className={cn(
-                    'transition-all duration-500',
-                    barColor,
-                    selectedRango === rango.key
-                      ? 'opacity-100'
-                      : selectedRango
-                        ? 'opacity-30'
-                        : 'opacity-80'
-                  )}
-                  style={{ width: `${pct}%` }}
-                  title={`${rango.sublabel}: ${count} (${pct.toFixed(1)}%)`}
-                />
-              )
-            })}
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2.5">
-            {RANGOS.map((rango) => (
-              <button
-                key={rango.key}
-                type="button"
-                onClick={() => toggleRango(rango.key)}
-                className={cn(
-                  'flex items-center gap-1.5 text-xs transition-colors cursor-pointer',
-                  selectedRango === rango.key
-                    ? 'font-semibold'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-              >
-                <div
-                  className={cn(
-                    'h-2 w-2 rounded-full',
-                    rango.key === 'vencido'
-                      ? 'bg-red-500'
-                      : rango.key === 'urgente'
-                        ? 'bg-amber-500'
-                        : rango.key === 'proximo'
-                          ? 'bg-sky-500'
-                          : 'bg-emerald-500'
-                  )}
-                />
-                {rango.sublabel}: {counts[rango.key]}
+        {/* ═══ FILTROS POR ESTADO ═══ */}
+        <div className="flex flex-wrap gap-2">
+          {([
+            ['vigente', '> 30 días'],
+            ['proximo', '≤ 30 días'],
+            ['urgente', '≤ 15 días'],
+            ['vencido', 'Vencidos'],
+          ] as const).map(([key, label]) => {
+            const active = filtros[key as keyof typeof filtros]
+            return (
+              <button key={key} type="button"
+                onClick={() => setFiltros((f) => ({ ...f, [key]: !f[key as keyof typeof f] }))}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border ${
+                  active
+                    ? STATUS_BTN_ACTIVE[key]
+                    : 'bg-slate-700/30 border-slate-600/30 text-slate-500 hover:text-slate-400'
+                }`}>
+                <span className={`w-3 h-3 rounded-full ${active ? STATUS_BTN_DOT[key] : 'bg-slate-600'}`} />
+                {label}
+                <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  active ? 'bg-white/10' : 'bg-slate-700/50'
+                }`}>
+                  {counts[key as keyof typeof counts]}
+                </span>
               </button>
-            ))}
-          </div>
+            )
+          })}
         </div>
-      )}
+
+        {hasActiveFilters && (
+          <p className="text-xs text-slate-400">
+            Mostrando <span className="text-white font-bold">{filtered.length}</span> de{' '}
+            <span className="text-slate-300">{fefoData.length}</span> registros
+          </p>
+        )}
+      </div>
+
+      {/* ═══ TABLA ═══ */}
+      <div className="overflow-x-auto max-h-[500px] overflow-y-auto rounded-xl border border-slate-600/40 shadow-lg">
+        <table className="min-w-[750px] w-full text-sm">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-slate-800/95 backdrop-blur border-b-2 border-slate-600/40">
+              {['Código', 'Descripción', 'Bloque', 'Torre', 'Piso', 'Pos', 'Stock', 'Proveedor', 'Vencimiento', 'Días', 'Estado'].map(h => (
+                <th key={h} className={`px-4 py-3 text-xs font-bold text-slate-300 uppercase tracking-wider ${
+                  h === 'Stock' || h === 'Días' ? 'text-right' : 'text-left'
+                }`}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="bg-slate-900/60">
+            {filtered.map((item, i) => (
+              <tr key={i} className="border-b border-slate-700/25 hover:bg-slate-800/60 transition-colors">
+                <td className="px-4 py-3 font-mono font-bold text-sky-300 text-sm">{item.codigo}</td>
+                <td className="px-4 py-3 text-slate-200 max-w-[220px] truncate font-medium">{item.descripcion}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold">{item.bloque}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold">{item.torre}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold">{item.piso}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold">{item.posicion}</td>
+                <td className="px-4 py-3 text-right">
+                  <span className="text-emerald-300 font-bold text-base">{item.stock}</span>
+                  <span className="text-slate-400 ml-1 text-xs">{item.un}</span>
+                </td>
+                <td className="px-4 py-3">
+                  {item.proveedor ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-violet-500/25 text-violet-200 border border-violet-500/40">
+                      {item.proveedor}
+                    </span>
+                  ) : (
+                    <span className="text-slate-600">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-slate-200 font-medium">{item.fVencimiento}</td>
+                <td className={`px-4 py-3 text-right font-bold text-base ${DIAS_COLOR[item.status]}`}>
+                  {item.diasRestantes}
+                </td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${STATUS_BADGE[item.status]}`}>
+                    <span className={`w-2 h-2 rounded-full ${STATUS_BADGE_DOT[item.status]}`} />
+                    {item.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={11} className="text-center text-slate-500 py-10 text-base">
+                  {hasActiveFilters ? 'Sin resultados para los filtros aplicados' : 'Sin registros FEFO'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

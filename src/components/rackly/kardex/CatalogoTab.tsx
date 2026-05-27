@@ -1,16 +1,21 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import * as XLSX from 'xlsx'
 import {
   fetchCatalogo,
   parseCatalogoText,
+  parseCatalogoExcelRows,
   mergeCatalogo,
   clearCatalogo,
+  syncToPisoBloques,
+  removeFromPisoBloques,
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
 import { useAuth } from '@/hooks/useAuth'
+import { supabase } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Table,
@@ -20,17 +25,40 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Upload, Trash2, ClipboardList, FileSpreadsheet, AlertTriangle } from 'lucide-react'
+import {
+  Upload, Trash2, ClipboardList, Plus, Pencil, X, Check, Loader2, FileSpreadsheet,
+} from 'lucide-react'
 
 export function CatalogoTab() {
   const { perfil } = useAuth()
   const [text, setText] = useState('')
   const [catalogo, setCatalogo] = useState<CatalogoItem[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
+
+  // Add/Edit individual
+  const [showAdd, setShowAdd] = useState(false)
+  const [editItem, setEditItem] = useState<CatalogoItem | null>(null)
+  const [formCodigo, setFormCodigo] = useState('')
+  const [formUn, setFormUn] = useState('')
+  const [formDesc, setFormDesc] = useState('')
+  const [formSBM, setFormSBM] = useState('')
+  const [formBusy, setFormBusy] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [excelBusy, setExcelBusy] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function loadCatalogo() {
     try {
@@ -53,7 +81,6 @@ export function CatalogoTab() {
       toast.error('No se encontraron datos válidos')
       return
     }
-    setBusy(true)
     try {
       const data = await mergeCatalogo(items)
       setCatalogo(data)
@@ -62,91 +89,38 @@ export function CatalogoTab() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
       toast.error('Error al importar', { description: message })
-    } finally {
-      setBusy(false)
     }
   }
 
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleExcelUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    setBusy(true)
-    const reader = new FileReader()
-    reader.onload = async (evt) => {
-      try {
-        const data = new Uint8Array(evt.target?.result as ArrayBuffer)
-        const wb = XLSX.read(data, { type: 'array' })
-        const ws = wb.Sheets[wb.SheetNames[0]]
-        const rows: (string | number | undefined)[][] = XLSX.utils.sheet_to_json(ws, { header: 1 })
-
-        if (rows.length < 2) {
-          toast.error('El archivo está vacío o no tiene datos')
-          setBusy(false)
-          return
-        }
-
-        // Detectar columnas: buscar encabezados "codigo", "descripción", "un", "stock big magic"
-        const headerRow = (rows[0] ?? []).map((c) => String(c ?? '').trim().toUpperCase())
-        let colCodigo = -1
-        let colDescripcion = -1
-        let colUn = -1
-        let colStock = -1
-
-        for (let i = 0; i < headerRow.length; i++) {
-          const h = headerRow[i]
-          if (h.includes('CÓDIGO') || h === 'CODIGO' || h === 'COD') colCodigo = i
-          else if (h.includes('DESCRIPCI') || h.includes('DESC') || h === 'PRODUCTO' || h === 'NOMBRE') colDescripcion = i
-          else if (h === 'UN' || h === 'U.M.' || h === 'UM' || h === 'UNIT') colUn = i
-          else if (h.includes('STOCK') || h.includes('BIG MAGIC') || h === 'CANTIDAD' || h === 'QTY') colStock = i
-        }
-
-        // Si no encontró encabezados, asumir orden: código, descripción, UN, stock
-        if (colCodigo === -1 && colDescripcion === -1) {
-          colCodigo = 0
-          colDescripcion = 1
-          colUn = 2
-          colStock = 3
-        }
-
-        const items: CatalogoItem[] = []
-        for (let r = 1; r < rows.length; r++) {
-          const row = rows[r] ?? []
-          const codigo = colCodigo >= 0 ? String(row[colCodigo] ?? '').trim() : ''
-          const descripcion = colDescripcion >= 0 ? String(row[colDescripcion] ?? '').trim() : ''
-          const un = colUn >= 0 ? String(row[colUn] ?? '').trim() : ''
-          const stockRaw = colStock >= 0 ? row[colStock] : 0
-
-          if (!codigo || !un) continue
-          if (codigo.toUpperCase() === 'CÓDIGO' || codigo.toUpperCase() === 'CODIGO') continue
-
-          let stockNum = 0
-          if (typeof stockRaw === 'number') stockNum = stockRaw
-          else if (typeof stockRaw === 'string') stockNum = parseFloat(stockRaw.replace(/,/g, '')) || 0
-
-          items.push({
-            codigo,
-            descripcion,
-            un,
-            stockBigMagic: stockNum,
-          })
-        }
-
-        if (items.length === 0) {
-          toast.error('No se encontraron productos válidos en el archivo')
-        } else {
-          const data = await mergeCatalogo(items)
-          setCatalogo(data)
-          toast.success(`${items.length} ítem(s) importados desde Excel`)
-        }
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Error'
-        toast.error('Error al leer el archivo Excel', { description: message })
-      } finally {
-        setBusy(false)
-        if (fileRef.current) fileRef.current.value = ''
+    setExcelBusy(true)
+    try {
+      const XLSX = await import('xlsx')
+      const buffer = await file.arrayBuffer()
+      const wb = XLSX.read(buffer, { type: 'array' })
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json(ws) as Record<string, unknown>[]
+      if (rows.length === 0) {
+        toast.error('El archivo está vacío')
+        return
       }
+      const items = parseCatalogoExcelRows(rows)
+      if (items.length === 0) {
+        toast.error('No se encontraron columnas válidas (CÓDIGO, DESCRIPCIÓN, UN, STOCK BIG MAGIC)')
+        return
+      }
+      const data = await mergeCatalogo(items)
+      setCatalogo(data)
+      toast.success(`${items.length} ítem(s) importados desde Excel`)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error'
+      toast.error('Error al procesar Excel', { description: message })
+    } finally {
+      setExcelBusy(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
-    reader.readAsArrayBuffer(file)
   }
 
   async function handleClear() {
@@ -161,6 +135,115 @@ export function CatalogoTab() {
     }
   }
 
+  function openAdd() {
+    setFormCodigo('')
+    setFormUn('')
+    setFormDesc('')
+    setFormSBM('')
+    setShowAdd(true)
+  }
+
+  function openEdit(item: CatalogoItem) {
+    setFormCodigo(item.codigo)
+    setFormUn(item.un)
+    setFormDesc(item.descripcion)
+    setFormSBM(item.stock_big_magic ? String(item.stock_big_magic) : '')
+    setEditItem(item)
+  }
+
+  async function doSave() {
+    if (!formCodigo.trim() || !formUn.trim() || !formDesc.trim()) {
+      toast.error('Completa todos los campos')
+      return
+    }
+    setFormBusy(true)
+    try {
+      const { data: sbmData } = await supabase
+        .from('catalogo')
+        .select('stock_big_magic')
+        .eq('codigo', formCodigo.trim().toUpperCase())
+        .maybeSingle()
+
+      const existingSBM = (sbmData as Record<string, unknown>)?.stock_big_magic ?? 0
+
+      if (editItem) {
+        // Update
+        const { error } = await supabase
+          .from('catalogo')
+          .update({
+            codigo: formCodigo.trim().toUpperCase(),
+            un: formUn.trim(),
+            descripcion: formDesc.trim(),
+            stock_big_magic: formSBM ? parseFloat(formSBM) || 0 : existingSBM,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('codigo', editItem.codigo)
+        if (error) throw error
+        toast.success('Ítem actualizado')
+      } else {
+        // Insert
+        const { error } = await supabase
+          .from('catalogo')
+          .upsert({
+            codigo: formCodigo.trim().toUpperCase(),
+            un: formUn.trim(),
+            descripcion: formDesc.trim(),
+            stock_big_magic: formSBM ? parseFloat(formSBM) || 0 : 0,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'codigo' })
+        if (error) throw error
+        toast.success('Ítem agregado')
+      }
+      // Sincronizar con piso_bloques
+      await syncToPisoBloques([{
+        codigo: formCodigo.trim().toUpperCase(),
+        un: formUn.trim(),
+        descripcion: formDesc.trim(),
+        stock_big_magic: formSBM ? parseFloat(formSBM) || 0 : 0,
+      }])
+      const data = await fetchCatalogo()
+      setCatalogo(data)
+      setShowAdd(false)
+      setEditItem(null)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error'
+      toast.error(editItem ? 'Error al actualizar' : 'Error al agregar', { description: message })
+    } finally {
+      setFormBusy(false)
+    }
+  }
+
+  async function doDelete() {
+    if (!deleteTarget) return
+    setFormBusy(true)
+    try {
+      const { error } = await supabase
+        .from('catalogo')
+        .delete()
+        .eq('codigo', deleteTarget)
+      if (error) throw error
+      // Sincronizar: también eliminar de piso_bloques
+      await removeFromPisoBloques(deleteTarget)
+      const data = await fetchCatalogo()
+      setCatalogo(data)
+      setDeleteTarget(null)
+      toast.success('Ítem eliminado')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error'
+      toast.error('Error al eliminar', { description: message })
+    } finally {
+      setFormBusy(false)
+    }
+  }
+
+  const filtered = searchQuery.trim()
+    ? catalogo.filter(
+        (i) =>
+          i.codigo.toUpperCase().includes(searchQuery.toUpperCase()) ||
+          i.descripcion.toUpperCase().includes(searchQuery.toUpperCase())
+      )
+    : catalogo
+
   if (!loaded) {
     return (
       <div className="space-y-4">
@@ -172,125 +255,186 @@ export function CatalogoTab() {
     )
   }
 
-  const totalStockBM = catalogo.reduce((s, i) => s + i.stockBigMagic, 0)
-
   return (
-    <div className="space-y-5">
-      {/* ─── Importar Excel ─── */}
-      <div className="space-y-3 p-4 border rounded-lg bg-card">
-        <div className="flex items-center gap-2">
-          <FileSpreadsheet className="h-5 w-5 text-green-600" />
-          <p className="text-sm font-medium">Importar catálogo desde Excel (.xlsx)</p>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Columnas esperadas: <strong>CÓDIGO, DESCRIPCIÓN, UN, STOCK BIG MAGIC</strong>. 
-          El sistema detecta los encabezados automáticamente.
-        </p>
-        <div>
+    <div className="space-y-4">
+      {/* Búsqueda y acciones */}
+      <div className="flex flex-col sm:flex-row gap-2">
+        <div className="flex-1 relative">
           <input
-            ref={fileRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Buscar en catálogo..."
+            className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </div>
+        <div className="flex gap-2">
+          <Button onClick={openAdd} size="sm" className="gap-1.5 bg-green-600 hover:bg-green-700 text-white">
+            <Plus className="h-4 w-4" /> Agregar
+          </Button>
+          {perfil?.rol === 'admin' && (
+            <Button variant="destructive" size="sm" onClick={handleClear} className="gap-1.5">
+              <Trash2 className="h-4 w-4" /> Limpiar
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Subir archivo Excel */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium text-muted-foreground">
+            Importar catálogo desde Excel (.xlsx)
+          </p>
+          <p className="text-[10px] text-muted-foreground">Columnas: CÓDIGO, DESCRIPCIÓN, UN, STOCK BIG MAGIC</p>
+        </div>
+        <div className="flex gap-2">
+          <input
+            ref={fileInputRef}
             type="file"
             accept=".xlsx,.xls,.csv"
-            onChange={handleFileUpload}
             className="hidden"
+            onChange={handleExcelUpload}
           />
           <Button
-            onClick={() => fileRef.current?.click()}
-            disabled={busy}
-            className="gap-2"
+            onClick={() => fileInputRef.current?.click()}
+            size="sm"
+            variant="outline"
+            disabled={excelBusy}
+            className="gap-1.5 border-dashed"
           >
-            <Upload className="h-4 w-4" />
-            {busy ? 'Importando...' : 'Seleccionar archivo Excel'}
+            {excelBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+            {excelBusy ? 'Procesando...' : 'Subir Excel'}
           </Button>
         </div>
       </div>
 
-      {/* ─── Pegar datos ─── */}
-      <div className="space-y-3 p-4 border rounded-lg bg-card">
-        <div className="flex items-center gap-2">
-          <ClipboardList className="h-5 w-5 text-blue-600" />
-          <p className="text-sm font-medium">O pega datos desde Excel (TSV/CSV)</p>
+      {/* Importar desde texto (alternativa) */}
+      <details className="group">
+        <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+          Importar desde texto (pega datos TSV/CSV)
+        </summary>
+        <div className="space-y-2 mt-2">
+          <Textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={"Código\tUN\tDescripción\tStock BM\nABC123\tKG\tProducto\t100"}
+            rows={3}
+            className="text-xs"
+          />
+          <Button onClick={handleImport} size="sm" variant="outline" className="gap-1.5">
+            <Upload className="h-4 w-4" /> Importar texto
+          </Button>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Orden: código, descripción, UN, stock. Un ítem por línea.
-        </p>
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={"120\tÁCIDO CÍTRICO\tKG\t13375\n122\tÁCIDO FOSFÓRICO AL 85%\tKG\t600"}
-          rows={4}
-        />
-        <Button onClick={handleImport} disabled={busy || !text.trim()}>
-          <Upload className="h-4 w-4 mr-2" />
-          Importar
-        </Button>
-      </div>
+      </details>
 
-      {/* ─── Resumen ─── */}
-      {catalogo.length > 0 && (
-        <div className="rounded-lg border bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 p-4">
-          <div className="grid grid-cols-2 gap-4 text-center">
-            <div>
-              <p className="text-2xl font-bold text-green-600 dark:text-green-400">{catalogo.length}</p>
-              <p className="text-xs text-muted-foreground">Productos en catálogo</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{totalStockBM.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground">Stock total Big Magic</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ─── Tabla ─── */}
+      {/* Tabla de catálogo */}
       <div className="overflow-x-auto">
-        <Table>
+        <Table className="min-w-[550px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-12">#</TableHead>
               <TableHead>Código</TableHead>
+              <TableHead>UN</TableHead>
               <TableHead>Descripción</TableHead>
-              <TableHead className="w-16 text-center">UN</TableHead>
-              <TableHead className="text-right">Stock Big Magic</TableHead>
+              <TableHead className="w-24 text-right">Stock BM</TableHead>
+              <TableHead className="w-20 text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {catalogo.map((item, i) => (
+            {filtered.map((item, i) => (
               <TableRow key={item.codigo}>
                 <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                 <TableCell className="font-mono font-medium">{item.codigo}</TableCell>
+                <TableCell><Badge variant="secondary">{item.un}</Badge></TableCell>
                 <TableCell>{item.descripcion}</TableCell>
-                <TableCell className="text-center">
-                  <Badge variant="secondary">{item.un}</Badge>
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  <span className={item.stockBigMagic > 0 ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}>
-                    {item.stockBigMagic.toLocaleString()}
-                  </span>
+                <TableCell className="text-right font-mono text-xs">{item.stock_big_magic > 0 ? item.stock_big_magic : '—'}</TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button size="icon" variant="ghost" onClick={() => openEdit(item)} title="Editar">
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(item.codigo)} title="Eliminar">
+                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
-            {catalogo.length === 0 && (
+            {filtered.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                  El catálogo está vacío. Importa un archivo Excel o pega los datos.
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  {searchQuery ? 'Sin resultados' : 'El catálogo está vacío'}
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
       </div>
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">
-          Total: {catalogo.length} ítem(s)
-        </p>
-        {perfil?.rol === 'admin' && (
-          <Button variant="destructive" size="sm" onClick={handleClear}>
-            <Trash2 className="h-4 w-4 mr-2" />
-            Limpiar catálogo
-          </Button>
-        )}
-      </div>
+      <p className="text-xs text-muted-foreground">
+        Total: {filtered.length} de {catalogo.length} ítem(s)
+      </p>
+
+      {/* Diálogo Agregar/Editar */}
+      <AlertDialog open={showAdd || !!editItem} onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditItem(null) } }}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{editItem ? 'Editar ítem' : 'Agregar ítem'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {editItem ? 'Modifica los datos del ítem.' : 'Completa los datos del nuevo ítem.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Código *</Label>
+              <Input
+                value={formCodigo}
+                onChange={(e) => setFormCodigo(e.target.value)}
+                placeholder="ABC123"
+                className="h-9 font-mono"
+                disabled={!!editItem}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">UN *</Label>
+                <Input value={formUn} onChange={(e) => setFormUn(e.target.value)} placeholder="KG" className="h-9" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Stock Big Magic</Label>
+                <Input type="number" step="any" min="0" value={formSBM} onChange={(e) => setFormSBM(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Descripción *</Label>
+              <Input value={formDesc} onChange={(e) => setFormDesc(e.target.value)} placeholder="Descripción del producto" className="h-9" />
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <Button onClick={doSave} disabled={formBusy} className="gap-1.5">
+              {formBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              {editItem ? 'Guardar' : 'Agregar'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Diálogo de eliminar */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar ítem</AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Eliminar <strong className="font-mono">{deleteTarget}</strong> del catálogo? Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={doDelete}>Eliminar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

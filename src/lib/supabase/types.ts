@@ -157,6 +157,7 @@ export type Database = {
         Row: {
           bloque_id: string
           cantidad: number
+          fecha_vencimiento: string | null
           id: string
           movimiento_id: string
           nivel_id: string
@@ -164,6 +165,7 @@ export type Database = {
         Insert: {
           bloque_id: string
           cantidad: number
+          fecha_vencimiento?: string | null
           id?: string
           movimiento_id: string
           nivel_id: string
@@ -171,6 +173,7 @@ export type Database = {
         Update: {
           bloque_id?: string
           cantidad?: number
+          fecha_vencimiento?: string | null
           id?: string
           movimiento_id?: string
           nivel_id?: string
@@ -331,19 +334,19 @@ export type Database = {
         Row: {
           created_at: string
           id: string
-          role: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
+          role: 'admin' | 'operario'
           user_id: string
         }
         Insert: {
           created_at?: string
           id?: string
-          role: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
+          role: 'admin' | 'operario'
           user_id: string
         }
         Update: {
           created_at?: string
           id?: string
-          role?: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
+          role?: 'admin' | 'operario'
           user_id?: string
         }
         Relationships: []
@@ -354,7 +357,7 @@ export type Database = {
     }
     Functions: {
       has_role: {
-        Args: { _role: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'; _user_id: string }
+        Args: { _role: 'admin' | 'operario'; _user_id: string }
         Returns: boolean
       }
       ocupacion_celdas: {
@@ -381,6 +384,30 @@ export type Database = {
           usuario_nombre: string | null
         }
       }
+      piso_stock_detalle_posicion: {
+        Args: { _posicion_id: string }
+        Returns: {
+          bloque_descripcion: string
+          bloque_id: string
+          bloque_codigo: string
+          bloque_unidad: string
+          cantidad: number
+          fecha_vencimiento: string
+        }[]
+      }
+      piso_stock_sector_grid: {
+        Args: { _sector_id: string }
+        Returns: {
+          bloque_id: string
+          bloque_codigo: string
+          columna_letra: string
+          posicion_id: string
+          posicion_numero: number
+          stock_total: number
+          subcolumna_codigo: string
+          bloques_json: Json
+        }[]
+      }
       primer_nombre_usuario: {
         Args: { _correo: string; _nombre: string }
         Returns: string
@@ -405,7 +432,7 @@ export type Database = {
       }
     }
     Enums: {
-      app_role: 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
+      app_role: 'admin' | 'operario'
     }
     CompositeTypes: {
       [_ in never]: never

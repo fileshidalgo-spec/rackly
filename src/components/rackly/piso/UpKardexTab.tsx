@@ -57,9 +57,11 @@ export function UpKardexTab() {
 
       const items = data
         .map((row) => ({
+          id: crypto.randomUUID(),
           codigo: String(row[codeCol] ?? '').trim().toUpperCase(),
           descripcion: String(row[descCol] ?? '').trim(),
           unidad: String(row[unitCol] ?? 'KG').trim(),
+          created_at: new Date().toISOString(),
         }))
         .filter((item) => item.codigo && item.codigo !== codeCol.toUpperCase())
 

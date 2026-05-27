@@ -167,16 +167,28 @@ export async function stockEnUbicacion(
 }
 
 export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
-  // Consultar todos los movimientos (solo campos necesarios para ocupación)
-  const { data, error } = await supabase
-    .from('movimientos')
-    .select('bloque, torre, piso, posicion, tipo, cantidad, codigo')
-  if (error) throw error
+  // Consultar TODOS los movimientos con paginación (límite default de Supabase: 1000)
+  const PAGE_SIZE = 1000
+  const all: Record<string, unknown>[] = []
+  let from = 0
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const to = from + PAGE_SIZE - 1
+    const { data, error } = await supabase
+      .from('movimientos')
+      .select('bloque, torre, piso, posicion, tipo, cantidad, codigo')
+      .range(from, to)
+    if (error) throw error
+    const rows = data ?? []
+    all.push(...rows)
+    if (rows.length < PAGE_SIZE) break
+    from += PAGE_SIZE
+  }
 
   // Calcular stock por celda usando la misma lógica que calcularStockUbicacion:
   // Positivo = ingreso, devolucion, traslado | Negativo = salida
   const cellMap = new Map<string, { stock: number; codigos: Set<string> }>()
-  for (const row of (data ?? []) as Record<string, unknown>[]) {
+  for (const row of all) {
     const bloque = String(row.bloque ?? '')
     const torre = String(row.torre ?? '')
     const piso = String(row.piso ?? '')

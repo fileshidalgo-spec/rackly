@@ -669,7 +669,7 @@ function ColumnShelf({
       </div>
 
       {/* Subcolumn groups */}
-      <div className="grid gap-4 md:gap-5" style={{ gridTemplateColumns: `repeat(${Math.min(subKeys.length, 4)}, minmax(0, 1fr))` }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(subKeys.length, 6)}, minmax(0, 1fr))` }}>
         {subKeys.map((subKey) => (
           <SubcolumnGroup
             key={subKey}
@@ -705,7 +705,7 @@ function SubcolumnGroup({
       <p className="text-xs font-medium mb-2 tracking-wide uppercase" style={{ color: C.textDark }}>
         {subKey}
       </p>
-      <div className="grid grid-cols-5 gap-1.5">
+      <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(36px, 1fr))' }}>
         {positions.map((pos) => (
           <PositionCell3D
             key={pos.posicionId}
@@ -743,9 +743,9 @@ function PositionCell3D({
       onClick={onClick}
       className="relative group cursor-pointer transition-all duration-200 hover:scale-105 focus:outline-none"
       style={{
-        width: '100%',
-        aspectRatio: '1',
-        minWidth: 0,
+        width: '36px',
+        height: '36px',
+        minWidth: '36px',
       }}
       title={`${pos.columnaLetra}-${pos.subcolumnaCodigo}-${pos.posicionNumero} | Stock: ${fmtQty(pos.stock)}`}
     >
@@ -761,42 +761,42 @@ function PositionCell3D({
           zIndex: 2,
         }}
       >
-        {/* Stock count badge */}
+        {/* Stock count */}
         {isOccupied && (
           <span
-            className="text-[9px] md:text-[10px] font-bold leading-none"
+            className="text-[11px] font-bold leading-none"
             style={{ color: C.textWhite }}
           >
             {fmtQty(pos.stock)}
           </span>
         )}
 
-        {/* Box icon for occupied */}
+        {/* Icon */}
         {isOccupied && !isMulti && (
           <Package
-            className="h-2.5 w-2.5 md:h-3 md:w-3 mt-0.5"
+            className="h-2.5 w-2.5 mt-0.5"
             style={{ color: `${C.textWhite}88` }}
           />
         )}
         {isMulti && (
           <Layers3
-            className="h-2.5 w-2.5 md:h-3 md:w-3 mt-0.5"
+            className="h-2.5 w-2.5 mt-0.5"
             style={{ color: C.textWhite }}
           />
         )}
 
-        {/* Empty indicator */}
+        {/* Empty dot */}
         {isEmpty && (
           <div
-            className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full"
+            className="w-2 h-2 rounded-full"
             style={{ background: `${C.emptyLight}44` }}
           />
         )}
 
         {/* Position number */}
         <span
-          className="text-[7px] md:text-[8px] mt-0.5 leading-none"
-          style={{ color: `${C.textMuted}` }}
+          className="text-[9px] mt-0.5 leading-none font-medium"
+          style={{ color: C.textLight }}
         >
           {pos.posicionNumero}
         </span>

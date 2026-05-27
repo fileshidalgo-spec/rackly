@@ -475,7 +475,7 @@ function RacklyApp() {
                     Exporta a Excel movimientos y stock actual.
                   </CardDescription>
                 </CardHeader>
-                <CardContent><DescargaTab /></CardContent>
+                <CardContent><DescargaTab movimientos={movs} /></CardContent>
               </Card>
             </TabsContent>
 

@@ -44,7 +44,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { Loader2, ArrowRightLeft, PackageSearch } from 'lucide-react'
+import { Loader2, ArrowRightLeft, ArrowDown, ArrowUp, Minus, Equal } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 type LocStock = {
@@ -125,6 +125,8 @@ export function TrasladoTab() {
   }
 
   const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedOrigin)
+  const qtyNum = qty ? parseFloat(qty) : 0
+  const diff = qtyNum - (origin?.stock ?? 0)
 
   function handleConfirm() {
     if (!origin) return
@@ -138,26 +140,18 @@ export function TrasladoTab() {
       toast.error('Completa la ubicación de destino')
       return
     }
-    const qtyNum = parseFloat(qty)
     if (!qtyNum || qtyNum <= 0) {
       toast.error('Ingresa una cantidad válida mayor a 0')
       return
     }
-    // Permitir qty > stock con confirmación especial
-    if (qtyNum > origin.stock) {
-      setExceedsStock(true)
-    } else {
-      setExceedsStock(false)
-    }
+    setExceedsStock(diff > 0)
     setConfirm(true)
   }
 
   async function doTraslado() {
     if (!origin || !perfil) return
-    const qtyNum = parseFloat(qty)
     setBusy(true)
     try {
-      const diferencia = qtyNum - origin.stock
       const result = await trasladarMovimiento({
         codigo: origin.codigo,
         descripcion: origin.descripcion,
@@ -183,10 +177,12 @@ export function TrasladoTab() {
         fVencimiento: origin.fVencimiento,
         proveedor: origin.proveedor,
       })
-      if (diferencia > 0) {
-        toast.success(`Traslado registrado. Se generó un ingreso de corrección de ${diferencia} ${origin.un} en origen.`, { duration: 5000 })
+      if (diff > 0) {
+        toast.success(`Traslado registrado. Se generó un ingreso de corrección de ${diff} ${origin.un} en origen.`, { duration: 5000 })
+      } else if (diff < 0) {
+        toast.success(`Traslado registrado. Quedan ${origin.stock - qtyNum} ${origin.un} en el origen.`, { duration: 5000 })
       } else {
-        toast.success('Traslado registrado')
+        toast.success('Traslado registrado. Se trasladó todo el stock al destino.')
       }
       setMovs(result)
       resetForm()
@@ -322,7 +318,7 @@ export function TrasladoTab() {
           </div>
 
           <div className="space-y-1">
-            <Label>Cantidad a trasladar {origin.un}</Label>
+            <Label>Cantidad a trasladar ({origin.un})</Label>
             <Input
               type="text"
               inputMode="decimal"
@@ -334,53 +330,152 @@ export function TrasladoTab() {
               onFocus={(e) => e.target.select()}
               placeholder={`Stock disponible: ${origin.stock} ${origin.un}`}
             />
-            {qty && parseFloat(qty) > origin.stock && (
-              <p className="text-xs text-blue-600 dark:text-blue-400 font-medium">
-                La cantidad ({parseFloat(qty)}) supera el stock del sistema ({origin.stock} {origin.un}). Se generará un ingreso de corrección automático de {(parseFloat(qty) - origin.stock)} {origin.un} en el origen.
-              </p>
-            )}
           </div>
 
-          <Button onClick={handleConfirm} disabled={!destBloque || !destTorre || !destPiso || !destPos || !qty || parseFloat(qty) <= 0} className="gap-2">
+          {/* ─── PANEL DE AJUSTE EN TIEMPO REAL ─── */}
+          {qty && qtyNum > 0 && (
+            <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+              <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Resumen del ajuste</p>
+
+              {/* Fila Origen */}
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground font-medium w-14 shrink-0">Origen</span>
+                <span className="font-bold">{origin.stock} {origin.un}</span>
+                {diff > 0 ? (
+                  <>
+                    <span className="text-green-600 dark:text-green-400 font-medium flex items-center gap-0.5">
+                      <ArrowUp className="h-3 w-3" /> +{Math.abs(diff)} {origin.un}
+                    </span>
+                    <span className="text-muted-foreground text-xs">(corrección)</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-red-600 dark:text-red-400 font-medium flex items-center gap-0.5">
+                      <ArrowDown className="h-3 w-3" /> -{qtyNum} {origin.un}
+                    </span>
+                    <span className="text-muted-foreground text-xs">(salida)</span>
+                  </>
+                )}
+                <Equal className="h-3 w-3 text-muted-foreground" />
+                <span className="font-bold">
+                  {diff > 0 ? 0 : (origin.stock - qtyNum)} {origin.un}
+                </span>
+                <span className="text-muted-foreground text-xs">(queda)</span>
+              </div>
+
+              {/* Fila Destino */}
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground font-medium w-14 shrink-0">Destino</span>
+                <span className="font-bold">0 {origin.un}</span>
+                <span className="text-blue-600 dark:text-blue-400 font-medium flex items-center gap-0.5">
+                  <ArrowDown className="h-3 w-3 rotate-180" /> +{qtyNum} {origin.un}
+                </span>
+                <span className="text-muted-foreground text-xs">(traslado)</span>
+                <Equal className="h-3 w-3 text-muted-foreground" />
+                <span className="font-bold">{qtyNum} {origin.un}</span>
+                <span className="text-muted-foreground text-xs">(nuevo stock)</span>
+              </div>
+
+              {/* Mensaje de advertencia o información */}
+              {diff > 0 && (
+                <div className="flex items-start gap-2 mt-1 p-2 rounded bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+                  <ArrowUp className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                  <p className="text-xs text-blue-700 dark:text-blue-300">
+                    <strong>Traslado mayor al stock:</strong> Se generará un ingreso de corrección de <strong>{Math.abs(diff)} {origin.un}</strong> en el origen antes de la salida. El origen quedará en 0 y el destino recibirá {qtyNum} {origin.un}.
+                  </p>
+                </div>
+              )}
+              {diff < 0 && (
+                <div className="flex items-start gap-2 mt-1 p-2 rounded bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800">
+                  <Minus className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0 mt-0.5" />
+                  <p className="text-xs text-green-700 dark:text-green-300">
+                    <strong>Traslado parcial:</strong> Se trasladan {qtyNum} {origin.un} al destino. Quedan <strong>{origin.stock - qtyNum} {origin.un}</strong> en el origen.
+                  </p>
+                </div>
+              )}
+              {diff === 0 && (
+                <div className="flex items-start gap-2 mt-1 p-2 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+                  <Equal className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    <strong>Traslado total:</strong> Se trasladan todos los {origin.stock} {origin.un} al destino. El origen quedará vacío.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <Button onClick={handleConfirm} disabled={!destBloque || !destTorre || !destPiso || !destPos || !qty || qtyNum <= 0} className="gap-2">
             <ArrowRightLeft className="h-4 w-4" />
             Confirmar traslado
           </Button>
         </div>
       )}
 
-      {/* Dialog de confirmación */}
+      {/* ─── Dialog de confirmación ─── */}
       <AlertDialog open={confirm} onOpenChange={(open) => { if (!open) { setConfirm(false); setExceedsStock(false) } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {exceedsStock ? 'Traslado con corrección de stock' : 'Confirmar traslado'}
+              {diff > 0 ? 'Traslado con corrección de stock' : diff < 0 ? 'Traslado parcial' : 'Confirmar traslado total'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm">
-                {exceedsStock && (
-                  <>
-                    <div className="rounded-lg border border-blue-300 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 p-3 text-blue-700 dark:text-blue-300">
-                      <p className="font-medium mb-1">Corrección automática</p>
-                      <p>La cantidad supera el stock del sistema. Se registrará un <strong>ingreso de corrección</strong> de <strong>{(() => { const q = parseFloat(qty); const o = origin?.stock ?? 0; return (q - o).toLocaleString() })()} {origin?.un}</strong> en el origen para igualar la cantidad física real.</p>
-                    </div>
-                    <div className="rounded-lg border border-muted p-2.5 text-xs text-muted-foreground space-y-1">
-                      <p>• Origen: stock {origin?.stock} {origin?.un} → ingreso de {(() => { const q = parseFloat(qty); const o = origin?.stock ?? 0; return (q - o).toLocaleString() })()} {origin?.un} → stock {parseFloat(qty)} {origin?.un}</p>
-                      <p>• Luego: salida de {qty} {origin?.un} en origen → stock 0</p>
-                      <p>• Destino: ingreso de {qty} {origin?.un} por traslado</p>
-                    </div>
-                  </>
-                )}
                 <p><strong>Código:</strong> {origin?.codigo} — {origin?.descripcion}</p>
                 <p><strong>Cantidad a trasladar:</strong> {qty} {origin?.un}</p>
-                <p><strong>Origen:</strong> B{origin?.bloque} T{origin?.torre} P{origin?.piso} Pos{origin?.posicion}</p>
+                <p><strong>Origen:</strong> B{origin?.bloque} T{origin?.torre} P{origin?.piso} Pos{origin?.posicion} (stock: {origin?.stock} {origin?.un})</p>
                 <p><strong>Destino:</strong> B{destBloque} T{destTorre} P{destPiso} Pos{destPos}</p>
+
+                {/* Detalle del ajuste */}
+                <div className="rounded-lg border bg-muted/50 p-3 space-y-2 mt-2">
+                  <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Detalle del ajuste</p>
+
+                  {diff > 0 ? (
+                    <>
+                      <div className="rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-2 space-y-1 text-xs">
+                        <p className="font-bold text-blue-700 dark:text-blue-300">Corrección automática (+{Math.abs(diff)} {origin?.un})</p>
+                        <p className="text-muted-foreground">Se registrará un <strong>ingreso de corrección</strong> de {Math.abs(diff)} {origin?.un} en el origen.</p>
+                        <p className="text-muted-foreground">Luego una <strong>salida</strong> de {qty} {origin?.un} en el origen.</p>
+                        <p className="text-muted-foreground">El origen quedará en <strong>0 {origin?.un}</strong>.</p>
+                      </div>
+                      <p className="text-xs">
+                        <strong>Destino:</strong> Recibirá <strong>{qty} {origin?.un}</strong> por traslado.
+                      </p>
+                    </>
+                  ) : diff < 0 ? (
+                    <>
+                      <div className="rounded border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30 p-2 space-y-1 text-xs">
+                        <p className="font-bold text-green-700 dark:text-green-300">Traslado parcial</p>
+                        <p className="text-muted-foreground">Se registrará una <strong>salida</strong> de {qty} {origin?.un} en el origen.</p>
+                        <p className="text-muted-foreground">El origen quedará con <strong>{origin?.stock - qtyNum} {origin?.un}</strong>.</p>
+                      </div>
+                      <p className="text-xs">
+                        <strong>Destino:</strong> Recibirá <strong>{qty} {origin?.un}</strong> por traslado.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-2 space-y-1 text-xs">
+                        <p className="font-bold text-amber-700 dark:text-amber-300">Traslado total</p>
+                        <p className="text-muted-foreground">Se registrará una <strong>salida</strong> de {origin?.stock} {origin?.un} en el origen.</p>
+                        <p className="text-muted-foreground">El origen quedará <strong>vacío (0 {origin?.un})</strong>.</p>
+                      </div>
+                      <p className="text-xs">
+                        <strong>Destino:</strong> Recibirá <strong>{origin?.stock} {origin?.un}</strong> por traslado.
+                      </p>
+                    </>
+                  )}
+                </div>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={doTraslado}>
-              {busy ? 'Procesando...' : 'Confirmar'}
+              {busy ? (
+                <span className="flex items-center gap-1.5"><Loader2 className="h-4 w-4 animate-spin" /> Procesando...</span>
+              ) : (
+                'Confirmar traslado'
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

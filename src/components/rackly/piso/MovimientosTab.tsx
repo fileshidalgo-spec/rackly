@@ -186,20 +186,19 @@ export function MovimientosTab() {
     setBusyExport(true)
     try {
       const XLSX = await import('xlsx')
-      const rows = movsFiltrados.map((m) => {
-        const bloques = m.detalles.map((d) => `${d.bloque_codigo || '?'}:${d.cantidad}`).join(' | ')
-        const niveles = m.detalles.map((d) => d.nivel_codigo || '').filter(Boolean).join(' | ')
-        return {
+      const rows = movsFiltrados.flatMap((m) =>
+        m.detalles.map((d) => ({
           'N° Op.': m.numero_operacion,
           'Fecha': fmtFecha(m.fecha),
-          'Tipo': m.tipo,
+          'Tipo': tipoBadgeLabel(m.tipo),
           'Turno': m.turno,
           'Usuario': m.usuario_nombre || '',
-          'Bloques (cant)': bloques,
-          'Niveles': niveles,
-          'Total Cant.': m.detalles.reduce((s, d) => s + d.cantidad, 0),
-        }
-      })
+          'Código': d.bloque_codigo || '',
+          'Descripción': d.bloque_descripcion || '',
+          'Cantidad': d.cantidad,
+          'Nivel': d.nivel_codigo || '',
+        }))
+      )
       const ws = XLSX.utils.json_to_sheet(rows)
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Movimientos Piso')
@@ -437,44 +436,63 @@ export function MovimientosTab() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">N° Op</TableHead>
-                    <TableHead className="text-xs">Fecha</TableHead>
-                    <TableHead className="text-xs">Tipo</TableHead>
-                    <TableHead className="text-xs">Turno</TableHead>
-                    <TableHead className="text-xs">Bloques (cant)</TableHead>
-                    <TableHead className="text-xs hidden sm:table-cell">Niveles</TableHead>
-                    <TableHead className="text-xs">Usuario</TableHead>
+                    <TableHead className="text-xs font-semibold">N° Op</TableHead>
+                    <TableHead className="text-xs font-semibold">Fecha</TableHead>
+                    <TableHead className="text-xs font-semibold">Tipo</TableHead>
+                    <TableHead className="text-xs font-semibold">Turno</TableHead>
+                    <TableHead className="text-xs font-semibold">Código</TableHead>
+                    <TableHead className="text-xs font-semibold">Descripción</TableHead>
+                    <TableHead className="text-xs font-semibold text-right">Cant.</TableHead>
+                    <TableHead className="text-xs font-semibold hidden sm:table-cell">Nivel</TableHead>
+                    <TableHead className="text-xs font-semibold">Usuario</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {movsFiltrados.slice(0, 100).map((m) => (
-                    <TableRow key={m.id}>
-                      <TableCell className="font-mono text-sm font-medium">{m.numero_operacion}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtFecha(m.fecha)}</TableCell>
-                      <TableCell>
-                        <Badge variant={tipoBadgeVariant(m.tipo)} className="text-xs">
-                          {tipoBadgeLabel(m.tipo)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm">{m.turno}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {m.detalles.slice(0, 4).map((d, i) => (
-                            <span key={i} className="text-xs font-mono px-1.5 py-0.5 rounded bg-muted font-medium">
-                              {d.bloque_codigo}:{d.cantidad}
+                    m.detalles.map((d, dIdx) => (
+                      <TableRow key={`${m.id}-${dIdx}`} className={dIdx > 0 ? 'border-t border-dashed' : ''}>
+                        {dIdx === 0 && (
+                          <>
+                            <TableCell rowSpan={m.detalles.length} className="font-mono text-sm font-medium align-top">
+                              {m.numero_operacion}
+                            </TableCell>
+                            <TableCell rowSpan={m.detalles.length} className="text-sm text-muted-foreground align-top whitespace-nowrap">
+                              {fmtFecha(m.fecha)}
+                            </TableCell>
+                            <TableCell rowSpan={m.detalles.length} className="align-top">
+                              <Badge variant={tipoBadgeVariant(m.tipo)} className="text-xs">
+                                {tipoBadgeLabel(m.tipo)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell rowSpan={m.detalles.length} className="text-sm align-top">
+                              {m.turno}
+                            </TableCell>
+                          </>
+                        )}
+                        <TableCell className="font-mono text-sm font-semibold text-blue-700">
+                          {d.bloque_codigo || '—'}
+                        </TableCell>
+                        <TableCell className="text-sm text-foreground max-w-[200px] truncate" title={d.bloque_descripcion || ''}>
+                          {d.bloque_descripcion || '—'}
+                        </TableCell>
+                        <TableCell className="text-sm font-semibold text-right">
+                          {d.cantidad}
+                        </TableCell>
+                        {dIdx === 0 && (
+                          <TableCell rowSpan={m.detalles.length} className="hidden sm:table-cell align-top">
+                            <span className="text-xs font-mono text-muted-foreground">
+                              {m.detalles.slice(0, 3).map((det) => det.nivel_codigo || '').filter(Boolean).join(', ')}
+                              {m.detalles.length > 3 && '...'}
                             </span>
-                          ))}
-                          {m.detalles.length > 4 && <span className="text-xs text-muted-foreground">+{m.detalles.length - 4}</span>}
-                        </div>
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell">
-                        <span className="text-xs font-mono text-muted-foreground">
-                          {m.detalles.slice(0, 2).map((d) => d.nivel_codigo || '').filter(Boolean).join(', ')}
-                          {m.detalles.length > 2 && '...'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-sm">{m.usuario_nombre || '—'}</TableCell>
-                    </TableRow>
+                          </TableCell>
+                        )}
+                        {dIdx === 0 && (
+                          <TableCell rowSpan={m.detalles.length} className="text-sm align-top whitespace-nowrap">
+                            {m.usuario_nombre || '—'}
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))
                   ))}
                 </TableBody>
               </Table>

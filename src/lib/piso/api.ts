@@ -68,6 +68,7 @@ export type MovimientoDetalle = {
 export type MovimientoConDetalles = PisoMovimiento & {
   detalles: (MovimientoDetalle & {
     bloque_codigo?: string
+    bloque_descripcion?: string
     nivel_codigo?: string
   })[]
 }
@@ -347,7 +348,7 @@ export async function listarMovimientos(
     blockIds.length > 0
       ? supabase
           .from('piso_bloques')
-          .select('id, codigo')
+          .select('id, codigo, descripcion')
           .in('id', blockIds)
       : Promise.resolve({ data: [], error: null }),
     nivelIds.length > 0
@@ -358,9 +359,9 @@ export async function listarMovimientos(
       : Promise.resolve({ data: [], error: null }),
   ])
 
-  const bloqueMap = new Map<string, string>()
-  ;((bloquesRes.data ?? []) as { id: string; codigo: string }[]).forEach(
-    (b) => bloqueMap.set(b.id, b.codigo)
+  const bloqueMap = new Map<string, { codigo: string; descripcion: string }>()
+  ;((bloquesRes.data ?? []) as { id: string; codigo: string; descripcion: string }[]).forEach(
+    (b) => bloqueMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '' })
   )
   const nivelMap = new Map<string, string | null>()
   ;(
@@ -371,7 +372,8 @@ export async function listarMovimientos(
     ...m,
     detalles: (detalleMap.get(m.id) ?? []).map((d) => ({
       ...d,
-      bloque_codigo: bloqueMap.get(d.bloque_id),
+      bloque_codigo: bloqueMap.get(d.bloque_id)?.codigo,
+      bloque_descripcion: bloqueMap.get(d.bloque_id)?.descripcion,
       nivel_codigo: nivelMap.get(d.nivel_id) ?? undefined,
     })),
   }))

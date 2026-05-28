@@ -33,7 +33,17 @@ import {
   Check, AlertTriangle, ToggleLeft, ToggleRight,
 } from 'lucide-react'
 
-type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number }
+type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }
+type SalItem = {
+  bloque_id: string
+  bloque_codigo: string
+  bloque_descripcion: string
+  bloque_unidad: string
+  cantidad: string
+  stockActual: number
+  fecha_vencimiento: string
+  selected: boolean
+}
 type BloqueOption = { id: string; codigo: string; descripcion: string; unidad: string }
 type ActionMode = 'view' | 'ingreso' | 'salida' | 'traslado' | 'devolucion'
 
@@ -143,7 +153,7 @@ export function PisoSectoresTab() {
   const [ingRows, setIngRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
 
   // Salida state
-  const [salItems, setSalItems] = useState<{ bloque_id: string; cantidad: string }[]>([])
+  const [salItems, setSalItems] = useState<SalItem[]>([])
 
   // Traslado state
   type TrItem = {
@@ -262,7 +272,16 @@ export function PisoSectoresTab() {
       if (mountedRef.current) {
         setDetail({ posicionId: pos.posicionId, posicionNumero: pos.posicionNumero, subcolumnaCodigo: pos.subcolumnaCodigo, columnaLetra: pos.columnaLetra, stock })
         setMode('view')
-        setSalItems(stock.map((s) => ({ bloque_id: s.bloque_id, cantidad: String(s.cantidad) })))
+        setSalItems(stock.map((s) => ({
+          bloque_id: s.bloque_id,
+          bloque_codigo: s.bloque_codigo,
+          bloque_descripcion: s.bloque_descripcion,
+          bloque_unidad: s.bloque_unidad,
+          cantidad: String(s.cantidad),
+          stockActual: s.cantidad,
+          fecha_vencimiento: s.fecha_vencimiento || '',
+          selected: true,
+        })))
         setTrItems(stock.map((s) => ({
           bloque_id: s.bloque_id,
           bloque_codigo: s.bloque_codigo,
@@ -283,7 +302,16 @@ export function PisoSectoresTab() {
   }
 
   function openSalida() {
-    if (detail) setSalItems(detail.stock.map((s) => ({ bloque_id: s.bloque_id, cantidad: String(s.cantidad) })))
+    if (detail) setSalItems(detail.stock.map((s) => ({
+      bloque_id: s.bloque_id,
+      bloque_codigo: s.bloque_codigo,
+      bloque_descripcion: s.bloque_descripcion,
+      bloque_unidad: s.bloque_unidad,
+      cantidad: String(s.cantidad),
+      stockActual: s.cantidad,
+      fecha_vencimiento: s.fecha_vencimiento || '',
+      selected: true,
+    })))
     setMode('salida')
   }
 
@@ -466,7 +494,7 @@ export function PisoSectoresTab() {
 
   async function doSalida() {
     if (!detail || !perfil) return
-    const validRows = salItems.filter((r) => r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
+    const validRows = salItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para salir'); return }
     setBusy(true)
     try {
@@ -990,7 +1018,7 @@ export function PisoSectoresTab() {
                 detail.stock.length > 0 ? (
                   <div className="space-y-2.5 mt-4">
                     {detail.stock.map((s, idx) => (
-                      <div key={s.bloque_id}
+                      <div key={`${s.bloque_id}-${s.fecha_vencimiento}-${idx}`}
                         className="rounded-xl border border-slate-700/40 bg-slate-800/50 backdrop-blur-sm p-3.5 hover:border-slate-600/50 transition-all duration-300 hover:shadow-lg group/item">
                         <div className="flex items-start justify-between">
                           <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -998,8 +1026,20 @@ export function PisoSectoresTab() {
                             <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-slate-700/60 flex items-center justify-center text-[9px] font-bold text-slate-300 border border-slate-600/40">
                               {idx + 1}
                             </div>
-                            <div className="min-w-0">
-                              <span className="font-mono text-sky-300 font-bold text-sm">{s.bloque_codigo}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-sky-300 font-bold text-sm">{s.bloque_codigo}</span>
+                                {s.fecha_vencimiento && (
+                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/20 flex items-center gap-0.5">
+                                    <Calendar className="h-2.5 w-2.5" /> {s.fecha_vencimiento}
+                                  </span>
+                                )}
+                                {!s.fecha_vencimiento && (
+                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-700/40 text-slate-400 border border-slate-600/30 flex items-center gap-0.5">
+                                    <CalendarOff className="h-2.5 w-2.5" /> Sin fecha
+                                  </span>
+                                )}
+                              </div>
                               <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
                             </div>
                           </div>
@@ -1105,21 +1145,54 @@ export function PisoSectoresTab() {
               {/* ── SALIDA MODE ── */}
               {mode === 'salida' && (
                 <div className="space-y-3 mt-4">
-                  <p className="text-xs font-bold text-slate-300">Articulos a salir:</p>
-                  {salItems.map((row, i) => {
-                    const bloque = bloquesCatalogo.find((b) => b.id === row.bloque_id)
-                    return (
-                      <div key={i} className="flex items-center gap-3 rounded-xl border border-red-500/15 bg-slate-800/40 backdrop-blur-sm p-3 border-l-2 border-l-red-500/40 transition-all duration-300">
-                        <div className="w-6 h-6 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-[9px] font-bold text-red-400 flex-shrink-0">
-                          {i + 1}
+                  <p className="text-xs font-bold text-slate-300">Selecciona los articulos a salir:</p>
+                  {salItems.map((row, i) => (
+                    <div key={`${row.bloque_id}-${row.fecha_vencimiento}-${i}`}
+                      className={`rounded-xl border backdrop-blur-sm p-3 border-l-2 transition-all duration-300 ${
+                        row.selected
+                          ? 'border-red-500/15 bg-slate-800/40 border-l-red-500/40'
+                          : 'border-slate-700/30 bg-slate-800/20 border-l-slate-600/30 opacity-50'
+                      }`}>
+                      <div className="flex items-start gap-3">
+                        {/* Checkbox */}
+                        {salItems.length > 1 && (
+                          <div className="pt-0.5 flex-shrink-0">
+                            <Checkbox
+                              checked={row.selected}
+                              onCheckedChange={(checked) => {
+                                const u = [...salItems]
+                                u[i] = { ...u[i], selected: !!checked }
+                                setSalItems(u)
+                              }}
+                              className="data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500"
+                            />
+                          </div>
+                        )}
+                        {/* Article info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Package className="h-4 w-4 text-red-400/60 flex-shrink-0" />
+                            <span className="font-mono text-sky-300 text-xs font-semibold">{row.bloque_codigo}</span>
+                            {row.fecha_vencimiento && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/20 flex items-center gap-0.5">
+                                <Calendar className="h-2.5 w-2.5" /> {row.fecha_vencimiento}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-slate-400 text-[10px] mt-0.5 truncate">{row.bloque_descripcion || 'Sin descripcion'}</p>
+                          <p className="text-[9px] text-slate-500 mt-0.5">Stock: {row.stockActual} {row.bloque_unidad}</p>
                         </div>
-                        <Package className="h-4 w-4 text-red-400/60 flex-shrink-0" />
-                        <span className="font-mono text-sky-400 text-xs flex-1">{bloque?.codigo || '-'}</span>
-                        <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => { const u = [...salItems]; u[i].cantidad = e.target.value; setSalItems(u) }}
+                        {/* Quantity */}
+                        <Input type="number" step="any" min="0" max={row.stockActual} value={row.cantidad}
+                          onChange={(e) => {
+                            const u = [...salItems]
+                            u[i] = { ...u[i], cantidad: e.target.value }
+                            setSalItems(u)
+                          }}
                           className="w-20 h-9 text-xs bg-slate-900/80 border-red-500/30 text-white focus:ring-red-500/40 rounded-xl backdrop-blur-sm transition-all duration-300" />
                       </div>
-                    )
-                  })}
+                    </div>
+                  ))}
                   <div className="flex gap-2 pt-2">
                     <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
                     <Button onClick={doSalida} disabled={busy} size="sm" className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20 transition-all duration-300 hover:shadow-red-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />} Registrar salida</Button>

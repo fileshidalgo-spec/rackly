@@ -621,7 +621,7 @@ export async function cargarPosicionesSector(
  */
 export async function stockDetallePosicion(
   posicionId: string
-): Promise<{ bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number }[]> {
+): Promise<{ bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[]> {
   // Obtener niveles de esta posición
   const { data: nivData, error: nivErr } = await dataClient
     .from('piso_niveles')
@@ -632,33 +632,39 @@ export async function stockDetallePosicion(
 
   if (nivelIds.length === 0) return []
 
-  // Obtener detalles de movimiento con stock
+  // Obtener detalles de movimiento con stock y fecha_vencimiento
   const { data: detData, error: detErr } = await dataClient
     .from('piso_movimiento_detalles')
-    .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+    .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
     .in('nivel_id', nivelIds)
   if (detErr) throw detErr
 
-  // Calcular stock neto por bloque
+  // Calcular stock neto por bloque_id + fecha_vencimiento
   const stockMap = new Map<string, number>()
   for (const d of (detData ?? []) as unknown as {
-    bloque_id: string; cantidad: unknown; piso_movimientos: { tipo: string }
+    bloque_id: string; cantidad: unknown; fecha_vencimiento: string | null; piso_movimientos: { tipo: string }
   }[]) {
     const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
     const delta = (d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial' || d.piso_movimientos.tipo === 'devolucion')
       ? qty : -qty
-    const current = stockMap.get(d.bloque_id) ?? 0
-    stockMap.set(d.bloque_id, current + delta)
+    const fv = d.fecha_vencimiento || ''
+    const key = `${d.bloque_id}::${fv}`
+    const current = stockMap.get(key) ?? 0
+    stockMap.set(key, current + delta)
   }
 
   // Obtener info de bloques
-  const bloqueIds = [...stockMap.keys()].filter((id) => (stockMap.get(id) ?? 0) > 0)
-  if (bloqueIds.length === 0) return []
+  const bloqueIds = new Set<string>()
+  for (const key of stockMap.keys()) {
+    const bid = key.split('::')[0]
+    if ((stockMap.get(key) ?? 0) > 0) bloqueIds.add(bid)
+  }
+  if (bloqueIds.size === 0) return []
 
   const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
 
   // Buscar en piso_bloques (solo IDs reales)
-  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_'))
+  const realIds = [...bloqueIds].filter((id) => !id.startsWith('cat_'))
   if (realIds.length > 0) {
     const { data: bloqData } = await dataClient
       .from('piso_bloques')
@@ -669,7 +675,7 @@ export async function stockDetallePosicion(
     }
   }
   // Para IDs virtuales, buscar en catalogo
-  const virtualIds = bloqueIds.filter((id) => id.startsWith('cat_'))
+  const virtualIds = [...bloqueIds].filter((id) => id.startsWith('cat_'))
   if (virtualIds.length > 0) {
     const codes = virtualIds.map((id) => id.replace('cat_', ''))
     const { data: catData } = await dataClient
@@ -681,18 +687,32 @@ export async function stockDetallePosicion(
     }
   }
 
-  return bloqueIds
-    .filter((id) => bloqueInfoMap.has(id))
-    .map((id) => {
-      const info = bloqueInfoMap.get(id)!
-      return {
-        bloque_id: id,
-        bloque_codigo: info.codigo,
-        bloque_descripcion: info.descripcion,
-        bloque_unidad: info.unidad || 'KG',
-        cantidad: Math.round((stockMap.get(id) ?? 0) * 1000) / 1000,
-      }
+  // Build results and sort: sin fecha goes last, con fecha sorted ascending (nearest first)
+  const results: { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[] = []
+  for (const [key, cantidad] of stockMap) {
+    if (cantidad <= 0) continue
+    const [bid, fv] = key.split('::')
+    const info = bloqueInfoMap.get(bid)
+    if (!info) continue
+    results.push({
+      bloque_id: bid,
+      bloque_codigo: info.codigo,
+      bloque_descripcion: info.descripcion,
+      bloque_unidad: info.unidad || 'KG',
+      cantidad: Math.round(cantidad * 1000) / 1000,
+      fecha_vencimiento: fv,
     })
+  }
+
+  // Sort: items with date first (ascending), then items without date
+  results.sort((a, b) => {
+    if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+    if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
+    if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
+    return a.bloque_codigo.localeCompare(b.bloque_codigo)
+  })
+
+  return results
 }
 
 /**

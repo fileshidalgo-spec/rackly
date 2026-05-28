@@ -408,7 +408,7 @@ export function PisoSectoresTab() {
       // Resolve manual_ IDs before registering
       const resolved = await ensureManualBloqueCreated(validRows)
       const nivelId = await obtenerPrimerNivel(detail.posicionId)
-      if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); return }
+      if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); setBusy(false); return }
       const detalles = resolved.map((r) => ({
         nivel_id: nivelId,
         bloque_id: r.bloque_id,
@@ -417,12 +417,18 @@ export function PisoSectoresTab() {
       }))
       await registrarIngresoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Ingreso registrado')
-      // Reload catalog to include newly created blocks
+      // Reload everything in parallel for real-time update
       loadBloques()
-      if (mountedRef.current) {
-        const stock = await stockDetallePosicion(detail.posicionId)
-        setDetail({ ...detail, stock }); loadPosiciones(); setMode('view')
+      const [stock] = await Promise.all([
+        stockDetallePosicion(detail.posicionId),
+      ])
+      if (mountedRef.current && detail) {
+        setDetail({ ...detail, stock })
+        setMode('view')
+        setIngRows([{ ...EMPTY_ROW }])
       }
+      // Reload positions grid
+      await loadPosiciones()
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
   }
 
@@ -433,14 +439,15 @@ export function PisoSectoresTab() {
     setBusy(true)
     try {
       const nivelId = await obtenerPrimerNivel(detail.posicionId)
-      if (!nivelId) { toast.error('No hay niveles disponibles'); return }
+      if (!nivelId) { toast.error('No hay niveles disponibles'); setBusy(false); return }
       const detalles = validRows.map((r) => ({ nivel_id: nivelId, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad) }))
       await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Salida registrada')
-      if (mountedRef.current) {
-        const stock = await stockDetallePosicion(detail.posicionId)
-        setDetail({ ...detail, stock }); loadPosiciones(); setMode('view')
+      const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
+      if (mountedRef.current && detail) {
+        setDetail({ ...detail, stock }); setMode('view')
       }
+      await loadPosiciones()
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
   }
 
@@ -476,7 +483,7 @@ export function PisoSectoresTab() {
       // Resolve manual_ IDs before registering
       const resolved = await ensureManualBloqueCreated(validRows)
       const nivelId = await obtenerPrimerNivel(detail.posicionId)
-      if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); return }
+      if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); setBusy(false); return }
       const detalles = resolved.map((r) => ({
         nivel_id: nivelId,
         bloque_id: r.bloque_id,
@@ -486,10 +493,12 @@ export function PisoSectoresTab() {
       await registrarDevolucionPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Devolucion registrada')
       loadBloques()
-      if (mountedRef.current) {
-        const stock = await stockDetallePosicion(detail.posicionId)
-        setDetail({ ...detail, stock }); loadPosiciones(); setMode('view')
+      const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
+      if (mountedRef.current && detail) {
+        setDetail({ ...detail, stock }); setMode('view')
+        setDevRows([{ ...EMPTY_ROW }])
       }
+      await loadPosiciones()
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
   }
 
@@ -590,9 +599,9 @@ export function PisoSectoresTab() {
   //  3D CELL STYLING — Enhanced Isometric Shelf
   // ═══════════════════════════════════════════════
   function getCellClasses(pos: PosicionConStock): string {
-    const base = 'relative group min-w-[42px] h-11 px-1.5 rounded-lg text-[9px] font-bold transition-all duration-300 cursor-pointer border overflow-hidden'
+    const base = 'relative group min-w-[50px] h-12 px-1.5 rounded-lg text-[9px] font-bold transition-all duration-300 cursor-pointer border overflow-hidden'
     if (pos.stock <= 0) {
-      return `${base} bg-emerald-500/[0.12] border-emerald-400/15 text-emerald-300/60 hover:bg-emerald-500/25 hover:border-emerald-400/35 hover:text-emerald-300 hover:shadow-lg hover:shadow-emerald-500/15 hover:-translate-y-1`
+      return `${base} bg-emerald-500/[0.18] border-emerald-400/25 text-emerald-300 hover:bg-emerald-500/30 hover:border-emerald-400/40 hover:text-emerald-200 hover:shadow-lg hover:shadow-emerald-500/15 hover:-translate-y-1`
     }
     if (pos.bloques.length > 1) {
       return `${base} bg-amber-500/40 border-amber-400/25 text-white hover:bg-amber-500/55 hover:shadow-lg hover:shadow-amber-500/25 hover:-translate-y-1`
@@ -826,23 +835,17 @@ export function PisoSectoresTab() {
                             {/* Inner depth shadow */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent pointer-events-none rounded-lg" />
 
-                            <span className="relative z-10">{pos.posicionNumero}</span>
+                            <span className="relative z-10 text-[11px]">{pos.posicionNumero}</span>
 
                             {/* Box visual when occupied — sits IN the shelf */}
                             {isOccupied && (
-                              <div className={`absolute inset-[4px] rounded-md border flex flex-col items-center justify-center pb-0.5 pointer-events-none transition-all duration-300 group-hover/pos:from-white/15 ${
+                              <div className={`absolute bottom-0.5 inset-x-1 rounded-t-md flex flex-col items-center justify-center pointer-events-none transition-all duration-300 ${
                                 isMulti
-                                  ? 'bg-gradient-to-br from-amber-400/20 to-amber-600/10 border-amber-400/10 shadow-inner shadow-amber-500/10'
-                                  : 'bg-gradient-to-br from-sky-400/15 to-sky-600/10 border-sky-400/10 shadow-inner shadow-sky-500/10'
+                                  ? 'bg-gradient-to-t from-amber-400/25 to-amber-400/5'
+                                  : 'bg-gradient-to-t from-sky-400/25 to-sky-400/5'
                               }`}>
-                                {/* Box top face */}
-                                <div className={`absolute inset-x-[2px] -top-[1px] h-[3px] rounded-t-md ${
-                                  isMulti
-                                    ? 'bg-gradient-to-b from-amber-300/15 to-transparent'
-                                    : 'bg-gradient-to-b from-sky-300/15 to-transparent'
-                                }`} />
-                                <span className="text-[7px] font-bold text-white/80 drop-shadow-sm">{pos.stock}</span>
-                                {isMulti && <span className="text-[5px] text-amber-300/60 font-bold">+{pos.bloques.length}</span>}
+                                <span className="text-[8px] font-extrabold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">{pos.stock}</span>
+                                {isMulti && <span className="text-[6px] font-bold text-amber-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">+{pos.bloques.length}</span>}
                               </div>
                             )}
 
@@ -898,12 +901,12 @@ export function PisoSectoresTab() {
                   {detail?.columnaLetra}
                 </div>
                 {/* Position breadcrumb */}
-                <nav className="flex items-center gap-1 text-xs text-slate-400">
-                  <span className="text-slate-500">{detail?.columnaLetra}</span>
-                  <ChevronRight className="h-3 w-3 text-slate-600" />
-                  <span className="text-slate-400">{detail?.subcolumnaCodigo}</span>
-                  <ChevronRight className="h-3 w-3 text-slate-600" />
-                  <span className="text-sky-300 font-semibold">Pos {detail?.posicionNumero}</span>
+                <nav className="flex items-center gap-1 text-xs">
+                  <span className="text-slate-300 font-medium">{detail?.columnaLetra}</span>
+                  <ChevronRight className="h-3 w-3 text-slate-400" />
+                  <span className="text-slate-300 font-medium">{detail?.subcolumnaCodigo}</span>
+                  <ChevronRight className="h-3 w-3 text-slate-400" />
+                  <span className="text-sky-300 font-bold">Pos {detail?.posicionNumero}</span>
                 </nav>
                 {/* Animated type badge */}
                 {(!mode || mode === 'view') ? null : (
@@ -930,17 +933,17 @@ export function PisoSectoresTab() {
                         <div className="flex items-start justify-between">
                           <div className="flex items-start gap-3 flex-1 min-w-0">
                             {/* Card number badge */}
-                            <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-slate-700/60 flex items-center justify-center text-[9px] font-bold text-slate-500 border border-slate-600/40">
+                            <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-slate-700/60 flex items-center justify-center text-[9px] font-bold text-slate-300 border border-slate-600/40">
                               {idx + 1}
                             </div>
                             <div className="min-w-0">
-                              <span className="font-mono text-sky-400 font-bold text-xs">{s.bloque_codigo}</span>
-                              <p className="text-slate-400 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
+                              <span className="font-mono text-sky-300 font-bold text-sm">{s.bloque_codigo}</span>
+                              <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
                             </div>
                           </div>
                           <div className="text-right flex-shrink-0 ml-3">
-                            <p className="font-extrabold text-emerald-400 text-lg leading-none">{s.cantidad}</p>
-                            <p className="text-[10px] text-slate-500 mt-0.5">{s.bloque_unidad}</p>
+                            <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
+                            <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
                           </div>
                         </div>
                       </div>

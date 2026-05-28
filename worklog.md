@@ -121,3 +121,28 @@
 - All exports maintained (`PisoSectoresTab`, `MovimientosTab`)
 - ESLint passes with 0 errors (3 pre-existing warnings)
 - Dev server compiles successfully
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix orange cell colors in Kardex Racks Ubicación + track lots by expiration date
+
+Work Log:
+- Read and analyzed OcupacionTab.tsx (890 lines) and kardex.ts (482 lines)
+- Identified root cause: calcularOcupacion() used raw m.codigo without normalizing (trim/uppercase), causing same article with different case/spaces to count as separate codes → false orange color
+- Added `lotes: number` field to OcupacionCelda type in kardex.ts
+- Rewrote calcularOcupacion() to: (1) normalize codes with trim().toUpperCase(), (2) track stock by LOT (codigo||fVencimiento) instead of just by codigo, (3) count unique codes AND unique lots
+- Updated cell color logic: isMultiArt (codigos.length > 1) → orange, isMultiLote (single code, multiple lots) → blue with amber dot indicator
+- Added amber dot indicator on multi-lote cells for visual traceability
+- Updated tooltip to show stock, article count, and lot count
+- Updated dashboard stats to include multiLote count
+- Updated dashBloques per-block to show lot count badge
+- Updated legend with new multi-lote indicator
+- Updated Excel export with Estado (Multi-lote) and Lotes columns
+- Build succeeded
+
+Stage Summary:
+- Orange cells with single article: FIXED by normalizing codes (trim + uppercase)
+- Multi-lot traceability: IMPLEMENTED with amber dot indicator on cells and lot count in tooltips/dashboard/export
+- Files modified: src/lib/rackly/kardex.ts, src/components/rackly/kardex/OcupacionTab.tsx, tsconfig.json
+- Tag: JHIA-42 committed locally
+- Deployment: BLOCKED - Cloudflare API token and GitHub token expired

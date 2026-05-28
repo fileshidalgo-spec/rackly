@@ -221,3 +221,30 @@ Stage Summary:
 - Git tag: JHIA-57
 - Pushed to origin/main
 - Deployment pending (no Cloudflare API token available in environment)
+
+---
+Task ID: JHIA-57b
+Agent: main
+Task: Crear SQL server-side RPCs + diagnosticar problema persistente de salidas
+
+Work Log:
+- Identified that previous JHIA-55/56/57 fixes may not have been deployed (no CF API token, no CI/CD)
+- Created comprehensive SQL file: download/rackly_piso_fix_jhia57b.sql (6 sections)
+  - Section 1: Diagnostic queries
+  - Section 2: Schema fix (ensure fecha_vencimiento column)
+  - Section 3: New RPC piso_stock_detalle_posicion (server-side FEFO)
+  - Section 4: New RPC piso_stock_sector_grid (sector grid with stock)
+  - Section 5: Updated piso_registrar_movimiento (now handles fecha_vencimiento)
+  - Section 6: Backfill query for existing salida detalles without fecha
+- Updated stockDetallePosicion to call RPC first, fallback to client-side
+- Updated cargarPosicionesSector to call RPC first, fallback to client-side
+- Created GitHub Actions workflow (.github/workflows/deploy.yml)
+- Pushed as JHIA-57b tag + main branch
+
+Stage Summary:
+- Files created: download/rackly_piso_fix_jhia57b.sql, .github/workflows/deploy.yml
+- Files modified: src/lib/piso/api.ts
+- Git tags: JHIA-57, JHIA-57b
+- IMPORTANT: User needs to:
+  1. Execute SQL in Supabase SQL Editor
+  2. Set up CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in GitHub repo secrets

@@ -281,7 +281,7 @@ export function PisoSectoresTab() {
           cantidad: String(s.cantidad),
           stockActual: s.cantidad,
           fecha_vencimiento: s.fecha_vencimiento || '',
-          selected: true,
+          selected: false,
         })))
         setTrItems(stock.map((s) => ({
           bloque_id: s.bloque_id,
@@ -290,7 +290,7 @@ export function PisoSectoresTab() {
           bloque_unidad: s.bloque_unidad,
           cantidad: String(s.cantidad),
           stockActual: s.cantidad,
-          selected: true,
+          selected: false,
           saldoMode: 'saldo',
           fecha_vencimiento: s.fecha_vencimiento || '',
         })))
@@ -312,7 +312,7 @@ export function PisoSectoresTab() {
       cantidad: String(s.cantidad),
       stockActual: s.cantidad,
       fecha_vencimiento: s.fecha_vencimiento || '',
-      selected: true,
+      selected: false,
     })))
     setMode('salida')
   }
@@ -327,7 +327,7 @@ export function PisoSectoresTab() {
       bloque_unidad: s.bloque_unidad,
       cantidad: String(s.cantidad),
       stockActual: s.cantidad,
-      selected: true,
+      selected: false,
       saldoMode: 'saldo',
       fecha_vencimiento: s.fecha_vencimiento || '',
     })))
@@ -1148,29 +1148,49 @@ export function PisoSectoresTab() {
               {/* ── SALIDA MODE ── */}
               {mode === 'salida' && (
                 <div className="space-y-3 mt-4">
-                  <p className="text-xs font-bold text-slate-300">Selecciona los articulos a salir:</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold text-slate-300">Toca los articulos que quieres salir:</p>
+                    {salItems.length > 1 && (
+                      <button
+                        onClick={() => {
+                          const allSelected = salItems.every((r) => r.selected)
+                          setSalItems((prev) => prev.map((r) => ({ ...r, selected: !allSelected, cantidad: !allSelected ? String(r.stockActual) : r.cantidad })))
+                        }}
+                        className="flex items-center gap-1 text-[10px] font-semibold text-red-400 hover:text-red-300 transition-all duration-300"
+                      >
+                        {salItems.every((r) => r.selected) ? (
+                          <><X className="h-3 w-3" /> Deseleccionar todos</>
+                        ) : (
+                          <><Check className="h-3 w-3" /> Seleccionar todos</>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500 -mt-2">{salItems.filter((r) => r.selected).length} de {salItems.length} seleccionados</p>
                   {salItems.map((row, i) => (
                     <div key={`${row.bloque_id}-${row.fecha_vencimiento}-${i}`}
-                      className={`rounded-xl border backdrop-blur-sm p-3 border-l-2 transition-all duration-300 ${
+                      onClick={() => {
+                        const u = [...salItems]
+                        const newSelected = !u[i].selected
+                        u[i] = { ...u[i], selected: newSelected, cantidad: newSelected ? String(u[i].stockActual) : u[i].cantidad }
+                        setSalItems(u)
+                      }}
+                      className={`rounded-xl border backdrop-blur-sm p-3 border-l-[3px] cursor-pointer transition-all duration-300 ${
                         row.selected
-                          ? 'border-red-500/15 bg-slate-800/40 border-l-red-500/40'
-                          : 'border-slate-700/30 bg-slate-800/20 border-l-slate-600/30 opacity-50'
+                          ? 'border-red-500/25 bg-red-950/30 border-l-red-500 shadow-md shadow-red-500/10 scale-[1.01]'
+                          : 'border-slate-700/30 bg-slate-800/20 border-l-slate-600/40 hover:border-slate-600/60 hover:bg-slate-800/40'
                       }`}>
                       <div className="flex items-start gap-3">
-                        {/* Checkbox */}
-                        {salItems.length > 1 && (
-                          <div className="pt-0.5 flex-shrink-0">
-                            <Checkbox
-                              checked={row.selected}
-                              onCheckedChange={(checked) => {
-                                const u = [...salItems]
-                                u[i] = { ...u[i], selected: !!checked }
-                                setSalItems(u)
-                              }}
-                              className="data-[state=checked]:bg-red-500 data-[state=checked]:border-red-500"
-                            />
+                        {/* Selection indicator */}
+                        <div className="pt-0.5 flex-shrink-0">
+                          <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all duration-300 ${
+                            row.selected
+                              ? 'bg-red-500 border-red-500 shadow-md shadow-red-500/30'
+                              : 'border-slate-600 bg-slate-800/60'
+                          }`}>
+                            {row.selected && <Check className="h-3 w-3 text-white" />}
                           </div>
-                        )}
+                        </div>
                         {/* Article info */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
@@ -1181,24 +1201,30 @@ export function PisoSectoresTab() {
                                 <Calendar className="h-2.5 w-2.5" /> {row.fecha_vencimiento}
                               </span>
                             )}
+                            {row.selected && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-300 border border-red-500/30 font-bold">SELECCIONADO</span>
+                            )}
                           </div>
                           <p className="text-slate-400 text-[10px] mt-0.5 truncate">{row.bloque_descripcion || 'Sin descripcion'}</p>
                           <p className="text-[9px] text-slate-500 mt-0.5">Stock: {row.stockActual} {row.bloque_unidad}</p>
                         </div>
                         {/* Quantity */}
-                        <Input type="number" step="any" min="0" max={row.stockActual} value={row.cantidad}
-                          onChange={(e) => {
-                            const u = [...salItems]
-                            u[i] = { ...u[i], cantidad: e.target.value }
-                            setSalItems(u)
-                          }}
-                          className="w-20 h-9 text-xs bg-slate-900/80 border-red-500/30 text-white focus:ring-red-500/40 rounded-xl backdrop-blur-sm transition-all duration-300" />
+                        {row.selected && (
+                          <Input type="number" step="any" min="0" max={row.stockActual} value={row.cantidad}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              const u = [...salItems]
+                              u[i] = { ...u[i], cantidad: e.target.value }
+                              setSalItems(u)
+                            }}
+                            className="w-20 h-9 text-xs bg-slate-900/80 border-red-500/30 text-white focus:ring-red-500/40 rounded-xl backdrop-blur-sm transition-all duration-300" />
+                        )}
                       </div>
                     </div>
                   ))}
                   <div className="flex gap-2 pt-2">
                     <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
-                    <Button onClick={doSalida} disabled={busy} size="sm" className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20 transition-all duration-300 hover:shadow-red-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />} Registrar salida</Button>
+                    <Button onClick={doSalida} disabled={busy || salItems.every((r) => !r.selected)} size="sm" className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20 transition-all duration-300 hover:shadow-red-500/30 hover:scale-[1.02] disabled:opacity-40 disabled:hover:scale-100">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />} Registrar salida</Button>
                   </div>
                 </div>
               )}
@@ -1206,35 +1232,54 @@ export function PisoSectoresTab() {
               {/* ── TRASLADO MODE ── */}
               {mode === 'traslado' && (
                 <div className="space-y-3 mt-4">
-                  <p className="text-xs font-bold text-slate-300">Articulos a trasladar:</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold text-slate-300">Toca los articulos que quieres trasladar:</p>
+                    {trItems.length > 1 && (
+                      <button
+                        onClick={() => {
+                          const allSelected = trItems.every((r) => r.selected)
+                          setTrItems((prev) => prev.map((r) => ({ ...r, selected: !allSelected, cantidad: !allSelected ? String(r.stockActual) : r.cantidad })))
+                        }}
+                        className="flex items-center gap-1 text-[10px] font-semibold text-sky-400 hover:text-sky-300 transition-all duration-300"
+                      >
+                        {trItems.every((r) => r.selected) ? (
+                          <><X className="h-3 w-3" /> Deseleccionar todos</>
+                        ) : (
+                          <><Check className="h-3 w-3" /> Seleccionar todos</>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500 -mt-2">{trItems.filter((r) => r.selected).length} de {trItems.length} seleccionados</p>
                   {trItems.map((row, i) => {
                     const qty = parseFloat(row.cantidad) || 0
                     const diffType = qty > row.stockActual ? 'surplus' : qty < row.stockActual ? 'deficit' : 'exact'
                     return (
-                      <div key={i} className={`rounded-xl border backdrop-blur-sm p-3 border-l-2 transition-all duration-300 ${
+                      <div key={i} onClick={() => {
+                        const u = [...trItems]
+                        const newSelected = !u[i].selected
+                        u[i] = { ...u[i], selected: newSelected, cantidad: newSelected ? String(u[i].stockActual) : u[i].cantidad }
+                        setTrItems(u)
+                      }} className={`rounded-xl border backdrop-blur-sm p-3 border-l-[3px] cursor-pointer transition-all duration-300 ${
                         row.selected
                           ? diffType === 'surplus'
-                            ? 'border-amber-500/20 bg-amber-950/20 border-l-amber-500/60'
+                            ? 'border-amber-500/25 bg-amber-950/25 border-l-amber-500 shadow-md shadow-amber-500/10 scale-[1.01]'
                             : diffType === 'deficit'
-                              ? 'border-sky-500/15 bg-slate-800/40 border-l-sky-500/40'
-                              : 'border-emerald-500/15 bg-emerald-950/20 border-l-emerald-500/40'
-                          : 'border-slate-700/30 bg-slate-800/20 border-l-slate-600/30 opacity-50'
+                              ? 'border-sky-500/20 bg-sky-950/20 border-l-sky-500 shadow-md shadow-sky-500/10 scale-[1.01]'
+                              : 'border-emerald-500/20 bg-emerald-950/20 border-l-emerald-500 shadow-md shadow-emerald-500/10 scale-[1.01]'
+                          : 'border-slate-700/30 bg-slate-800/20 border-l-slate-600/40 hover:border-slate-600/60 hover:bg-slate-800/40'
                       }`}>
                         <div className="flex items-start gap-3">
-                          {/* Checkbox */}
-                          {trItems.length > 1 && (
-                            <div className="pt-0.5 flex-shrink-0">
-                              <Checkbox
-                                checked={row.selected}
-                                onCheckedChange={(checked) => {
-                                  const u = [...trItems]
-                                  u[i] = { ...u[i], selected: !!checked }
-                                  setTrItems(u)
-                                }}
-                                className="data-[state=checked]:bg-sky-500 data-[state=checked]:border-sky-500"
-                              />
+                          {/* Selection indicator */}
+                          <div className="pt-0.5 flex-shrink-0">
+                            <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all duration-300 ${
+                              row.selected
+                                ? 'bg-sky-500 border-sky-500 shadow-md shadow-sky-500/30'
+                                : 'border-slate-600 bg-slate-800/60'
+                            }`}>
+                              {row.selected && <Check className="h-3 w-3 text-white" />}
                             </div>
-                          )}
+                          </div>
                           {/* Article info */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
@@ -1249,19 +1294,21 @@ export function PisoSectoresTab() {
                                 <span className="font-mono font-semibold text-slate-300">{row.stockActual}</span>
                                 <span>{row.bloque_unidad}</span>
                               </div>
-                              <Input
-                                type="number"
-                                step="any"
-                                min="0"
-                                value={row.cantidad}
-                                onChange={(e) => {
-                                  const u = [...trItems]
-                                  u[i] = { ...u[i], cantidad: e.target.value }
-                                  setTrItems(u)
-                                }}
-                                disabled={!row.selected}
-                                className="w-24 h-8 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 rounded-lg backdrop-blur-sm transition-all duration-300"
-                              />
+                              {row.selected && (
+                                <Input
+                                  type="number"
+                                  step="any"
+                                  min="0"
+                                  value={row.cantidad}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => {
+                                    const u = [...trItems]
+                                    u[i] = { ...u[i], cantidad: e.target.value }
+                                    setTrItems(u)
+                                  }}
+                                  className="w-24 h-8 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 rounded-lg backdrop-blur-sm transition-all duration-300"
+                                />
+                              )}
                             </div>
                             {/* Discrepancy indicators */}
                             {row.selected && qty > 0 && diffType === 'surplus' && (
@@ -1271,7 +1318,7 @@ export function PisoSectoresTab() {
                               </div>
                             )}
                             {row.selected && qty > 0 && diffType === 'deficit' && (
-                              <div className="flex items-center gap-2 mt-2">
+                              <div className="flex items-center gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
                                 <button
                                   onClick={() => {
                                     const u = [...trItems]

@@ -720,20 +720,31 @@ export async function stockDetallePosicion(
   const nivelIds = ((nivData ?? []) as { id: string }[]).map((n) => n.id)
   if (nivelIds.length === 0) return []
 
-  const { data: detData, error: detErr } = await dataClient
-    .from('piso_movimiento_detalles')
-    .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
-    .in('nivel_id', nivelIds)
-  if (detErr) throw detErr
+  // Intentar select con fecha_vencimiento primero; si falla (columna no existe), reintentar sin ella
+  const getDetalles = async () => {
+    // Intento 1: con fecha_vencimiento
+    const { data: d1, error: e1 } = await dataClient
+      .from('piso_movimiento_detalles')
+      .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
+      .in('nivel_id', nivelIds)
+    if (!e1) return d1 as unknown[]
+    // Intento 2: sin fecha_vencimiento (columna no existe en la DB)
+    console.warn('[Piso] fallback: fecha_vencimiento no disponible, calculando sin FEFO')
+    const { data: d2, error: e2 } = await dataClient
+      .from('piso_movimiento_detalles')
+      .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+      .in('nivel_id', nivelIds)
+    if (e2) throw e2
+    return d2 as unknown[]
+  }
+  const rawDetalles = await getDetalles()
 
-  const detalles = (detData ?? []) as unknown as {
-    bloque_id: string; cantidad: unknown; fecha_vencimiento: string | null;
-    piso_movimientos: { tipo: string } | null | { tipo: string }[]
-  }[]
+  type DetRow = { bloque_id: string; cantidad: unknown; fecha_vencimiento?: string | null; piso_movimientos: { tipo: string } | null | { tipo: string }[] }
+  const detalles = (rawDetalles ?? []) as DetRow[]
 
   const isIngresoType = (tipo: string) =>
     tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
-  const getTipo = (pm: { tipo: string } | null | { tipo: string }[]): string | null => {
+  const getTipo = (pm: DetRow['piso_movimientos']): string | null => {
     if (!pm) return null
     if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo : null
     return pm.tipo

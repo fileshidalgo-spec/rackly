@@ -22,13 +22,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
+import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
   Layers3, BoxSelect, X, Plus, Trash2, Search, RefreshCw, Package,
   RotateCcw, CalendarOff, Calendar, Warehouse, Sparkles, ChevronRight,
+  Check, AlertTriangle, ToggleLeft, ToggleRight,
 } from 'lucide-react'
 
 type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number }
@@ -144,8 +146,19 @@ export function PisoSectoresTab() {
   const [salItems, setSalItems] = useState<{ bloque_id: string; cantidad: string }[]>([])
 
   // Traslado state
+  type TrItem = {
+    bloque_id: string
+    bloque_codigo: string
+    bloque_descripcion: string
+    bloque_unidad: string
+    cantidad: string
+    stockActual: number
+    selected: boolean
+    saldoMode: 'saldo' | 'ajustar'
+  }
   const [trDestPos, setTrDestPos] = useState<PosicionConStock | null>(null)
-  const [trItems, setTrItems] = useState<{ bloque_id: string; cantidad: string }[]>([])
+  const [trItems, setTrItems] = useState<TrItem[]>([])
+  const [trConfirmOpen, setTrConfirmOpen] = useState(false)
 
   // Devolucion state
   const [devRows, setDevRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
@@ -250,7 +263,16 @@ export function PisoSectoresTab() {
         setDetail({ posicionId: pos.posicionId, posicionNumero: pos.posicionNumero, subcolumnaCodigo: pos.subcolumnaCodigo, columnaLetra: pos.columnaLetra, stock })
         setMode('view')
         setSalItems(stock.map((s) => ({ bloque_id: s.bloque_id, cantidad: String(s.cantidad) })))
-        setTrItems(stock.map((s) => ({ bloque_id: s.bloque_id, cantidad: String(s.cantidad) })))
+        setTrItems(stock.map((s) => ({
+          bloque_id: s.bloque_id,
+          bloque_codigo: s.bloque_codigo,
+          bloque_descripcion: s.bloque_descripcion,
+          bloque_unidad: s.bloque_unidad,
+          cantidad: String(s.cantidad),
+          stockActual: s.cantidad,
+          selected: true,
+          saldoMode: 'saldo',
+        })))
       }
     } catch { toast.error('Error al cargar detalle') }
   }
@@ -267,7 +289,17 @@ export function PisoSectoresTab() {
 
   function openTraslado() {
     setTrDestPos(null)
-    if (detail) setTrItems(detail.stock.map((s) => ({ bloque_id: s.bloque_id, cantidad: String(s.cantidad) })))
+    setTrConfirmOpen(false)
+    if (detail) setTrItems(detail.stock.map((s) => ({
+      bloque_id: s.bloque_id,
+      bloque_codigo: s.bloque_codigo,
+      bloque_descripcion: s.bloque_descripcion,
+      bloque_unidad: s.bloque_unidad,
+      cantidad: String(s.cantidad),
+      stockActual: s.cantidad,
+      selected: true,
+      saldoMode: 'saldo',
+    })))
     setMode('traslado')
   }
 
@@ -454,7 +486,7 @@ export function PisoSectoresTab() {
   async function doTraslado() {
     if (!detail || !perfil || !trDestPos) return
     if (detail.posicionId === trDestPos.posicionId) { toast.error('Origen y destino no pueden ser iguales'); return }
-    const validRows = trItems.filter((r) => r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
+    const validRows = trItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para trasladar'); return }
     setBusy(true)
     try {
@@ -462,11 +494,48 @@ export function PisoSectoresTab() {
         obtenerPrimerNivel(detail.posicionId),
         obtenerPrimerNivel(trDestPos.posicionId),
       ])
-      if (!origNivelId || !destNivelId) { toast.error('No hay niveles disponibles'); return }
-      const detallesSal = validRows.map((r) => ({ nivel_id: origNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad) }))
-      const detallesIng = validRows.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad) }))
-      await registrarTrasladoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detallesSal, detallesIng)
-      toast.success('Traslado registrado')
+      if (!origNivelId || !destNivelId) { toast.error('No hay niveles disponibles'); setBusy(false); return }
+
+      // Separate items by discrepancy type
+      const exactItems = validRows.filter((r) => parseFloat(r.cantidad) === r.stockActual)
+      const deficitItems = validRows.filter((r) => parseFloat(r.cantidad) < r.stockActual)
+      const surplusItems = validRows.filter((r) => parseFloat(r.cantidad) > r.stockActual)
+
+      // 1) Base transfer for ALL selected items (move the entered amount)
+      const allDetSal = validRows.map((r) => ({ nivel_id: origNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad) }))
+      const allDetIng = validRows.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad) }))
+      await registrarTrasladoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', allDetSal, allDetIng)
+
+      // 2) For surplus items (qty > stock): create ingreso at destination for the excess
+      for (const item of surplusItems) {
+        const excess = parseFloat(item.cantidad) - item.stockActual
+        if (excess > 0) {
+          await registrarIngresoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
+            { nivel_id: destNivelId!, bloque_id: item.bloque_id, cantidad: excess },
+          ])
+        }
+      }
+
+      // 3) For deficit items with saldoMode 'ajustar': create salida at origin for remaining balance
+      for (const item of deficitItems) {
+        if (item.saldoMode === 'ajustar') {
+          const remaining = item.stockActual - parseFloat(item.cantidad)
+          if (remaining > 0) {
+            await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
+              { nivel_id: origNivelId!, bloque_id: item.bloque_id, cantidad: remaining },
+            ])
+          }
+        }
+        // saldoMode === 'saldo': leave the balance as-is, no extra action needed
+      }
+
+      // Build result message
+      const parts: string[] = ['Traslado registrado']
+      if (surplusItems.length > 0) parts.push(`${surplusItems.length} ingreso(s) por excedente`)
+      const adjustedCount = deficitItems.filter((r) => r.saldoMode === 'ajustar').length
+      if (adjustedCount > 0) parts.push(`${adjustedCount} salida(s) por ajuste`)
+      toast.success(parts.join(' · '))
+      setTrConfirmOpen(false)
       if (mountedRef.current) { setDetail(null); setTrDestPos(null); loadPosiciones() }
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
   }
@@ -1063,16 +1132,120 @@ export function PisoSectoresTab() {
                 <div className="space-y-3 mt-4">
                   <p className="text-xs font-bold text-slate-300">Articulos a trasladar:</p>
                   {trItems.map((row, i) => {
-                    const bloque = bloquesCatalogo.find((b) => b.id === row.bloque_id)
+                    const qty = parseFloat(row.cantidad) || 0
+                    const diffType = qty > row.stockActual ? 'surplus' : qty < row.stockActual ? 'deficit' : 'exact'
                     return (
-                      <div key={i} className="flex items-center gap-3 rounded-xl border border-sky-500/15 bg-slate-800/40 backdrop-blur-sm p-3 border-l-2 border-l-sky-500/40 transition-all duration-300">
-                        <div className="w-6 h-6 rounded-full bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-[9px] font-bold text-sky-400 flex-shrink-0">
-                          {i + 1}
+                      <div key={i} className={`rounded-xl border backdrop-blur-sm p-3 border-l-2 transition-all duration-300 ${
+                        row.selected
+                          ? diffType === 'surplus'
+                            ? 'border-amber-500/20 bg-amber-950/20 border-l-amber-500/60'
+                            : diffType === 'deficit'
+                              ? 'border-sky-500/15 bg-slate-800/40 border-l-sky-500/40'
+                              : 'border-emerald-500/15 bg-emerald-950/20 border-l-emerald-500/40'
+                          : 'border-slate-700/30 bg-slate-800/20 border-l-slate-600/30 opacity-50'
+                      }`}>
+                        <div className="flex items-start gap-3">
+                          {/* Checkbox */}
+                          {trItems.length > 1 && (
+                            <div className="pt-0.5 flex-shrink-0">
+                              <Checkbox
+                                checked={row.selected}
+                                onCheckedChange={(checked) => {
+                                  const u = [...trItems]
+                                  u[i] = { ...u[i], selected: !!checked }
+                                  setTrItems(u)
+                                }}
+                                className="data-[state=checked]:bg-sky-500 data-[state=checked]:border-sky-500"
+                              />
+                            </div>
+                          )}
+                          {/* Article info */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <Package className="h-4 w-4 text-sky-400/60 flex-shrink-0" />
+                              <span className="font-mono text-sky-400 text-xs font-semibold">{row.bloque_codigo}</span>
+                              <span className="text-[10px] text-slate-500 truncate">{row.bloque_descripcion}</span>
+                            </div>
+                            {/* Stock reference + qty input row */}
+                            <div className="flex items-center gap-3 mt-2">
+                              <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+                                <span>Stock:</span>
+                                <span className="font-mono font-semibold text-slate-300">{row.stockActual}</span>
+                                <span>{row.bloque_unidad}</span>
+                              </div>
+                              <Input
+                                type="number"
+                                step="any"
+                                min="0"
+                                value={row.cantidad}
+                                onChange={(e) => {
+                                  const u = [...trItems]
+                                  u[i] = { ...u[i], cantidad: e.target.value }
+                                  setTrItems(u)
+                                }}
+                                disabled={!row.selected}
+                                className="w-24 h-8 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 rounded-lg backdrop-blur-sm transition-all duration-300"
+                              />
+                            </div>
+                            {/* Discrepancy indicators */}
+                            {row.selected && qty > 0 && diffType === 'surplus' && (
+                              <div className="flex items-center gap-1.5 mt-2 text-amber-400 text-[10px]">
+                                <AlertTriangle className="h-3 w-3" />
+                                <span className="font-semibold">Excedente: se registrara ingreso de <span className="font-mono">{(qty - row.stockActual).toFixed(2)}</span> {row.bloque_unidad}</span>
+                              </div>
+                            )}
+                            {row.selected && qty > 0 && diffType === 'deficit' && (
+                              <div className="flex items-center gap-2 mt-2">
+                                <button
+                                  onClick={() => {
+                                    const u = [...trItems]
+                                    u[i] = { ...u[i], saldoMode: 'saldo' }
+                                    setTrItems(u)
+                                  }}
+                                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold border transition-all duration-300 ${
+                                    row.saldoMode === 'saldo'
+                                      ? 'bg-sky-500/20 border-sky-500/40 text-sky-300 shadow-inner'
+                                      : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
+                                  }`}
+                                >
+                                  <ToggleLeft className="h-3 w-3" />
+                                  Dejar saldo
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const u = [...trItems]
+                                    u[i] = { ...u[i], saldoMode: 'ajustar' }
+                                    setTrItems(u)
+                                  }}
+                                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold border transition-all duration-300 ${
+                                    row.saldoMode === 'ajustar'
+                                      ? 'bg-red-500/20 border-red-500/40 text-red-300 shadow-inner'
+                                      : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
+                                  }`}
+                                >
+                                  <ToggleRight className="h-3 w-3" />
+                                  Ajustar salida
+                                </button>
+                                {row.saldoMode === 'ajustar' && (
+                                  <span className="text-[10px] text-red-400">
+                                    Salida de <span className="font-mono font-semibold">{(row.stockActual - qty).toFixed(2)}</span> {row.bloque_unidad}
+                                  </span>
+                                )}
+                                {row.saldoMode === 'saldo' && (
+                                  <span className="text-[10px] text-slate-500">
+                                    Queda <span className="font-mono font-semibold">{(row.stockActual - qty).toFixed(2)}</span> {row.bloque_unidad} en origen
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            {row.selected && qty > 0 && diffType === 'exact' && (
+                              <div className="flex items-center gap-1.5 mt-2 text-emerald-400 text-[10px]">
+                                <Check className="h-3 w-3" />
+                                <span className="font-semibold">Total</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <Package className="h-4 w-4 text-sky-400/60 flex-shrink-0" />
-                        <span className="font-mono text-sky-400 text-xs flex-1">{bloque?.codigo || '-'}</span>
-                        <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => { const u = [...trItems]; u[i].cantidad = e.target.value; setTrItems(u) }}
-                          className="w-20 h-9 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 rounded-xl backdrop-blur-sm transition-all duration-300" />
                       </div>
                     )
                   })}
@@ -1092,7 +1265,9 @@ export function PisoSectoresTab() {
                   </div>
                   <div className="flex gap-2 pt-2">
                     <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
-                    <Button onClick={doTraslado} disabled={busy || !trDestPos} size="sm" className="gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20 transition-all duration-300 hover:shadow-sky-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />} Trasladar</Button>
+                    <Button onClick={() => setTrConfirmOpen(true)} disabled={busy || !trDestPos || trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0).length === 0} size="sm" className="gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20 transition-all duration-300 hover:shadow-sky-500/30 hover:scale-[1.02]">
+                      <ArrowRightLeft className="h-3.5 w-3.5" /> Confirmar traslado
+                    </Button>
                   </div>
                 </div>
               )}
@@ -1164,6 +1339,94 @@ export function PisoSectoresTab() {
               )}
             </>)}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ TRASLADO CONFIRMATION DIALOG ═══ */}
+      <Dialog open={trConfirmOpen} onOpenChange={(open) => { if (!open) setTrConfirmOpen(false) }}>
+        <DialogContent className="sm:max-w-lg bg-slate-900 border-slate-700/50 backdrop-blur-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <ArrowRightLeft className="h-5 w-5 text-sky-400" />
+              Confirmar Traslado
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-400">
+              Resumen de articulos a trasladar con ajustes.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+            {(() => {
+              const selected = trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0)
+              if (selected.length === 0) return <p className="text-xs text-slate-500">No hay articulos seleccionados.</p>
+              return selected.map((r, i) => {
+                const qty = parseFloat(r.cantidad)
+                const diff = qty - r.stockActual
+                let statusColor = 'text-emerald-400'
+                let statusBg = 'bg-emerald-500/10 border-emerald-500/20'
+                let statusLabel = 'Total'
+                let statusIcon = <Check className="h-3 w-3" />
+                if (diff > 0) {
+                  statusColor = 'text-amber-400'
+                  statusBg = 'bg-amber-500/10 border-amber-500/20'
+                  statusLabel = `+${diff.toFixed(2)} excedente → ingreso`
+                  statusIcon = <AlertTriangle className="h-3 w-3" />
+                } else if (diff < 0) {
+                  const deficit = Math.abs(diff)
+                  if (r.saldoMode === 'ajustar') {
+                    statusColor = 'text-red-400'
+                    statusBg = 'bg-red-500/10 border-red-500/20'
+                    statusLabel = `${deficit.toFixed(2)} queda → salida`
+                    statusIcon = <ArrowUpFromLine className="h-3 w-3" />
+                  } else {
+                    statusColor = 'text-sky-400'
+                    statusBg = 'bg-sky-500/10 border-sky-500/20'
+                    statusLabel = `${deficit.toFixed(2)} queda en origen`
+                    statusIcon = <ToggleLeft className="h-3 w-3" />
+                  }
+                }
+                return (
+                  <div key={i} className={`rounded-lg border ${statusBg} p-2.5`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Package className="h-3.5 w-3.5 text-slate-500 flex-shrink-0" />
+                        <span className="font-mono text-xs text-sky-300 font-semibold">{r.bloque_codigo}</span>
+                      </div>
+                      <div className={`flex items-center gap-1 text-[10px] font-semibold ${statusColor}`}>
+                        {statusIcon}
+                        <span>{statusLabel}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-500 pl-5">
+                      <span>Trasladar: <span className="font-mono font-semibold text-white">{qty.toFixed(2)}</span></span>
+                      <span>Stock: <span className="font-mono font-semibold text-slate-300">{r.stockActual}</span></span>
+                      <span>{r.bloque_unidad}</span>
+                    </div>
+                  </div>
+                )
+              })
+            })()}
+          </div>
+
+          {trDestPos && (
+            <div className="flex items-center gap-2 text-xs bg-slate-800/60 rounded-lg border border-slate-700/40 px-3 py-2">
+              <Warehouse className="h-3.5 w-3.5 text-slate-500" />
+              <span className="text-slate-500">Destino:</span>
+              <span className="font-mono font-semibold text-sky-300">
+                {trDestPos.columnaLetra}-{trDestPos.subcolumnaCodigo}-{trDestPos.posicionNumero}
+              </span>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setTrConfirmOpen(false)} size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
+              Cancelar
+            </Button>
+            <Button onClick={doTraslado} disabled={busy} size="sm" className="gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20">
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
+              Ejecutar traslado
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

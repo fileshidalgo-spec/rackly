@@ -275,37 +275,42 @@ export function PisoSectoresTab() {
     setMode('devolucion')
   }
 
-  // Auto-buscar bloque por codigo al escribir — supports manual_ fallback
+  // Auto-buscar bloque por codigo al escribir — also matches by description in catalog
   async function handleCodeInput(prefix: 'ing' | 'dev', idx: number, value: string) {
-    const upper = value.trim().toUpperCase()
-    if (prefix === 'ing') {
-      const updated = [...ingRows]
-      updated[idx] = { ...updated[idx], codigo: upper, bloque_id: upper ? updated[idx].bloque_id : '', descripcion: '', unidad: '' }
-      setIngRows(updated)
-    } else {
-      const updated = [...devRows]
-      updated[idx] = { ...updated[idx], codigo: upper, bloque_id: upper ? updated[idx].bloque_id : '', descripcion: '', unidad: '' }
-      setDevRows(updated)
-    }
-    if (upper.length < 2) return
+    const trimmed = value.trim()
+    const updateRows = prefix === 'ing' ? setIngRows : setDevRows
+    // Clear fields so dropdown can show while searching
+    updateRows((prev) => {
+      const u = [...prev]
+      u[idx] = { ...u[idx], codigo: trimmed, bloque_id: '', descripcion: '', unidad: '' }
+      return u
+    })
+    if (trimmed.length < 2) return
     setSearchingCode(`${prefix}-${idx}`)
-    const bloque = await buscarBloquePorCodigo(upper)
+    // Try exact code match first
+    const bloque = await buscarBloquePorCodigo(trimmed.toUpperCase())
     if (bloque) {
-      const updateRows = prefix === 'ing' ? setIngRows : setDevRows
       updateRows((prev) => {
         const u = [...prev]
         u[idx] = { ...u[idx], bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad }
         return u
       })
     } else {
-      // Fallback: create virtual manual_ entry so user can still proceed
-      const virtualId = `manual_${upper}`
-      const updateRows = prefix === 'ing' ? setIngRows : setDevRows
-      updateRows((prev) => {
-        const u = [...prev]
-        u[idx] = { ...u[idx], bloque_id: virtualId, codigo: upper, descripcion: 'Articulo nuevo (manual)', unidad: 'KG' }
-        return u
-      })
+      // Check catalog for code or description partial matches before creating manual_
+      const lower = trimmed.toLowerCase()
+      const hasCatalogMatch = bloquesCatalogo.some((b) =>
+        b.codigo.toLowerCase().includes(lower) || b.descripcion.toLowerCase().includes(lower)
+      )
+      if (!hasCatalogMatch) {
+        // No match at all — create virtual manual_ entry
+        const virtualId = `manual_${trimmed.toUpperCase()}`
+        updateRows((prev) => {
+          const u = [...prev]
+          u[idx] = { ...u[idx], bloque_id: virtualId, codigo: trimmed.toUpperCase(), descripcion: 'Articulo nuevo (manual)', unidad: 'KG' }
+          return u
+        })
+      }
+      // If catalog has matches, leave bloque_id empty so dropdown shows
     }
     setSearchingCode(null)
   }
@@ -572,7 +577,7 @@ export function PisoSectoresTab() {
           <div className="px-3 py-2.5 flex items-center gap-2 border-b border-slate-800/50">
             <Sparkles className={`h-3.5 w-3.5 ${isIng ? 'text-emerald-400' : 'text-amber-400'}`} />
             <span className="text-xs text-slate-400 italic">
-              Escribe un codigo para crear nuevo articulo
+              Escribe codigo o descripcion para crear nuevo articulo
             </span>
           </div>
         )}
@@ -992,7 +997,7 @@ export function PisoSectoresTab() {
                         <div className="col-span-11 sm:col-span-4">
                           <Label className="text-[10px] text-emerald-400 font-semibold">Codigo</Label>
                           <div className="relative">
-                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} placeholder="Escribe codigo..."
+                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} placeholder="Buscar codigo o descripcion..."
                               className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-emerald-500/40 ring-emerald-500/20 shadow-sm shadow-emerald-500/10' : 'border-slate-700/50 focus:ring-emerald-500/40'}`} />
                             {searchingCode === `ing-${i}` && (
                               <div className="absolute right-3 top-1/2 -translate-y-1/2"><Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" /></div>
@@ -1125,7 +1130,7 @@ export function PisoSectoresTab() {
                         <div className="col-span-11 sm:col-span-4">
                           <Label className="text-[10px] text-amber-400 font-semibold">Codigo</Label>
                           <div className="relative">
-                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('dev', i, e.target.value)} placeholder="Escribe codigo..."
+                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('dev', i, e.target.value)} placeholder="Buscar codigo o descripcion..."
                               className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-amber-500/40 ring-amber-500/20 shadow-sm shadow-amber-500/10' : 'border-slate-700/50 focus:ring-amber-500/40'}`} />
                             {searchingCode === `dev-${i}` && (
                               <div className="absolute right-3 top-1/2 -translate-y-1/2"><Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" /></div>

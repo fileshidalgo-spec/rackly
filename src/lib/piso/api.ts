@@ -642,51 +642,64 @@ export async function stockDetallePosicion(
   // Calcular stock neto por bloque_id + fecha_vencimiento
   const stockMap = new Map<string, number>()
   for (const d of (detData ?? []) as unknown as {
-    bloque_id: string; cantidad: unknown; fecha_vencimiento: string | null; piso_movimientos: { tipo: string }
+    bloque_id: string; cantidad: unknown; fecha_vencimiento: string | null; piso_movimientos: { tipo: string } | null
   }[]) {
+    // Skip records without a valid movimiento (orphan detalles)
+    if (!d.piso_movimientos?.tipo) continue
     const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
-    const delta = (d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial' || d.piso_movimientos.tipo === 'devolucion')
-      ? qty : -qty
+    const isIngreso = d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial' || d.piso_movimientos.tipo === 'devolucion'
+    const delta = isIngreso ? qty : -qty
     const fv = d.fecha_vencimiento || ''
     const key = `${d.bloque_id}::${fv}`
     const current = stockMap.get(key) ?? 0
     stockMap.set(key, current + delta)
   }
 
-  // ═══ FIX: Redistribuir salidas huérfanas (sin fecha_vencimiento) ═══
+  // ═══ FIX: Redistribuir salidas huérfanas (sin fecha_vencimiento o con fecha incorrecta) ═══
   // Las salidas registradas antes de JHIA-55 no tienen fecha_vencimiento,
   // creando entries con key "bloque_id::" que no coinciden con los ingresos
   // que sí tienen fecha. Esto hacía que el stock nunca se restara.
-  // Solución: encontrar esas salidas huérfanas (negativas con fecha vacía)
-  // y redistribuir la cantidad a los ingresos del mismo bloque_id.
-  const orphanKeys: string[] = []
-  for (const [key, amount] of stockMap) {
-    if (amount < 0 && key.endsWith('::')) {
-      orphanKeys.push(key)
-    }
-  }
-  for (const orphanKey of orphanKeys) {
-    const bloqueId = orphanKey.slice(0, -2) // Remove trailing "::"
-    const orphanAmount = Math.abs(stockMap.get(orphanKey)!)
-    stockMap.delete(orphanKey)
+  // Solución: encontrar TODAS las entradas negativas por bloque_id
+  // y redistribuir la cantidad a los ingresos del mismo bloque_id (FEFO).
+  const allKeys = [...stockMap.keys()]
+  const processedBloques = new Set<string>()
+  for (const key of allKeys) {
+    const bloqueId = key.split('::')[0]
+    if (processedBloques.has(bloqueId)) continue
+    processedBloques.add(bloqueId)
 
-    // Subtract from matching bloque_id entries that have a fecha_vencimiento
-    let remaining = orphanAmount
-    // Collect matching keys sorted by fecha_vencimiento ascending (FEFO: nearest first)
-    const matchKeys = [...stockMap.keys()]
-      .filter((k) => k.startsWith(`${bloqueId}::`) && k !== `${bloqueId}::` && (stockMap.get(k) ?? 0) > 0)
+    // Collect all entries for this bloque_id
+    const bloqueEntries = allKeys
+      .filter((k) => k.startsWith(`${bloqueId}::`))
+      .map((k) => ({ key: k, amount: stockMap.get(k) ?? 0 }))
+
+    const negatives = bloqueEntries.filter((e) => e.amount < 0)
+    if (negatives.length === 0) continue
+
+    // Collect positive entries sorted by fecha ascending (FEFO: nearest first, empty last)
+    const positives = bloqueEntries
+      .filter((e) => e.amount > 0)
       .sort((a, b) => {
-        const fvA = a.split('::').slice(1).join('::')
-        const fvB = b.split('::').slice(1).join('::')
+        const fvA = a.key.split('::').slice(1).join('::')
+        const fvB = b.key.split('::').slice(1).join('::')
+        if (!fvA && fvB) return 1   // empty fecha goes last
+        if (fvA && !fvB) return -1
         return fvA.localeCompare(fvB)
       })
 
-    for (const mk of matchKeys) {
-      if (remaining <= 0) break
-      const current = stockMap.get(mk) ?? 0
-      const deduct = Math.min(current, remaining)
-      stockMap.set(mk, current - deduct)
-      remaining -= deduct
+    // Redistribute each negative entry to positives
+    for (const neg of negatives) {
+      let remaining = Math.abs(neg.amount)
+      stockMap.delete(neg.key)
+
+      for (const pos of positives) {
+        if (remaining <= 0) break
+        const current = stockMap.get(pos.key) ?? 0
+        if (current <= 0) continue
+        const deduct = Math.min(current, remaining)
+        stockMap.set(pos.key, current - deduct)
+        remaining -= deduct
+      }
     }
   }
 

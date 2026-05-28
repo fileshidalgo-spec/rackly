@@ -653,6 +653,43 @@ export async function stockDetallePosicion(
     stockMap.set(key, current + delta)
   }
 
+  // ═══ FIX: Redistribuir salidas huérfanas (sin fecha_vencimiento) ═══
+  // Las salidas registradas antes de JHIA-55 no tienen fecha_vencimiento,
+  // creando entries con key "bloque_id::" que no coinciden con los ingresos
+  // que sí tienen fecha. Esto hacía que el stock nunca se restara.
+  // Solución: encontrar esas salidas huérfanas (negativas con fecha vacía)
+  // y redistribuir la cantidad a los ingresos del mismo bloque_id.
+  const orphanKeys: string[] = []
+  for (const [key, amount] of stockMap) {
+    if (amount < 0 && key.endsWith('::')) {
+      orphanKeys.push(key)
+    }
+  }
+  for (const orphanKey of orphanKeys) {
+    const bloqueId = orphanKey.slice(0, -2) // Remove trailing "::"
+    const orphanAmount = Math.abs(stockMap.get(orphanKey)!)
+    stockMap.delete(orphanKey)
+
+    // Subtract from matching bloque_id entries that have a fecha_vencimiento
+    let remaining = orphanAmount
+    // Collect matching keys sorted by fecha_vencimiento ascending (FEFO: nearest first)
+    const matchKeys = [...stockMap.keys()]
+      .filter((k) => k.startsWith(`${bloqueId}::`) && k !== `${bloqueId}::` && (stockMap.get(k) ?? 0) > 0)
+      .sort((a, b) => {
+        const fvA = a.split('::').slice(1).join('::')
+        const fvB = b.split('::').slice(1).join('::')
+        return fvA.localeCompare(fvB)
+      })
+
+    for (const mk of matchKeys) {
+      if (remaining <= 0) break
+      const current = stockMap.get(mk) ?? 0
+      const deduct = Math.min(current, remaining)
+      stockMap.set(mk, current - deduct)
+      remaining -= deduct
+    }
+  }
+
   // Obtener info de bloques
   const bloqueIds = new Set<string>()
   for (const key of stockMap.keys()) {

@@ -639,82 +639,100 @@ export async function stockDetallePosicion(
     .in('nivel_id', nivelIds)
   if (detErr) throw detErr
 
-  // Calcular stock neto por bloque_id + fecha_vencimiento
-  const stockMap = new Map<string, number>()
-  for (const d of (detData ?? []) as unknown as {
-    bloque_id: string; cantidad: unknown; fecha_vencimiento: string | null; piso_movimientos: { tipo: string } | null
-  }[]) {
-    // Skip records without a valid movimiento (orphan detalles)
-    if (!d.piso_movimientos?.tipo) continue
-    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
-    const isIngreso = d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial' || d.piso_movimientos.tipo === 'devolucion'
-    const delta = isIngreso ? qty : -qty
-    const fv = d.fecha_vencimiento || ''
-    const key = `${d.bloque_id}::${fv}`
-    const current = stockMap.get(key) ?? 0
-    stockMap.set(key, current + delta)
+  const detalles = (detData ?? []) as unknown as {
+    bloque_id: string
+    cantidad: unknown
+    fecha_vencimiento: string | null
+    piso_movimientos: { tipo: string } | null | { tipo: string }[]
+  }[]
+
+  // ═══ ALGORITMO FEFO ROBUSTO ═══
+  // En vez de agrupar por bloque_id::fecha_vencimiento (que falla cuando
+  // las salidas antiguas no tienen fecha), separamos ingresos y salidas:
+  //
+  // 1. Construir "pool de lotes" a partir de ingresos (bloque_id → fecha → qty)
+  // 2. Sumar TODAS las salidas por bloque_id (sin importar fecha_vencimiento)
+  // 3. Descontar las salidas del pool en orden FEFO (fecha más próxima primero)
+
+  const isIngresoType = (tipo: string) =>
+    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+
+  // Helper: extraer tipo del join (puede ser objeto, array o null)
+  const getTipo = (pm: { tipo: string } | null | { tipo: string }[]): string | null => {
+    if (!pm) return null
+    if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo : null
+    return pm.tipo
   }
 
-  // ═══ FIX: Redistribuir salidas huérfanas (sin fecha_vencimiento o con fecha incorrecta) ═══
-  // Las salidas registradas antes de JHIA-55 no tienen fecha_vencimiento,
-  // creando entries con key "bloque_id::" que no coinciden con los ingresos
-  // que sí tienen fecha. Esto hacía que el stock nunca se restara.
-  // Solución: encontrar TODAS las entradas negativas por bloque_id
-  // y redistribuir la cantidad a los ingresos del mismo bloque_id (FEFO).
-  const allKeys = [...stockMap.keys()]
-  const processedBloques = new Set<string>()
-  for (const key of allKeys) {
-    const bloqueId = key.split('::')[0]
-    if (processedBloques.has(bloqueId)) continue
-    processedBloques.add(bloqueId)
+  // Paso 1: Pool de lotes por ingreso → Map<bloque_id, Map<fecha, qty>>
+  const ingresoPools = new Map<string, Map<string, number>>()
+  for (const d of detalles) {
+    const tipo = getTipo(d.piso_movimientos)
+    if (!tipo || !isIngresoType(tipo)) continue
+    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+    if (qty <= 0) continue
+    const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
+    const pool = ingresoPools.get(d.bloque_id) ?? new Map<string, number>()
+    pool.set(fv, (pool.get(fv) ?? 0) + qty)
+    ingresoPools.set(d.bloque_id, pool)
+  }
 
-    // Collect all entries for this bloque_id
-    const bloqueEntries = allKeys
-      .filter((k) => k.startsWith(`${bloqueId}::`))
-      .map((k) => ({ key: k, amount: stockMap.get(k) ?? 0 }))
+  // Paso 2: Sumar salidas por bloque_id (ignorando fecha_vencimiento)
+  const salidasPorBloque = new Map<string, number>()
+  for (const d of detalles) {
+    const tipo = getTipo(d.piso_movimientos)
+    if (!tipo || isIngresoType(tipo)) continue
+    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+    if (qty <= 0) continue
+    salidasPorBloque.set(d.bloque_id, (salidasPorBloque.get(d.bloque_id) ?? 0) + qty)
+  }
 
-    const negatives = bloqueEntries.filter((e) => e.amount < 0)
-    if (negatives.length === 0) continue
+  // Paso 3: Descontar salidas del pool en orden FEFO
+  // Resultado: Map<bloque_id, Array<{ fecha, qty_restante }>>
+  const lotesRestantes = new Map<string, { fecha: string; qty: number }[]>()
 
-    // Collect positive entries sorted by fecha ascending (FEFO: nearest first, empty last)
-    const positives = bloqueEntries
-      .filter((e) => e.amount > 0)
-      .sort((a, b) => {
-        const fvA = a.key.split('::').slice(1).join('::')
-        const fvB = b.key.split('::').slice(1).join('::')
-        if (!fvA && fvB) return 1   // empty fecha goes last
-        if (fvA && !fvB) return -1
-        return fvA.localeCompare(fvB)
-      })
+  for (const [bloqueId, pool] of ingresoPools) {
+    // Ordenar lotes por fecha: con fecha ascendente, sin fecha al final
+    const sortedLots = [...pool.entries()].sort(([a], [b]) => {
+      if (!a && b) return 1   // sin fecha va al final
+      if (a && !b) return -1
+      return a.localeCompare(b)
+    })
 
-    // Redistribute each negative entry to positives
-    for (const neg of negatives) {
-      let remaining = Math.abs(neg.amount)
-      stockMap.delete(neg.key)
+    const totalSalida = salidasPorBloque.get(bloqueId) ?? 0
+    let pendiente = totalSalida
+    const restantes: { fecha: string; qty: number }[] = []
 
-      for (const pos of positives) {
-        if (remaining <= 0) break
-        const current = stockMap.get(pos.key) ?? 0
-        if (current <= 0) continue
-        const deduct = Math.min(current, remaining)
-        stockMap.set(pos.key, current - deduct)
-        remaining -= deduct
+    for (const [fecha, qty] of sortedLots) {
+      if (pendiente <= 0) {
+        // No hay más salida que descontar, este lote queda intacto
+        restantes.push({ fecha, qty })
+      } else if (qty <= pendiente) {
+        // La salida consume todo este lote
+        pendiente -= qty
+        // No se agrega (qty fue consumido completamente)
+      } else {
+        // La salida consume parte del lote
+        restantes.push({ fecha, qty: qty - pendiente })
+        pendiente = 0
       }
+    }
+    // Si pendiente > 0 significa que las salidas exceden los ingresos (stock negativo → no se muestra)
+
+    if (restantes.length > 0) {
+      lotesRestantes.set(bloqueId, restantes)
     }
   }
 
-  // Obtener info de bloques
-  const bloqueIds = new Set<string>()
-  for (const key of stockMap.keys()) {
-    const bid = key.split('::')[0]
-    if ((stockMap.get(key) ?? 0) > 0) bloqueIds.add(bid)
-  }
-  if (bloqueIds.size === 0) return []
+  // Si no hay stock, devolver vacío
+  if (lotesRestantes.size === 0) return []
 
+  // Obtener info de bloques
+  const bloqueIds = [...lotesRestantes.keys()]
   const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
 
   // Buscar en piso_bloques (solo IDs reales)
-  const realIds = [...bloqueIds].filter((id) => !id.startsWith('cat_'))
+  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_'))
   if (realIds.length > 0) {
     const { data: bloqData } = await dataClient
       .from('piso_bloques')
@@ -725,7 +743,7 @@ export async function stockDetallePosicion(
     }
   }
   // Para IDs virtuales, buscar en catalogo
-  const virtualIds = [...bloqueIds].filter((id) => id.startsWith('cat_'))
+  const virtualIds = bloqueIds.filter((id) => id.startsWith('cat_'))
   if (virtualIds.length > 0) {
     const codes = virtualIds.map((id) => id.replace('cat_', ''))
     const { data: catData } = await dataClient
@@ -737,24 +755,25 @@ export async function stockDetallePosicion(
     }
   }
 
-  // Build results and sort: sin fecha goes last, con fecha sorted ascending (nearest first)
+  // Construir resultados
   const results: { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[] = []
-  for (const [key, cantidad] of stockMap) {
-    if (cantidad <= 0) continue
-    const [bid, fv] = key.split('::')
-    const info = bloqueInfoMap.get(bid)
+  for (const [bloqueId, lots] of lotesRestantes) {
+    const info = bloqueInfoMap.get(bloqueId)
     if (!info) continue
-    results.push({
-      bloque_id: bid,
-      bloque_codigo: info.codigo,
-      bloque_descripcion: info.descripcion,
-      bloque_unidad: info.unidad || 'KG',
-      cantidad: Math.round(cantidad * 1000) / 1000,
-      fecha_vencimiento: fv,
-    })
+    for (const lot of lots) {
+      if (lot.qty <= 0) continue
+      results.push({
+        bloque_id: bloqueId,
+        bloque_codigo: info.codigo,
+        bloque_descripcion: info.descripcion,
+        bloque_unidad: info.unidad || 'KG',
+        cantidad: Math.round(lot.qty * 1000) / 1000,
+        fecha_vencimiento: lot.fecha,
+      })
+    }
   }
 
-  // Sort: items with date first (ascending), then items without date
+  // Ordenar: con fecha primero (ascendente), sin fecha al final
   results.sort((a, b) => {
     if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
     if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1

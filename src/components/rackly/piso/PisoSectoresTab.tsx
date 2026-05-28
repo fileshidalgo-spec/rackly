@@ -835,10 +835,17 @@ export function PisoSectoresTab() {
                             {/* Inner depth shadow */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent pointer-events-none rounded-lg" />
 
-                            {/* Centered position number only */}
-                            <span className={`relative z-10 font-bold text-[12px] ${
-                              pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
-                            }`}>{pos.posicionNumero}</span>
+                            {/* Position number + article count */}
+                            <div className="relative z-10 flex flex-col items-center justify-center h-full">
+                              <span className={`font-bold text-[12px] leading-none ${
+                                pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
+                              }`}>{pos.posicionNumero}</span>
+                              {isOccupied && (
+                                <span className={`text-[8px] font-bold leading-none mt-0.5 ${
+                                  isMulti ? 'text-amber-200' : 'text-sky-200'
+                                }`}>{pos.bloques.length} art.</span>
+                              )}
+                            </div>
                           </button>
                         </div>
                       )

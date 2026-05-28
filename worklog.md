@@ -146,3 +146,27 @@ Stage Summary:
 - Files modified: src/lib/rackly/kardex.ts, src/components/rackly/kardex/OcupacionTab.tsx, tsconfig.json
 - Tag: JHIA-42 committed locally
 - Deployment: BLOCKED - Cloudflare API token and GitHub token expired
+
+---
+Task ID: JHIA-43
+Agent: Main Agent
+Task: Fix orange color bug in Kardex Racks Ocupación tab - positions with 1 article showing as multi-article
+
+Work Log:
+- Queried Supabase DB for B9-T1-P4-Pos4 and B9-T1-P4-Pos5 to investigate root cause
+- Found that Pos4 has code 50890 with 2 different expiration dates (2 lotes, same code) and 55544 fully netted (stock=0)
+- Found that Pos5 has code 50890 with 1 lote and 57418 fully netted (stock=0)
+- Analyzed `calcularOcupacion()` function — it correctly computes: Pos4 = multi-lote (blue+dot), Pos5 = single (blue)
+- Determined the real issue: the JHIA-42 fix was NEVER DEPLOYED because Cloudflare API token had expired
+- Built the project successfully with `npm run build`
+- Deployed to Cloudflare Pages using new API token: `***REDACTED***`
+- Deployment successful at https://204e38c9.rackly.pages.dev
+- Created git tag JHIA-43
+
+Stage Summary:
+- Root cause: JHIA-42 code fix (trim().toUpperCase() normalization + lot tracking) was correct but never deployed to production
+- No code changes were needed — only deployment
+- Production site at https://rackly.pages.dev now has the correct fix
+- Pos4 (B9-T1-P4): shows as multi-lote (blue + orange dot) — 2 lotes of same article 50890
+- Pos5 (B9-T1-P4): shows as single article (blue) — 1 lote of article 50890
+- Noted data quality issue: Pos5 has date "0026-11-26" (malformed year prefix)

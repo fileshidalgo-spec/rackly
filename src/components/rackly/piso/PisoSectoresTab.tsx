@@ -599,7 +599,7 @@ export function PisoSectoresTab() {
   //  3D CELL STYLING — Enhanced Isometric Shelf
   // ═══════════════════════════════════════════════
   function getCellClasses(pos: PosicionConStock): string {
-    const base = 'relative group min-w-[52px] h-14 px-1 rounded-lg transition-all duration-300 cursor-pointer border overflow-hidden'
+    const base = 'relative group min-w-[52px] h-10 px-1 rounded-lg transition-all duration-300 cursor-pointer border overflow-hidden'
     if (pos.stock <= 0) {
       return `${base} bg-emerald-500/[0.18] border-emerald-400/25 hover:bg-emerald-500/30 hover:border-emerald-400/40 hover:shadow-lg hover:shadow-emerald-500/15 hover:-translate-y-1`
     }
@@ -835,30 +835,10 @@ export function PisoSectoresTab() {
                             {/* Inner depth shadow */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent pointer-events-none rounded-lg" />
 
-                            {/* Two-zone flex layout: top = position number, bottom = stock */}
-                            <div className="relative z-10 flex flex-col items-center justify-between h-full py-1.5">
-                              {/* Position number — top zone */}
-                              <span className={`font-bold text-[12px] leading-none ${
-                                pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
-                              }`}>{pos.posicionNumero}</span>
-
-                              {/* Stock badge — bottom zone */}
-                              {isOccupied && (
-                                <div className={`flex flex-col items-center leading-none mt-1 ${
-                                  isMulti
-                                    ? 'bg-amber-500/30 rounded px-1.5 py-0.5'
-                                    : 'bg-sky-500/25 rounded px-1.5 py-0.5'
-                                }`}>
-                                  <span className="text-[9px] font-extrabold text-white">{pos.stock}</span>
-                                  {isMulti && <span className="text-[6px] font-bold text-amber-200">+{pos.bloques.length}</span>}
-                                </div>
-                              )}
-
-                              {/* Empty indicator */}
-                              {!isOccupied && (
-                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400/40 mt-1" />
-                              )}
-                            </div>
+                            {/* Centered position number only */}
+                            <span className={`relative z-10 font-bold text-[12px] ${
+                              pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
+                            }`}>{pos.posicionNumero}</span>
                           </button>
                         </div>
                       )

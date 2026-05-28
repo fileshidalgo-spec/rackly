@@ -759,7 +759,7 @@ export async function registrarSalidaPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detalles: { nivel_id: string; bloque_id: string; cantidad: number }[]
+  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
 ): Promise<void> {
   const { data: movData, error: movErr } = await dataClient
     .from('piso_movimientos')
@@ -775,6 +775,7 @@ export async function registrarSalidaPosicion(
       nivel_id: d.nivel_id,
       bloque_id: d.bloque_id,
       cantidad: d.cantidad,
+      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
     }))
     const { error: detErr } = await dataClient
       .from('piso_movimiento_detalles')
@@ -826,8 +827,8 @@ export async function registrarTrasladoPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detallesSalida: { nivel_id: string; bloque_id: string; cantidad: number }[],
-  detallesIngreso: { nivel_id: string; bloque_id: string; cantidad: number }[]
+  detallesSalida: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[],
+  detallesIngreso: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
 ): Promise<void> {
   // Crear movimiento de salida (origen)
   const { data: salData, error: salErr } = await dataClient
@@ -848,14 +849,26 @@ export async function registrarTrasladoPosicion(
   // Insertar detalles de salida
   if (detallesSalida.length > 0) {
     await dataClient.from('piso_movimiento_detalles').insert(
-      detallesSalida.map((d) => ({ movimiento_id: (salData as { id: string }).id, nivel_id: d.nivel_id, bloque_id: d.bloque_id, cantidad: d.cantidad }))
+      detallesSalida.map((d) => ({
+        movimiento_id: (salData as { id: string }).id,
+        nivel_id: d.nivel_id,
+        bloque_id: d.bloque_id,
+        cantidad: d.cantidad,
+        ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
+      }))
     )
   }
 
   // Insertar detalles de ingreso
   if (detallesIngreso.length > 0) {
     await dataClient.from('piso_movimiento_detalles').insert(
-      detallesIngreso.map((d) => ({ movimiento_id: (ingData as { id: string }).id, nivel_id: d.nivel_id, bloque_id: d.bloque_id, cantidad: d.cantidad }))
+      detallesIngreso.map((d) => ({
+        movimiento_id: (ingData as { id: string }).id,
+        nivel_id: d.nivel_id,
+        bloque_id: d.bloque_id,
+        cantidad: d.cantidad,
+        ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
+      }))
     )
   }
 }

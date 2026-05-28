@@ -128,6 +128,7 @@ export function PisoSectoresTab() {
   const [busyExport, setBusyExport] = useState(false)
   const [searchBloque, setSearchBloque] = useState('')
   const mountedRef = useRef(true)
+  const justSelectedRef = useRef(false)
 
   // Detalle de posicion
   const [detail, setDetail] = useState<{
@@ -288,6 +289,8 @@ export function PisoSectoresTab() {
 
   // Crear articulo manual cuando el usuario sale del campo sin seleccionar nada
   async function handleCodeBlur(prefix: 'ing' | 'dev', idx: number) {
+    // Skip if user just selected from dropdown (onBlur fires before onClick)
+    if (justSelectedRef.current) { justSelectedRef.current = false; return }
     const rows = prefix === 'ing' ? ingRows : devRows
     const row = rows[idx]
     if (!row || row.bloque_id || row.codigo.trim().length < 1) return
@@ -312,6 +315,7 @@ export function PisoSectoresTab() {
   }
 
   function onSelectFromCatalog(prefix: 'ing' | 'dev', idx: number, bloque: BloqueOption) {
+    justSelectedRef.current = true
     if (prefix === 'ing') {
       setIngRows((prev) => {
         const u = [...prev]

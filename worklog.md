@@ -197,3 +197,27 @@ Stage Summary:
 - ENTORNO COMPLETAMENTE FUNCIONAL tras correcciones
 - CORRECCIONES: git remote actualizado, SERVICE_ROLE_KEY agregada a Cloudflare env vars
 - Las claves no expiran hasta 2036, no se necesitarán actualizaciones por ~10 años
+
+---
+Task ID: JHIA-57
+Agent: main
+Task: Fix salidas not reducing stock in Kardex Piso Sectores
+
+Work Log:
+- Read the full schema: `piso_movimiento_detalles` originally has NO `fecha_vencimiento` column
+- Migration added it later, but old RPC `piso_registrar_movimiento` never writes it
+- Old salidas had NULL fecha_vencimiento → key `bloque_id::`, while new ingresos had fecha → key `bloque_id::date`
+- Previous redistribution logic (JHIA-56) was complex and still failing
+- Rewrote `stockDetallePosicion` with clean FEFO allocation algorithm:
+  1. Build lot pools from ingreso records (bloque_id → fecha → qty)
+  2. Sum ALL salidas by bloque_id (ignoring fecha_vencimiento completely)
+  3. Deduct salidas from lot pools in FEFO order (nearest expiry first)
+- Added `getTipo()` helper to handle join result as both object and array
+- Built and verified TypeScript compilation
+- Committed as JHIA-57, pushed to GitHub
+
+Stage Summary:
+- File changed: `src/lib/piso/api.ts` (98 insertions, 79 deletions)
+- Git tag: JHIA-57
+- Pushed to origin/main
+- Deployment pending (no Cloudflare API token available in environment)

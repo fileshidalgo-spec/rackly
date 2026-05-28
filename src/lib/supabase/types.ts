@@ -157,6 +157,7 @@ export type Database = {
         Row: {
           bloque_id: string
           cantidad: number
+          fecha_vencimiento: string | null
           id: string
           movimiento_id: string
           nivel_id: string
@@ -164,6 +165,7 @@ export type Database = {
         Insert: {
           bloque_id: string
           cantidad: number
+          fecha_vencimiento?: string | null
           id?: string
           movimiento_id: string
           nivel_id: string
@@ -171,6 +173,7 @@ export type Database = {
         Update: {
           bloque_id?: string
           cantidad?: number
+          fecha_vencimiento?: string | null
           id?: string
           movimiento_id?: string
           nivel_id?: string
@@ -380,6 +383,30 @@ export type Database = {
           usuario_id: string | null
           usuario_nombre: string | null
         }
+      }
+      piso_stock_detalle_posicion: {
+        Args: { _posicion_id: string }
+        Returns: {
+          bloque_descripcion: string
+          bloque_id: string
+          bloque_codigo: string
+          bloque_unidad: string
+          cantidad: number
+          fecha_vencimiento: string
+        }[]
+      }
+      piso_stock_sector_grid: {
+        Args: { _sector_id: string }
+        Returns: {
+          bloque_id: string
+          bloque_codigo: string
+          columna_letra: string
+          posicion_id: string
+          posicion_numero: number
+          stock_total: number
+          subcolumna_codigo: string
+          bloques_json: Json
+        }[]
       }
       primer_nombre_usuario: {
         Args: { _correo: string; _nombre: string }

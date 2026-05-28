@@ -71,6 +71,7 @@ export function TrasladoTab() {
   const [un, setUn] = useState('')
   const [locations, setLocations] = useState<LocStock[]>([])
   const [selectedOrigin, setSelectedOrigin] = useState<string | null>(null)
+  const [trasladoTotal, setTrasladoTotal] = useState(true)
   const [destBloque, setDestBloque] = useState('')
   const [destTorre, setDestTorre] = useState('')
   const [destPiso, setDestPiso] = useState('')
@@ -133,6 +134,7 @@ export function TrasladoTab() {
   const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedOrigin)
 
   const qtyNum = parseFloat(qty) || 0
+  const saldoRestante = origin ? origin.stock - qtyNum : 0
   const excedeStock = origin ? qtyNum > origin.stock : false
   const faltaStock = origin ? qtyNum > 0 && qtyNum < origin.stock : false
   const diferencia = origin ? qtyNum - origin.stock : 0
@@ -250,6 +252,7 @@ export function TrasladoTab() {
     setUn('')
     setLocations([])
     setSelectedOrigin(null)
+    setTrasladoTotal(true)
     setDestBloque('')
     setDestTorre('')
     setDestPiso('')
@@ -308,6 +311,7 @@ export function TrasladoTab() {
         <>
           <div className="flex items-center gap-2">
             <p className="text-sm font-semibold">1. Selecciona ubicación de origen:</p>
+            <p className="text-xs text-muted-foreground">y elige el tipo de traslado</p>
           </div>
           <div className="overflow-x-auto rounded-xl border border-slate-200/60">
             <Table className="min-w-[700px]">
@@ -338,6 +342,7 @@ export function TrasladoTab() {
                       }`}
                       onClick={() => {
                         setSelectedOrigin(key)
+                        setTrasladoTotal(true)
                         setQty(String(loc.stock))
                         setStep(2)
                       }}
@@ -375,28 +380,45 @@ export function TrasladoTab() {
                         )}
                       </TableCell>
                       <TableCell className="text-center">
-                        <Button
-                          size="sm"
-                          variant={isSelected ? 'default' : 'outline'}
-                          disabled={isSelected}
-                          className={`h-8 px-3 text-xs font-semibold gap-1.5 ${
-                            isSelected
-                              ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                              : 'border-blue-200 text-blue-700 hover:bg-blue-50 hover:text-blue-800 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-950/50'
-                          }`}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setSelectedOrigin(key)
-                            setQty(String(loc.stock))
-                            setStep(2)
-                          }}
-                        >
-                          {isSelected ? (
-                            <><CheckCircle2 className="h-3.5 w-3.5" /> Seleccionado</>
-                          ) : (
-                            'Seleccionar'
-                          )}
-                        </Button>
+                        {isSelected ? (
+                          <div className="flex items-center justify-center gap-1 text-xs font-bold text-blue-700 dark:text-blue-400">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            <span>{trasladoTotal ? 'Total' : 'Parcial'}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 px-2.5 text-[11px] font-semibold gap-1 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/50"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSelectedOrigin(key)
+                                setTrasladoTotal(true)
+                                setQty(String(loc.stock))
+                                setStep(2)
+                              }}
+                            >
+                              <Package className="h-3 w-3" />
+                              Todo
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 px-2.5 text-[11px] font-semibold gap-1 border-sky-200 text-sky-700 hover:bg-sky-50 hover:text-sky-800 dark:border-sky-800 dark:text-sky-400 dark:hover:bg-sky-950/50"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSelectedOrigin(key)
+                                setTrasladoTotal(false)
+                                setQty('')
+                                setStep(2)
+                              }}
+                            >
+                              <ArrowUpFromLine className="h-3 w-3" />
+                              Parcial
+                            </Button>
+                          </div>
+                        )}
                       </TableCell>
                     </TableRow>
                   )
@@ -412,7 +434,63 @@ export function TrasladoTab() {
 
       {origin && step === 2 && (
         <div className="space-y-3 p-4 border rounded-lg">
-          <p className="text-sm font-medium">2. Elige ubicación de destino:</p>
+          {/* Indicador del tipo de traslado seleccionado */}
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium">2. Elige ubicación de destino:</p>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => { setTrasladoTotal(true); setQty(String(origin.stock)) }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  trasladoTotal
+                    ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400 shadow-sm'
+                    : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700'
+                }`}
+              >
+                <Package className="h-3 w-3 inline-block mr-1 -mt-0.5" />
+                Traslado Total
+              </button>
+              <button
+                onClick={() => { setTrasladoTotal(false); setQty('') }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  !trasladoTotal
+                    ? 'bg-sky-100 text-sky-800 border-2 border-sky-400 shadow-sm dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-600'
+                    : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700'
+                }`}
+              >
+                <ArrowUpFromLine className="h-3 w-3 inline-block mr-1 -mt-0.5" />
+                Traslado Parcial
+              </button>
+            </div>
+          </div>
+
+          {/* Info del tipo de traslado */}
+          <div className={`rounded-lg border p-2.5 flex items-center gap-2.5 ${
+            trasladoTotal
+              ? 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/20'
+              : 'border-sky-200 bg-sky-50/70 dark:border-sky-800 dark:bg-sky-950/20'
+          }`}>
+            {trasladoTotal ? (
+              <>
+                <div className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
+                  <Package className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                  <strong>Traslado Total:</strong> Se moverán <strong>todas las {origin.stock} {origin.un}</strong> al destino.
+                  La ubicación de origen quedará con <strong>stock 0</strong>.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="w-7 h-7 rounded-full bg-sky-100 dark:bg-sky-900/40 flex items-center justify-center shrink-0">
+                  <ArrowUpFromLine className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+                </div>
+                <p className="text-xs text-sky-700 dark:text-sky-300">
+                  <strong>Traslado Parcial:</strong> Ingresa la cantidad que deseas mover.
+                  El <strong>saldo restante ({origin.stock} - cantidad)</strong> se quedará en la ubicación de origen.
+                </p>
+              </>
+            )}
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="space-y-1">
               <Label>Bloque</Label>
@@ -453,21 +531,48 @@ export function TrasladoTab() {
           </div>
 
           <div className="space-y-1">
-            <Label>Cantidad a trasladar</Label>
-            <Input
-              type="number"
-              step="any"
-              value={qty}
-              onChange={(e) => setQty(e.target.value)}
-              placeholder={`Stock disponible: ${origin.stock} ${origin.un}`}
-            />
-            <p className="text-xs text-muted-foreground">
-              Stock disponible en origen: <strong>{origin.stock} {origin.un}</strong>
-            </p>
+            <Label>{trasladoTotal ? 'Cantidad a trasladar (stock total)' : 'Cantidad a trasladar'}</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                step="any"
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+                disabled={trasladoTotal}
+                placeholder={`Stock disponible: ${origin.stock} ${origin.un}`}
+                className={trasladoTotal ? 'bg-emerald-50 dark:bg-emerald-950/20 font-bold' : ''}
+              />
+              {!trasladoTotal && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setQty(String(origin.stock))}
+                  className="shrink-0 h-9 px-2.5 text-xs font-semibold border-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900"
+                >
+                  Max: {origin.stock}
+                </Button>
+              )}
+            </div>
+            {!trasladoTotal && qtyNum > 0 && qtyNum <= origin.stock && (
+              <div className="flex items-center justify-between text-xs">
+                <p className="text-muted-foreground">
+                  Stock disponible: <strong>{origin.stock} {origin.un}</strong>
+                </p>
+                <p className={`font-semibold ${saldoRestante === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-sky-600 dark:text-sky-400'}`}>
+                  Saldo en origen: <strong>{saldoRestante} {origin.un}</strong>
+                </p>
+              </div>
+            )}
+            {trasladoTotal && (
+              <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                Se trasladará todo el stock. La ubicación quedará vacía (0).
+              </p>
+            )}
           </div>
 
-          {/* Sección de ajuste cuando qty != stock */}
-          {tieneAjuste && (
+          {/* Sección de ajuste cuando qty != stock (no aplica en traslado total) */}
+          {tieneAjuste && !trasladoTotal && (
             <div className={`rounded-lg border p-3 space-y-2 ${
               excedeStock
                 ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800'
@@ -563,7 +668,9 @@ export function TrasladoTab() {
                 }`}>
                   {destinoOcupado.length > 0
                     ? 'El destino ya tiene stock. Revisa o retira productos antes de trasladar.'
-                    : 'Confirma los datos del traslado.'}
+                    : trasladoTotal
+                      ? `Traslado total de ${qty} ${origin?.un}. La ubicación de origen quedará vacía.`
+                      : `Traslado parcial. Quedará un saldo de ${saldoRestante} ${origin?.un} en el origen.`}
                 </AlertDialogDescription>
               </div>
             </div>
@@ -611,8 +718,34 @@ export function TrasladoTab() {
               </div>
             </div>
 
+            {/* Tipo de traslado y saldo */}
+            <div className="px-6 pb-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge className={`text-xs font-bold ${
+                  trasladoTotal
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+                    : 'bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-700'
+                }`}>
+                  {trasladoTotal
+                    ? <><Package className="h-3 w-3 mr-1" /> Traslado Total</>
+                    : <><ArrowUpFromLine className="h-3 w-3 mr-1" /> Traslado Parcial</>
+                  }
+                </Badge>
+                {!trasladoTotal && qtyNum > 0 && (
+                  <Badge variant="outline" className="border-sky-300 text-sky-700 dark:text-sky-300 text-xs font-semibold">
+                    Saldo en origen: {saldoRestante} {origin?.un}
+                  </Badge>
+                )}
+                {trasladoTotal && (
+                  <Badge variant="outline" className="border-emerald-300 text-emerald-700 dark:text-emerald-300 text-xs font-semibold">
+                    Origen quedará en 0
+                  </Badge>
+                )}
+              </div>
+            </div>
+
             {/* Ajuste automático */}
-            {tieneAjuste && (
+            {tieneAjuste && !trasladoTotal && (
               <div className="px-6 pb-3">
                 <div className={`rounded-xl border p-3 ${
                   excedeStock

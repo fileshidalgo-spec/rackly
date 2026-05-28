@@ -159,7 +159,7 @@ Work Log:
 - Analyzed `calcularOcupacion()` function — it correctly computes: Pos4 = multi-lote (blue+dot), Pos5 = single (blue)
 - Determined the real issue: the JHIA-42 fix was NEVER DEPLOYED because Cloudflare API token had expired
 - Built the project successfully with `npm run build`
-- Deployed to Cloudflare Pages using new API token: `[REDACTED]`
+- Deployed to Cloudflare Pages using new API token
 - Deployment successful at https://204e38c9.rackly.pages.dev
 - Created git tag JHIA-43
 
@@ -181,7 +181,7 @@ Work Log:
 - Verificado token GitHub antiguo (ghp_t1XJG...) → EXPIRADO (401 Bad credentials)
 - Verificado token GitHub actual (ghp_oirH...) → VÁLIDO, full scopes (admin, repo, workflow, etc.)
 - Actualizado git remote para usar el token válido
-- Verificado token Cloudflare (cfat_ke5Y...) → funciona para account/pages (aunque /tokens/verify falla, es normal)
+- Verificado token Cloudflare ([REDACTED] → funciona para account/pages (aunque /tokens/verify falla, es normal)
 - Verificado proyecto Cloudflare Pages "rackly" existe y está activo
 - Encontrado que NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY NO estaba en Cloudflare env vars
 - Agregada SERVICE_ROLE_KEY a Cloudflare production env vars

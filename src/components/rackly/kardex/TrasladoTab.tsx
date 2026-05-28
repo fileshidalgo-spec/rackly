@@ -81,6 +81,7 @@ export function TrasladoTab() {
   const [confirm, setConfirm] = useState(false)
   const [destinoOcupado, setDestinoOcupado] = useState<StockEnUbicacion[]>([])
   const [salidaBusy, setSalidaBusy] = useState<string | null>(null)
+  const [corregirDiferencia, setCorregirDiferencia] = useState(false)
 
   const [movs, setMovs] = useState<Movimiento[]>([])
 
@@ -138,7 +139,8 @@ export function TrasladoTab() {
   const excedeStock = origin ? qtyNum > origin.stock : false
   const faltaStock = origin ? qtyNum > 0 && qtyNum < origin.stock : false
   const diferencia = origin ? qtyNum - origin.stock : 0
-  const tieneAjuste = excedeStock || faltaStock
+  // Ajuste automático: se activa cuando qty > stock (siempre), o cuando qty < stock Y el usuario elige corregir
+  const ajusteActivo = excedeStock || (faltaStock && corregirDiferencia)
 
   async function handleConfirm() {
     if (!origin) return
@@ -223,16 +225,19 @@ export function TrasladoTab() {
         usuarioCorreo: perfil.correo,
         fVencimiento: origin.fVencimiento,
         proveedor: origin.proveedor,
-        // Se genera ajuste automático cuando qty != stock (positivo o negativo)
-        cantidadAjuste: tieneAjuste ? diferencia : undefined,
+        // Se genera ajuste automático solo si aplica: qty > stock o (qty < stock y el usuario elige corregir)
+        cantidadAjuste: ajusteActivo ? diferencia : undefined,
       })
       toast.success('Traslado registrado')
-      if (tieneAjuste) {
+      if (ajusteActivo) {
         if (excedeStock) {
-          toast.info(`Ajuste automático: +${Math.abs(diferencia)} ${origin.un} en origen (faltaba stock)`, { duration: 6000 })
-        } else {
-          toast.info(`Ajuste automático: -${Math.abs(diferencia)} ${origin.un} en origen (sobraba stock)`, { duration: 6000 })
+          toast.info(`Ajuste automático: +${Math.abs(diferencia)} ${origin.un} ingreso en origen (faltaba stock registrado)`, { duration: 6000 })
+        } else if (corregirDiferencia) {
+          toast.info(`Ajuste automático: -${Math.abs(diferencia)} ${origin.un} salida en origen (se deja posición en 0)`, { duration: 6000 })
         }
+      }
+      if (faltaStock && !corregirDiferencia) {
+        toast.info(`Queda un saldo de ${saldoRestante} ${origin.un} en la ubicación de origen`, { duration: 6000 })
       }
       setMovs(result)
       resetForm()
@@ -253,6 +258,7 @@ export function TrasladoTab() {
     setLocations([])
     setSelectedOrigin(null)
     setTrasladoTotal(true)
+    setCorregirDiferencia(false)
     setDestBloque('')
     setDestTorre('')
     setDestPiso('')
@@ -537,7 +543,7 @@ export function TrasladoTab() {
                 type="number"
                 step="any"
                 value={qty}
-                onChange={(e) => setQty(e.target.value)}
+                onChange={(e) => { setQty(e.target.value); setCorregirDiferencia(false) }}
                 disabled={trasladoTotal}
                 placeholder={`Stock disponible: ${origin.stock} ${origin.un}`}
                 className={trasladoTotal ? 'bg-emerald-50 dark:bg-emerald-950/20 font-bold' : ''}
@@ -547,94 +553,116 @@ export function TrasladoTab() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setQty(String(origin.stock))}
+                  onClick={() => { setQty(String(origin.stock)); setCorregirDiferencia(false) }}
                   className="shrink-0 h-9 px-2.5 text-xs font-semibold border-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900"
                 >
                   Max: {origin.stock}
                 </Button>
               )}
             </div>
-            {!trasladoTotal && qtyNum > 0 && qtyNum <= origin.stock && (
-              <div className="flex items-center justify-between text-xs">
-                <p className="text-muted-foreground">
-                  Stock disponible: <strong>{origin.stock} {origin.un}</strong>
-                </p>
-                <p className={`font-semibold ${saldoRestante === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-sky-600 dark:text-sky-400'}`}>
-                  Saldo en origen: <strong>{saldoRestante} {origin.un}</strong>
-                </p>
-              </div>
-            )}
+
+            {/* Indicadores debajo del input de cantidad */}
             {trasladoTotal && (
               <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
                 Se trasladará todo el stock. La ubicación quedará vacía (0).
               </p>
             )}
-          </div>
 
-          {/* Sección de ajuste cuando qty != stock (no aplica en traslado total) */}
-          {tieneAjuste && !trasladoTotal && (
-            <div className={`rounded-lg border p-3 space-y-2 ${
-              excedeStock
-                ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800'
-                : 'border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800'
-            }`}>
-              <div className="flex items-start gap-2">
-                <AlertTriangle className={`h-4 w-4 mt-0.5 shrink-0 ${
-                  excedeStock
-                    ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-sky-600 dark:text-sky-400'
-                }`} />
-                <div className={`text-sm ${
-                  excedeStock
-                    ? 'text-amber-700 dark:text-amber-300'
-                    : 'text-sky-700 dark:text-sky-300'
-                }`}>
-                  <p className="font-medium">Ajuste de stock requerido</p>
-                  {excedeStock ? (
-                    <>
-                      <p className="mt-1">
-                        La cantidad a trasladar ({qtyNum} {origin.un}) supera el stock registrado ({origin.stock} {origin.un}).
+            {!trasladoTotal && qtyNum > 0 && (
+              <div className="space-y-1.5 pt-1">
+                {/* Caso 1: Cantidad exacta (igual al stock) */}
+                {qtyNum === origin.stock && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                      Cantidad exacta — Se trasladará todo el stock. Origen quedará en 0.
+                    </span>
+                  </div>
+                )}
+
+                {/* Caso 2: Cantidad menor al stock — OPCIÓN: dejar saldo o corregir */}
+                {faltaStock && (
+                  <div className="rounded-lg border border-sky-200 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/20 p-2.5 space-y-2">
+                    <p className="text-xs text-sky-700 dark:text-sky-300 font-medium">
+                      Cantidad menor al stock ({qtyNum} de {origin.stock} {origin.un}).
+                      Diferencia: <strong>{saldoRestante} {origin.un}</strong>
+                    </p>
+                    <p className="text-[11px] text-muted-foreground font-medium">¿Qué deseas hacer con la diferencia?</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCorregirDiferencia(false)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border-2 ${
+                          !corregirDiferencia
+                            ? 'bg-sky-100 text-sky-800 border-sky-400 shadow-sm dark:bg-sky-900/50 dark:text-sky-200 dark:border-sky-500'
+                            : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700'
+                        }`}
+                      >
+                        <Package className="h-3 w-3" />
+                        Dejar saldo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCorregirDiferencia(true)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border-2 ${
+                          corregirDiferencia
+                            ? 'bg-orange-100 text-orange-800 border-orange-400 shadow-sm dark:bg-orange-900/40 dark:text-orange-200 dark:border-orange-500'
+                            : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700'
+                        }`}
+                      >
+                        <ArrowUpFromLine className="h-3 w-3" />
+                        Corregir (salida)
+                      </button>
+                    </div>
+                    {!corregirDiferencia ? (
+                      <p className="text-[11px] text-sky-600/80 dark:text-sky-400/80 italic">
+                        <Package className="h-3 w-3 inline-block -mt-0.5 mr-0.5" />
+                        La posición de origen quedará con un <strong>saldo de {saldoRestante} {origin.un}</strong>.
                       </p>
-                      <p className="mt-1">
-                        Diferencia: <strong>+{Math.abs(diferencia)} {origin.un}</strong> (faltaba en el sistema)
-                      </p>
-                      <p className="mt-1 text-xs opacity-90">
-                        Se registrará un <strong>ingreso de ajuste</strong> de {Math.abs(diferencia)} {origin.un} en el origen
-                        para cubrir lo que falta, dejando el stock en 0. Útil cuando un operador dejó saldo adicional
-                        no registrado.
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="mt-1">
-                        La cantidad a trasladar ({qtyNum} {origin.un}) es menor al stock registrado ({origin.stock} {origin.un}).
-                      </p>
-                      <p className="mt-1">
-                        Diferencia: <strong>-{Math.abs(diferencia)} {origin.un}</strong> (sobra en el sistema)
-                      </p>
-                      <p className="mt-1 text-xs opacity-90">
-                        Se registrará una <strong>salida de ajuste</strong> de {Math.abs(diferencia)} {origin.un} en el origen
-                        para retirar lo que sobra, dejando el stock en 0. Útil cuando un operador registró de más
-                        o faltó producto físico.
-                      </p>
-                    </>
-                  )}
-                </div>
+                    ) : (
+                      <div className="rounded-md border border-orange-200 bg-orange-50/80 dark:border-orange-800 dark:bg-orange-950/30 p-2">
+                        <p className="text-[11px] text-orange-700 dark:text-orange-300">
+                          <AlertTriangle className="h-3 w-3 inline-block -mt-0.5 mr-0.5" />
+                          Se registrará una <strong>salida de ajuste de {saldoRestante} {origin.un}</strong> en el origen.
+                          La posición quedará en <strong>0</strong>. Útil cuando el producto físico ya no está ahí.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Caso 3: Cantidad mayor al stock — SIEMPRE auto-ajusta con ingreso */}
+                {excedeStock && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/20 p-2.5 space-y-1.5">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                      <div className="text-xs text-amber-700 dark:text-amber-300 space-y-1">
+                        <p className="font-medium">
+                          Cantidad mayor al stock registrado ({qtyNum} de {origin.stock} {origin.un}).
+                        </p>
+                        <p>
+                          Diferencia: <strong>+{Math.abs(diferencia)} {origin.un}</strong> (faltaba en el sistema)
+                        </p>
+                        <p className="text-[11px] opacity-90">
+                          Se registrará un <strong>ingreso de ajuste de {Math.abs(diferencia)} {origin.un}</strong> en el origen
+                          para cubrir lo que falta. La posición quedará en <strong>0</strong>. Útil cuando un operador dejó
+                          saldo adicional no registrado.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 text-[11px] font-semibold pt-0.5">
+                      <Badge variant="outline" className="border-amber-300 text-amber-700 dark:text-amber-300">
+                        Origen: {origin.stock} +{Math.abs(diferencia)} = {qtyNum} {origin.un}
+                      </Badge>
+                      <Badge variant="outline" className="border-blue-300 text-blue-700 dark:text-blue-300">
+                        Destino: +{qtyNum} {origin.un}
+                      </Badge>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-3 text-xs font-medium">
-                <Badge variant="outline" className={excedeStock
-                  ? 'border-amber-400 text-amber-700 dark:text-amber-300'
-                  : 'border-sky-400 text-sky-700 dark:text-sky-300'
-                }>
-                  Origen: {origin.stock} → {qtyNum} {origin.un}
-                  [{diferencia > 0 ? '+' : ''}{diferencia} ajuste]
-                </Badge>
-                <Badge variant="outline" className="border-blue-400 text-blue-700 dark:text-blue-300">
-                  Destino: +{qtyNum} {origin.un}
-                </Badge>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
 
           <Button onClick={handleConfirm} disabled={!destBloque || !destTorre || !destPos || qtyNum <= 0} className="gap-2">
             <ArrowRightLeft className="h-4 w-4" />
@@ -670,7 +698,11 @@ export function TrasladoTab() {
                     ? 'El destino ya tiene stock. Revisa o retira productos antes de trasladar.'
                     : trasladoTotal
                       ? `Traslado total de ${qty} ${origin?.un}. La ubicación de origen quedará vacía.`
-                      : `Traslado parcial. Quedará un saldo de ${saldoRestante} ${origin?.un} en el origen.`}
+                      : excedeStock
+                        ? `Traslado de ${qty} ${origin?.un} (+${Math.abs(diferencia)} ajuste ingreso). Origen quedará en 0.`
+                        : corregirDiferencia
+                          ? `Traslado de ${qty} ${origin?.un} (-${saldoRestante} ajuste salida). Origen quedará en 0.`
+                          : `Traslado parcial de ${qty} ${origin?.un}. Quedará saldo de ${saldoRestante} ${origin?.un} en origen.`}
                 </AlertDialogDescription>
               </div>
             </div>
@@ -724,19 +756,27 @@ export function TrasladoTab() {
                 <Badge className={`text-xs font-bold ${
                   trasladoTotal
                     ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
-                    : 'bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-700'
+                    : excedeStock
+                      ? 'bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700'
+                      : corregirDiferencia
+                        ? 'bg-orange-100 text-orange-800 border border-orange-300 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700'
+                        : 'bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-700'
                 }`}>
                   {trasladoTotal
                     ? <><Package className="h-3 w-3 mr-1" /> Traslado Total</>
-                    : <><ArrowUpFromLine className="h-3 w-3 mr-1" /> Traslado Parcial</>
+                    : excedeStock
+                      ? <><AlertTriangle className="h-3 w-3 mr-1" /> Traslado con Ajuste (Ingreso +{Math.abs(diferencia)})</>
+                      : corregirDiferencia
+                        ? <><ArrowUpFromLine className="h-3 w-3 mr-1" /> Traslado Parcial + Salida ({saldoRestante})</>
+                        : <><ArrowUpFromLine className="h-3 w-3 mr-1" /> Traslado Parcial</>
                   }
                 </Badge>
-                {!trasladoTotal && qtyNum > 0 && (
+                {!trasladoTotal && !excedeStock && !corregirDiferencia && qtyNum > 0 && origin && qtyNum < origin.stock && (
                   <Badge variant="outline" className="border-sky-300 text-sky-700 dark:text-sky-300 text-xs font-semibold">
                     Saldo en origen: {saldoRestante} {origin?.un}
                   </Badge>
                 )}
-                {trasladoTotal && (
+                {(trasladoTotal || corregirDiferencia || excedeStock) && (
                   <Badge variant="outline" className="border-emerald-300 text-emerald-700 dark:text-emerald-300 text-xs font-semibold">
                     Origen quedará en 0
                   </Badge>
@@ -745,7 +785,7 @@ export function TrasladoTab() {
             </div>
 
             {/* Ajuste automático */}
-            {tieneAjuste && !trasladoTotal && (
+            {ajusteActivo && (
               <div className="px-6 pb-3">
                 <div className={`rounded-xl border p-3 ${
                   excedeStock

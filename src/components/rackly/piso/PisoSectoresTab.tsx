@@ -165,6 +165,7 @@ export function PisoSectoresTab() {
     stockActual: number
     selected: boolean
     saldoMode: 'saldo' | 'ajustar'
+    fecha_vencimiento: string
   }
   const [trDestPos, setTrDestPos] = useState<PosicionConStock | null>(null)
   const [trItems, setTrItems] = useState<TrItem[]>([])
@@ -291,6 +292,7 @@ export function PisoSectoresTab() {
           stockActual: s.cantidad,
           selected: true,
           saldoMode: 'saldo',
+          fecha_vencimiento: s.fecha_vencimiento || '',
         })))
       }
     } catch { toast.error('Error al cargar detalle') }
@@ -327,6 +329,7 @@ export function PisoSectoresTab() {
       stockActual: s.cantidad,
       selected: true,
       saldoMode: 'saldo',
+      fecha_vencimiento: s.fecha_vencimiento || '',
     })))
     setMode('traslado')
   }
@@ -500,7 +503,7 @@ export function PisoSectoresTab() {
     try {
       const nivelId = await obtenerPrimerNivel(detail.posicionId)
       if (!nivelId) { toast.error('No hay niveles disponibles'); setBusy(false); return }
-      const detalles = validRows.map((r) => ({ nivel_id: nivelId, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad) }))
+      const detalles = validRows.map((r) => ({ nivel_id: nivelId, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
       await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Salida registrada')
       const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
@@ -530,8 +533,8 @@ export function PisoSectoresTab() {
       const surplusItems = validRows.filter((r) => parseFloat(r.cantidad) > r.stockActual)
 
       // 1) Base transfer for ALL selected items (move the entered amount)
-      const allDetSal = validRows.map((r) => ({ nivel_id: origNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad) }))
-      const allDetIng = validRows.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad) }))
+      const allDetSal = validRows.map((r) => ({ nivel_id: origNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
+      const allDetIng = validRows.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
       await registrarTrasladoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', allDetSal, allDetIng)
 
       // 2) For surplus items (qty > stock): create ingreso at destination for the excess
@@ -539,7 +542,7 @@ export function PisoSectoresTab() {
         const excess = parseFloat(item.cantidad) - item.stockActual
         if (excess > 0) {
           await registrarIngresoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
-            { nivel_id: destNivelId!, bloque_id: item.bloque_id, cantidad: excess },
+            { nivel_id: destNivelId!, bloque_id: item.bloque_id, cantidad: excess, fecha_vencimiento: item.fecha_vencimiento || '' },
           ])
         }
       }
@@ -550,7 +553,7 @@ export function PisoSectoresTab() {
           const remaining = item.stockActual - parseFloat(item.cantidad)
           if (remaining > 0) {
             await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
-              { nivel_id: origNivelId!, bloque_id: item.bloque_id, cantidad: remaining },
+              { nivel_id: origNivelId!, bloque_id: item.bloque_id, cantidad: remaining, fecha_vencimiento: item.fecha_vencimiento || null },
             ])
           }
         }

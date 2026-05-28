@@ -45,7 +45,7 @@ type RowEntry = {
   sin_vencimiento: boolean
 }
 
-const EMPTY_ROW: RowEntry = { bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '', fecha_vencimiento: '', sin_vencimiento: true }
+const EMPTY_ROW: RowEntry = { bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '', fecha_vencimiento: '', sin_vencimiento: false }
 
 // ═══════════════════════════════════════════════
 //  ANIMATED COUNTER HOOK

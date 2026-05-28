@@ -448,10 +448,73 @@ export type PosicionConStock = {
 /**
  * Obtiene todas las posiciones de un sector con su stock por bloque.
  * Retorna un arreglo plano de posiciones con información de columna y stock.
+ * Usa RPC server-side cuando disponible, fallback client-side.
  */
 export async function cargarPosicionesSector(
   sectorId: string
 ): Promise<PosicionConStock[]> {
+  // ═══ MÉTODO PRINCIPAL: RPC server-side (JHIA-57b) ═══
+  try {
+    const { data, error } = await dataClient.rpc('piso_stock_sector_grid', {
+      _sector_id: sectorId,
+    })
+    if (!error && Array.isArray(data) && data.length >= 0) {
+      // El RPC retorna posiciones con stock > 0, pero necesitamos TODAS las posiciones (incluidas vacías)
+      // 1. Obtener todas las posiciones del sector
+      const { data: cols, error: colErr } = await dataClient
+        .from('piso_columnas').select('id, letra').eq('sector_id', sectorId).order('letra')
+      if (colErr) throw colErr
+      const columnas = (cols ?? []) as { id: string; letra: string }[]
+      if (columnas.length === 0) return []
+      const colMap = new Map(columnas.map((c) => [c.id, c.letra]))
+
+      const { data: subs } = await dataClient
+        .from('piso_subcolumnas').select('id, codigo, columna_id').in('columna_id', columnas.map((c) => c.id))
+      const subMap = new Map(((subs ?? []) as { id: string; codigo: string; columna_id: string }[]).map((s) => [s.id, s]))
+
+      const { data: posData } = await dataClient
+        .from('piso_posiciones').select('id, numero, subcolumna_id').in('subcolumna_id', ((subs ?? []) as { id: string }[]).map((s) => s.id))
+      const posiciones = (posData ?? []) as { id: string; numero: number; subcolumna_id: string }[]
+
+      // 2. Mapear resultados del RPC por posicion_id
+      const rpcData = data as unknown as {
+        posicion_id: string; posicion_numero: number; subcolumna_codigo: string;
+        columna_letra: string; stock_total: unknown; bloques_json: unknown;
+      }[]
+      const rpcStockMap = new Map<string, { stock: number; bloques: { bloque_id: string; bloque_codigo: string; cantidad: number }[] }>()
+      for (const r of rpcData) {
+        const qty = typeof r.stock_total === 'number' ? r.stock_total : parseFloat(String(r.stock_total ?? '0')) || 0
+        let bloques: { bloque_id: string; bloque_codigo: string; cantidad: number }[] = []
+        try {
+          bloques = (typeof r.bloques_json === 'object' && r.bloques_json ? (r.bloques_json as { bloque_id: string; bloque_codigo: string; cantidad: unknown }[]) : []).map((b) => ({
+            bloque_id: b.bloque_id,
+            bloque_codigo: b.bloque_codigo,
+            cantidad: typeof b.cantidad === 'number' ? b.cantidad : parseFloat(String(b.cantidad ?? '0')) || 0,
+          }))
+        } catch { /* json parse error */ }
+        rpcStockMap.set(r.posicion_id, { stock: qty, bloques })
+      }
+
+      // 3. Construir resultado para TODAS las posiciones
+      const result: PosicionConStock[] = posiciones.map((pos) => {
+        const sub = subMap.get(pos.subcolumna_id)
+        const rpcInfo = rpcStockMap.get(pos.id)
+        return {
+          posicionId: pos.id,
+          posicionNumero: pos.numero,
+          subcolumnaCodigo: sub?.codigo ?? '',
+          columnaLetra: sub ? (colMap.get(sub.columna_id) ?? '') : '',
+          stock: rpcInfo?.stock ?? 0,
+          bloques: (rpcInfo?.bloques ?? []).filter((b) => b.cantidad > 0),
+        }
+      })
+      return result
+    }
+  } catch (rpcErr) {
+    console.warn('[Piso] RPC piso_stock_sector_grid no disponible, usando fallback:', rpcErr)
+  }
+
+  // ═══ FALLBACK: Cálculo client-side ═══
   // 1. Obtener todas las columnas del sector
   const { data: cols, error: colErr } = await dataClient
     .from('piso_columnas')
@@ -618,21 +681,45 @@ export async function cargarPosicionesSector(
 
 /**
  * Obtiene el stock detallado de una posición específica (todos los bloques y cantidades).
+ * Usa el RPC server-side `piso_stock_detalle_posicion` para cálculo FEFO robusto.
+ * Fallback: cálculo client-side si el RPC no existe aún.
  */
 export async function stockDetallePosicion(
   posicionId: string
 ): Promise<{ bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[]> {
-  // Obtener niveles de esta posición
+  // ═══ MÉTODO PRINCIPAL: RPC server-side (JHIA-57b) ═══
+  try {
+    const { data, error } = await dataClient.rpc('piso_stock_detalle_posicion', {
+      _posicion_id: posicionId,
+    })
+    if (!error && data) {
+      return (data as unknown as {
+        bloque_id: string; bloque_codigo: string; bloque_descripcion: string;
+        bloque_unidad: string; cantidad: unknown; fecha_vencimiento: string | null;
+      }[]).map((r) => ({
+        bloque_id: r.bloque_id,
+        bloque_codigo: r.bloque_codigo,
+        bloque_descripcion: r.bloque_descripcion ?? '',
+        bloque_unidad: r.bloque_unidad || 'KG',
+        cantidad: Math.round((typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0) * 1000) / 1000,
+        fecha_vencimiento: r.fecha_vencimiento ?? '',
+      }))
+    }
+    // Si el RPC no existe (error 428P01), caer al fallback
+    console.warn('[Piso] RPC piso_stock_detalle_posicion no disponible, usando fallback client-side')
+  } catch (rpcErr) {
+    console.warn('[Piso] Error RPC piso_stock_detalle_posicion:', rpcErr)
+  }
+
+  // ═══ FALLBACK: Cálculo client-side FEFO ═══
   const { data: nivData, error: nivErr } = await dataClient
     .from('piso_niveles')
     .select('id')
     .eq('posicion_id', posicionId)
   if (nivErr) throw nivErr
   const nivelIds = ((nivData ?? []) as { id: string }[]).map((n) => n.id)
-
   if (nivelIds.length === 0) return []
 
-  // Obtener detalles de movimiento con stock y fecha_vencimiento
   const { data: detData, error: detErr } = await dataClient
     .from('piso_movimiento_detalles')
     .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
@@ -640,31 +727,19 @@ export async function stockDetallePosicion(
   if (detErr) throw detErr
 
   const detalles = (detData ?? []) as unknown as {
-    bloque_id: string
-    cantidad: unknown
-    fecha_vencimiento: string | null
+    bloque_id: string; cantidad: unknown; fecha_vencimiento: string | null;
     piso_movimientos: { tipo: string } | null | { tipo: string }[]
   }[]
 
-  // ═══ ALGORITMO FEFO ROBUSTO ═══
-  // En vez de agrupar por bloque_id::fecha_vencimiento (que falla cuando
-  // las salidas antiguas no tienen fecha), separamos ingresos y salidas:
-  //
-  // 1. Construir "pool de lotes" a partir de ingresos (bloque_id → fecha → qty)
-  // 2. Sumar TODAS las salidas por bloque_id (sin importar fecha_vencimiento)
-  // 3. Descontar las salidas del pool en orden FEFO (fecha más próxima primero)
-
   const isIngresoType = (tipo: string) =>
     tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
-
-  // Helper: extraer tipo del join (puede ser objeto, array o null)
   const getTipo = (pm: { tipo: string } | null | { tipo: string }[]): string | null => {
     if (!pm) return null
     if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo : null
     return pm.tipo
   }
 
-  // Paso 1: Pool de lotes por ingreso → Map<bloque_id, Map<fecha, qty>>
+  // Pool de lotes por ingreso
   const ingresoPools = new Map<string, Map<string, number>>()
   for (const d of detalles) {
     const tipo = getTipo(d.piso_movimientos)
@@ -677,7 +752,7 @@ export async function stockDetallePosicion(
     ingresoPools.set(d.bloque_id, pool)
   }
 
-  // Paso 2: Sumar salidas por bloque_id (ignorando fecha_vencimiento)
+  // Sumar salidas por bloque_id (sin importar fecha)
   const salidasPorBloque = new Map<string, number>()
   for (const d of detalles) {
     const tipo = getTipo(d.piso_movimientos)
@@ -687,75 +762,44 @@ export async function stockDetallePosicion(
     salidasPorBloque.set(d.bloque_id, (salidasPorBloque.get(d.bloque_id) ?? 0) + qty)
   }
 
-  // Paso 3: Descontar salidas del pool en orden FEFO
-  // Resultado: Map<bloque_id, Array<{ fecha, qty_restante }>>
+  // FEFO: descontar salidas del pool
   const lotesRestantes = new Map<string, { fecha: string; qty: number }[]>()
-
   for (const [bloqueId, pool] of ingresoPools) {
-    // Ordenar lotes por fecha: con fecha ascendente, sin fecha al final
     const sortedLots = [...pool.entries()].sort(([a], [b]) => {
-      if (!a && b) return 1   // sin fecha va al final
+      if (!a && b) return 1
       if (a && !b) return -1
       return a.localeCompare(b)
     })
-
     const totalSalida = salidasPorBloque.get(bloqueId) ?? 0
     let pendiente = totalSalida
     const restantes: { fecha: string; qty: number }[] = []
-
     for (const [fecha, qty] of sortedLots) {
-      if (pendiente <= 0) {
-        // No hay más salida que descontar, este lote queda intacto
-        restantes.push({ fecha, qty })
-      } else if (qty <= pendiente) {
-        // La salida consume todo este lote
-        pendiente -= qty
-        // No se agrega (qty fue consumido completamente)
-      } else {
-        // La salida consume parte del lote
-        restantes.push({ fecha, qty: qty - pendiente })
-        pendiente = 0
-      }
+      if (pendiente <= 0) { restantes.push({ fecha, qty }) }
+      else if (qty <= pendiente) { pendiente -= qty }
+      else { restantes.push({ fecha, qty: qty - pendiente }); pendiente = 0 }
     }
-    // Si pendiente > 0 significa que las salidas exceden los ingresos (stock negativo → no se muestra)
-
-    if (restantes.length > 0) {
-      lotesRestantes.set(bloqueId, restantes)
-    }
+    if (restantes.length > 0) lotesRestantes.set(bloqueId, restantes)
   }
 
-  // Si no hay stock, devolver vacío
   if (lotesRestantes.size === 0) return []
 
-  // Obtener info de bloques
+  // Info de bloques
   const bloqueIds = [...lotesRestantes.keys()]
   const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
-
-  // Buscar en piso_bloques (solo IDs reales)
   const realIds = bloqueIds.filter((id) => !id.startsWith('cat_'))
   if (realIds.length > 0) {
-    const { data: bloqData } = await dataClient
-      .from('piso_bloques')
-      .select('id, codigo, descripcion, unidad')
-      .in('id', realIds)
-    for (const b of (bloqData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
+    const { data: bloqData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
+    for (const b of (bloqData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
       bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
-    }
   }
-  // Para IDs virtuales, buscar en catalogo
   const virtualIds = bloqueIds.filter((id) => id.startsWith('cat_'))
   if (virtualIds.length > 0) {
     const codes = virtualIds.map((id) => id.replace('cat_', ''))
-    const { data: catData } = await dataClient
-      .from('catalogo')
-      .select('codigo, descripcion, un')
-      .in('codigo', codes)
-    for (const c of (catData ?? []) as { codigo: string; descripcion: string; un: string }[]) {
+    const { data: catData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
+    for (const c of (catData ?? []) as { codigo: string; descripcion: string; un: string }[])
       bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
-    }
   }
 
-  // Construir resultados
   const results: { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[] = []
   for (const [bloqueId, lots] of lotesRestantes) {
     const info = bloqueInfoMap.get(bloqueId)
@@ -763,24 +807,17 @@ export async function stockDetallePosicion(
     for (const lot of lots) {
       if (lot.qty <= 0) continue
       results.push({
-        bloque_id: bloqueId,
-        bloque_codigo: info.codigo,
-        bloque_descripcion: info.descripcion,
-        bloque_unidad: info.unidad || 'KG',
-        cantidad: Math.round(lot.qty * 1000) / 1000,
-        fecha_vencimiento: lot.fecha,
+        bloque_id: bloqueId, bloque_codigo: info.codigo, bloque_descripcion: info.descripcion,
+        bloque_unidad: info.unidad || 'KG', cantidad: Math.round(lot.qty * 1000) / 1000, fecha_vencimiento: lot.fecha,
       })
     }
   }
-
-  // Ordenar: con fecha primero (ascendente), sin fecha al final
   results.sort((a, b) => {
     if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
     if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
     if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
     return a.bloque_codigo.localeCompare(b.bloque_codigo)
   })
-
   return results
 }
 

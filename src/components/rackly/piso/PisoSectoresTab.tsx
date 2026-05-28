@@ -599,14 +599,14 @@ export function PisoSectoresTab() {
   //  3D CELL STYLING — Enhanced Isometric Shelf
   // ═══════════════════════════════════════════════
   function getCellClasses(pos: PosicionConStock): string {
-    const base = 'relative group min-w-[50px] h-12 px-1.5 rounded-lg text-[9px] font-bold transition-all duration-300 cursor-pointer border overflow-hidden'
+    const base = 'relative group min-w-[52px] h-14 px-1 rounded-lg transition-all duration-300 cursor-pointer border overflow-hidden'
     if (pos.stock <= 0) {
-      return `${base} bg-emerald-500/[0.18] border-emerald-400/25 text-emerald-300 hover:bg-emerald-500/30 hover:border-emerald-400/40 hover:text-emerald-200 hover:shadow-lg hover:shadow-emerald-500/15 hover:-translate-y-1`
+      return `${base} bg-emerald-500/[0.18] border-emerald-400/25 hover:bg-emerald-500/30 hover:border-emerald-400/40 hover:shadow-lg hover:shadow-emerald-500/15 hover:-translate-y-1`
     }
     if (pos.bloques.length > 1) {
-      return `${base} bg-amber-500/40 border-amber-400/25 text-white hover:bg-amber-500/55 hover:shadow-lg hover:shadow-amber-500/25 hover:-translate-y-1`
+      return `${base} bg-amber-500/40 border-amber-400/25 hover:bg-amber-500/55 hover:shadow-lg hover:shadow-amber-500/25 hover:-translate-y-1`
     }
-    return `${base} bg-sky-500/30 border-sky-400/20 text-white hover:bg-sky-500/45 hover:shadow-lg hover:shadow-sky-500/25 hover:-translate-y-1`
+    return `${base} bg-sky-500/30 border-sky-400/20 hover:bg-sky-500/45 hover:shadow-lg hover:shadow-sky-500/25 hover:-translate-y-1`
   }
 
   // ═══════════════════════════════════════════════
@@ -835,24 +835,30 @@ export function PisoSectoresTab() {
                             {/* Inner depth shadow */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent pointer-events-none rounded-lg" />
 
-                            <span className="relative z-10 text-[11px]">{pos.posicionNumero}</span>
+                            {/* Two-zone flex layout: top = position number, bottom = stock */}
+                            <div className="relative z-10 flex flex-col items-center justify-between h-full py-1.5">
+                              {/* Position number — top zone */}
+                              <span className={`font-bold text-[12px] leading-none ${
+                                pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
+                              }`}>{pos.posicionNumero}</span>
 
-                            {/* Box visual when occupied — sits IN the shelf */}
-                            {isOccupied && (
-                              <div className={`absolute bottom-0.5 inset-x-1 rounded-t-md flex flex-col items-center justify-center pointer-events-none transition-all duration-300 ${
-                                isMulti
-                                  ? 'bg-gradient-to-t from-amber-400/25 to-amber-400/5'
-                                  : 'bg-gradient-to-t from-sky-400/25 to-sky-400/5'
-                              }`}>
-                                <span className="text-[8px] font-extrabold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">{pos.stock}</span>
-                                {isMulti && <span className="text-[6px] font-bold text-amber-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">+{pos.bloques.length}</span>}
-                              </div>
-                            )}
+                              {/* Stock badge — bottom zone */}
+                              {isOccupied && (
+                                <div className={`flex flex-col items-center leading-none mt-1 ${
+                                  isMulti
+                                    ? 'bg-amber-500/30 rounded px-1.5 py-0.5'
+                                    : 'bg-sky-500/25 rounded px-1.5 py-0.5'
+                                }`}>
+                                  <span className="text-[9px] font-extrabold text-white">{pos.stock}</span>
+                                  {isMulti && <span className="text-[6px] font-bold text-amber-200">+{pos.bloques.length}</span>}
+                                </div>
+                              )}
 
-                            {/* Empty slot depth illusion */}
-                            {!isOccupied && (
-                              <div className="absolute inset-[4px] rounded-md bg-black/[0.06] border border-black/[0.04] pointer-events-none" />
-                            )}
+                              {/* Empty indicator */}
+                              {!isOccupied && (
+                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400/40 mt-1" />
+                              )}
+                            </div>
                           </button>
                         </div>
                       )

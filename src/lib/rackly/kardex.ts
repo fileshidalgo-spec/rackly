@@ -34,6 +34,7 @@ export type OcupacionCelda = {
   posicion: string
   stock: number
   codigos: string[]
+  lotes: number
 }
 
 function fromRow(r: Record<string, unknown>): Movimiento {
@@ -265,6 +266,7 @@ export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
     posicion: String(r.posicion ?? ''),
     stock: Number(r.stock ?? 0),
     codigos: Array.isArray(r.codigos) ? (r.codigos as string[]).map(String) : [],
+    lotes: Array.isArray(r.codigos) ? (r.codigos as string[]).length : 0,
   }))
 }
 

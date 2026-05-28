@@ -63,30 +63,37 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
   return multiples
 }
 
-// Calcula ocupación desde movimientos — independiente del orden de procesamiento.
-// Rastrea stock POR CÓDIGO para evitar perder códigos con múltiples artículos.
+// Calcula ocupación desde movimientos — rastrea stock POR LOTE (código + vencimiento).
+// Normaliza códigos (trim + uppercase) para evitar falsos multi-artículo por diferencias de formato.
 function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
-  // Mapa: ubicacion_key → (codigo → stock por código)
+  // Mapa: ubicacion_key → (lote_key "codigo||fVencimiento" → stock)
   const cellMap = new Map<string, Map<string, number>>()
   for (const m of movs) {
     const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-    let codeMap = cellMap.get(key)
-    if (!codeMap) { codeMap = new Map(); cellMap.set(key, codeMap) }
+    const code = m.codigo.trim().toUpperCase()
+    const lotKey = `${code}||${m.fVencimiento || ''}`
+    let lotMap = cellMap.get(key)
+    if (!lotMap) { lotMap = new Map(); cellMap.set(key, lotMap) }
     const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
-    const current = codeMap.get(m.codigo) ?? 0
-    codeMap.set(m.codigo, current + delta)
+    const current = lotMap.get(lotKey) ?? 0
+    lotMap.set(lotKey, current + delta)
   }
   // Construir resultado: solo celdas con stock total > 0
   const result: OcupacionCelda[] = []
-  for (const [key, codeMap] of cellMap) {
+  for (const [key, lotMap] of cellMap) {
     let totalStock = 0
-    const codigos: string[] = []
-    for (const [code, stock] of codeMap) {
-      if (stock > 0) { totalStock += stock; codigos.push(code) }
+    const codigos = new Set<string>()
+    let lotes = 0
+    for (const [lotKey, stock] of lotMap) {
+      if (stock > 0) {
+        totalStock += stock
+        lotes++
+        codigos.add(lotKey.split('||')[0])
+      }
     }
     if (totalStock > 0) {
       const [bloque, torre, piso, posicion] = key.split('-')
-      result.push({ bloque, torre, piso, posicion, stock: totalStock, codigos })
+      result.push({ bloque, torre, piso, posicion, stock: totalStock, codigos: Array.from(codigos), lotes })
     }
   }
   return result
@@ -169,7 +176,8 @@ export function OcupacionTab() {
   const filtered = bloqueFilter === 'all' ? ocupacion : ocupacion.filter(o => o.bloque === bloqueFilter)
   const occupied = filtered.filter(o => o.stock > 0).length
   const multiArt = filtered.filter(o => o.stock > 0 && o.codigos.length > 1).length
-  const singleArt = occupied - multiArt
+  const multiLote = filtered.filter(o => o.stock > 0 && o.codigos.length === 1 && o.lotes > 1).length
+  const singleArt = occupied - multiArt - multiLote
   const total = bloqueFilter === 'all' ? totalCeldas() : totalPosBloque(bloqueFilter)
   const empty = total - occupied
   const pct = total > 0 ? Math.round((occupied / total) * 100) : 0
@@ -317,7 +325,8 @@ export function OcupacionTab() {
                 Stock: isOcc ? cell.stock : 0,
                 Códigos: isOcc ? cell.codigos.join(', ') : '',
                 Artículos: isOcc ? cell.codigos.length : 0,
-                Estado: isOcc ? (cell!.codigos.length > 1 ? 'Mixto' : 'Ocupado') : 'Vacío',
+                Estado: isOcc ? (cell!.codigos.length > 1 ? 'Mixto' : cell!.lotes > 1 ? 'Multi-lote' : 'Ocupado') : 'Vacío',
+                Lotes: isOcc ? cell!.lotes : 0,
               })
             }
           }
@@ -342,7 +351,8 @@ export function OcupacionTab() {
   const dashBloques = BLOQUES.map(b => {
     const bt = totalPosBloque(b), bo = ocupacion.filter(o => o.bloque === b && o.stock > 0).length
     const bm = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length > 1).length
-    return { bloque: b, total: bt, occupied: bo, multi: bm, empty: bt - bo, pct: bt > 0 ? Math.round((bo / bt) * 100) : 0 }
+    const bl = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length === 1 && o.lotes > 1).length
+    return { bloque: b, total: bt, occupied: bo, multi: bm, multiLote: bl, empty: bt - bo, pct: bt > 0 ? Math.round((bo / bt) * 100) : 0 }
   })
 
   const isView = detailMode === 'view'
@@ -360,7 +370,7 @@ export function OcupacionTab() {
         <div className="rounded-xl border border-blue-600/30 bg-gradient-to-br from-blue-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center"><Layers className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-blue-400/80 uppercase tracking-widest">Ocupadas</p></div>
           <p className="text-2xl font-bold text-blue-300">{occupied}</p>
-          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiArt} mixtas</p>
+          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiLote} multi-lote · {multiArt} mixtas</p>
         </div>
         <div className="rounded-xl border border-emerald-600/30 bg-gradient-to-br from-emerald-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>
@@ -383,6 +393,7 @@ export function OcupacionTab() {
               <div className={`w-7 h-7 rounded-lg mx-auto flex items-center justify-center text-xs font-bold transition-all ${bloqueFilter === db.bloque ? 'bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-md scale-105' : 'bg-slate-700 text-slate-400'}`}>{db.bloque}</div>
               <p className="text-[9px] text-slate-500">{db.total} pos</p>
               <div className="flex justify-center gap-1"><span className="text-[9px] font-bold text-blue-400">{db.occupied}</span><span className="text-[9px] text-slate-600">/</span><span className="text-[9px] font-bold text-emerald-400">{db.empty}</span></div>
+              {db.multiLote > 0 && <span className="text-[8px] font-semibold text-yellow-400 bg-yellow-400/10 px-1 py-px rounded">{db.multiLote} lote</span>}
               {db.multi > 0 && <span className="text-[8px] font-semibold text-amber-400 bg-amber-400/10 px-1 py-px rounded">{db.multi} mix</span>}
               <div className="h-1 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-500" style={{ width: `${db.pct}%` }} /></div>
             </button>
@@ -398,6 +409,7 @@ export function OcupacionTab() {
         </Select>
         <div className="flex items-center gap-4 text-[10px] text-slate-400">
           <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600" /><span>Ocupado</span></div>
+          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600 relative"><span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full" /></div><span>Multi-lote</span></div>
           <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-amber-400 to-orange-500" /><span>Multi-art.</span></div>
           <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-emerald-400 to-green-600" /><span>Vacío</span></div>
         </div>
@@ -455,24 +467,26 @@ export function OcupacionTab() {
                                   {posA.map(pos => {
                                     const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
                                     const isOcc = cell && cell.stock > 0
-                                    const isMulti = isOcc && cell.codigos.length > 1
-                                    let cls = 'flex-1 min-w-[24px] h-8 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
-                                    if (isMulti) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
+                                    const isMultiArt = isOcc && cell.codigos.length > 1
+                                    const isMultiLote = isOcc && !isMultiArt && cell.lotes > 1
+                                    let cls = 'relative flex-1 min-w-[24px] h-8 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
+                                    if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15'
-                                    return <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOcc ? ` (${cell.stock})${isMulti ? ` · ${cell.codigos.length} art` : ''}` : ' · Vacío'}`}>{pos}</button>
+                                    return <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOcc ? ` · Stock: ${cell.stock}${isMultiArt ? ` · ${cell.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell.lotes} lotes` : ''}` : ' · Vacío'}`}>{pos}{isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}</button>
                                   })}
                                 </div>
                                 <div className="flex px-1.5 pt-[2px] pb-1.5 gap-[2px]">
                                   {posB.map(pos => {
                                     const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
                                     const isOcc = cell && cell.stock > 0
-                                    const isMulti = isOcc && cell.codigos.length > 1
-                                    let cls = 'flex-1 min-w-[24px] h-8 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
-                                    if (isMulti) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
+                                    const isMultiArt = isOcc && cell.codigos.length > 1
+                                    const isMultiLote = isOcc && !isMultiArt && cell.lotes > 1
+                                    let cls = 'relative flex-1 min-w-[24px] h-8 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
+                                    if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15'
-                                    return <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOcc ? ` (${cell.stock})${isMulti ? ` · ${cell.codigos.length} art` : ''}` : ' · Vacío'}`}>{pos}</button>
+                                    return <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOcc ? ` · Stock: ${cell.stock}${isMultiArt ? ` · ${cell.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell.lotes} lotes` : ''}` : ' · Vacío'}`}>{pos}{isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}</button>
                                   })}
                                 </div>
                               </div>

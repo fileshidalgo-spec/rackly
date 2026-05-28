@@ -151,7 +151,7 @@ export function PisoSectoresTab() {
 
   // Catalogo
   const [bloquesCatalogo, setBloquesCatalogo] = useState<BloqueOption[]>([])
-  const [searchingCode, setSearchingCode] = useState<string | null>(null)
+
   const [catalogoLoading, setCatalogoLoading] = useState(false)
 
   // Animated counters
@@ -275,20 +275,26 @@ export function PisoSectoresTab() {
     setMode('devolucion')
   }
 
-  // Auto-buscar bloque por codigo al escribir — also matches by description in catalog
-  async function handleCodeInput(prefix: 'ing' | 'dev', idx: number, value: string) {
+  // Actualizar campo de busqueda — solo actualiza texto, no auto-selecciona
+  function handleCodeInput(prefix: 'ing' | 'dev', idx: number, value: string) {
     const trimmed = value.trim()
     const updateRows = prefix === 'ing' ? setIngRows : setDevRows
-    // Clear fields so dropdown can show while searching
     updateRows((prev) => {
       const u = [...prev]
       u[idx] = { ...u[idx], codigo: trimmed, bloque_id: '', descripcion: '', unidad: '' }
       return u
     })
-    if (trimmed.length < 2) return
-    setSearchingCode(`${prefix}-${idx}`)
-    // Try exact code match first
-    const bloque = await buscarBloquePorCodigo(trimmed.toUpperCase())
+  }
+
+  // Crear articulo manual cuando el usuario sale del campo sin seleccionar nada
+  async function handleCodeBlur(prefix: 'ing' | 'dev', idx: number) {
+    const rows = prefix === 'ing' ? ingRows : devRows
+    const row = rows[idx]
+    if (!row || row.bloque_id || row.codigo.trim().length < 1) return
+    const upper = row.codigo.trim().toUpperCase()
+    const updateRows = prefix === 'ing' ? setIngRows : setDevRows
+    // Check if exact code exists
+    const bloque = await buscarBloquePorCodigo(upper)
     if (bloque) {
       updateRows((prev) => {
         const u = [...prev]
@@ -296,23 +302,13 @@ export function PisoSectoresTab() {
         return u
       })
     } else {
-      // Check catalog for code or description partial matches before creating manual_
-      const lower = trimmed.toLowerCase()
-      const hasCatalogMatch = bloquesCatalogo.some((b) =>
-        b.codigo.toLowerCase().includes(lower) || b.descripcion.toLowerCase().includes(lower)
-      )
-      if (!hasCatalogMatch) {
-        // No match at all — create virtual manual_ entry
-        const virtualId = `manual_${trimmed.toUpperCase()}`
-        updateRows((prev) => {
-          const u = [...prev]
-          u[idx] = { ...u[idx], bloque_id: virtualId, codigo: trimmed.toUpperCase(), descripcion: 'Articulo nuevo (manual)', unidad: 'KG' }
-          return u
-        })
-      }
-      // If catalog has matches, leave bloque_id empty so dropdown shows
+      const virtualId = `manual_${upper}`
+      updateRows((prev) => {
+        const u = [...prev]
+        u[idx] = { ...u[idx], bloque_id: virtualId, codigo: upper, descripcion: 'Articulo nuevo (manual)', unidad: 'KG' }
+        return u
+      })
     }
-    setSearchingCode(null)
   }
 
   function onSelectFromCatalog(prefix: 'ing' | 'dev', idx: number, bloque: BloqueOption) {
@@ -559,26 +555,20 @@ export function PisoSectoresTab() {
   }) {
     const rows = prefix === 'ing' ? ingRows : devRows
     const isIng = prefix === 'ing'
-    if (row.bloque_id || row.codigo.length < 1) return null
+    // Show dropdown whenever there's text and no selection yet
+    if (row.bloque_id || row.codigo.trim().length < 1) return null
     const suggestions = !catalogoLoading
       ? getFilteredCatalogo(prefix, idx)
           .filter((b) => !rows.some((r, ri) => ri !== idx && r.bloque_id === b.id))
-          .slice(0, 8)
+          .slice(0, 10)
       : []
-    const catalogEmpty = bloquesCatalogo.length === 0 && !catalogoLoading
-    const showCreateHint = catalogEmpty && row.codigo.length >= 2
     return (
-      <div className="max-h-28 overflow-y-auto rounded-xl border border-slate-700/80 bg-slate-900/95 backdrop-blur-sm mt-1 shadow-2xl shadow-black/30 z-50">
+      <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-700/80 bg-slate-900/95 backdrop-blur-sm shadow-2xl shadow-black/40">
         {catalogoLoading && <div className="px-3 py-2 text-xs text-slate-500">Cargando catalogo...</div>}
-        {!catalogoLoading && suggestions.length === 0 && !showCreateHint && (
-          <div className="px-3 py-2 text-xs text-slate-500">Sin resultados</div>
-        )}
-        {showCreateHint && (
-          <div className="px-3 py-2.5 flex items-center gap-2 border-b border-slate-800/50">
-            <Sparkles className={`h-3.5 w-3.5 ${isIng ? 'text-emerald-400' : 'text-amber-400'}`} />
-            <span className="text-xs text-slate-400 italic">
-              Escribe codigo o descripcion para crear nuevo articulo
-            </span>
+        {!catalogoLoading && suggestions.length === 0 && (
+          <div className="px-3 py-2 text-xs text-slate-400 flex items-center gap-1.5">
+            <Sparkles className={`h-3 w-3 ${isIng ? 'text-emerald-400' : 'text-amber-400'}`} />
+            Articulo nuevo — se creara al registrar
           </div>
         )}
         {!catalogoLoading && suggestions.map((b) => (
@@ -997,13 +987,10 @@ export function PisoSectoresTab() {
                         <div className="col-span-11 sm:col-span-4">
                           <Label className="text-[10px] text-emerald-400 font-semibold">Codigo</Label>
                           <div className="relative">
-                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} placeholder="Buscar codigo o descripcion..."
+                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('ing', i), 150)} placeholder="Buscar codigo o descripcion..."
                               className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-emerald-500/40 ring-emerald-500/20 shadow-sm shadow-emerald-500/10' : 'border-slate-700/50 focus:ring-emerald-500/40'}`} />
-                            {searchingCode === `ing-${i}` && (
-                              <div className="absolute right-3 top-1/2 -translate-y-1/2"><Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" /></div>
-                            )}
+                            <AutocompleteDropdown prefix="ing" idx={i} row={row} accentColor="emerald" />
                           </div>
-                          <AutocompleteDropdown prefix="ing" idx={i} row={row} accentColor="emerald" />
                         </div>
 
                         {/* Descripcion */}
@@ -1130,13 +1117,10 @@ export function PisoSectoresTab() {
                         <div className="col-span-11 sm:col-span-4">
                           <Label className="text-[10px] text-amber-400 font-semibold">Codigo</Label>
                           <div className="relative">
-                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('dev', i, e.target.value)} placeholder="Buscar codigo o descripcion..."
+                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('dev', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('dev', i), 150)} placeholder="Buscar codigo o descripcion..."
                               className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-amber-500/40 ring-amber-500/20 shadow-sm shadow-amber-500/10' : 'border-slate-700/50 focus:ring-amber-500/40'}`} />
-                            {searchingCode === `dev-${i}` && (
-                              <div className="absolute right-3 top-1/2 -translate-y-1/2"><Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" /></div>
-                            )}
+                            <AutocompleteDropdown prefix="dev" idx={i} row={row} accentColor="amber" />
                           </div>
-                          <AutocompleteDropdown prefix="dev" idx={i} row={row} accentColor="amber" />
                         </div>
 
                         {/* Descripcion */}

@@ -699,14 +699,14 @@ export function PisoSectoresTab() {
   //  3D CELL STYLING — Enhanced Isometric Shelf
   // ═══════════════════════════════════════════════
   function getCellClasses(pos: PosicionConStock): string {
-    const base = 'relative group min-w-[42px] w-[42px] h-9 px-1 rounded-lg transition-all duration-300 cursor-pointer border overflow-hidden shrink-0'
+    const base = 'relative group w-full h-9 px-1 rounded-lg transition-all duration-200 cursor-pointer border overflow-hidden'
     if (pos.stock <= 0) {
-      return `${base} bg-emerald-500/[0.18] border-emerald-400/25 hover:bg-emerald-500/30 hover:border-emerald-400/40 hover:shadow-lg hover:shadow-emerald-500/15 hover:-translate-y-1`
+      return `${base} bg-emerald-500/[0.18] border-emerald-400/25 hover:bg-emerald-500/30 hover:border-emerald-400/40 hover:shadow-md hover:shadow-emerald-500/15 hover:scale-[1.04]`
     }
     if (pos.bloques.length > 1) {
-      return `${base} bg-amber-500/40 border-amber-400/25 hover:bg-amber-500/55 hover:shadow-lg hover:shadow-amber-500/25 hover:-translate-y-1`
+      return `${base} bg-amber-500/40 border-amber-400/25 hover:bg-amber-500/55 hover:shadow-md hover:shadow-amber-500/25 hover:scale-[1.04]`
     }
-    return `${base} bg-sky-500/30 border-sky-400/20 hover:bg-sky-500/45 hover:shadow-lg hover:shadow-sky-500/25 hover:-translate-y-1`
+    return `${base} bg-sky-500/30 border-sky-400/20 hover:bg-sky-500/45 hover:shadow-md hover:shadow-sky-500/25 hover:scale-[1.04]`
   }
 
   // ═══════════════════════════════════════════════
@@ -868,14 +868,12 @@ export function PisoSectoresTab() {
         </div>
       </div>
 
-      {/* ═══ 3D RACK GRID — Enhanced isometric warehouse shelves ═══ */}
-      <div
-        className="space-y-8"
-      >
+      {/* ═══ RACK GRID — Column cards ═══ */}
+      <div className="grid gap-4 sm:gap-6">
         {columnas.map((col) => (
           <div
             key={col.letra}
-            className="rounded-2xl border border-slate-700/40 bg-gradient-to-b from-slate-800/70 to-slate-800/25 backdrop-blur-sm shadow-lg shadow-black/20 transition-all duration-300 hover:shadow-xl"
+            className="rounded-2xl border border-slate-700/40 bg-gradient-to-b from-slate-800/70 to-slate-800/25 backdrop-blur-sm shadow-lg shadow-black/20 transition-all duration-300 hover:shadow-xl overflow-hidden"
           >
             {/* Column header — 3D tab/label sticking up */}
             <div className="relative px-5 py-3 border-b border-slate-700/40 bg-gradient-to-r from-slate-900/70 to-slate-900/40 flex items-center gap-3 overflow-hidden">
@@ -911,60 +909,36 @@ export function PisoSectoresTab() {
                     <div className="flex-1 h-px bg-gradient-to-r from-slate-700/80 via-slate-600/40 to-transparent" />
                   </div>
 
-                  {/* Positions grid — responsive columns with overflow scroll */}
-                  <div className="overflow-x-auto -mx-1 px-1 pb-1">
-                    <div className="flex flex-wrap gap-1.5 relative min-w-0">
-                    {/* Shelf surface line */}
-                    <div className="absolute left-0 right-0 bottom-[-6px] h-[3px] bg-gradient-to-r from-transparent via-slate-500/30 to-transparent rounded-full shadow-sm shadow-black/30" />
-
+                  {/* Positions grid — CSS Grid for proper containment */}
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(42px,1fr))] gap-1.5">
                     {sub.pos.map((pos) => {
                       const isOccupied = pos.stock > 0
                       const isMulti = pos.bloques.length > 1
                       return (
-                        <div key={pos.posicionId} className="relative">
-                          <button
-                            onClick={() => handleClick(pos)}
-                            title={`${sub.codigo}-${pos.posicionNumero}${pos.stock > 0 ? ` (${pos.stock})` : ' · Vacio'}`}
-                            className={getCellClasses(pos)}
-                            style={{
-                              boxShadow: isOccupied
-                                ? 'inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 2px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.25)'
-                                : 'inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 2px rgba(0,0,0,0.1), 0 1px 4px rgba(0,0,0,0.12)',
-                            }}
-                          >
-                            {/* Top surface gradient */}
-                            <div className="absolute inset-0 bg-gradient-to-b from-white/[0.08] to-transparent pointer-events-none rounded-lg" />
-                            {/* Inner depth shadow */}
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent pointer-events-none rounded-lg" />
-
-                            {/* Position number + article count */}
-                            <div className="relative z-10 flex flex-col items-center justify-center h-full">
-                              <span className={`font-bold text-[11px] leading-none ${
-                                pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
-                              }`}>{pos.posicionNumero}</span>
-                              {isOccupied && (
-                                <span className={`text-[7px] font-bold leading-none mt-0.5 ${
-                                  isMulti ? 'text-amber-200' : 'text-sky-200'
-                                }`}>{pos.bloques.length} art.</span>
-                              )}
-                            </div>
-                          </button>
-                        </div>
+                        <button
+                          key={pos.posicionId}
+                          onClick={() => handleClick(pos)}
+                          title={`${sub.codigo}-${pos.posicionNumero}${isOccupied ? ` (${pos.bloques.length} art.)` : ' · Vacio'}`}
+                          className={getCellClasses(pos)}
+                        >
+                          <span className={`relative z-10 block text-center font-bold text-[11px] leading-none ${
+                            pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
+                          }`}>{pos.posicionNumero}</span>
+                          {isOccupied && (
+                            <span className={`relative z-10 block text-center text-[7px] font-bold leading-none mt-0.5 ${
+                              isMulti ? 'text-amber-200' : 'text-sky-200'
+                            }`}>{pos.bloques.length} art.</span>
+                          )}
+                        </button>
                       )
                     })}
-                    </div>
                   </div>
                 </div>
               ))}
             </div>
 
-            {/* Bottom grounding shadow */}
-            <div className="h-2 bg-gradient-to-r from-transparent via-black/10 to-transparent" />
           </div>
         ))}
-
-        {/* Floor reflection */}
-        <div className="h-16 bg-gradient-to-b from-slate-800/[0.04] to-transparent pointer-events-none -mt-4 rounded-b-3xl" />
       </div>
 
       {/* Exportar */}

@@ -185,12 +185,12 @@ export function StockTab() {
                 <TableRow>
                   <TableHead>Bloque</TableHead>
                   <TableHead>Torre</TableHead>
-                  <TableHead>Piso</TableHead>
-                  <TableHead>Posición</TableHead>
-                  <TableHead>Descripción</TableHead>
-                  <TableHead>UN</TableHead>
-                  <TableHead>Proveedor</TableHead>
-                  <TableHead>Vencimiento</TableHead>
+                  <TableHead className="hidden sm:table-cell">Piso</TableHead>
+                  <TableHead>Pos.</TableHead>
+                  <TableHead className="hidden md:table-cell max-w-[180px]">Descripción</TableHead>
+                  <TableHead className="hidden sm:table-cell">UN</TableHead>
+                  <TableHead className="hidden lg:table-cell">Proveedor</TableHead>
+                  <TableHead className="hidden sm:table-cell">Vencimiento</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
@@ -215,13 +215,13 @@ export function StockTab() {
 
                   return (
                     <TableRow key={i}>
-                      <TableCell>{s.bloque}</TableCell>
-                      <TableCell>{s.torre}</TableCell>
-                      <TableCell>{s.piso}</TableCell>
-                      <TableCell>{s.posicion}</TableCell>
-                      <TableCell>{s.descripcion}</TableCell>
-                      <TableCell>{s.un}</TableCell>
-                      <TableCell>
+                      <TableCell className="font-medium">{s.bloque}</TableCell>
+                      <TableCell className="font-medium">{s.torre}</TableCell>
+                      <TableCell className="hidden sm:table-cell">{s.piso}</TableCell>
+                      <TableCell className="font-medium">{s.posicion}</TableCell>
+                      <TableCell className="hidden md:table-cell max-w-[180px] truncate min-w-0">{s.descripcion}</TableCell>
+                      <TableCell className="hidden sm:table-cell">{s.un}</TableCell>
+                      <TableCell className="hidden lg:table-cell">
                         {s.proveedor ? (
                           <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
                             {s.proveedor}
@@ -230,7 +230,7 @@ export function StockTab() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         {s.fVencimiento ? (
                           <Badge variant="outline" className={`font-semibold ${badgeClass}`}>
                             {s.fVencimiento}

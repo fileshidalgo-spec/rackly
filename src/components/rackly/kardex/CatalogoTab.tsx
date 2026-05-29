@@ -335,9 +335,9 @@ export function CatalogoTab() {
             <TableRow>
               <TableHead className="w-12">#</TableHead>
               <TableHead>Código</TableHead>
-              <TableHead>UN</TableHead>
+              <TableHead className="hidden sm:table-cell">UN</TableHead>
               <TableHead>Descripción</TableHead>
-              <TableHead className="w-24 text-right">Stock BM</TableHead>
+              <TableHead className="w-24 text-right hidden sm:table-cell">Stock BM</TableHead>
               <TableHead className="w-20 text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
@@ -346,9 +346,9 @@ export function CatalogoTab() {
               <TableRow key={item.codigo}>
                 <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                 <TableCell className="font-mono font-medium">{item.codigo}</TableCell>
-                <TableCell><Badge variant="secondary">{item.un}</Badge></TableCell>
-                <TableCell>{item.descripcion}</TableCell>
-                <TableCell className="text-right font-mono text-xs">{item.stock_big_magic > 0 ? item.stock_big_magic : '—'}</TableCell>
+                <TableCell className="hidden sm:table-cell"><Badge variant="secondary">{item.un}</Badge></TableCell>
+                <TableCell className="max-w-[200px] truncate min-w-0">{item.descripcion}</TableCell>
+                <TableCell className="text-right font-mono text-xs hidden sm:table-cell">{item.stock_big_magic > 0 ? item.stock_big_magic : '—'}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" onClick={() => openEdit(item)} title="Editar">

@@ -94,3 +94,23 @@ Stage Summary:
 - Salida por niveles ahora muestra cantidades reales del nivel (no total acumulado)
 - Salida en masa requiere confirmación con resumen detallado antes de ejecutar
 - No se afectó modo Ver, Ingreso, Traslado, Devolución ni Salida en tab "Todos"
+
+---
+Task ID: JHIA-68
+Agent: Main Agent
+Task: Aplicar responsividad móvil en Kardex Racks (mismos patrones que JHIA-67 en Kardex Piso)
+
+Work Log:
+- Revisado todos los componentes bajo src/components/rackly/kardex/ (10 archivos)
+- Identificadas las brechas vs Kardex Piso JHIA-67: columnas sin ocultar en móvil, texto sin truncar, padding fijo en diálogos
+- StockTab.tsx: Ocultadas columnas Piso(>sm), Descripción(>md), UN(>sm), Proveedor(>lg), Vencimiento(>sm) en móvil. Truncado descripción.
+- TrasladoTab.tsx: Ocultadas columnas Piso(>sm), UN(>sm), F.Vencimiento(>md), Proveedor(>lg). Truncado ruta en diálogo. Padding responsivo px-4 sm:px-6 en diálogo.
+- MovimientoForm.tsx (Salida): Ocultadas columnas Piso(>sm), F.Vencimiento(>md), Proveedor(>lg). Padding responsivo px-4 sm:px-6 en diálogo de ingreso.
+- FefoTab.tsx: Ocultadas columnas Torre/Piso/Pos(>sm), Proveedor/Vencimiento(>md) en tabla custom.
+- CatalogoTab.tsx: Ocultadas columnas UN(>sm), Stock BM(>sm). Truncado descripción.
+- Build verificado: compilación exitosa sin errores TypeScript.
+
+Stage Summary:
+- 5 archivos modificados: StockTab.tsx, TrasladoTab.tsx, MovimientoForm.tsx, FefoTab.tsx, CatalogoTab.tsx
+- Patrones aplicados: hidden sm:table-cell, hidden md:table-cell, hidden lg:table-cell, truncate min-w-0, px-4 sm:px-6
+- Build exitoso, sin errores

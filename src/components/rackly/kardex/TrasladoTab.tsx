@@ -325,12 +325,12 @@ export function TrasladoTab() {
                 <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
                   <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Bloque</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Torre</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Piso</TableHead>
+                  <TableHead className="font-semibold text-xs uppercase tracking-wider text-center hidden sm:table-cell">Piso</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Pos.</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider text-right">Stock</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">UN</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">F. Vencimiento</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">Proveedor</TableHead>
+                  <TableHead className="font-semibold text-xs uppercase tracking-wider hidden sm:table-cell">UN</TableHead>
+                  <TableHead className="font-semibold text-xs uppercase tracking-wider hidden md:table-cell">F. Vencimiento</TableHead>
+                  <TableHead className="font-semibold text-xs uppercase tracking-wider hidden lg:table-cell">Proveedor</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Acción</TableHead>
                 </TableRow>
               </TableHeader>
@@ -355,13 +355,13 @@ export function TrasladoTab() {
                     >
                       <TableCell className="text-center font-medium text-slate-700">{loc.bloque}</TableCell>
                       <TableCell className="text-center font-medium text-slate-700">{loc.torre}</TableCell>
-                      <TableCell className="text-center font-medium text-slate-700">{loc.piso}</TableCell>
+                      <TableCell className="text-center font-medium text-slate-700 hidden sm:table-cell">{loc.piso}</TableCell>
                       <TableCell className="text-center font-medium text-slate-700">{loc.posicion}</TableCell>
                       <TableCell className="text-right font-bold text-slate-800">{loc.stock}</TableCell>
-                      <TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         <Badge variant="secondary" className="font-medium text-xs">{loc.un}</Badge>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         {loc.fVencimiento ? (
                           <span className={`text-sm font-medium ${
                             isExpired(loc.fVencimiento)
@@ -376,7 +376,7 @@ export function TrasladoTab() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden lg:table-cell">
                         {loc.proveedor ? (
                           <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold text-xs">
                             {loc.proveedor}
@@ -674,7 +674,7 @@ export function TrasladoTab() {
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
         <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 overflow-hidden max-h-[85vh]">
           {/* Header con gradiente */}
-          <div className={`px-6 py-5 text-white ${
+          <div className={`px-4 sm:px-6 py-5 text-white ${
             destinoOcupado.length > 0
               ? 'bg-gradient-to-r from-orange-500 via-red-500 to-red-600'
               : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600'
@@ -715,11 +715,11 @@ export function TrasladoTab() {
           {/* Contenido scrolleable */}
           <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
             {/* Ruta origen → destino */}
-            <div className="px-6 pt-4 pb-2">
+            <div className="px-4 sm:px-6 pt-4 pb-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ruta del traslado</p>
               <div className="flex items-center gap-2 text-sm bg-slate-50 dark:bg-slate-900 rounded-lg px-3 py-2.5">
                 <MapPin className="h-4 w-4 text-blue-500 flex-shrink-0" />
-                <span className="font-mono font-medium text-slate-700 dark:text-slate-300">
+                <span className="font-mono font-medium text-slate-700 dark:text-slate-300 truncate min-w-0">
                   B-{origin?.bloque} T-{origin?.torre} P-{origin?.piso} Pos-{origin?.posicion}
                   <span className="mx-2 text-indigo-500 font-bold">→</span>
                   B-{destBloque} T-{destTorre} P-{destPisoSeleccionado} Pos-{destPos}
@@ -728,7 +728,7 @@ export function TrasladoTab() {
             </div>
 
             {/* Producto a trasladar */}
-            <div className="px-6 pb-3">
+            <div className="px-4 sm:px-6 pb-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Producto a trasladar</p>
               <div className="rounded-xl border-2 border-dashed border-blue-300 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/20 p-3 space-y-1.5">
                 <div className="flex items-center justify-between">
@@ -751,7 +751,7 @@ export function TrasladoTab() {
             </div>
 
             {/* Tipo de traslado y saldo */}
-            <div className="px-6 pb-3">
+            <div className="px-4 sm:px-6 pb-3">
               <div className="flex items-center gap-2 flex-wrap">
                 <Badge className={`text-xs font-bold ${
                   trasladoTotal
@@ -786,8 +786,8 @@ export function TrasladoTab() {
 
             {/* Ajuste automático */}
             {ajusteActivo && (
-              <div className="px-6 pb-3">
-                <div className={`rounded-xl border p-3 ${
+              <div className="px-4 sm:px-6 pb-3">
+                <div className={`rounded-xl border p-3 {
                   excedeStock
                     ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 text-amber-700 dark:text-amber-300'
                     : 'border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 text-sky-700 dark:text-sky-300'
@@ -807,7 +807,7 @@ export function TrasladoTab() {
 
             {/* Separador si hay productos en destino */}
             {destinoOcupado.length > 0 && (
-              <div className="px-6 pb-2">
+              <div className="px-4 sm:px-6 pb-2">
                 <div className="flex items-center gap-2">
                   <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Stock actual en el destino</span>
@@ -818,7 +818,7 @@ export function TrasladoTab() {
 
             {/* Productos existentes en destino */}
             {destinoOcupado.length > 0 && (
-              <div className="px-6 pb-4">
+              <div className="px-4 sm:px-6 pb-4">
                 <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">
                   {destinoOcupado.length} producto{destinoOcupado.length !== 1 ? 's' : ''} encontrado{destinoOcupado.length !== 1 ? 's' : ''}
                 </p>
@@ -869,7 +869,7 @@ export function TrasladoTab() {
           </div>
 
           {/* Botones de acción */}
-          <AlertDialogFooter className="px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2">
+          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2">
             <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium border-slate-300 dark:border-slate-600">
               Cancelar
             </AlertDialogCancel>

@@ -672,7 +672,7 @@ export function TrasladoTab() {
       )}
 
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
-        <AlertDialogContent className="max-w-lg p-0 overflow-hidden">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 overflow-hidden max-h-[85vh]">
           {/* Header con gradiente */}
           <div className={`px-6 py-5 text-white ${
             destinoOcupado.length > 0
@@ -713,7 +713,7 @@ export function TrasladoTab() {
           </AlertDialogDescription>
 
           {/* Contenido scrolleable */}
-          <div className="max-h-[60vh] overflow-y-auto">
+          <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
             {/* Ruta origen → destino */}
             <div className="px-6 pt-4 pb-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ruta del traslado</p>

@@ -367,7 +367,7 @@ function IngresoForm({
 
       {/* ═══ DIÁLOGO DE CONFIRMACIÓN — Ubicación Ocupada ═══ */}
       <AlertDialog open={!!confirmData} onOpenChange={() => setConfirmData(null)}>
-        <AlertDialogContent className="max-w-lg p-0 overflow-hidden">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 overflow-hidden max-h-[85vh]">
           {/* Header con gradiente */}
           <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 px-6 py-5 text-white">
             <div className="flex items-center gap-3">
@@ -386,7 +386,7 @@ function IngresoForm({
           </div>
 
           {/* Contenido scrolleable */}
-          <div className="max-h-[60vh] overflow-y-auto">
+          <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
             {/* Ubicación destino */}
             <div className="px-6 pt-4 pb-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ubicación destino</p>
@@ -827,7 +827,7 @@ function SalidaForm({
 
       {/* Diálogo de confirmación Sí/No */}
       <AlertDialog open={!!confirmState} onOpenChange={(open) => { if (!open) setConfirmState(null) }}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
           <AlertDialogHeader>
             <AlertDialogTitle>
               {confirmState?.full ? 'Retirar todo el stock' : 'Confirmar salida'}

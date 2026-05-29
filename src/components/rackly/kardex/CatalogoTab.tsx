@@ -377,7 +377,7 @@ export function CatalogoTab() {
 
       {/* Diálogo Agregar/Editar */}
       <AlertDialog open={showAdd || !!editItem} onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditItem(null) } }}>
-        <AlertDialogContent className="max-w-md">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
           <AlertDialogHeader>
             <AlertDialogTitle>{editItem ? 'Editar ítem' : 'Agregar ítem'}</AlertDialogTitle>
             <AlertDialogDescription>
@@ -422,7 +422,7 @@ export function CatalogoTab() {
 
       {/* Diálogo de eliminar */}
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
           <AlertDialogHeader>
             <AlertDialogTitle>Eliminar ítem</AlertDialogTitle>
             <AlertDialogDescription>

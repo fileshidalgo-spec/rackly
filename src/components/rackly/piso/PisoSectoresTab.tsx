@@ -28,7 +28,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
-  Layers3, BoxSelect, X, Plus, Trash2, Search, RefreshCw, Package,
+  Layers3, BoxSelect, X, Plus, Trash2, RefreshCw, Package,
   RotateCcw, CalendarOff, Calendar, Warehouse, Sparkles, ChevronRight,
   Check, AlertTriangle, ToggleLeft, ToggleRight,
 } from 'lucide-react'
@@ -138,7 +138,7 @@ export function PisoSectoresTab() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [busyExport, setBusyExport] = useState(false)
-  const [searchBloque, setSearchBloque] = useState('')
+
   const mountedRef = useRef(true)
   const justSelectedRef = useRef(false)
 
@@ -261,9 +261,7 @@ export function PisoSectoresTab() {
   const empty = total - occupied
   const pct = total > 0 ? Math.round((occupied / total) * 100) : 0
 
-  const filteredPosiciones = searchBloque.trim()
-    ? posiciones.filter((p) => p.bloques.some((b) => b.bloque_codigo.includes(searchBloque.toUpperCase())))
-    : posiciones
+
 
   // Click posicion
   async function handleClick(pos: PosicionConStock | null) {
@@ -741,7 +739,7 @@ export function PisoSectoresTab() {
     )
   }
 
-  const displayPos = searchBloque.trim() ? filteredPosiciones : posiciones
+  const displayPos = posiciones
 
   // Pill tab indicator position
   const activeSectorIdx = sectores.findIndex((s) => s.id === sectorFilter)
@@ -845,11 +843,6 @@ export function PisoSectoresTab() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
-            <input type="text" value={searchBloque} onChange={(e) => setSearchBloque(e.target.value)} placeholder="Buscar codigo..."
-              className="pl-9 pr-3 py-2 h-9 rounded-xl border border-slate-700/50 text-xs bg-slate-800/60 text-white placeholder-slate-500 w-48 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-500/50 backdrop-blur-sm transition-all duration-300" />
-          </div>
           <button onClick={loadPosiciones} className="p-2 rounded-xl border border-slate-700/50 hover:bg-slate-700/80 transition-all duration-500 hover:-rotate-180 bg-slate-800/60 backdrop-blur-sm hover:shadow-lg"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /></button>
           <div className="hidden sm:flex items-center gap-3 text-[10px] text-slate-400 bg-slate-800/40 rounded-xl px-3 py-1.5 border border-slate-700/30 backdrop-blur-sm">
             <div className="flex items-center gap-1.5">

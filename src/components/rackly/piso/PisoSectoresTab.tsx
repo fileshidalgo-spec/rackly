@@ -6,6 +6,8 @@ import {
   cargarPosicionesSector,
   stockDetallePosicion,
   obtenerPrimerNivel,
+  obtenerNivelesPosicion,
+  type NivelInfo,
   listarBloquesParaSelect,
   buscarBloquePorCodigo,
   crearBloque,
@@ -30,7 +32,7 @@ import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
   Layers3, BoxSelect, X, Plus, Trash2, RefreshCw, Package,
   RotateCcw, CalendarOff, Calendar, Warehouse, Sparkles, ChevronRight,
-  Check, AlertTriangle, ToggleLeft, ToggleRight,
+  Check, AlertTriangle, ToggleLeft, ToggleRight, Layers, ChevronDown,
 } from 'lucide-react'
 
 type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }
@@ -174,6 +176,12 @@ export function PisoSectoresTab() {
   // Devolucion state
   const [devRows, setDevRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
 
+  // Niveles de la posición seleccionada
+  const [niveles, setNiveles] = useState<NivelInfo[]>([])
+  const [selectedNivelId, setSelectedNivelId] = useState<string>('')
+  // Traslado: nivel destino
+  const [trDestNivelId, setTrDestNivelId] = useState<string>('')
+
   // Catalogo
   const [bloquesCatalogo, setBloquesCatalogo] = useState<BloqueOption[]>([])
 
@@ -267,9 +275,14 @@ export function PisoSectoresTab() {
   async function handleClick(pos: PosicionConStock | null) {
     if (!pos) return
     try {
-      const stock = await stockDetallePosicion(pos.posicionId)
+      const [stock, nivs] = await Promise.all([
+        stockDetallePosicion(pos.posicionId),
+        obtenerNivelesPosicion(pos.posicionId),
+      ])
       if (mountedRef.current) {
         setDetail({ posicionId: pos.posicionId, posicionNumero: pos.posicionNumero, subcolumnaCodigo: pos.subcolumnaCodigo, columnaLetra: pos.columnaLetra, stock })
+        setNiveles(nivs)
+        setSelectedNivelId(nivs.length > 0 ? nivs[0].id : '')
         setMode('view')
         setSalItems(stock.map((s) => ({
           bloque_id: s.bloque_id,
@@ -296,12 +309,21 @@ export function PisoSectoresTab() {
     } catch { toast.error('Error al cargar detalle') }
   }
 
+  // Helper: obtener nivel ID seleccionado, fallback al primero
+  function getNivelId(): string {
+    if (selectedNivelId) return selectedNivelId
+    if (niveles.length > 0) return niveles[0].id
+    return ''
+  }
+
   function openIngreso() {
     setIngRows([{ ...EMPTY_ROW }])
+    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
     setMode('ingreso')
   }
 
   function openSalida() {
+    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
     if (detail) setSalItems(detail.stock.map((s) => ({
       bloque_id: s.bloque_id,
       bloque_codigo: s.bloque_codigo,
@@ -317,7 +339,9 @@ export function PisoSectoresTab() {
 
   function openTraslado() {
     setTrDestPos(null)
+    setTrDestNivelId('')
     setTrConfirmOpen(false)
+    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
     if (detail) setTrItems(detail.stock.map((s) => ({
       bloque_id: s.bloque_id,
       bloque_codigo: s.bloque_codigo,
@@ -334,6 +358,7 @@ export function PisoSectoresTab() {
 
   function openDevolucion() {
     setDevRows([{ ...EMPTY_ROW }])
+    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
     setMode('devolucion')
   }
 
@@ -464,12 +489,12 @@ export function PisoSectoresTab() {
     for (const r of validRows) {
       if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad invalida'); return }
     }
+    const nivelId = getNivelId()
+    if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); return }
     setBusy(true)
     try {
       // Resolve manual_ IDs before registering
       const resolved = await ensureManualBloqueCreated(validRows)
-      const nivelId = await obtenerPrimerNivel(detail.posicionId)
-      if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); setBusy(false); return }
       const detalles = resolved.map((r) => ({
         nivel_id: nivelId,
         bloque_id: r.bloque_id,
@@ -497,10 +522,10 @@ export function PisoSectoresTab() {
     if (!detail || !perfil) return
     const validRows = salItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para salir'); return }
+    const nivelId = getNivelId()
+    if (!nivelId) { toast.error('No hay niveles disponibles'); return }
     setBusy(true)
     try {
-      const nivelId = await obtenerPrimerNivel(detail.posicionId)
-      if (!nivelId) { toast.error('No hay niveles disponibles'); setBusy(false); return }
       const detalles = validRows.map((r) => ({ nivel_id: nivelId, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
       await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Salida registrada')
@@ -517,13 +542,11 @@ export function PisoSectoresTab() {
     if (detail.posicionId === trDestPos.posicionId) { toast.error('Origen y destino no pueden ser iguales'); return }
     const validRows = trItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para trasladar'); return }
+    const origNivelId = getNivelId()
+    if (!origNivelId || !trDestNivelId) { toast.error('Selecciona nivel de origen y destino'); return }
+    const destNivelId = trDestNivelId
     setBusy(true)
     try {
-      const [origNivelId, destNivelId] = await Promise.all([
-        obtenerPrimerNivel(detail.posicionId),
-        obtenerPrimerNivel(trDestPos.posicionId),
-      ])
-      if (!origNivelId || !destNivelId) { toast.error('No hay niveles disponibles'); setBusy(false); return }
 
       // Separate items by discrepancy type
       const exactItems = validRows.filter((r) => parseFloat(r.cantidad) === r.stockActual)
@@ -576,12 +599,12 @@ export function PisoSectoresTab() {
     for (const r of validRows) {
       if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad invalida'); return }
     }
+    const nivelId = getNivelId()
+    if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); return }
     setBusy(true)
     try {
       // Resolve manual_ IDs before registering
       const resolved = await ensureManualBloqueCreated(validRows)
-      const nivelId = await obtenerPrimerNivel(detail.posicionId)
-      if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); setBusy(false); return }
       const detalles = resolved.map((r) => ({
         nivel_id: nivelId,
         bloque_id: r.bloque_id,
@@ -689,6 +712,47 @@ export function PisoSectoresTab() {
             <span className="text-slate-500 ml-1.5">— {b.descripcion || b.unidad}</span>
           </button>
         ))}
+      </div>
+    )
+  }
+
+  // ─── Nivel Selector sub-component ───
+  function NivelSelector({
+    label,
+    nivelId,
+    onNivelChange,
+    nivelesList,
+    accentColor,
+  }: {
+    label: string
+    nivelId: string
+    onNivelChange: (id: string) => void
+    nivelesList: NivelInfo[]
+    accentColor: 'emerald' | 'red' | 'sky' | 'amber'
+  }) {
+    if (nivelesList.length <= 1) return null // No mostrar si solo hay 1 nivel
+    const colors = {
+      emerald: 'border-emerald-500/40 text-emerald-400 focus:ring-emerald-500/30',
+      red: 'border-red-500/40 text-red-400 focus:ring-red-500/30',
+      sky: 'border-sky-500/40 text-sky-400 focus:ring-sky-500/30',
+      amber: 'border-amber-500/40 text-amber-400 focus:ring-amber-500/30',
+    }
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-slate-700/40 bg-slate-800/50 px-3 py-2 backdrop-blur-sm">
+        <Layers className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider shrink-0">{label}:</span>
+        <select
+          value={nivelId}
+          onChange={(e) => onNivelChange(e.target.value)}
+          className={`flex-1 bg-slate-900/80 border rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 transition-all duration-200 appearance-none cursor-pointer ${colors[accentColor]}`}
+        >
+          {nivelesList.map((n) => (
+            <option key={n.id} value={n.id}>
+              Nivel {n.numero}{n.codigo_ubicacion ? ` (${n.codigo_ubicacion})` : ''}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="h-3 w-3 text-slate-500 -ml-1 shrink-0 pointer-events-none" />
       </div>
     )
   }
@@ -958,6 +1022,7 @@ export function PisoSectoresTab() {
                   <span className="text-slate-300 font-medium">{detail?.subcolumnaCodigo}</span>
                   <ChevronRight className="h-3 w-3 text-slate-400" />
                   <span className="text-sky-300 font-bold">Pos {detail?.posicionNumero}</span>
+                  <span className="text-slate-500 text-[10px]">({niveles.length} nivel{niveles.length !== 1 ? 'es' : ''})</span>
                 </nav>
                 {/* Animated type badge */}
                 {(!mode || mode === 'view') ? null : (
@@ -1035,9 +1100,16 @@ export function PisoSectoresTab() {
                 )
               )}
 
-              {/* ── INGRESO MODE — Card number badges + border-left accent ═─ */}
+              {/* ── INGRESO MODE ── */}
               {mode === 'ingreso' && (
                 <div className="space-y-4 mt-4">
+                  <NivelSelector
+                    label="Nivel destino"
+                    nivelId={selectedNivelId}
+                    onNivelChange={setSelectedNivelId}
+                    nivelesList={niveles}
+                    accentColor="emerald"
+                  />
                   {detail.stock.length > 0 && (
                     <div className="rounded-xl border border-amber-500/20 bg-amber-950/30 backdrop-blur-sm p-3">
                       <p className="text-[10px] font-bold text-amber-400">Posicion con {detail.stock.length} articulo(s). Se agregara el nuevo.</p>
@@ -1106,6 +1178,13 @@ export function PisoSectoresTab() {
               {/* ── SALIDA MODE ── */}
               {mode === 'salida' && (
                 <div className="space-y-3 mt-4">
+                  <NivelSelector
+                    label="Nivel origen"
+                    nivelId={selectedNivelId}
+                    onNivelChange={setSelectedNivelId}
+                    nivelesList={niveles}
+                    accentColor="red"
+                  />
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-bold text-slate-300">Toca los articulos que quieres salir:</p>
                     {salItems.length > 1 && (
@@ -1190,6 +1269,28 @@ export function PisoSectoresTab() {
               {/* ── TRASLADO MODE ── */}
               {mode === 'traslado' && (
                 <div className="space-y-3 mt-4">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <NivelSelector
+                        label="Nivel origen"
+                        nivelId={selectedNivelId}
+                        onNivelChange={setSelectedNivelId}
+                        nivelesList={niveles}
+                        accentColor="sky"
+                      />
+                    </div>
+                    {trDestPos && (
+                      <div className="flex-1">
+                        <NivelSelector
+                          label="Nivel destino"
+                          nivelId={trDestNivelId}
+                          onNivelChange={setTrDestNivelId}
+                          nivelesList={niveles}
+                          accentColor="sky"
+                        />
+                      </div>
+                    )}
+                  </div>
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-bold text-slate-300">Toca los articulos que quieres trasladar:</p>
                     {trItems.length > 1 && (
@@ -1334,7 +1435,14 @@ export function PisoSectoresTab() {
                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">DESTINO:</p>
                     <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
                       {posiciones.filter((p) => p.posicionId !== detail.posicionId).map((p) => (
-                        <button key={p.posicionId} onClick={() => setTrDestPos(p)}
+                        <button key={p.posicionId} onClick={async () => {
+                          setTrDestPos(p)
+                          // Cargar niveles del destino
+                          try {
+                            const destNivs = await obtenerNivelesPosicion(p.posicionId)
+                            setTrDestNivelId(destNivs.length > 0 ? destNivs[0].id : '')
+                          } catch { /* ok */ }
+                        }}
                           className={`px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-all duration-300 border ${trDestPos?.posicionId === p.posicionId
                             ? 'bg-sky-500 text-white border-sky-500 shadow-lg shadow-sky-500/20 scale-105'
                             : 'bg-slate-800/60 text-slate-400 hover:bg-slate-700/80 hover:text-slate-300 border-slate-700/40 backdrop-blur-sm hover:scale-[1.02]'
@@ -1353,9 +1461,16 @@ export function PisoSectoresTab() {
                 </div>
               )}
 
-              {/* ── DEVOLUCION MODE — Card number badges + border-left accent ═─ */}
+              {/* ── DEVOLUCION MODE ── */}
               {mode === 'devolucion' && (
                 <div className="space-y-4 mt-4">
+                  <NivelSelector
+                    label="Nivel destino"
+                    nivelId={selectedNivelId}
+                    onNivelChange={setSelectedNivelId}
+                    nivelesList={niveles}
+                    accentColor="amber"
+                  />
                   <div className="rounded-xl border border-amber-500/20 bg-amber-950/30 backdrop-blur-sm p-3">
                     <p className="text-[10px] font-bold text-amber-400">Registra articulos devueltos a esta posicion.</p>
                   </div>

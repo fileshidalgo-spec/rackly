@@ -699,7 +699,7 @@ export function PisoSectoresTab() {
   //  3D CELL STYLING — Enhanced Isometric Shelf
   // ═══════════════════════════════════════════════
   function getCellClasses(pos: PosicionConStock): string {
-    const base = 'relative group min-w-[52px] h-10 px-1 rounded-lg transition-all duration-300 cursor-pointer border overflow-hidden'
+    const base = 'relative group min-w-[42px] w-[42px] h-9 px-1 rounded-lg transition-all duration-300 cursor-pointer border overflow-hidden shrink-0'
     if (pos.stock <= 0) {
       return `${base} bg-emerald-500/[0.18] border-emerald-400/25 hover:bg-emerald-500/30 hover:border-emerald-400/40 hover:shadow-lg hover:shadow-emerald-500/15 hover:-translate-y-1`
     }
@@ -808,8 +808,9 @@ export function PisoSectoresTab() {
 
       {/* ═══ SELECTOR SECTOR — Pill-style with sliding indicator ═══ */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Sector:</span>
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0">Sector:</span>
+          {sectores.length <= 4 ? (
           <div className="relative flex gap-1 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm">
             {/* Sliding indicator */}
             <div
@@ -821,7 +822,7 @@ export function PisoSectoresTab() {
             />
             {sectores.map((s) => (
               <button key={s.id} onClick={() => setSectorFilter(s.id)}
-                className={`relative z-10 flex-1 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-300 ${sectorFilter === s.id
+                className={`relative z-10 flex-1 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-300 whitespace-nowrap ${sectorFilter === s.id
                   ? 'text-white'
                   : 'text-slate-400 hover:text-slate-300'
                   }`}>
@@ -829,6 +830,19 @@ export function PisoSectoresTab() {
               </button>
             ))}
           </div>
+          ) : (
+          <div className="flex gap-1 overflow-x-auto max-w-[60vw] sm:max-w-none">
+            {sectores.map((s) => (
+              <button key={s.id} onClick={() => setSectorFilter(s.id)}
+                className={`px-3 py-2 rounded-lg text-xs font-bold border transition-all duration-300 whitespace-nowrap shrink-0 ${sectorFilter === s.id
+                  ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white border-sky-400/50 shadow-lg shadow-sky-500/25'
+                  : 'bg-slate-800/60 text-slate-400 border-slate-700/30 hover:text-slate-300 hover:border-slate-600'
+                  }`}>
+                {s.nombre}
+              </button>
+            ))}
+          </div>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <div className="relative">
@@ -856,19 +870,12 @@ export function PisoSectoresTab() {
 
       {/* ═══ 3D RACK GRID — Enhanced isometric warehouse shelves ═══ */}
       <div
-        className="space-y-10"
-        style={{
-          perspective: '1400px',
-        }}
+        className="space-y-8"
       >
         {columnas.map((col) => (
           <div
             key={col.letra}
-            className="rounded-2xl border border-slate-700/40 bg-gradient-to-b from-slate-800/70 to-slate-800/25 backdrop-blur-sm shadow-2xl shadow-black/25 overflow-hidden transition-all duration-300 hover:shadow-black/35"
-            style={{
-              transform: 'rotateX(8deg) rotateY(-2deg)',
-              transformOrigin: 'top left',
-            }}
+            className="rounded-2xl border border-slate-700/40 bg-gradient-to-b from-slate-800/70 to-slate-800/25 backdrop-blur-sm shadow-lg shadow-black/20 transition-all duration-300 hover:shadow-xl"
           >
             {/* Column header — 3D tab/label sticking up */}
             <div className="relative px-5 py-3 border-b border-slate-700/40 bg-gradient-to-r from-slate-900/70 to-slate-900/40 flex items-center gap-3 overflow-hidden">
@@ -904,8 +911,9 @@ export function PisoSectoresTab() {
                     <div className="flex-1 h-px bg-gradient-to-r from-slate-700/80 via-slate-600/40 to-transparent" />
                   </div>
 
-                  {/* 3D shelf positions grid */}
-                  <div className="flex flex-wrap gap-2.5 relative">
+                  {/* Positions grid — responsive columns with overflow scroll */}
+                  <div className="overflow-x-auto -mx-1 px-1 pb-1">
+                    <div className="flex flex-wrap gap-1.5 relative min-w-0">
                     {/* Shelf surface line */}
                     <div className="absolute left-0 right-0 bottom-[-6px] h-[3px] bg-gradient-to-r from-transparent via-slate-500/30 to-transparent rounded-full shadow-sm shadow-black/30" />
 
@@ -913,21 +921,15 @@ export function PisoSectoresTab() {
                       const isOccupied = pos.stock > 0
                       const isMulti = pos.bloques.length > 1
                       return (
-                        <div key={pos.posicionId} className="relative group/pos">
-                          {/* Side face (right) */}
-                          <div className="absolute -right-[3px] top-[2px] bottom-[2px] w-[3px] rounded-r-sm bg-gradient-to-r from-black/15 to-black/25 transition-all duration-300 group-hover/pos:from-black/20 group-hover/pos:to-black/35" />
-                          {/* Bottom face for depth */}
-                          <div className="absolute -bottom-[3px] left-[2px] right-[2px] h-[3px] rounded-b-sm bg-gradient-to-b from-black/15 to-black/25 transition-all duration-300 group-hover/pos:from-black/20 group-hover/pos:to-black/35" />
-
+                        <div key={pos.posicionId} className="relative">
                           <button
                             onClick={() => handleClick(pos)}
                             title={`${sub.codigo}-${pos.posicionNumero}${pos.stock > 0 ? ` (${pos.stock})` : ' · Vacio'}`}
                             className={getCellClasses(pos)}
                             style={{
-                              transform: 'perspective(600px) rotateX(2deg)',
                               boxShadow: isOccupied
-                                ? 'inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 2px rgba(0,0,0,0.15), 4px 5px 0 -1px rgba(0,0,0,0.2), 0 3px 12px rgba(0,0,0,0.25)'
-                                : 'inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 2px rgba(0,0,0,0.1), 3px 4px 0 -1px rgba(0,0,0,0.1), 0 2px 6px rgba(0,0,0,0.12)',
+                                ? 'inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 2px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.25)'
+                                : 'inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 2px rgba(0,0,0,0.1), 0 1px 4px rgba(0,0,0,0.12)',
                             }}
                           >
                             {/* Top surface gradient */}
@@ -937,11 +939,11 @@ export function PisoSectoresTab() {
 
                             {/* Position number + article count */}
                             <div className="relative z-10 flex flex-col items-center justify-center h-full">
-                              <span className={`font-bold text-[12px] leading-none ${
+                              <span className={`font-bold text-[11px] leading-none ${
                                 pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
                               }`}>{pos.posicionNumero}</span>
                               {isOccupied && (
-                                <span className={`text-[8px] font-bold leading-none mt-0.5 ${
+                                <span className={`text-[7px] font-bold leading-none mt-0.5 ${
                                   isMulti ? 'text-amber-200' : 'text-sky-200'
                                 }`}>{pos.bloques.length} art.</span>
                               )}
@@ -950,6 +952,7 @@ export function PisoSectoresTab() {
                         </div>
                       )
                     })}
+                    </div>
                   </div>
                 </div>
               ))}

@@ -480,8 +480,17 @@ export function PisoSectoresTab() {
       }))
       await registrarIngresoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Ingreso registrado')
+      // Reload everything in parallel for real-time update
       loadBloques()
-      if (mountedRef.current) { setDetail(null); setMode('view'); setIngRows([{ ...EMPTY_ROW }]) }
+      const [stock] = await Promise.all([
+        stockDetallePosicion(detail.posicionId),
+      ])
+      if (mountedRef.current && detail) {
+        setDetail({ ...detail, stock })
+        setMode('view')
+        setIngRows([{ ...EMPTY_ROW }])
+      }
+      // Reload positions grid
       await loadPosiciones()
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
   }
@@ -497,7 +506,10 @@ export function PisoSectoresTab() {
       const detalles = validRows.map((r) => ({ nivel_id: nivelId, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
       await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Salida registrada')
-      if (mountedRef.current) { setDetail(null); setMode('view') }
+      const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
+      if (mountedRef.current && detail) {
+        setDetail({ ...detail, stock }); setMode('view')
+      }
       await loadPosiciones()
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
   }
@@ -581,7 +593,11 @@ export function PisoSectoresTab() {
       await registrarDevolucionPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Devolucion registrada')
       loadBloques()
-      if (mountedRef.current) { setDetail(null); setMode('view'); setDevRows([{ ...EMPTY_ROW }]) }
+      const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
+      if (mountedRef.current && detail) {
+        setDetail({ ...detail, stock }); setMode('view')
+        setDevRows([{ ...EMPTY_ROW }])
+      }
       await loadPosiciones()
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
   }
@@ -691,10 +707,6 @@ export function PisoSectoresTab() {
       return `${base} bg-amber-500/40 border-amber-400/25 hover:bg-amber-500/55 hover:shadow-lg hover:shadow-amber-500/25 hover:-translate-y-1`
     }
     return `${base} bg-sky-500/30 border-sky-400/20 hover:bg-sky-500/45 hover:shadow-lg hover:shadow-sky-500/25 hover:-translate-y-1`
-  }
-
-  function formatStock(qty: number): string {
-    return qty % 1 === 0 ? String(qty) : qty.toFixed(1)
   }
 
   // ═══════════════════════════════════════════════
@@ -887,7 +899,7 @@ export function PisoSectoresTab() {
                   <div className="flex items-center gap-2.5 px-2 py-1.5 mb-3">
                     <div className="w-1.5 h-4 rounded-full bg-gradient-to-b from-sky-400 to-sky-600" />
                     <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">{sub.codigo}</span>
-                    <span className="text-[9px] text-slate-500 bg-slate-800/60 rounded-full px-2 py-0.5">{sub.pos.filter((p) => p.stock > 0).length}/{sub.pos.length} · {formatStock(sub.pos.reduce((s, p) => s + p.stock, 0))}</span>
+                    <span className="text-[9px] text-slate-500 bg-slate-800/60 rounded-full px-2 py-0.5">{sub.pos.filter((p) => p.stock > 0).length}/{sub.pos.length} ocupadas</span>
                     {/* Shelf bar */}
                     <div className="flex-1 h-px bg-gradient-to-r from-slate-700/80 via-slate-600/40 to-transparent" />
                   </div>
@@ -909,7 +921,7 @@ export function PisoSectoresTab() {
 
                           <button
                             onClick={() => handleClick(pos)}
-                            title={`${sub.codigo}-${pos.posicionNumero}${pos.stock > 0 ? ` · ${pos.bloques.length} articulo(s) · Stock: ${formatStock(pos.stock)}` : ' · Vacio'}`}
+                            title={`${sub.codigo}-${pos.posicionNumero}${pos.stock > 0 ? ` (${pos.stock})` : ' · Vacio'}`}
                             className={getCellClasses(pos)}
                             style={{
                               transform: 'perspective(600px) rotateX(2deg)',
@@ -929,9 +941,9 @@ export function PisoSectoresTab() {
                                 pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
                               }`}>{pos.posicionNumero}</span>
                               {isOccupied && (
-                                <span className={`text-[8px] font-bold leading-none mt-0.5 tabular-nums ${
+                                <span className={`text-[8px] font-bold leading-none mt-0.5 ${
                                   isMulti ? 'text-amber-200' : 'text-sky-200'
-                                }`}>{pos.bloques.length} art</span>
+                                }`}>{pos.bloques.length} art.</span>
                               )}
                             </div>
                           </button>
@@ -1087,7 +1099,7 @@ export function PisoSectoresTab() {
                         <div className="col-span-11 sm:col-span-4">
                           <Label className="text-[10px] text-emerald-400 font-semibold">Codigo</Label>
                           <div className="relative">
-                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('ing', i), 150)} placeholder="Buscar codigo o descripcion..." autoFocus
+                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('ing', i), 150)} placeholder="Buscar codigo o descripcion..."
                               className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-emerald-500/40 ring-emerald-500/20 shadow-sm shadow-emerald-500/10' : 'border-slate-700/50 focus:ring-emerald-500/40'}`} />
                             <AutocompleteDropdown prefix="ing" idx={i} row={row} accentColor="emerald" />
                           </div>
@@ -1111,7 +1123,7 @@ export function PisoSectoresTab() {
                         <div className="col-span-8 sm:col-span-4">
                           <Label className="text-[10px] text-sky-400 font-semibold">Cantidad</Label>
                           <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateIngresoCantidad(i, e.target.value)}
-                            className="h-10 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" />
+                            className="h-10 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" autoFocus />
                         </div>
                       </div>
 
@@ -1403,7 +1415,7 @@ export function PisoSectoresTab() {
                         <div className="col-span-11 sm:col-span-4">
                           <Label className="text-[10px] text-amber-400 font-semibold">Codigo</Label>
                           <div className="relative">
-                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('dev', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('dev', i), 150)} placeholder="Buscar codigo o descripcion..." autoFocus
+                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('dev', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('dev', i), 150)} placeholder="Buscar codigo o descripcion..."
                               className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-amber-500/40 ring-amber-500/20 shadow-sm shadow-amber-500/10' : 'border-slate-700/50 focus:ring-amber-500/40'}`} />
                             <AutocompleteDropdown prefix="dev" idx={i} row={row} accentColor="amber" />
                           </div>
@@ -1427,7 +1439,7 @@ export function PisoSectoresTab() {
                         <div className="col-span-8 sm:col-span-4">
                           <Label className="text-[10px] text-amber-400 font-semibold">Cantidad</Label>
                           <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateDevCantidad(i, e.target.value)}
-                            className="h-10 text-xs bg-slate-900/80 border-amber-500/30 text-white focus:ring-amber-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" />
+                            className="h-10 text-xs bg-slate-900/80 border-amber-500/30 text-white focus:ring-amber-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" autoFocus />
                         </div>
                       </div>
 

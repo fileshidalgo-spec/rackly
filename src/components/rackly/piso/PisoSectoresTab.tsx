@@ -185,6 +185,23 @@ export function PisoSectoresTab() {
   // Stock por nivel (para vista desglosada)
   const [stockByNivel, setStockByNivel] = useState<Record<string, DetailStock[]>>({})
   const [viewNivelTab, setViewNivelTab] = useState<string>('all') // 'all' o nivel_id
+  // Salida: tab de nivel seleccionado
+  const [salNivelTab, setSalNivelTab] = useState<string>('all')
+
+  // Salida en masa: selección múltiple
+  const [massMode, setMassMode] = useState(false)
+  const [massSelected, setMassSelected] = useState<Set<string>>(new Set())
+  const [massDialogOpen, setMassDialogOpen] = useState(false)
+  const [massBusy, setMassBusy] = useState(false)
+  // Datos cargados para el dialog de salida en masa
+  type MassPosData = {
+    pos: PosicionConStock
+    niveles: NivelInfo[]
+    stockByNivel: Record<string, DetailStock[]>
+    stock: DetailStock[]
+    selectedNivelId: string
+  }
+  const [massData, setMassData] = useState<Map<string, MassPosData>>(new Map())
 
   // Catalogo
   const [bloquesCatalogo, setBloquesCatalogo] = useState<BloqueOption[]>([])
@@ -338,6 +355,7 @@ export function PisoSectoresTab() {
 
   function openSalida() {
     setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
+    setSalNivelTab('all')
     if (detail) setSalItems(detail.stock.map((s) => ({
       bloque_id: s.bloque_id,
       bloque_codigo: s.bloque_codigo,
@@ -534,16 +552,33 @@ export function PisoSectoresTab() {
 
   async function doSalida() {
     if (!detail || !perfil) return
-    const validRows = salItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
+    // Filtrar items por nivel seleccionado
+    const filteredItems = salNivelTab === 'all'
+      ? salItems
+      : salItems.filter((r) => {
+          // Verificar si este bloque pertenece al nivel seleccionado
+          const nivelStock = stockByNivel[salNivelTab] ?? []
+          return nivelStock.some((ns) => ns.bloque_id === r.bloque_id && ns.fecha_vencimiento === r.fecha_vencimiento)
+        })
+    const validRows = filteredItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para salir'); return }
-    const nivelId = getNivelId()
+    // Determinar nivel_id para la salida
+    const nivelId = salNivelTab === 'all' ? getNivelId() : salNivelTab
     if (!nivelId) { toast.error('No hay niveles disponibles'); return }
     setBusy(true)
     try {
       const detalles = validRows.map((r) => ({ nivel_id: nivelId, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
       await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Salida registrada')
+      // Recargar stock y stock por nivel
       const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
+      // Recalcular stockByNivel
+      if (niveles.length > 0) {
+        const nivelStocks = await Promise.all(niveles.map((n) => stockDetalleNivel(n.id)))
+        const newStockByNivel: Record<string, DetailStock[]> = {}
+        niveles.forEach((n, i) => { newStockByNivel[n.id] = nivelStocks[i] })
+        if (mountedRef.current) setStockByNivel(newStockByNivel)
+      }
       if (mountedRef.current && detail) {
         setDetail({ ...detail, stock }); setMode('view')
       }
@@ -635,6 +670,101 @@ export function PisoSectoresTab() {
       }
       await loadPosiciones()
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
+  }
+
+  // ═══ SALIDA EN MASA ═══
+  function toggleMassSelect(posicionId: string) {
+    setMassSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(posicionId)) next.delete(posicionId)
+      else next.add(posicionId)
+      return next
+    })
+  }
+
+  function toggleMassMode() {
+    setMassMode((prev) => !prev)
+    if (massMode) { setMassSelected(new Set()) } // Al desactivar, limpiar selección
+  }
+
+  async function openMassDialog() {
+    if (massSelected.size === 0 || !perfil) return
+    setMassBusy(true)
+    setMassDialogOpen(true)
+    try {
+      const selectedPositions = posiciones.filter((p) => massSelected.has(p.posicionId))
+      const dataMap = new Map<string, MassPosData>()
+      await Promise.all(selectedPositions.map(async (pos) => {
+        try {
+          const [stock, nivs] = await Promise.all([
+            stockDetallePosicion(pos.posicionId),
+            obtenerNivelesPosicion(pos.posicionId),
+          ])
+          const sBN: Record<string, DetailStock[]> = {}
+          if (nivs.length > 0) {
+            const nivelStocks = await Promise.all(nivs.map((n) => stockDetalleNivel(n.id)))
+            nivs.forEach((n, i) => { sBN[n.id] = nivelStocks[i] })
+          }
+          dataMap.set(pos.posicionId, {
+            pos,
+            niveles: nivs,
+            stockByNivel: sBN,
+            stock,
+            selectedNivelId: nivs.length > 0 ? nivs[0].id : '',
+          })
+        } catch { /* skip failed positions */ }
+      }))
+      if (mountedRef.current) setMassData(dataMap)
+    } catch (err: unknown) {
+      toast.error('Error al cargar datos', { description: err instanceof Error ? err.message : '' })
+    } finally {
+      if (mountedRef.current) setMassBusy(false)
+    }
+  }
+
+  async function doMassSalida() {
+    if (!perfil || massData.size === 0) return
+    setMassBusy(true)
+    let successCount = 0
+    let errorCount = 0
+    try {
+      const entries = [...massData.entries()]
+      await Promise.all(entries.map(async ([posicionId, pd]) => {
+        try {
+          const nivelId = pd.selectedNivelId
+          if (!nivelId) { errorCount++; return }
+          // Salir TODO el stock de cada artículo en el nivel seleccionado
+          const items = pd.selectedNivelId && pd.stockByNivel[pd.selectedNivelId]
+            ? pd.stockByNivel[pd.selectedNivelId]
+            : pd.stock
+          if (items.length === 0) { return } // Skip empty
+          const detalles = items.map((s) => ({
+            nivel_id: nivelId,
+            bloque_id: s.bloque_id,
+            cantidad: s.cantidad,
+            fecha_vencimiento: s.fecha_vencimiento || null,
+          }))
+          await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
+          successCount++
+        } catch { errorCount++ }
+      }))
+      if (successCount > 0) toast.success(`Salida registrada en ${successCount} posicion(es)`)
+      if (errorCount > 0) toast.error(`${errorCount} posicion(es) con error`)
+      setMassDialogOpen(false)
+      setMassSelected(new Set())
+      setMassMode(false)
+      await loadPosiciones()
+    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setMassBusy(false) }
+  }
+
+  // Cambiar nivel seleccionado en salida en masa
+  function updateMassNivel(posicionId: string, nivelId: string) {
+    setMassData((prev) => {
+      const next = new Map(prev)
+      const d = next.get(posicionId)
+      if (d) next.set(posicionId, { ...d, selectedNivelId: nivelId })
+      return next
+    })
   }
 
   // Export Excel
@@ -922,6 +1052,18 @@ export function PisoSectoresTab() {
         </div>
         <div className="flex items-center gap-3">
           <button onClick={loadPosiciones} className="p-2 rounded-xl border border-slate-700/50 hover:bg-slate-700/80 transition-all duration-500 hover:-rotate-180 bg-slate-800/60 backdrop-blur-sm hover:shadow-lg"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /></button>
+          {/* Salida en masa toggle */}
+          <button
+            onClick={toggleMassMode}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all duration-300 ${massMode
+              ? 'bg-red-600/20 text-red-400 border-red-500/40 shadow-lg shadow-red-500/10'
+              : 'bg-slate-800/60 text-slate-400 border-slate-700/30 hover:text-red-400 hover:border-red-500/30'
+            }`}
+          >
+            <ArrowUpFromLine className="h-3.5 w-3.5" />
+            Salida en masa
+            {massMode && <span className="ml-1 text-[9px] bg-red-500/30 text-red-300 px-1.5 py-0.5 rounded-md font-mono">{massSelected.size}</span>}
+          </button>
           <div className="hidden sm:flex items-center gap-3 text-[10px] text-slate-400 bg-slate-800/40 rounded-xl px-3 py-1.5 border border-slate-700/30 backdrop-blur-sm">
             <div className="flex items-center gap-1.5">
               <div className="w-3 h-3 rounded-md bg-sky-500/50 shadow-sm shadow-sky-500/20" />
@@ -975,16 +1117,22 @@ export function PisoSectoresTab() {
                       const isOccupied = pos.stock > 0
                       const artCount = pos.bloques.length
                       const isMulti = artCount > 1
+                      const isMassSel = massSelected.has(pos.posicionId)
                       return (
                         <button
                           key={pos.posicionId}
-                          onClick={() => handleClick(pos)}
+                          onClick={() => massMode ? toggleMassSelect(pos.posicionId) : handleClick(pos)}
                           title={`${sub.codigo}-${pos.posicionNumero}${isOccupied ? ` | ${pos.bloques.map((b) => b.bloque_codigo).join(', ')}` : ' · Vacio'}`}
-                          className={getCellClasses(pos)}
+                          className={`${getCellClasses(pos)} ${massMode && isMassSel ? 'ring-2 ring-red-400 bg-red-950/60 scale-105 z-10' : massMode && isOccupied ? 'hover:ring-1 hover:ring-red-400/50' : ''} transition-all duration-200`}
                         >
                           <div className="flex flex-col items-center justify-center h-full">
+                            {massMode && (
+                              <div className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center transition-all duration-200 mb-0.5 ${isMassSel ? 'bg-red-500 border-red-500' : 'border-slate-500 bg-slate-800/60'}`}>
+                                {isMassSel && <Check className="h-2 w-2 text-white" />}
+                              </div>
+                            )}
                             <span className="font-bold text-[11px] leading-none">{pos.posicionNumero}</span>
-                            {isOccupied && (
+                            {isOccupied && !massMode && (
                               <span className="text-[8px] font-bold leading-none mt-0.5 opacity-90">{artCount} art.</span>
                             )}
                           </div>
@@ -999,6 +1147,34 @@ export function PisoSectoresTab() {
           </div>
         ))}
       </div>
+
+      {/* ═══ MASS SALIDA FLOATING BAR ═══ */}
+      {massMode && massSelected.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl bg-slate-900/95 border border-red-500/40 shadow-2xl shadow-red-500/20 backdrop-blur-xl animate-[scale-in_0.2s_ease-out]">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-red-500/20 flex items-center justify-center">
+              <span className="font-extrabold text-red-400 text-sm">{massSelected.size}</span>
+            </div>
+            <span className="text-xs font-bold text-slate-300">posicion(es) seleccionada(s)</span>
+          </div>
+          <Button
+            onClick={openMassDialog}
+            disabled={massSelected.size === 0}
+            size="sm"
+            className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/30 transition-all duration-300 hover:scale-[1.03]"
+          >
+            <ArrowUpFromLine className="h-3.5 w-3.5" /> Procesar salida
+          </Button>
+        </div>
+      )}
+
+      {/* Banner modo masa activo */}
+      {massMode && massSelected.size === 0 && (
+        <div className="flex items-center justify-center gap-2 py-3 rounded-xl bg-red-950/20 border border-red-500/20">
+          <span className="text-xs text-red-400 font-semibold">Modo salida en masa activado — toca las posiciones que quieres seleccionar</span>
+          <button onClick={toggleMassMode} className="text-[10px] text-slate-400 hover:text-slate-300 underline">Cancelar</button>
+        </div>
+      )}
 
       {/* Exportar */}
       <div className="flex justify-end">
@@ -1189,7 +1365,7 @@ export function PisoSectoresTab() {
                           <Label className="text-[10px] text-emerald-400 font-semibold">Codigo</Label>
                           <div className="relative">
                             <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('ing', i), 150)} placeholder="Buscar codigo o descripcion..."
-                              className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-emerald-500/40 ring-emerald-500/20 shadow-sm shadow-emerald-500/10' : 'border-slate-700/50 focus:ring-emerald-500/40'}`} />
+                              className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-emerald-500/40 ring-emerald-500/20 shadow-sm shadow-emerald-500/10' : 'border-slate-700/50 focus:ring-emerald-500/40'}`} autoFocus />
                             <AutocompleteDropdown prefix="ing" idx={i} row={row} accentColor="emerald" />
                           </div>
                         </div>
@@ -1212,7 +1388,7 @@ export function PisoSectoresTab() {
                         <div className="col-span-8 sm:col-span-4">
                           <Label className="text-[10px] text-sky-400 font-semibold">Cantidad</Label>
                           <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateIngresoCantidad(i, e.target.value)}
-                            className="h-10 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" autoFocus />
+                            className="h-10 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" />
                         </div>
                       </div>
 
@@ -1235,26 +1411,72 @@ export function PisoSectoresTab() {
               )}
 
               {/* ── SALIDA MODE ── */}
-              {mode === 'salida' && (
+              {mode === 'salida' && (() => {
+                // Filtrar salItems según nivel seleccionado
+                const filteredSalItems = salNivelTab === 'all'
+                  ? salItems
+                  : salItems.filter((r) => {
+                      const nivelStock = stockByNivel[salNivelTab] ?? []
+                      return nivelStock.some((ns) => ns.bloque_id === r.bloque_id && ns.fecha_vencimiento === r.fecha_vencimiento)
+                    })
+                const selCount = filteredSalItems.filter((r) => r.selected).length
+                return (
                 <div className="space-y-3 mt-4">
-                  <NivelSelector
-                    label="Nivel origen"
-                    nivelId={selectedNivelId}
-                    onNivelChange={setSelectedNivelId}
-                    nivelesList={niveles}
-                    accentColor="red"
-                  />
+                  {/* Nivel tabs para salida */}
+                  {niveles.length > 1 && (
+                    <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm">
+                      <button
+                        onClick={() => { setSalNivelTab('all'); setSalItems((prev) => prev.map((r) => ({ ...r, selected: false }))) }}
+                        className={`relative z-10 flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 whitespace-nowrap ${
+                          salNivelTab === 'all'
+                            ? 'bg-gradient-to-r from-red-400 to-rose-500 text-white shadow-lg shadow-red-500/25'
+                            : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        Todos ({salItems.length})
+                      </button>
+                      {niveles.map((n) => {
+                        const nCount = (stockByNivel[n.id] ?? []).length
+                        return (
+                          <button
+                            key={n.id}
+                            onClick={() => { setSalNivelTab(n.id); setSalItems((prev) => prev.map((r) => ({ ...r, selected: false }))) }}
+                            className={`relative z-10 flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 whitespace-nowrap ${
+                              salNivelTab === n.id
+                                ? 'bg-gradient-to-r from-red-400 to-rose-500 text-white shadow-lg shadow-red-500/25'
+                                : 'text-slate-400 hover:text-slate-300'
+                            }`}
+                          >
+                            Nivel {n.numero} ({nCount})
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {salNivelTab !== 'all' && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-950/30 border border-red-500/20">
+                      <Layers className="h-3.5 w-3.5 text-red-400" />
+                      <span className="text-[10px] font-bold text-red-300">
+                        Salida de Nivel {niveles.find((n) => n.id === salNivelTab)?.numero ?? '?'}
+                        {niveles.find((n) => n.id === salNivelTab)?.codigo_ubicacion ? ` — ${niveles.find((n) => n.id === salNivelTab)?.codigo_ubicacion}` : ''}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-bold text-slate-300">Toca los articulos que quieres salir:</p>
-                    {salItems.length > 1 && (
+                    {filteredSalItems.length > 1 && (
                       <button
                         onClick={() => {
-                          const allSelected = salItems.every((r) => r.selected)
-                          setSalItems((prev) => prev.map((r) => ({ ...r, selected: !allSelected, cantidad: !allSelected ? String(r.stockActual) : r.cantidad })))
+                          const allSel = filteredSalItems.every((r) => r.selected)
+                          setSalItems((prev) => prev.map((r) => {
+                            const isInLevel = salNivelTab === 'all' || (stockByNivel[salNivelTab] ?? []).some((ns) => ns.bloque_id === r.bloque_id && ns.fecha_vencimiento === r.fecha_vencimiento)
+                            if (!isInLevel) return r
+                            return { ...r, selected: !allSel, cantidad: !allSel ? String(r.stockActual) : r.cantidad }
+                          }))
                         }}
                         className="flex items-center gap-1 text-[10px] font-semibold text-red-400 hover:text-red-300 transition-all duration-300"
                       >
-                        {salItems.every((r) => r.selected) ? (
+                        {selCount === filteredSalItems.length && filteredSalItems.length > 0 ? (
                           <><X className="h-3 w-3" /> Deseleccionar todos</>
                         ) : (
                           <><Check className="h-3 w-3" /> Seleccionar todos</>
@@ -1262,13 +1484,16 @@ export function PisoSectoresTab() {
                       </button>
                     )}
                   </div>
-                  <p className="text-[10px] text-slate-500 -mt-2">{salItems.filter((r) => r.selected).length} de {salItems.length} seleccionados</p>
-                  {salItems.map((row, i) => (
+                  <p className="text-[10px] text-slate-500 -mt-2">{selCount} de {filteredSalItems.length} seleccionados</p>
+                  {filteredSalItems.map((row, i) => {
+                    // Find real index in full salItems array
+                    const realIdx = salItems.findIndex((r) => r.bloque_id === row.bloque_id && r.fecha_vencimiento === row.fecha_vencimiento && r.stockActual === row.stockActual)
+                    return (
                     <div key={`${row.bloque_id}-${row.fecha_vencimiento}-${i}`}
                       onClick={() => {
                         const u = [...salItems]
-                        const newSelected = !u[i].selected
-                        u[i] = { ...u[i], selected: newSelected, cantidad: newSelected ? String(u[i].stockActual) : u[i].cantidad }
+                        const newSelected = !u[realIdx].selected
+                        u[realIdx] = { ...u[realIdx], selected: newSelected, cantidad: newSelected ? String(u[realIdx].stockActual) : u[realIdx].cantidad }
                         setSalItems(u)
                       }}
                       className={`rounded-xl border backdrop-blur-sm p-3 border-l-[3px] cursor-pointer transition-all duration-300 ${
@@ -1310,20 +1535,27 @@ export function PisoSectoresTab() {
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => {
                               const u = [...salItems]
-                              u[i] = { ...u[i], cantidad: e.target.value }
+                              u[realIdx] = { ...u[realIdx], cantidad: e.target.value }
                               setSalItems(u)
                             }}
                             className="w-20 h-9 text-xs bg-slate-900/80 border-red-500/30 text-white focus:ring-red-500/40 rounded-xl backdrop-blur-sm transition-all duration-300" />
                         )}
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
+                  {filteredSalItems.length === 0 && (
+                    <div className="py-6 text-center">
+                      <p className="text-slate-500 text-xs">No hay articulos en este nivel</p>
+                    </div>
+                  )}
                   <div className="flex gap-2 pt-2">
                     <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
-                    <Button onClick={doSalida} disabled={busy || salItems.every((r) => !r.selected)} size="sm" className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20 transition-all duration-300 hover:shadow-red-500/30 hover:scale-[1.02] disabled:opacity-40 disabled:hover:scale-100">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />} Registrar salida</Button>
+                    <Button onClick={doSalida} disabled={busy || selCount === 0} size="sm" className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20 transition-all duration-300 hover:shadow-red-500/30 hover:scale-[1.02] disabled:opacity-40 disabled:hover:scale-100">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />} Registrar salida</Button>
                   </div>
                 </div>
-              )}
+                )
+              })()}
 
               {/* ── TRASLADO MODE ── */}
               {mode === 'traslado' && (
@@ -1548,7 +1780,7 @@ export function PisoSectoresTab() {
                           <Label className="text-[10px] text-amber-400 font-semibold">Codigo</Label>
                           <div className="relative">
                             <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('dev', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('dev', i), 150)} placeholder="Buscar codigo o descripcion..."
-                              className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-amber-500/40 ring-amber-500/20 shadow-sm shadow-amber-500/10' : 'border-slate-700/50 focus:ring-amber-500/40'}`} />
+                              className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-amber-500/40 ring-amber-500/20 shadow-sm shadow-amber-500/10' : 'border-slate-700/50 focus:ring-amber-500/40'}`} autoFocus />
                             <AutocompleteDropdown prefix="dev" idx={i} row={row} accentColor="amber" />
                           </div>
                         </div>
@@ -1571,7 +1803,7 @@ export function PisoSectoresTab() {
                         <div className="col-span-8 sm:col-span-4">
                           <Label className="text-[10px] text-amber-400 font-semibold">Cantidad</Label>
                           <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateDevCantidad(i, e.target.value)}
-                            className="h-10 text-xs bg-slate-900/80 border-amber-500/30 text-white focus:ring-amber-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" autoFocus />
+                            className="h-10 text-xs bg-slate-900/80 border-amber-500/30 text-white focus:ring-amber-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" />
                         </div>
                       </div>
 
@@ -1682,6 +1914,105 @@ export function PisoSectoresTab() {
               Ejecutar traslado
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ MASS SALIDA DIALOG ═══ */}
+      <Dialog open={massDialogOpen} onOpenChange={(open) => { if (!open) setMassDialogOpen(false) }}>
+        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto p-0 border-0 shadow-2xl"
+          style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9))', backdropFilter: 'blur(24px)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-red-400 to-transparent opacity-60" />
+          <div className="p-6">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <div className="w-8 h-8 rounded-xl bg-red-600/20 flex items-center justify-center">
+                  <ArrowUpFromLine className="h-4 w-4 text-red-400" />
+                </div>
+                Salida en Masa — {massData.size} posicion(es)
+              </DialogTitle>
+              <DialogDescription className="text-xs text-slate-400">
+                Se registrara salida de TODO el stock de cada articulo en el nivel seleccionado. Revisa las posiciones antes de confirmar.
+              </DialogDescription>
+            </DialogHeader>
+
+            {massBusy && massData.size === 0 ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-red-400" />
+                <span className="ml-3 text-slate-400 text-sm">Cargando datos de posiciones...</span>
+              </div>
+            ) : (
+              <div className="space-y-3 mt-4">
+                {[...massData.entries()].map(([posicionId, pd]) => {
+                  const displayItems = pd.selectedNivelId ? (pd.stockByNivel[pd.selectedNivelId] ?? []) : pd.stock
+                  const totalQty = displayItems.reduce((s, it) => s + it.cantidad, 0)
+                  return (
+                    <div key={posicionId} className="rounded-xl border border-slate-700/40 bg-slate-800/40 backdrop-blur-sm p-3.5">
+                      {/* Position header + nivel selector */}
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-lg bg-sky-600/20 flex items-center justify-center text-sky-300 font-extrabold text-[10px] border border-sky-500/20">
+                          {pd.pos.columnaLetra}
+                        </div>
+                        <span className="font-mono text-xs font-bold text-slate-200">
+                          {pd.pos.columnaLetra}-{pd.pos.subcolumnaCodigo}-{pd.pos.posicionNumero}
+                        </span>
+                        <span className="text-[10px] text-slate-500 ml-auto">{displayItems.length} art. · {totalQty.toFixed(2)} total</span>
+                      </div>
+                      {/* Nivel selector si tiene multiples niveles */}
+                      {pd.niveles.length > 1 && (
+                        <div className="flex items-center gap-1.5 mb-2 bg-slate-900/60 rounded-lg p-0.5 border border-slate-700/30">
+                          {pd.niveles.map((n) => {
+                            const nItems = (pd.stockByNivel[n.id] ?? []).length
+                            return (
+                              <button
+                                key={n.id}
+                                onClick={() => updateMassNivel(posicionId, n.id)}
+                                className={`flex-1 px-2.5 py-1 rounded-md text-[9px] font-bold transition-all duration-200 ${
+                                  pd.selectedNivelId === n.id
+                                    ? 'bg-red-500/30 text-red-300 border border-red-500/30'
+                                    : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                                }`}
+                              >
+                                Nivel {n.numero} ({nItems})
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                      {/* Items list */}
+                      <div className="space-y-1">
+                        {displayItems.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-slate-900/40 text-[10px]">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Package className="h-3 w-3 text-slate-500 shrink-0" />
+                              <span className="font-mono text-sky-300 font-semibold">{item.bloque_codigo}</span>
+                              <span className="text-slate-500 truncate">{item.bloque_descripcion || ''}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-bold text-red-300">{item.cantidad}</span>
+                              <span className="text-slate-500">{item.bloque_unidad}</span>
+                            </div>
+                          </div>
+                        ))}
+                        {displayItems.length === 0 && (
+                          <p className="text-slate-500 text-[10px] text-center py-2">Sin articulos en este nivel</p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            <DialogFooter className="gap-2 sm:gap-0 mt-4 pt-3 border-t border-slate-700/30">
+              <Button variant="outline" onClick={() => setMassDialogOpen(false)} size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
+                Cancelar
+              </Button>
+              <Button onClick={doMassSalida} disabled={massBusy || massData.size === 0} size="sm" className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20">
+                {massBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />}
+                Registrar {massData.size} salida(s)
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

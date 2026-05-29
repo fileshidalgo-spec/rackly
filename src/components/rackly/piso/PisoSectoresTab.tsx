@@ -5,6 +5,7 @@ import {
   listarSectores,
   cargarPosicionesSector,
   stockDetallePosicion,
+  stockDetalleNivel,
   obtenerPrimerNivel,
   obtenerNivelesPosicion,
   type NivelInfo,
@@ -181,6 +182,9 @@ export function PisoSectoresTab() {
   const [selectedNivelId, setSelectedNivelId] = useState<string>('')
   // Traslado: nivel destino
   const [trDestNivelId, setTrDestNivelId] = useState<string>('')
+  // Stock por nivel (para vista desglosada)
+  const [stockByNivel, setStockByNivel] = useState<Record<string, DetailStock[]>>({})
+  const [viewNivelTab, setViewNivelTab] = useState<string>('all') // 'all' o nivel_id
 
   // Catalogo
   const [bloquesCatalogo, setBloquesCatalogo] = useState<BloqueOption[]>([])
@@ -279,10 +283,20 @@ export function PisoSectoresTab() {
         stockDetallePosicion(pos.posicionId),
         obtenerNivelesPosicion(pos.posicionId),
       ])
+      // Cargar stock por nivel (en paralelo)
+      const stockPerNivel: Record<string, DetailStock[]> = {}
+      if (nivs.length > 0) {
+        const nivelStocks = await Promise.all(
+          nivs.map((n) => stockDetalleNivel(n.id))
+        )
+        nivs.forEach((n, i) => { stockPerNivel[n.id] = nivelStocks[i] })
+      }
       if (mountedRef.current) {
         setDetail({ posicionId: pos.posicionId, posicionNumero: pos.posicionNumero, subcolumnaCodigo: pos.subcolumnaCodigo, columnaLetra: pos.columnaLetra, stock })
         setNiveles(nivs)
         setSelectedNivelId(nivs.length > 0 ? nivs[0].id : '')
+        setStockByNivel(stockPerNivel)
+        setViewNivelTab('all')
         setMode('view')
         setSalItems(stock.map((s) => ({
           bloque_id: s.bloque_id,
@@ -965,7 +979,7 @@ export function PisoSectoresTab() {
                         <button
                           key={pos.posicionId}
                           onClick={() => handleClick(pos)}
-                          title={`${sub.codigo}-${pos.posicionNumero}${isOccupied ? ` | ${artCount} articulo(s), stock: ${pos.stock}` : ' · Vacio'}`}
+                          title={`${sub.codigo}-${pos.posicionNumero}${isOccupied ? ` | ${pos.bloques.map((b) => b.bloque_codigo).join(', ')}` : ' · Vacio'}`}
                           className={getCellClasses(pos)}
                         >
                           <div className="flex flex-col items-center justify-center h-full">
@@ -1040,10 +1054,55 @@ export function PisoSectoresTab() {
 
             {detail && (<>
               {/* ── VIEW MODE ── */}
-              {mode === 'view' && (
-                detail.stock.length > 0 ? (
+              {mode === 'view' && (() => {
+                const displayStock = viewNivelTab === 'all'
+                  ? detail.stock
+                  : (stockByNivel[viewNivelTab] ?? [])
+                const selectedNivelLabel = niveles.find((n) => n.id === viewNivelTab)
+                return displayStock.length > 0 ? (
                   <div className="space-y-2.5 mt-4">
-                    {detail.stock.map((s, idx) => (
+                    {/* Level tabs — only show if position has multiple levels */}
+                    {niveles.length > 1 && (
+                      <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm">
+                        <button
+                          onClick={() => setViewNivelTab('all')}
+                          className={`relative z-10 flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 whitespace-nowrap ${
+                            viewNivelTab === 'all'
+                              ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white shadow-lg shadow-sky-500/25'
+                              : 'text-slate-400 hover:text-slate-300'
+                          }`}
+                        >
+                          Todos ({detail.stock.length})
+                        </button>
+                        {niveles.map((n) => {
+                          const count = (stockByNivel[n.id] ?? []).length
+                          return (
+                            <button
+                              key={n.id}
+                              onClick={() => setViewNivelTab(n.id)}
+                              className={`relative z-10 flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 whitespace-nowrap ${
+                                viewNivelTab === n.id
+                                  ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white shadow-lg shadow-sky-500/25'
+                                  : 'text-slate-400 hover:text-slate-300'
+                              }`}
+                            >
+                              Nivel {n.numero} ({count})
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {/* Level label when viewing a specific level */}
+                    {viewNivelTab !== 'all' && selectedNivelLabel && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-sky-950/30 border border-sky-500/20">
+                        <Layers className="h-3.5 w-3.5 text-sky-400" />
+                        <span className="text-[10px] font-bold text-sky-300">
+                          Nivel {selectedNivelLabel.numero}{selectedNivelLabel.codigo_ubicacion ? ` — ${selectedNivelLabel.codigo_ubicacion}` : ''}
+                        </span>
+                        <span className="text-[9px] text-slate-500">· {(stockByNivel[viewNivelTab] ?? []).reduce((s, it) => s + it.cantidad, 0).toFixed(2)} total</span>
+                      </div>
+                    )}
+                    {displayStock.map((s, idx) => (
                       <div key={`${s.bloque_id}-${s.fecha_vencimiento}-${idx}`}
                         className="rounded-xl border border-slate-700/40 bg-slate-800/50 backdrop-blur-sm p-3.5 hover:border-slate-600/50 transition-all duration-300 hover:shadow-lg group/item">
                         <div className="flex items-start justify-between">
@@ -1089,8 +1148,8 @@ export function PisoSectoresTab() {
                       <BoxSelect className="h-8 w-8 text-slate-600" />
                     </div>
                     <div>
-                      <p className="text-slate-400 font-semibold">Posicion vacia</p>
-                      <p className="text-xs text-slate-500 mt-1">Esta posicion no tiene articulos registrados</p>
+                      <p className="text-slate-400 font-semibold">{viewNivelTab !== 'all' ? 'Nivel sin articulos' : 'Posicion vacia'}</p>
+                      <p className="text-xs text-slate-500 mt-1">{viewNivelTab !== 'all' ? 'Este nivel no tiene articulos registrados' : 'Esta posicion no tiene articulos registrados'}</p>
                     </div>
                     <div className="grid grid-cols-2 gap-2 max-w-xs mx-auto">
                       <Button onClick={openIngreso} size="sm" className="gap-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/15 transition-all duration-300 hover:scale-[1.02]"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
@@ -1098,7 +1157,7 @@ export function PisoSectoresTab() {
                     </div>
                   </div>
                 )
-              )}
+              })()}
 
               {/* ── INGRESO MODE ── */}
               {mode === 'ingreso' && (

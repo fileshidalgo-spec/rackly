@@ -855,6 +855,129 @@ export async function stockDetallePosicion(
 }
 
 /**
+ * Obtiene el stock detallado de un NIVEL específico (para vista por niveles).
+ * Usa cálculo client-side FEFO idéntico al fallback de stockDetallePosicion
+ * pero filtrado a un solo nivel_id.
+ */
+export async function stockDetalleNivel(
+  nivelId: string
+): Promise<{ bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[]> {
+  // Obtener detalles de movimiento para este nivel específico
+  const getDetalles = async () => {
+    const { data: d1, error: e1 } = await dataClient
+      .from('piso_movimiento_detalles')
+      .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
+      .eq('nivel_id', nivelId)
+    if (!e1) return d1 as unknown[]
+    const { data: d2, error: e2 } = await dataClient
+      .from('piso_movimiento_detalles')
+      .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+      .eq('nivel_id', nivelId)
+    if (e2) throw e2
+    return d2 as unknown[]
+  }
+  const rawDetalles = await getDetalles()
+
+  type DetRow = { bloque_id: string; cantidad: unknown; fecha_vencimiento?: string | null; piso_movimientos: { tipo: string } | null | { tipo: string }[] }
+  const detalles = (rawDetalles ?? []) as DetRow[]
+
+  const isIngresoType = (tipo: string) =>
+    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+  const getTipo = (pm: DetRow['piso_movimientos']): string | null => {
+    if (!pm) return null
+    if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo : null
+    return pm.tipo
+  }
+
+  // Pool de lotes por ingreso
+  const ingresoPools = new Map<string, Map<string, number>>()
+  for (const d of detalles) {
+    const tipo = getTipo(d.piso_movimientos)
+    if (!tipo || !isIngresoType(tipo)) continue
+    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+    if (qty <= 0) continue
+    const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
+    const pool = ingresoPools.get(d.bloque_id) ?? new Map<string, number>()
+    pool.set(fv, (pool.get(fv) ?? 0) + qty)
+    ingresoPools.set(d.bloque_id, pool)
+  }
+
+  // Sumar salidas por bloque_id
+  const salidasPorBloque = new Map<string, number>()
+  for (const d of detalles) {
+    const tipo = getTipo(d.piso_movimientos)
+    if (!tipo || isIngresoType(tipo)) continue
+    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+    if (qty <= 0) continue
+    salidasPorBloque.set(d.bloque_id, (salidasPorBloque.get(d.bloque_id) ?? 0) + qty)
+  }
+
+  // FEFO: descontar salidas del pool
+  const lotesRestantes = new Map<string, { fecha: string; qty: number }[]>()
+  for (const [bloqueId, pool] of ingresoPools) {
+    const sortedLots = [...pool.entries()].sort(([a], [b]) => {
+      if (!a && b) return 1
+      if (a && !b) return -1
+      return a.localeCompare(b)
+    })
+    const totalSalida = salidasPorBloque.get(bloqueId) ?? 0
+    let pendiente = totalSalida
+    const restantes: { fecha: string; qty: number }[] = []
+    for (const [fecha, qty] of sortedLots) {
+      if (pendiente <= 0) { restantes.push({ fecha, qty }) }
+      else if (qty <= pendiente) { pendiente -= qty }
+      else { restantes.push({ fecha, qty: qty - pendiente }); pendiente = 0 }
+    }
+    if (restantes.length > 0) lotesRestantes.set(bloqueId, restantes)
+  }
+
+  if (lotesRestantes.size === 0) return []
+
+  // Info de bloques
+  const bloqueIds = [...lotesRestantes.keys()]
+  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
+  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_') && !id.startsWith('manual_'))
+  if (realIds.length > 0) {
+    const { data: bloqData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
+    for (const b of (bloqData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
+      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
+  }
+  const virtualIds = bloqueIds.filter((id) => id.startsWith('cat_'))
+  if (virtualIds.length > 0) {
+    const codes = virtualIds.map((id) => id.replace('cat_', ''))
+    const { data: catData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
+    for (const c of (catData ?? []) as { codigo: string; descripcion: string; un: string }[])
+      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+  }
+  // Handle manual_ IDs
+  for (const id of bloqueIds) {
+    if (id.startsWith('manual_') && !bloqueInfoMap.has(id)) {
+      bloqueInfoMap.set(id, { codigo: id.replace('manual_', ''), descripcion: 'Articulo nuevo (manual)', unidad: 'KG' })
+    }
+  }
+
+  const results: { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[] = []
+  for (const [bloqueId, lots] of lotesRestantes) {
+    const info = bloqueInfoMap.get(bloqueId)
+    if (!info) continue
+    for (const lot of lots) {
+      if (lot.qty <= 0) continue
+      results.push({
+        bloque_id: bloqueId, bloque_codigo: info.codigo, bloque_descripcion: info.descripcion,
+        bloque_unidad: info.unidad || 'KG', cantidad: Math.round(lot.qty * 1000) / 1000, fecha_vencimiento: lot.fecha,
+      })
+    }
+  }
+  results.sort((a, b) => {
+    if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+    if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
+    if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
+    return a.bloque_codigo.localeCompare(b.bloque_codigo)
+  })
+  return results
+}
+
+/**
  * Registra un ingreso directo a una posición (sin pasar por el RPC completo).
  * Permite múltiples bloques en una sola posición.
  */

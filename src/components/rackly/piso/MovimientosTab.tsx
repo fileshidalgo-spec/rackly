@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { listarMovimientos, type Sector } from '@/lib/piso/api'
+import { listarMovimientos, eliminarMovimiento, type Sector } from '@/lib/piso/api'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
@@ -24,8 +24,18 @@ import {
 import {
   Loader2, Filter, X, ArrowDownToLine, ArrowUpFromLine, RotateCcw,
   ArrowLeftRight, BarChart3, Search, ChevronDown, Package,
-  TrendingUp, Archive, Activity,
+  TrendingUp, Archive, Activity, Trash2, TriangleAlert,
 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 // ═══════════════════════════════════════════════
 //  ANIMATED COUNTER HOOK
@@ -81,6 +91,8 @@ export function MovimientosTab() {
   const [filtroDesde, setFiltroDesde] = useState<string>('')
   const [filtroHasta, setFiltroHasta] = useState<string>('')
   const [filtroTexto, setFiltroTexto] = useState<string>('')
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; op: number; tipo: string } | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
 
   // Load all movements on mount
   useEffect(() => {
@@ -147,6 +159,20 @@ export function MovimientosTab() {
 
   const tieneFiltrosActivos =
     filtroTipo !== '' || filtroUsuario !== '' || filtroDesde !== '' || filtroHasta !== '' || filtroTexto.trim() !== ''
+
+  async function doEliminar() {
+    if (!deleteTarget) return
+    setDeleteBusy(true)
+    try {
+      await eliminarMovimiento(deleteTarget.id)
+      setMovimientos((prev) => prev.filter((m) => m.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch (err) {
+      console.error('Error eliminando movimiento:', err)
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
 
   function limpiarFiltros() {
     setFiltroTipo('')
@@ -456,6 +482,39 @@ export function MovimientosTab() {
         </div>
       )}
 
+      {/* ── Delete confirmation dialog ── */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+          <AlertDialogHeader className="shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-red-600/15 flex items-center justify-center flex-shrink-0">
+                <TriangleAlert className="h-6 w-6 text-red-500" />
+              </div>
+              <div>
+                <AlertDialogTitle className="text-base">Eliminar movimiento</AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <span>
+                    ¿Eliminar el movimiento <strong className="font-mono">#{deleteTarget?.op}</strong> (tipo: <strong className="capitalize">{deleteTarget?.tipo}</strong>)?
+                    Se eliminarán todos los detalles asociados. Esta acción no se puede deshacer.
+                  </span>
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="shrink-0 mt-4 gap-2">
+            <AlertDialogCancel className="flex-1 h-11 rounded-lg">Cancelar</AlertDialogCancel>
+            <Button
+              onClick={(e) => { e.preventDefault(); doEliminar() }}
+              disabled={deleteBusy}
+              className="flex-1 h-11 rounded-lg text-sm font-bold bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-600/20 gap-2"
+            >
+              {deleteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {deleteBusy ? 'Eliminando...' : 'Eliminar'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* ── Table — alternating row colors, modern badges ── */}
       {!loading && movimientosFiltrados.length > 0 && (
         <div className="rounded-2xl border border-slate-700/40 overflow-hidden shadow-xl shadow-black/10">
@@ -472,6 +531,7 @@ export function MovimientosTab() {
                   <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider">Detalles</TableHead>
                   <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider hidden lg:table-cell w-[100px]">F. Venc.</TableHead>
                   <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[140px]">Usuario</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[50px] text-center">Acción</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -542,6 +602,16 @@ export function MovimientosTab() {
                         </div>
                         <span className="truncate">{m.usuario_nombre || <span className="text-slate-600">—</span>}</span>
                       </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-red-400/60 hover:text-red-400 hover:bg-red-950/40 hover:border-red-500/30 border border-transparent rounded-lg transition-all duration-200"
+                        onClick={() => setDeleteTarget({ id: m.id, op: m.numero_operacion, tipo: m.tipo })}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}

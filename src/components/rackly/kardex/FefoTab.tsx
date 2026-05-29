@@ -248,6 +248,10 @@ export function FefoTab() {
               {['Código', 'Descripción', 'Bloque', 'Torre', 'Piso', 'Pos', 'Stock', 'Proveedor', 'Vencimiento', 'Días', 'Estado'].map(h => (
                 <th key={h} className={`px-4 py-3 text-xs font-bold text-slate-300 uppercase tracking-wider ${
                   h === 'Stock' || h === 'Días' ? 'text-right' : 'text-left'
+                } ${
+                  h === 'Torre' || h === 'Piso' || h === 'Pos' ? 'hidden sm:table-cell' : ''
+                } ${
+                  h === 'Proveedor' || h === 'Vencimiento' ? 'hidden md:table-cell' : ''
                 }`}>{h}</th>
               ))}
             </tr>
@@ -258,14 +262,14 @@ export function FefoTab() {
                 <td className="px-4 py-3 font-mono font-bold text-sky-300 text-sm">{item.codigo}</td>
                 <td className="px-4 py-3 text-slate-200 max-w-[220px] truncate font-medium">{item.descripcion}</td>
                 <td className="px-4 py-3 text-slate-200 font-semibold">{item.bloque}</td>
-                <td className="px-4 py-3 text-slate-200 font-semibold">{item.torre}</td>
-                <td className="px-4 py-3 text-slate-200 font-semibold">{item.piso}</td>
-                <td className="px-4 py-3 text-slate-200 font-semibold">{item.posicion}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold hidden sm:table-cell">{item.torre}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold hidden sm:table-cell">{item.piso}</td>
+                <td className="px-4 py-3 text-slate-200 font-semibold hidden sm:table-cell">{item.posicion}</td>
                 <td className="px-4 py-3 text-right">
                   <span className="text-emerald-300 font-bold text-base">{item.stock}</span>
                   <span className="text-slate-400 ml-1 text-xs">{item.un}</span>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 hidden md:table-cell">
                   {item.proveedor ? (
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-violet-500/25 text-violet-200 border border-violet-500/40">
                       {item.proveedor}
@@ -274,7 +278,7 @@ export function FefoTab() {
                     <span className="text-slate-600">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-slate-200 font-medium">{item.fVencimiento}</td>
+                <td className="px-4 py-3 text-slate-200 font-medium hidden md:table-cell">{item.fVencimiento}</td>
                 <td className={`px-4 py-3 text-right font-bold text-base ${DIAS_COLOR[item.status]}`}>
                   {item.diasRestantes}
                 </td>

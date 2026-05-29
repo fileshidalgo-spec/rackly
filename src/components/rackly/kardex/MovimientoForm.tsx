@@ -369,7 +369,7 @@ function IngresoForm({
       <AlertDialog open={!!confirmData} onOpenChange={() => setConfirmData(null)}>
         <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 overflow-hidden max-h-[85vh]">
           {/* Header con gradiente */}
-          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 px-6 py-5 text-white">
+          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 px-4 sm:px-6 py-5 text-white">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
                 <TriangleAlert className="h-6 w-6 text-white" />
@@ -388,7 +388,7 @@ function IngresoForm({
           {/* Contenido scrolleable */}
           <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
             {/* Ubicación destino */}
-            <div className="px-6 pt-4 pb-2">
+            <div className="px-4 sm:px-6 pt-4 pb-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ubicación destino</p>
               <div className="flex items-center gap-2 text-sm text-muted-foreground bg-slate-50 dark:bg-slate-900 rounded-lg px-3 py-2.5">
                 <MapPin className="h-4 w-4 text-orange-500 flex-shrink-0" />
@@ -399,7 +399,7 @@ function IngresoForm({
             </div>
 
             {/* Producto que se desea ingresar */}
-            <div className="px-6 pb-3">
+            <div className="px-4 sm:px-6 pb-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Producto a {tipo === 'devolucion' ? 'devolver' : 'ingresar'}</p>
               <div className="rounded-xl border-2 border-dashed border-green-300 dark:border-green-700 bg-green-50/60 dark:bg-green-950/20 p-3 space-y-1.5">
                 <div className="flex items-center justify-between">
@@ -423,7 +423,7 @@ function IngresoForm({
 
             {/* Separador */}
             {confirmData && confirmData.length > 0 && (
-              <div className="px-6 pb-2">
+              <div className="px-4 sm:px-6 pb-2">
                 <div className="flex items-center gap-2">
                   <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Stock actual en esta ubicación</span>
@@ -434,7 +434,7 @@ function IngresoForm({
 
             {/* Productos existentes en la ubicación */}
             {confirmData && confirmData.length > 0 && (
-              <div className="px-6 pb-4">
+              <div className="px-4 sm:px-6 pb-4">
                 <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">
                   {confirmData.length} producto{confirmData.length !== 1 ? 's' : ''} encontrado{confirmData.length !== 1 ? 's' : ''}
                 </p>
@@ -485,7 +485,7 @@ function IngresoForm({
           </div>
 
           {/* Botones de acción */}
-          <AlertDialogFooter className="px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2">
+          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2">
             <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium border-slate-300 dark:border-slate-600">
               Cancelar
             </AlertDialogCancel>
@@ -734,13 +734,13 @@ function SalidaForm({
               <TableRow>
                 <TableHead className="w-16 text-center">Bloque</TableHead>
                 <TableHead className="w-16 text-center">Torre</TableHead>
-                <TableHead className="w-16 text-center">Piso</TableHead>
+                <TableHead className="w-16 text-center hidden sm:table-cell">Piso</TableHead>
                 <TableHead className="w-20 text-center">Posición</TableHead>
                 <TableHead className="text-right">Stock</TableHead>
-                <TableHead className="w-32">F. Vencimiento</TableHead>
-                <TableHead className="w-28">Proveedor</TableHead>
-                <TableHead className="w-36">Cantidad salida</TableHead>
-                <TableHead className="w-44">Acción</TableHead>
+                <TableHead className="hidden md:table-cell">F. Vencimiento</TableHead>
+                <TableHead className="hidden lg:table-cell">Proveedor</TableHead>
+                <TableHead className="min-w-[140px]">Cant. salida</TableHead>
+                <TableHead className="min-w-[180px]">Acción</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -750,17 +750,17 @@ function SalidaForm({
                   <TableRow key={key}>
                     <TableCell className="text-center font-medium">{loc.bloque}</TableCell>
                     <TableCell className="text-center font-medium">{loc.torre}</TableCell>
-                    <TableCell className="text-center font-medium">{loc.piso}</TableCell>
+                    <TableCell className="text-center font-medium hidden sm:table-cell">{loc.piso}</TableCell>
                     <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
                     <TableCell className="text-right font-bold">{loc.stock}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {loc.fVencimiento ? (
                         <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{formatDate(loc.fVencimiento)}</span>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       {loc.proveedor ? (
                         <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
                           {loc.proveedor}

@@ -270,6 +270,20 @@ export async function registrarMovimiento(
   return result[0] as PisoMovimiento
 }
 
+export async function eliminarMovimiento(movimientoId: string): Promise<void> {
+  // First delete details, then the movement header
+  const { error: detErr } = await dataClient
+    .from('piso_movimiento_detalles')
+    .delete()
+    .eq('movimiento_id', movimientoId)
+  if (detErr) throw detErr
+  const { error: movErr } = await dataClient
+    .from('piso_movimientos')
+    .delete()
+    .eq('id', movimientoId)
+  if (movErr) throw movErr
+}
+
 export async function listarMovimientos(
   sectorId?: string,
   columnaId?: string,

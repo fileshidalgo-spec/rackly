@@ -491,11 +491,14 @@ export async function cargarPosicionesSector(
           if (typeof rawBloques === 'string') {
             try { rawBloques = JSON.parse(rawBloques) } catch { rawBloques = [] }
           }
-          const arr = (Array.isArray(rawBloques) ? rawBloques : []) as { bloque_id: string; bloque_codigo: string; cantidad: unknown }[]
+          const arr = (Array.isArray(rawBloques) ? rawBloques : []) as { bloque_id: string; bloque_codigo: string; cantidad: unknown; stock: unknown }[]
           bloques = arr.map((b) => ({
             bloque_id: b.bloque_id ?? '',
             bloque_codigo: b.bloque_codigo ?? '',
-            cantidad: typeof b.cantidad === 'number' ? b.cantidad : parseFloat(String(b.cantidad ?? '0')) || 0,
+            // El RPC usa 'stock' como clave, el fallback usa 'cantidad'
+            cantidad: typeof b.cantidad === 'number' ? b.cantidad
+              : typeof b.stock === 'number' ? b.stock
+              : parseFloat(String(b.cantidad ?? b.stock ?? '0')) || 0,
           }))
         } catch { /* json parse error */ }
         rpcStockMap.set(r.posicion_id, { stock: qty, bloques })

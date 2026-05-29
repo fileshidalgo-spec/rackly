@@ -202,7 +202,7 @@ export function PisoSectoresTab() {
     niveles: NivelInfo[]
     stockByNivel: Record<string, DetailStock[]>
     stock: DetailStock[]
-    selectedNivelId: string
+    selectedNivelIds: Set<string> // empty = all levels
   }
   const [massData, setMassData] = useState<Map<string, MassPosData>>(new Map())
 
@@ -722,7 +722,7 @@ export function PisoSectoresTab() {
             niveles: nivs,
             stockByNivel: sBN,
             stock,
-            selectedNivelId: nivs.length > 0 ? nivs[0].id : '',
+            selectedNivelIds: new Set<string>(),
           })
         } catch { /* skip failed positions */ }
       }))
@@ -743,19 +743,27 @@ export function PisoSectoresTab() {
       const entries = [...massData.entries()]
       await Promise.all(entries.map(async ([posicionId, pd]) => {
         try {
-          const nivelId = pd.selectedNivelId
-          if (!nivelId) { errorCount++; return }
-          // Salir TODO el stock de cada artículo en el nivel seleccionado
-          const items = pd.selectedNivelId && pd.stockByNivel[pd.selectedNivelId]
-            ? pd.stockByNivel[pd.selectedNivelId]
-            : pd.stock
-          if (items.length === 0) { return } // Skip empty
-          const detalles = items.map((s) => ({
-            nivel_id: nivelId,
-            bloque_id: s.bloque_id,
-            cantidad: s.cantidad,
-            fecha_vencimiento: s.fecha_vencimiento || null,
-          }))
+          // Si no hay niveles seleccionados, salir de todos los niveles
+          const isAllLevels = pd.selectedNivelIds.size === 0
+          const detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento: string | null }[] = []
+          if (isAllLevels) {
+            // Salir de todos los niveles: agrupar por nivel_id real
+            for (const niv of pd.niveles) {
+              const items = pd.stockByNivel[niv.id] ?? []
+              for (const s of items) {
+                detalles.push({ nivel_id: niv.id, bloque_id: s.bloque_id, cantidad: s.cantidad, fecha_vencimiento: s.fecha_vencimiento || null })
+              }
+            }
+          } else {
+            // Salir solo de los niveles seleccionados
+            for (const nivelId of pd.selectedNivelIds) {
+              const items = pd.stockByNivel[nivelId] ?? []
+              for (const s of items) {
+                detalles.push({ nivel_id: nivelId, bloque_id: s.bloque_id, cantidad: s.cantidad, fecha_vencimiento: s.fecha_vencimiento || null })
+              }
+            }
+          }
+          if (detalles.length === 0) { return }
           await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
           successCount++
         } catch { errorCount++ }
@@ -769,14 +777,26 @@ export function PisoSectoresTab() {
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setMassBusy(false) }
   }
 
-  // Cambiar nivel seleccionado en salida en masa
-  function updateMassNivel(posicionId: string, nivelId: string) {
+  // Toggle nivel seleccionado en salida en masa (empty = todos)
+  function toggleMassNivel(posicionId: string, nivelId: string) {
     setMassData((prev) => {
       const next = new Map(prev)
       const d = next.get(posicionId)
-      if (d) next.set(posicionId, { ...d, selectedNivelId: nivelId })
+      if (d) {
+        const s = new Set(d.selectedNivelIds)
+        if (s.has(nivelId)) s.delete(nivelId); else s.add(nivelId)
+        next.set(posicionId, { ...d, selectedNivelIds: s })
+      }
       return next
     })
+  }
+
+  // Obtener items a mostrar según niveles seleccionados (vacío = todos)
+  function getMassDisplayItems(pd: MassPosData): DetailStock[] {
+    if (pd.selectedNivelIds.size === 0) return pd.stock
+    return pd.niveles
+      .filter((n) => pd.selectedNivelIds.has(n.id))
+      .flatMap((n) => pd.stockByNivel[n.id] ?? [])
   }
 
   // Export Excel
@@ -1946,8 +1966,9 @@ export function PisoSectoresTab() {
             ) : (
               <div className="space-y-3 mt-4">
                 {[...massData.entries()].map(([posicionId, pd]) => {
-                  const displayItems = pd.selectedNivelId ? (pd.stockByNivel[pd.selectedNivelId] ?? []) : pd.stock
+                  const displayItems = getMassDisplayItems(pd)
                   const totalQty = displayItems.reduce((s, it) => s + it.cantidad, 0)
+                  const isAll = pd.selectedNivelIds.size === 0
                   return (
                     <div key={posicionId} className="rounded-xl border border-slate-700/40 bg-slate-800/40 backdrop-blur-sm p-3.5">
                       {/* Position header + nivel selector */}
@@ -1960,25 +1981,34 @@ export function PisoSectoresTab() {
                         </span>
                         <span className="text-[10px] text-slate-500 ml-auto">{displayItems.length} art. · {totalQty.toFixed(2)} total</span>
                       </div>
-                      {/* Nivel selector si tiene multiples niveles */}
+                      {/* Nivel toggle buttons si tiene multiples niveles */}
                       {pd.niveles.length > 1 && (
-                        <div className="flex items-center gap-1.5 mb-2 bg-slate-900/60 rounded-lg p-0.5 border border-slate-700/30">
-                          {pd.niveles.map((n) => {
-                            const nItems = (pd.stockByNivel[n.id] ?? []).length
-                            return (
-                              <button
-                                key={n.id}
-                                onClick={() => updateMassNivel(posicionId, n.id)}
-                                className={`flex-1 px-2.5 py-1 rounded-md text-[9px] font-bold transition-all duration-200 ${
-                                  pd.selectedNivelId === n.id
-                                    ? 'bg-red-500/30 text-red-300 border border-red-500/30'
-                                    : 'text-slate-500 hover:text-slate-300 border border-transparent'
-                                }`}
-                              >
-                                Nivel {n.numero} ({nItems})
-                              </button>
-                            )
-                          })}
+                        <div className="mb-2">
+                          <div className="flex items-center gap-1.5 bg-slate-900/60 rounded-lg p-0.5 border border-slate-700/30">
+                            {pd.niveles.map((n) => {
+                              const nItems = (pd.stockByNivel[n.id] ?? []).length
+                              const isSelected = pd.selectedNivelIds.has(n.id)
+                              return (
+                                <button
+                                  key={n.id}
+                                  onClick={() => toggleMassNivel(posicionId, n.id)}
+                                  className={`flex-1 px-2.5 py-1 rounded-md text-[9px] font-bold transition-all duration-200 ${
+                                    isSelected
+                                      ? 'bg-red-500/30 text-red-300 border border-red-500/30'
+                                      : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                                  }`}
+                                >
+                                  Nivel {n.numero} ({nItems})
+                                </button>
+                              )
+                            })}
+                          </div>
+                          {isAll && (
+                            <p className="text-[9px] text-emerald-400/70 text-center mt-1">Salida total de todos los niveles</p>
+                          )}
+                          {!isAll && (
+                            <p className="text-[9px] text-amber-400/70 text-center mt-1">Salida solo de los niveles seleccionados</p>
+                          )}
                         </div>
                       )}
                       {/* Items list */}

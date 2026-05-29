@@ -73,3 +73,24 @@ Stage Summary:
 - No changes to existing single-position functionality (massMode is opt-in via toggle)
 - Commit: 31778fb, Tag: JHIA-65
 - Deployed to Cloudflare Pages via GitHub Actions
+---
+Task ID: JHIA-65
+Agent: main
+Task: Fix salida por niveles con cantidades correctas + confirmación salida en masa
+
+Work Log:
+- Diagnosticó que al filtrar por nivel en Salida, se mostraban cantidades totales (suma de todos los niveles) en vez de las cantidades reales del nivel seleccionado
+- Agregó estado `salItemsByNivel` (SalItem[]) para almacenar items con cantidades derivadas del nivel seleccionado
+- Creó función `buildSalItemsForNivel(nivelId)` que genera SalItem[] desde stockByNivel[nivelId] con cantidades correctas
+- Modificó los handlers de tabs de nivel: "Todos" usa salItems, nivel específico regenera salItemsByNivel
+- Modificó item click, quantity input y "seleccionar todos" para operar sobre la lista correcta según salNivelTab
+- Modificó doSalida() para usar filteredItems = salNivelTab === 'all' ? salItems : salItemsByNivel
+- Agregó estado massConfirmOpen para diálogo de confirmación
+- Cambió botón "Registrar" en diálogo masa para abrir confirmación en vez de ejecutar directamente
+- Creó diálogo de confirmación con resumen detallado: cada posición con nivel, artículos con código/descripción/cantidad, totales generales
+- Build exitoso, commit a404314, tag JHIA-65 pusheado
+
+Stage Summary:
+- Salida por niveles ahora muestra cantidades reales del nivel (no total acumulado)
+- Salida en masa requiere confirmación con resumen detallado antes de ejecutar
+- No se afectó modo Ver, Ingreso, Traslado, Devolución ni Salida en tab "Todos"

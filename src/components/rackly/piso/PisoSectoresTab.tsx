@@ -1942,16 +1942,16 @@ export function PisoSectoresTab() {
 
       {/* ═══ MASS SALIDA DIALOG ═══ */}
       <Dialog open={massDialogOpen} onOpenChange={(open) => { if (!open) setMassDialogOpen(false) }}>
-        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto p-0 border-0 shadow-2xl"
+        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
           style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9))', backdropFilter: 'blur(24px)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
           <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-red-400 to-transparent opacity-60" />
           <div className="p-6">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-base">
+              <DialogTitle className="flex items-center gap-2 text-base text-white">
                 <div className="w-8 h-8 rounded-xl bg-red-600/20 flex items-center justify-center">
                   <ArrowUpFromLine className="h-4 w-4 text-red-400" />
                 </div>
-                Salida en Masa — {massData.size} posicion(es)
+                <span className="text-white">Salida en Masa — {massData.size} posicion(es)</span>
               </DialogTitle>
               <DialogDescription className="text-xs text-slate-400">
                 Se registrara salida de TODO el stock de cada articulo en el nivel seleccionado. Revisa las posiciones antes de confirmar.
@@ -2051,16 +2051,16 @@ export function PisoSectoresTab() {
 
       {/* ═══ MASS SALIDA CONFIRMATION DIALOG ═══ */}
       <Dialog open={massConfirmOpen} onOpenChange={(open) => { if (!open) setMassConfirmOpen(false) }}>
-        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto p-0 border-0 shadow-2xl"
+        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
           style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(30, 41, 59, 0.95))', backdropFilter: 'blur(24px)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
           <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400 to-transparent opacity-60" />
           <div className="p-6">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-base">
+              <DialogTitle className="flex items-center gap-2 text-base text-white">
                 <div className="w-8 h-8 rounded-xl bg-amber-600/20 flex items-center justify-center">
                   <AlertTriangle className="h-4 w-4 text-amber-400" />
                 </div>
-                Confirmar Salida en Masa
+                <span className="text-white">Confirmar Salida en Masa</span>
               </DialogTitle>
               <DialogDescription className="text-xs text-slate-400">
                 Revisa el resumen de articulos y cantidades antes de confirmar la salida.

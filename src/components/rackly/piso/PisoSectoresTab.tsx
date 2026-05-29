@@ -937,7 +937,7 @@ export function PisoSectoresTab() {
   //  CELL STYLING — Clean 2D buttons
   // ═══════════════════════════════════════════════
   function getCellClasses(pos: PosicionConStock): string {
-    const base = 'w-full h-10 px-1 rounded-lg transition-colors duration-150 cursor-pointer border text-center'
+    const base = 'w-full h-11 px-1 rounded-lg transition-colors duration-150 cursor-pointer border text-center'
     if (pos.stock <= 0) {
       return `${base} bg-emerald-950/40 border-emerald-700/30 text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-500/40`
     }
@@ -1049,7 +1049,7 @@ export function PisoSectoresTab() {
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0">Sector:</span>
           {sectores.length <= 4 ? (
-          <div className="relative flex gap-1 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm">
+          <div className="relative flex gap-1 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm overflow-hidden">
             {/* Sliding indicator */}
             <div
               className="absolute top-1 bottom-1 rounded-lg bg-gradient-to-r from-sky-400 to-cyan-500 shadow-lg shadow-sky-500/25 transition-all duration-300 ease-out"
@@ -1060,7 +1060,7 @@ export function PisoSectoresTab() {
             />
             {sectores.map((s) => (
               <button key={s.id} onClick={() => setSectorFilter(s.id)}
-                className={`relative z-10 flex-1 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-300 whitespace-nowrap ${sectorFilter === s.id
+                className={`relative z-10 flex-1 min-w-0 px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition-all duration-300 truncate ${sectorFilter === s.id
                   ? 'text-white'
                   : 'text-slate-400 hover:text-slate-300'
                   }`}>
@@ -1144,7 +1144,7 @@ export function PisoSectoresTab() {
                   )}
 
                   {/* Positions grid — CSS Grid */}
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(48px,1fr))] gap-1">
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(50px,1fr))] gap-1">
                     {sub.pos.map((pos) => {
                       const isOccupied = pos.stock > 0
                       const artCount = pos.bloques.length
@@ -1182,20 +1182,20 @@ export function PisoSectoresTab() {
 
       {/* ═══ MASS SALIDA FLOATING BAR ═══ */}
       {massMode && massSelected.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl bg-slate-900/95 border border-red-500/40 shadow-2xl shadow-red-500/20 backdrop-blur-xl animate-[scale-in_0.2s_ease-out]">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-red-500/20 flex items-center justify-center">
-              <span className="font-extrabold text-red-400 text-sm">{massSelected.size}</span>
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-2.5 sm:py-3 rounded-2xl bg-slate-900/95 border border-red-500/40 shadow-2xl shadow-red-500/20 backdrop-blur-xl animate-[scale-in_0.2s_ease-out] max-w-[calc(100vw-1.5rem)]" style={{ paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom, 0.625rem))' }}>
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-red-500/20 flex items-center justify-center">
+              <span className="font-extrabold text-red-400 text-xs sm:text-sm">{massSelected.size}</span>
             </div>
-            <span className="text-xs font-bold text-slate-300">posicion(es) seleccionada(s)</span>
+            <span className="text-[10px] sm:text-xs font-bold text-slate-300 hidden sm:inline">posicion(es) seleccionada(s)</span>
           </div>
           <Button
             onClick={openMassDialog}
             disabled={massSelected.size === 0}
             size="sm"
-            className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/30 transition-all duration-300 hover:scale-[1.03]"
+            className="gap-1 sm:gap-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] sm:text-xs rounded-xl shadow-lg shadow-red-500/30 transition-all duration-300 hover:scale-[1.03] shrink-0"
           >
-            <ArrowUpFromLine className="h-3.5 w-3.5" /> Procesar salida
+            <ArrowUpFromLine className="h-3 w-3 sm:h-3.5 sm:w-3.5" /> <span className="hidden xs:inline">Procesar</span> salida
           </Button>
         </div>
       )}
@@ -1219,7 +1219,7 @@ export function PisoSectoresTab() {
       {/* ═══ DETAIL DIALOG — Frosted glass + breadcrumb + animated badge ═══ */}
       <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setMode('view') } }}>
         <DialogContent
-          className="max-w-[calc(100vw-1rem)] sm:max-w-xl rounded-2xl max-h-[90vh] overflow-y-auto p-0 border-0 shadow-2xl"
+          className="max-w-[calc(100vw-1rem)] sm:max-w-xl rounded-2xl max-h-[90vh] overflow-y-auto overscroll-contain p-0 border-0 shadow-2xl"
           style={{
             background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.88))',
             backdropFilter: 'blur(24px) saturate(1.2)',
@@ -1231,7 +1231,7 @@ export function PisoSectoresTab() {
           {/* Subtle inner glow */}
           <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-white/[0.03] to-transparent pointer-events-none rounded-t-2xl" />
 
-          <div className="p-6 relative">
+          <div className="p-4 sm:p-6 relative">
             <DialogHeader>
               <DialogTitle className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-400 to-cyan-500 flex items-center justify-center text-white font-extrabold text-xs shadow-lg shadow-sky-500/25">
@@ -1271,10 +1271,10 @@ export function PisoSectoresTab() {
                   <div className="space-y-2.5 mt-4">
                     {/* Level tabs — only show if position has multiple levels */}
                     {niveles.length > 1 && (
-                      <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm">
+                      <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm scrollbar-none">
                         <button
                           onClick={() => setViewNivelTab('all')}
-                          className={`relative z-10 flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 whitespace-nowrap ${
+                          className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
                             viewNivelTab === 'all'
                               ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white shadow-lg shadow-sky-500/25'
                               : 'text-slate-400 hover:text-slate-300'
@@ -1288,7 +1288,7 @@ export function PisoSectoresTab() {
                             <button
                               key={n.id}
                               onClick={() => setViewNivelTab(n.id)}
-                              className={`relative z-10 flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 whitespace-nowrap ${
+                              className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
                                 viewNivelTab === n.id
                                   ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white shadow-lg shadow-sky-500/25'
                                   : 'text-slate-400 hover:text-slate-300'
@@ -1452,10 +1452,10 @@ export function PisoSectoresTab() {
                 <div className="space-y-3 mt-4">
                   {/* Nivel tabs para salida */}
                   {niveles.length > 1 && (
-                    <div className="flex items-center gap-1.5 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm">
+                    <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm scrollbar-none">
                       <button
                         onClick={() => { setSalNivelTab('all'); setSalItems((prev) => prev.map((r) => ({ ...r, selected: false }))); setSalItemsByNivel([]) }}
-                        className={`relative z-10 flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 whitespace-nowrap ${
+                        className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
                           salNivelTab === 'all'
                             ? 'bg-gradient-to-r from-red-400 to-rose-500 text-white shadow-lg shadow-red-500/25'
                             : 'text-slate-400 hover:text-slate-300'
@@ -1469,7 +1469,7 @@ export function PisoSectoresTab() {
                           <button
                             key={n.id}
                             onClick={() => { setSalNivelTab(n.id); setSalItemsByNivel(buildSalItemsForNivel(n.id)) }}
-                            className={`relative z-10 flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 whitespace-nowrap ${
+                            className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
                               salNivelTab === n.id
                                 ? 'bg-gradient-to-r from-red-400 to-rose-500 text-white shadow-lg shadow-red-500/25'
                                 : 'text-slate-400 hover:text-slate-300'
@@ -1561,7 +1561,7 @@ export function PisoSectoresTab() {
                               u[i] = { ...u[i], cantidad: e.target.value }
                               if (isSalLevelView) setSalItemsByNivel(u); else setSalItems(u)
                             }}
-                            className="w-20 h-9 text-xs bg-slate-900/80 border-red-500/30 text-white focus:ring-red-500/40 rounded-xl backdrop-blur-sm transition-all duration-300" />
+                            className="w-16 sm:w-20 h-9 text-xs bg-slate-900/80 border-red-500/30 text-white focus:ring-red-500/40 rounded-xl backdrop-blur-sm transition-all duration-300" />
                         )}
                       </div>
                     </div>
@@ -1679,7 +1679,7 @@ export function PisoSectoresTab() {
                                     u[i] = { ...u[i], cantidad: e.target.value }
                                     setTrItems(u)
                                   }}
-                                  className="w-24 h-8 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 rounded-lg backdrop-blur-sm transition-all duration-300"
+                                  className="w-20 sm:w-24 h-8 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 rounded-lg backdrop-blur-sm transition-all duration-300"
                                 />
                               )}
                             </div>
@@ -1854,7 +1854,7 @@ export function PisoSectoresTab() {
 
       {/* ═══ TRASLADO CONFIRMATION DIALOG ═══ */}
       <Dialog open={trConfirmOpen} onOpenChange={(open) => { if (!open) setTrConfirmOpen(false) }}>
-        <DialogContent className="sm:max-w-lg bg-slate-900 border-slate-700/50 backdrop-blur-xl">
+        <DialogContent className="sm:max-w-lg max-w-[calc(100vw-1rem)] max-h-[85vh] overflow-y-auto overscroll-contain bg-slate-900 border-slate-700/50 backdrop-blur-xl rounded-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               <ArrowRightLeft className="h-5 w-5 text-sky-400" />
@@ -1942,10 +1942,10 @@ export function PisoSectoresTab() {
 
       {/* ═══ MASS SALIDA DIALOG ═══ */}
       <Dialog open={massDialogOpen} onOpenChange={(open) => { if (!open) setMassDialogOpen(false) }}>
-        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
           style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9))', backdropFilter: 'blur(24px)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
           <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-red-400 to-transparent opacity-60" />
-          <div className="p-6">
+          <div className="p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base text-white">
                 <div className="w-8 h-8 rounded-xl bg-red-600/20 flex items-center justify-center">
@@ -1984,7 +1984,7 @@ export function PisoSectoresTab() {
                       {/* Nivel toggle buttons si tiene multiples niveles */}
                       {pd.niveles.length > 1 && (
                         <div className="mb-2">
-                          <div className="flex items-center gap-1.5 bg-slate-900/60 rounded-lg p-0.5 border border-slate-700/30">
+                          <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-900/60 rounded-lg p-0.5 border border-slate-700/30 scrollbar-none">
                             {pd.niveles.map((n) => {
                               const nItems = (pd.stockByNivel[n.id] ?? []).length
                               const isSelected = pd.selectedNivelIds.has(n.id)
@@ -2051,10 +2051,10 @@ export function PisoSectoresTab() {
 
       {/* ═══ MASS SALIDA CONFIRMATION DIALOG ═══ */}
       <Dialog open={massConfirmOpen} onOpenChange={(open) => { if (!open) setMassConfirmOpen(false) }}>
-        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
           style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(30, 41, 59, 0.95))', backdropFilter: 'blur(24px)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
           <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400 to-transparent opacity-60" />
-          <div className="p-6">
+          <div className="p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base text-white">
                 <div className="w-8 h-8 rounded-xl bg-amber-600/20 flex items-center justify-center">

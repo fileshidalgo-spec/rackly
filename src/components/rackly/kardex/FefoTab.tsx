@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { Search, Download, Loader2, CalendarDays, FilterX } from 'lucide-react'
+import { impactoStock } from '@/lib/utils'
 
 type FefoItem = {
   codigo: string
@@ -91,11 +92,11 @@ export function FefoTab() {
 
     for (const m of movs) {
       const key = `${m.codigo}||${m.fVencimiento || ''}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-      const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+      const delta = impactoStock(m.tipo, m.cantidad)
       const existing = locMap.get(key)
       if (existing) {
         existing.stock += delta
-      } else if (delta > 0) {
+      } else {
         locMap.set(key, {
           codigo: m.codigo, descripcion: m.descripcion, un: m.un,
           bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,

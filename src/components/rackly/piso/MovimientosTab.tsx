@@ -24,10 +24,8 @@ import {
 import {
   Loader2, Filter, X, ArrowDownToLine, ArrowUpFromLine, RotateCcw,
   ArrowLeftRight, BarChart3, Search, ChevronDown, Package,
-  TrendingUp, Archive, Activity, Trash2,
+  TrendingUp, Archive, Activity,
 } from 'lucide-react'
-import { useAuth } from '@/hooks/useAuth'
-import { eliminarMovimiento } from '@/lib/piso/api'
 
 // ═══════════════════════════════════════════════
 //  ANIMATED COUNTER HOOK
@@ -83,9 +81,6 @@ export function MovimientosTab() {
   const [filtroDesde, setFiltroDesde] = useState<string>('')
   const [filtroHasta, setFiltroHasta] = useState<string>('')
   const [filtroTexto, setFiltroTexto] = useState<string>('')
-  const [eliminando, setEliminando] = useState<string | null>(null)
-  const { perfil } = useAuth()
-  const esAdmin = perfil?.rol === 'admin'
 
   // Load all movements on mount
   useEffect(() => {
@@ -152,19 +147,6 @@ export function MovimientosTab() {
 
   const tieneFiltrosActivos =
     filtroTipo !== '' || filtroUsuario !== '' || filtroDesde !== '' || filtroHasta !== '' || filtroTexto.trim() !== ''
-
-  async function handleEliminar(movId: string, numOp: number) {
-    if (!confirm(`¿Eliminar movimiento #${numOp}? Esta acción no se puede deshacer.`)) return
-    setEliminando(movId)
-    try {
-      await eliminarMovimiento(movId)
-      setMovimientos((prev) => prev.filter((m) => m.id !== movId))
-    } catch (err) {
-      console.error('[Movimientos] Error eliminando:', err)
-    } finally {
-      setEliminando(null)
-    }
-  }
 
   function limpiarFiltros() {
     setFiltroTipo('')
@@ -487,7 +469,6 @@ export function MovimientosTab() {
                   <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[70px]">Turno</TableHead>
                   <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider">Detalles</TableHead>
                   <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[160px]">Usuario</TableHead>
-                  {esAdmin && <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[50px] text-center"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -540,22 +521,6 @@ export function MovimientosTab() {
                         <span className="truncate">{m.usuario_nombre || <span className="text-slate-600">—</span>}</span>
                       </div>
                     </TableCell>
-                    {esAdmin && (
-                      <TableCell className="text-center">
-                        <button
-                          onClick={() => handleEliminar(m.id, m.numero_operacion)}
-                          disabled={eliminando === m.id}
-                          className="p-1.5 rounded-lg border border-slate-700/40 bg-slate-800/40 text-slate-500 hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/10 disabled:opacity-40 transition-all duration-200"
-                          title="Eliminar movimiento"
-                        >
-                          {eliminando === m.id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3.5 w-3.5" />
-                          )}
-                        </button>
-                      </TableCell>
-                    )}
                   </TableRow>
                 ))}
               </TableBody>

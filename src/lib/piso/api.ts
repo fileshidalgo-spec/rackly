@@ -486,10 +486,10 @@ export async function cargarPosicionesSector(
         const qty = typeof r.stock_total === 'number' ? r.stock_total : parseFloat(String(r.stock_total ?? '0')) || 0
         let bloques: { bloque_id: string; bloque_codigo: string; cantidad: number }[] = []
         try {
-          bloques = (typeof r.bloques_json === 'object' && r.bloques_json ? (r.bloques_json as { bloque_id: string; bloque_codigo: string; stock?: unknown; cantidad?: unknown }[]) : []).map((b) => ({
+          bloques = (typeof r.bloques_json === 'object' && r.bloques_json ? (r.bloques_json as { bloque_id: string; bloque_codigo: string; cantidad: unknown }[]) : []).map((b) => ({
             bloque_id: b.bloque_id,
             bloque_codigo: b.bloque_codigo,
-            cantidad: typeof b.cantidad === 'number' ? b.cantidad : (typeof (b as Record<string, unknown>).stock === 'number' ? (b as Record<string, unknown>).stock as number : parseFloat(String((b as Record<string, unknown>).stock ?? b.cantidad ?? '0')) || 0),
+            cantidad: typeof b.cantidad === 'number' ? b.cantidad : parseFloat(String(b.cantidad ?? '0')) || 0,
           }))
         } catch { /* json parse error */ }
         rpcStockMap.set(r.posicion_id, { stock: qty, bloques })
@@ -1135,24 +1135,4 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
   } catch (err) { console.warn('[Piso] Error auto-creando bloque:', err) }
 
   return null
-}
-
-/**
- * Elimina un movimiento y sus detalles (solo admin).
- * Borra primero los detalles y luego el movimiento cabecera.
- */
-export async function eliminarMovimiento(movimientoId: string): Promise<void> {
-  // 1. Eliminar detalles
-  const { error: detErr } = await dataClient
-    .from('piso_movimiento_detalles')
-    .delete()
-    .eq('movimiento_id', movimientoId)
-  if (detErr) throw detErr
-
-  // 2. Eliminar movimiento cabecera
-  const { error: movErr } = await dataClient
-    .from('piso_movimientos')
-    .delete()
-    .eq('id', movimientoId)
-  if (movErr) throw movErr
 }

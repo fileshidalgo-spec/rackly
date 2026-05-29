@@ -696,17 +696,17 @@ export function PisoSectoresTab() {
   }
 
   // ═══════════════════════════════════════════════
-  //  3D CELL STYLING — Enhanced Isometric Shelf
+  //  CELL STYLING — Clean 2D buttons
   // ═══════════════════════════════════════════════
   function getCellClasses(pos: PosicionConStock): string {
-    const base = 'relative group w-full h-9 px-1 rounded-lg transition-all duration-200 cursor-pointer border overflow-hidden'
+    const base = 'w-full h-9 px-1 rounded-lg transition-colors duration-150 cursor-pointer border text-center'
     if (pos.stock <= 0) {
-      return `${base} bg-emerald-500/[0.18] border-emerald-400/25 hover:bg-emerald-500/30 hover:border-emerald-400/40 hover:shadow-md hover:shadow-emerald-500/15 hover:scale-[1.04]`
+      return `${base} bg-emerald-950/40 border-emerald-700/30 text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-500/40`
     }
     if (pos.bloques.length > 1) {
-      return `${base} bg-amber-500/40 border-amber-400/25 hover:bg-amber-500/55 hover:shadow-md hover:shadow-amber-500/25 hover:scale-[1.04]`
+      return `${base} bg-amber-950/50 border-amber-700/30 text-amber-200 hover:bg-amber-900/50 hover:border-amber-500/40`
     }
-    return `${base} bg-sky-500/30 border-sky-400/20 hover:bg-sky-500/45 hover:shadow-md hover:shadow-sky-500/25 hover:scale-[1.04]`
+    return `${base} bg-sky-950/50 border-sky-700/30 text-sky-200 hover:bg-sky-900/50 hover:border-sky-500/40`
   }
 
   // ═══════════════════════════════════════════════
@@ -868,49 +868,38 @@ export function PisoSectoresTab() {
         </div>
       </div>
 
-      {/* ═══ RACK GRID — Column cards ═══ */}
-      <div className="grid gap-4 sm:gap-6">
+      {/* ═══ RACK GRID — Clean 2D column cards ═══ */}
+      <div className="space-y-4">
         {columnas.map((col) => (
           <div
             key={col.letra}
-            className="rounded-2xl border border-slate-700/40 bg-gradient-to-b from-slate-800/70 to-slate-800/25 backdrop-blur-sm shadow-lg shadow-black/20 transition-all duration-300 hover:shadow-xl overflow-hidden"
+            className="rounded-xl border border-slate-700/50 bg-slate-800/60 overflow-hidden"
           >
-            {/* Column header — 3D tab/label sticking up */}
-            <div className="relative px-5 py-3 border-b border-slate-700/40 bg-gradient-to-r from-slate-900/70 to-slate-900/40 flex items-center gap-3 overflow-hidden">
-              {/* Left side panel for depth */}
-              <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-slate-600 via-slate-500 to-slate-600" />
-              {/* Subtle inner glow */}
-              <div className="absolute inset-0 bg-gradient-to-r from-white/[0.02] to-transparent pointer-events-none" />
-
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-400 to-cyan-500 flex items-center justify-center text-white font-extrabold text-sm shadow-lg shadow-sky-500/30 relative">
-                <span className="relative z-10">{col.letra}</span>
-                {/* 3D tab top surface */}
-                <div className="absolute -top-1 left-1 right-1 h-2 rounded-t-lg bg-gradient-to-b from-sky-300/40 to-transparent" />
+            {/* Column header */}
+            <div className="px-4 py-2.5 border-b border-slate-700/40 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-sky-600 flex items-center justify-center text-white font-extrabold text-sm">
+                {col.letra}
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <span className="text-xs font-bold text-slate-200">Columna {col.letra}</span>
                 <span className="text-[10px] text-slate-500 ml-2">{col.subcols.length} subcol &middot; {col.subcols.reduce((s, sc) => s + sc.pos.length, 0)} pos</span>
               </div>
-              <ChevronRight className="h-4 w-4 text-slate-600" />
             </div>
 
-            {/* Top shelf surface gradient */}
-            <div className="h-[2px] bg-gradient-to-r from-slate-600/30 via-slate-500/20 to-slate-600/30" />
-
-            <div className="p-4">
+            <div className="p-3">
               {col.subcols.map((sub) => (
-                <div key={sub.codigo} className="mb-5 last:mb-0">
-                  {/* Subcolumn header - shelf look */}
-                  <div className="flex items-center gap-2.5 px-2 py-1.5 mb-3">
-                    <div className="w-1.5 h-4 rounded-full bg-gradient-to-b from-sky-400 to-sky-600" />
-                    <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider">{sub.codigo}</span>
-                    <span className="text-[9px] text-slate-500 bg-slate-800/60 rounded-full px-2 py-0.5">{sub.pos.filter((p) => p.stock > 0).length}/{sub.pos.length} ocupadas</span>
-                    {/* Shelf bar */}
-                    <div className="flex-1 h-px bg-gradient-to-r from-slate-700/80 via-slate-600/40 to-transparent" />
-                  </div>
+                <div key={sub.codigo} className={col.subcols.length > 1 ? 'mb-4 last:mb-0' : ''}>
+                  {/* Subcolumn header */}
+                  {col.subcols.length > 1 && (
+                    <div className="flex items-center gap-2 px-1 py-1 mb-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{sub.codigo}</span>
+                      <span className="text-[9px] text-slate-500">{sub.pos.filter((p) => p.stock > 0).length}/{sub.pos.length}</span>
+                      <div className="flex-1 h-px bg-slate-700/40" />
+                    </div>
+                  )}
 
-                  {/* Positions grid — CSS Grid for proper containment */}
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(42px,1fr))] gap-1.5">
+                  {/* Positions grid — CSS Grid */}
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(42px,1fr))] gap-1">
                     {sub.pos.map((pos) => {
                       const isOccupied = pos.stock > 0
                       const isMulti = pos.bloques.length > 1
@@ -921,14 +910,12 @@ export function PisoSectoresTab() {
                           title={`${sub.codigo}-${pos.posicionNumero}${isOccupied ? ` (${pos.bloques.length} art.)` : ' · Vacio'}`}
                           className={getCellClasses(pos)}
                         >
-                          <span className={`relative z-10 block text-center font-bold text-[11px] leading-none ${
-                            pos.stock <= 0 ? 'text-emerald-300' : 'text-white'
-                          }`}>{pos.posicionNumero}</span>
-                          {isOccupied && (
-                            <span className={`relative z-10 block text-center text-[7px] font-bold leading-none mt-0.5 ${
-                              isMulti ? 'text-amber-200' : 'text-sky-200'
-                            }`}>{pos.bloques.length} art.</span>
-                          )}
+                          <div className="flex flex-col items-center justify-center h-full">
+                            <span className="font-bold text-[11px] leading-none">{pos.posicionNumero}</span>
+                            {isOccupied && (
+                              <span className="text-[7px] font-bold leading-none mt-0.5 opacity-80">{pos.bloques.length} art.</span>
+                            )}
+                          </div>
                         </button>
                       )
                     })}

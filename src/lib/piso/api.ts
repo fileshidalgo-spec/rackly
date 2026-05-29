@@ -63,12 +63,15 @@ export type MovimientoDetalle = {
   nivel_id: string
   bloque_id: string
   cantidad: number
+  fecha_vencimiento?: string | null
 }
 
 export type MovimientoConDetalles = PisoMovimiento & {
   detalles: (MovimientoDetalle & {
     bloque_codigo?: string
     nivel_codigo?: string
+    sector_nombre?: string
+    posicion_label?: string
   })[]
 }
 
@@ -329,7 +332,7 @@ export async function listarMovimientos(
     nivelIds.length > 0
       ? dataClient
           .from('piso_niveles')
-          .select('id, codigo_ubicacion')
+          .select('id, codigo_ubicacion, posicion_id')
           .in('id', nivelIds)
       : Promise.resolve({ data: [], error: null }),
   ])
@@ -339,17 +342,75 @@ export async function listarMovimientos(
     (b) => bloqueMap.set(b.id, b.codigo)
   )
   const nivelMap = new Map<string, string | null>()
+  const nivelToPos = new Map<string, string>()
   ;(
-    (nivelesRes.data ?? []) as { id: string; codigo_ubicacion: string | null }[]
-  ).forEach((n) => nivelMap.set(n.id, n.codigo_ubicacion))
+    (nivelesRes.data ?? []) as { id: string; codigo_ubicacion: string | null; posicion_id: string }[]
+  ).forEach((n) => {
+    nivelMap.set(n.id, n.codigo_ubicacion)
+    nivelToPos.set(n.id, n.posicion_id)
+  })
+
+  // Resolve sector and position for each nivel
+  const posIds = [...new Set(nivelToPos.values())]
+  let sectorPosMap = new Map<string, { sector_nombre: string; posicion_label: string }>()
+  if (posIds.length > 0) {
+    const posRes = await dataClient.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds)
+    const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
+    ;((posRes.data ?? []) as { id: string; numero: number; subcolumna_id: string }[]).forEach(
+      (p) => posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id })
+    )
+    const subIds = [...new Set([...posMap.values()].map((p) => p.subcolumna_id))]
+    if (subIds.length > 0) {
+      const subRes = await dataClient.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds)
+      const subMap = new Map<string, { codigo: string; columna_id: string }>()
+      ;((subRes.data ?? []) as { id: string; codigo: string; columna_id: string }[]).forEach(
+        (s) => subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id })
+      )
+      const colIds = [...new Set([...subMap.values()].map((s) => s.columna_id))]
+      if (colIds.length > 0) {
+        const colRes = await dataClient.from('piso_columnas').select('id, letra, sector_id').in('id', colIds)
+        const colMap = new Map<string, { letra: string; sector_id: string }>()
+        ;((colRes.data ?? []) as { id: string; letra: string; sector_id: string }[]).forEach(
+          (c) => colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id })
+        )
+        const sIds = [...new Set([...colMap.values()].map((c) => c.sector_id))]
+        if (sIds.length > 0) {
+          const secData = await dataClient.from('piso_sectores').select('id, nombre').in('id', sIds)
+          const secNameMap = new Map<string, string>()
+          ;((secData.data ?? []) as { id: string; nombre: string }[]).forEach(
+            (s) => secNameMap.set(s.id, s.nombre)
+          )
+          // Build final map: nivel_id -> { sector_nombre, posicion_label }
+          for (const [nivId, posId] of nivelToPos) {
+            const pos = posMap.get(posId)
+            if (!pos) continue
+            const sub = subMap.get(pos.subcolumna_id)
+            if (!sub) continue
+            const col = colMap.get(sub.columna_id)
+            if (!col) continue
+            const secName = secNameMap.get(col.sector_id) || ''
+            sectorPosMap.set(nivId, {
+              sector_nombre: secName,
+              posicion_label: `${col.letra}-${sub.codigo}-Pos ${pos.numero}`,
+            })
+          }
+        }
+      }
+    }
+  }
 
   let result = all.map((m) => ({
     ...m,
-    detalles: (detalleMap.get(m.id) ?? []).map((d) => ({
-      ...d,
-      bloque_codigo: bloqueMap.get(d.bloque_id),
-      nivel_codigo: nivelMap.get(d.nivel_id) ?? undefined,
-    })),
+    detalles: (detalleMap.get(m.id) ?? []).map((d) => {
+      const locInfo = sectorPosMap.get(d.nivel_id)
+      return {
+        ...d,
+        bloque_codigo: bloqueMap.get(d.bloque_id),
+        nivel_codigo: nivelMap.get(d.nivel_id) ?? undefined,
+        sector_nombre: locInfo?.sector_nombre ?? '',
+        posicion_label: locInfo?.posicion_label ?? (d.nivel_codigo || ''),
+      }
+    }),
   }))
 
   // Filter by sector/columna/bloque if specified

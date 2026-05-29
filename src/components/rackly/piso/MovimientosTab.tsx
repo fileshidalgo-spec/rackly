@@ -71,7 +71,7 @@ export function MovimientosTab() {
       usuario_id: string | null
       usuario_nombre: string | null
       usuario_correo: string | null
-      detalles: { bloque_codigo?: string; cantidad: number; nivel_codigo?: string }[]
+      detalles: { bloque_codigo?: string; cantidad: number; nivel_codigo?: string; sector_nombre?: string; posicion_label?: string; fecha_vencimiento?: string | null }[]
     }[]
   >([])
   const [loading, setLoading] = useState(true)
@@ -464,11 +464,14 @@ export function MovimientosTab() {
               <TableHeader>
                 <TableRow className="bg-slate-800/90 border-b border-slate-700/50 hover:bg-slate-800/90 sticky top-0 z-10 backdrop-blur-sm">
                   <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[80px]">N° Op</TableHead>
-                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[160px]">Fecha</TableHead>
-                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[120px]">Tipo</TableHead>
-                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[70px]">Turno</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[150px]">Fecha</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[110px]">Tipo</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[65px]">Turno</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider hidden sm:table-cell w-[100px]">Sector</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider hidden md:table-cell w-[140px]">Posición</TableHead>
                   <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider">Detalles</TableHead>
-                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[160px]">Usuario</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider hidden lg:table-cell w-[100px]">F. Venc.</TableHead>
+                  <TableHead className="text-slate-400 font-semibold text-[10px] uppercase tracking-wider w-[140px]">Usuario</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -483,7 +486,7 @@ export function MovimientosTab() {
                       <span className="bg-slate-700/40 rounded-lg px-2 py-0.5 text-xs">#{m.numero_operacion}</span>
                     </TableCell>
                     <TableCell className="text-xs text-slate-300">
-                      {formatFecha(m.fecha)}
+                      <span className="whitespace-nowrap">{formatFecha(m.fecha)}</span>
                     </TableCell>
                     <TableCell>
                       <Badge className={`${getTipoBadge(m.tipo)} capitalize text-[10px] font-semibold gap-1 rounded-lg px-2 py-0.5 transition-all duration-300`}>
@@ -493,6 +496,20 @@ export function MovimientosTab() {
                     </TableCell>
                     <TableCell className="text-xs text-slate-300 text-center">
                       <span className="bg-slate-700/30 rounded-lg px-2 py-0.5 text-[10px] font-medium">{m.turno}</span>
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell text-xs text-slate-300">
+                      {m.detalles[0]?.sector_nombre ? (
+                        <span className="bg-sky-900/30 border border-sky-700/30 text-sky-300 rounded-lg px-2 py-0.5 text-[10px] font-medium truncate max-w-[90px] inline-block">
+                          {m.detalles[0].sector_nombre}
+                        </span>
+                      ) : <span className="text-slate-600">—</span>}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-slate-300">
+                      {m.detalles[0]?.posicion_label ? (
+                        <span className="font-mono text-[10px] bg-slate-700/30 rounded-lg px-2 py-0.5 truncate max-w-[130px] inline-block">
+                          {m.detalles[0].posicion_label}
+                        </span>
+                      ) : <span className="text-slate-600">—</span>}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1.5">
@@ -512,6 +529,11 @@ export function MovimientosTab() {
                           </span>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs text-slate-400">
+                      {m.detalles[0]?.fecha_vencimiento ? (
+                        <span className="whitespace-nowrap">{m.detalles[0].fecha_vencimiento}</span>
+                      ) : <span className="text-slate-600">—</span>}
                     </TableCell>
                     <TableCell className="text-xs text-slate-300">
                       <div className="flex items-center gap-2">

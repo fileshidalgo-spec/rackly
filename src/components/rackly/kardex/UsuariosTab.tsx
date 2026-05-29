@@ -318,7 +318,7 @@ export function UsuariosTab() {
         open={!!deleteTarget}
         onOpenChange={() => setDeleteTarget(null)}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
           <AlertDialogHeader>
             <AlertDialogTitle>Eliminar perfil</AlertDialogTitle>
             <AlertDialogDescription>

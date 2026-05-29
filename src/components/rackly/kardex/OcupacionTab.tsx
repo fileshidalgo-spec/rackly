@@ -469,7 +469,7 @@ export function OcupacionTab() {
                                     const isOcc = cell && cell.stock > 0
                                     const isMultiArt = isOcc && cell.codigos.length > 1
                                     const isMultiLote = isOcc && !isMultiArt && cell.lotes > 1
-                                    let cls = 'relative flex-1 min-w-[24px] h-8 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
+                                    let cls = 'relative flex-1 min-w-[24px] h-11 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
                                     if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15'
@@ -482,7 +482,7 @@ export function OcupacionTab() {
                                     const isOcc = cell && cell.stock > 0
                                     const isMultiArt = isOcc && cell.codigos.length > 1
                                     const isMultiLote = isOcc && !isMultiArt && cell.lotes > 1
-                                    let cls = 'relative flex-1 min-w-[24px] h-8 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
+                                    let cls = 'relative flex-1 min-w-[24px] h-11 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
                                     if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15'
@@ -515,7 +515,7 @@ export function OcupacionTab() {
           Todo dentro de la misma ventana emergente
           ═══════════════════════════════════════════════════════════════════ */}
       <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setDetailMode('view') } }}>
-        <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-xl bg-slate-800 border-slate-600/40 shadow-xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-xl bg-slate-800 border-slate-600/40 shadow-xl max-h-[90vh] overflow-y-auto overscroll-contain">
           <DialogHeader>
             <DialogTitle className="bg-gradient-to-r from-sky-400 to-blue-500 bg-clip-text text-transparent font-bold text-sm">
               B{detail?.bloque} · T{detail?.torre} · P{detail?.piso} · Pos {detail?.posicion}

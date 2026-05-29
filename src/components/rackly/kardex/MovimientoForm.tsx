@@ -367,9 +367,9 @@ function IngresoForm({
 
       {/* ═══ DIÁLOGO DE CONFIRMACIÓN — Ubicación Ocupada ═══ */}
       <AlertDialog open={!!confirmData} onOpenChange={() => setConfirmData(null)}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 overflow-hidden max-h-[85vh]">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
           {/* Header con gradiente */}
-          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 px-4 sm:px-6 py-5 text-white">
+          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 px-4 sm:px-6 py-5 text-white shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
                 <TriangleAlert className="h-6 w-6 text-white" />
@@ -386,7 +386,7 @@ function IngresoForm({
           </div>
 
           {/* Contenido scrolleable */}
-          <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
             {/* Ubicación destino */}
             <div className="px-4 sm:px-6 pt-4 pb-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ubicación destino</p>
@@ -485,7 +485,7 @@ function IngresoForm({
           </div>
 
           {/* Botones de acción */}
-          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2">
+          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2 shrink-0">
             <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium border-slate-300 dark:border-slate-600">
               Cancelar
             </AlertDialogCancel>
@@ -827,13 +827,13 @@ function SalidaForm({
 
       {/* Diálogo de confirmación Sí/No */}
       <AlertDialog open={!!confirmState} onOpenChange={(open) => { if (!open) setConfirmState(null) }}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
-          <AlertDialogHeader>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+          <AlertDialogHeader className="shrink-0">
             <AlertDialogTitle>
               {confirmState?.full ? 'Retirar todo el stock' : 'Confirmar salida'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div className="space-y-3">
+              <div className="space-y-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">
                 <p>¿Estás seguro de registrar esta salida?</p>
                 {confirmState && (
                   <div className="rounded-lg border bg-muted/50 p-3 space-y-1.5 text-sm">
@@ -880,7 +880,7 @@ function SalidaForm({
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
+          <AlertDialogFooter className="shrink-0">
             <AlertDialogCancel>No, cancelar</AlertDialogCancel>
             <Button
               onClick={(e) => { e.preventDefault(); doSalida() }}

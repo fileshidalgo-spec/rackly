@@ -672,9 +672,9 @@ export function TrasladoTab() {
       )}
 
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 overflow-hidden max-h-[85vh]">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
           {/* Header con gradiente */}
-          <div className={`px-4 sm:px-6 py-5 text-white ${
+          <div className={`px-4 sm:px-6 py-5 text-white shrink-0 ${
             destinoOcupado.length > 0
               ? 'bg-gradient-to-r from-orange-500 via-red-500 to-red-600'
               : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600'
@@ -713,7 +713,7 @@ export function TrasladoTab() {
           </AlertDialogDescription>
 
           {/* Contenido scrolleable */}
-          <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
             {/* Ruta origen → destino */}
             <div className="px-4 sm:px-6 pt-4 pb-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ruta del traslado</p>
@@ -869,7 +869,7 @@ export function TrasladoTab() {
           </div>
 
           {/* Botones de acción */}
-          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2">
+          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2 shrink-0">
             <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium border-slate-300 dark:border-slate-600">
               Cancelar
             </AlertDialogCancel>

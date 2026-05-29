@@ -377,14 +377,14 @@ export function CatalogoTab() {
 
       {/* Diálogo Agregar/Editar */}
       <AlertDialog open={showAdd || !!editItem} onOpenChange={(open) => { if (!open) { setShowAdd(false); setEditItem(null) } }}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
-          <AlertDialogHeader>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+          <AlertDialogHeader className="shrink-0">
             <AlertDialogTitle>{editItem ? 'Editar ítem' : 'Agregar ítem'}</AlertDialogTitle>
             <AlertDialogDescription>
               {editItem ? 'Modifica los datos del ítem.' : 'Completa los datos del nuevo ítem.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-3 py-2">
+          <div className="space-y-3 py-2 flex-1 min-h-0 overflow-y-auto overscroll-contain">
             <div className="space-y-1">
               <Label className="text-xs">Código *</Label>
               <Input
@@ -410,7 +410,7 @@ export function CatalogoTab() {
               <Input value={formDesc} onChange={(e) => setFormDesc(e.target.value)} placeholder="Descripción del producto" className="h-9" />
             </div>
           </div>
-          <AlertDialogFooter>
+          <AlertDialogFooter className="shrink-0">
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <Button onClick={doSave} disabled={formBusy} className="gap-1.5">
               {formBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
@@ -422,14 +422,14 @@ export function CatalogoTab() {
 
       {/* Diálogo de eliminar */}
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
-          <AlertDialogHeader>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+          <AlertDialogHeader className="shrink-0">
             <AlertDialogTitle>Eliminar ítem</AlertDialogTitle>
             <AlertDialogDescription>
               ¿Eliminar <strong className="font-mono">{deleteTarget}</strong> del catálogo? Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
+          <AlertDialogFooter className="shrink-0">
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={doDelete}>Eliminar</AlertDialogAction>
           </AlertDialogFooter>

@@ -1219,7 +1219,7 @@ export function PisoSectoresTab() {
       {/* ═══ DETAIL DIALOG — Frosted glass + breadcrumb + animated badge ═══ */}
       <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setMode('view') } }}>
         <DialogContent
-          className="max-w-[calc(100vw-1rem)] sm:max-w-xl rounded-2xl max-h-[90vh] overflow-y-auto overscroll-contain p-0 border-0 shadow-2xl"
+          className="max-w-[calc(100vw-1rem)] sm:max-w-xl rounded-2xl max-h-[90vh] overflow-y-auto overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
           style={{
             background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.88))',
             backdropFilter: 'blur(24px) saturate(1.2)',
@@ -1436,8 +1436,8 @@ export function PisoSectoresTab() {
                   ))}
                   <button onClick={addIngresoRow} className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-medium transition-all duration-300 hover:pl-1"><Plus className="h-3.5 w-3.5" /> Agregar otro articulo</button>
                   <div className="flex gap-2 pt-2">
-                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
-                    <Button onClick={doIngreso} disabled={busy} size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/20 transition-all duration-300 hover:shadow-emerald-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowDownToLine className="h-3.5 w-3.5" />} Registrar ingreso</Button>
+                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
+                    <Button onClick={doIngreso} disabled={busy} size="sm" className="h-11 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/20 transition-all duration-300 hover:shadow-emerald-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowDownToLine className="h-3.5 w-3.5" />} Registrar ingreso</Button>
                   </div>
                 </div>
               )}
@@ -1573,8 +1573,8 @@ export function PisoSectoresTab() {
                     </div>
                   )}
                   <div className="flex gap-2 pt-2">
-                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
-                    <Button onClick={doSalida} disabled={busy || selCount === 0} size="sm" className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20 transition-all duration-300 hover:shadow-red-500/30 hover:scale-[1.02] disabled:opacity-40 disabled:hover:scale-100">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />} Registrar salida</Button>
+                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
+                    <Button onClick={doSalida} disabled={busy || selCount === 0} size="sm" className="h-11 gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20 transition-all duration-300 hover:shadow-red-500/30 hover:scale-[1.02] disabled:opacity-40 disabled:hover:scale-100">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />} Registrar salida</Button>
                   </div>
                 </div>
                 )
@@ -1767,8 +1767,8 @@ export function PisoSectoresTab() {
                     </div>
                   </div>
                   <div className="flex gap-2 pt-2">
-                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
-                    <Button onClick={() => setTrConfirmOpen(true)} disabled={busy || !trDestPos || trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0).length === 0} size="sm" className="gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20 transition-all duration-300 hover:shadow-sky-500/30 hover:scale-[1.02]">
+                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
+                    <Button onClick={() => setTrConfirmOpen(true)} disabled={busy || !trDestPos || trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0).length === 0} size="sm" className="h-11 gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20 transition-all duration-300 hover:shadow-sky-500/30 hover:scale-[1.02]">
                       <ArrowRightLeft className="h-3.5 w-3.5" /> Confirmar traslado
                     </Button>
                   </div>
@@ -1842,8 +1842,8 @@ export function PisoSectoresTab() {
                   ))}
                   <button onClick={addDevRow} className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 font-medium transition-all duration-300 hover:pl-1"><Plus className="h-3.5 w-3.5" /> Agregar otro articulo</button>
                   <div className="flex gap-2 pt-2">
-                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
-                    <Button onClick={doDevolucion} disabled={busy} size="sm" className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all duration-300 hover:shadow-amber-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Registrar devolucion</Button>
+                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
+                    <Button onClick={doDevolucion} disabled={busy} size="sm" className="h-11 gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all duration-300 hover:shadow-amber-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Registrar devolucion</Button>
                   </div>
                 </div>
               )}
@@ -1854,8 +1854,8 @@ export function PisoSectoresTab() {
 
       {/* ═══ TRASLADO CONFIRMATION DIALOG ═══ */}
       <Dialog open={trConfirmOpen} onOpenChange={(open) => { if (!open) setTrConfirmOpen(false) }}>
-        <DialogContent className="sm:max-w-lg max-w-[calc(100vw-1rem)] max-h-[85vh] overflow-y-auto overscroll-contain bg-slate-900 border-slate-700/50 backdrop-blur-xl rounded-2xl">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-lg max-w-[calc(100vw-1rem)] max-h-[85vh] overflow-y-auto overscroll-contain bg-slate-900 border-slate-700/50 backdrop-blur-xl rounded-2xl p-0 [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100">
+          <DialogHeader className="px-4 sm:px-6 pt-5">
             <DialogTitle className="flex items-center gap-2 text-base">
               <ArrowRightLeft className="h-5 w-5 text-sky-400" />
               Confirmar Traslado
@@ -1865,7 +1865,7 @@ export function PisoSectoresTab() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+          <div className="px-4 sm:px-6 space-y-2 max-h-60 overflow-y-auto pr-1">
             {(() => {
               const selected = trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0)
               if (selected.length === 0) return <p className="text-xs text-slate-500">No hay articulos seleccionados.</p>
@@ -1897,17 +1897,17 @@ export function PisoSectoresTab() {
                 }
                 return (
                   <div key={i} className={`rounded-lg border ${statusBg} p-2.5`}>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <Package className="h-3.5 w-3.5 text-slate-500 flex-shrink-0" />
-                        <span className="font-mono text-xs text-sky-300 font-semibold">{r.bloque_codigo}</span>
+                        <span className="font-mono text-xs text-sky-300 font-semibold truncate">{r.bloque_codigo}</span>
                       </div>
-                      <div className={`flex items-center gap-1 text-[10px] font-semibold ${statusColor}`}>
+                      <div className={`flex items-center gap-1 text-[10px] font-semibold shrink-0 ${statusColor}`}>
                         {statusIcon}
-                        <span>{statusLabel}</span>
+                        <span className="truncate max-w-[140px]">{statusLabel}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-500 pl-5">
+                    <div className="flex items-center flex-wrap gap-x-3 gap-y-0 mt-1 text-[10px] text-slate-500 pl-5">
                       <span>Trasladar: <span className="font-mono font-semibold text-white">{qty.toFixed(2)}</span></span>
                       <span>Stock: <span className="font-mono font-semibold text-slate-300">{r.stockActual}</span></span>
                       <span>{r.bloque_unidad}</span>
@@ -1919,7 +1919,7 @@ export function PisoSectoresTab() {
           </div>
 
           {trDestPos && (
-            <div className="flex items-center gap-2 text-xs bg-slate-800/60 rounded-lg border border-slate-700/40 px-3 py-2">
+            <div className="px-4 sm:px-6 flex items-center gap-2 text-xs bg-slate-800/60 rounded-lg border border-slate-700/40 px-3 py-2">
               <Warehouse className="h-3.5 w-3.5 text-slate-500" />
               <span className="text-slate-500">Destino:</span>
               <span className="font-mono font-semibold text-sky-300">
@@ -1928,11 +1928,11 @@ export function PisoSectoresTab() {
             </div>
           )}
 
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setTrConfirmOpen(false)} size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
+          <DialogFooter className="px-4 sm:px-6 pb-5 gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setTrConfirmOpen(false)} size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
               Cancelar
             </Button>
-            <Button onClick={doTraslado} disabled={busy} size="sm" className="gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20">
+            <Button onClick={doTraslado} disabled={busy} size="sm" className="h-11 gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20">
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
               Ejecutar traslado
             </Button>
@@ -2037,10 +2037,10 @@ export function PisoSectoresTab() {
             )}
 
             <DialogFooter className="gap-2 sm:gap-0 mt-4 pt-3 border-t border-slate-700/30">
-              <Button variant="outline" onClick={() => setMassDialogOpen(false)} size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
+              <Button variant="outline" onClick={() => setMassDialogOpen(false)} size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
                 Cancelar
               </Button>
-              <Button onClick={() => setMassConfirmOpen(true)} disabled={massBusy || massData.size === 0} size="sm" className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20">
+              <Button onClick={() => setMassConfirmOpen(true)} disabled={massBusy || massData.size === 0} size="sm" className="h-11 gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20">
                 {massBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />}
                 Registrar {massData.size} salida(s)
               </Button>
@@ -2097,7 +2097,7 @@ export function PisoSectoresTab() {
                             Todos los niveles
                           </span>
                         ) : (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/20 font-bold">
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/20 font-bold truncate max-w-[100px]">
                             Nivel {nivelNums.join(', ')}
                           </span>
                         )}
@@ -2129,7 +2129,7 @@ export function PisoSectoresTab() {
                 }).concat([
                   // Resumen total al final
                   <div key="__totals__" className="rounded-xl border border-amber-500/30 bg-amber-950/20 backdrop-blur-sm p-3.5 mt-1">
-                    <div className="flex items-center justify-center gap-4">
+                    <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
                       <div className="flex items-center gap-2">
                         <Package className="h-4 w-4 text-amber-400" />
                         <span className="text-[10px] text-amber-300 font-medium">Total articulos:</span>
@@ -2148,10 +2148,10 @@ export function PisoSectoresTab() {
             </div>
 
             <DialogFooter className="gap-2 sm:gap-0 mt-4 pt-3 border-t border-slate-700/30">
-              <Button variant="outline" onClick={() => setMassConfirmOpen(false)} size="sm" className="text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
+              <Button variant="outline" onClick={() => setMassConfirmOpen(false)} size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
                 No, cancelar
               </Button>
-              <Button onClick={() => { setMassConfirmOpen(false); doMassSalida() }} disabled={massBusy || massData.size === 0} size="sm" className="gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20">
+              <Button onClick={() => { setMassConfirmOpen(false); doMassSalida() }} disabled={massBusy || massData.size === 0} size="sm" className="h-11 gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20">
                 {massBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                 Si, registrar salida
               </Button>

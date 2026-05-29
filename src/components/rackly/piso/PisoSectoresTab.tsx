@@ -2074,11 +2074,14 @@ export function PisoSectoresTab() {
                 let totalUnidades = 0
                 const entries = [...massData.entries()]
                 return entries.map(([posicionId, pd]) => {
-                  const displayItems = pd.selectedNivelId ? (pd.stockByNivel[pd.selectedNivelId] ?? []) : pd.stock
+                  const displayItems = getMassDisplayItems(pd)
                   const qtySum = displayItems.reduce((s, it) => s + it.cantidad, 0)
                   totalArticulos += displayItems.length
                   totalUnidades += qtySum
-                  const nivelNum = pd.selectedNivelId ? pd.niveles.find((n) => n.id === pd.selectedNivelId)?.numero : null
+                  const isAll = pd.selectedNivelIds.size === 0
+                  const nivelNums = pd.niveles
+                    .filter((n) => isAll || pd.selectedNivelIds.has(n.id))
+                    .map((n) => n.numero)
                   return (
                     <div key={posicionId} className="rounded-xl border border-slate-700/40 bg-slate-800/50 backdrop-blur-sm overflow-hidden">
                       {/* Header de posicion */}
@@ -2089,9 +2092,13 @@ export function PisoSectoresTab() {
                         <span className="font-mono text-xs font-bold text-slate-200">
                           {pd.pos.columnaLetra}-{pd.pos.subcolumnaCodigo}-{pd.pos.posicionNumero}
                         </span>
-                        {nivelNum && (
+                        {isAll ? (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/20 font-bold">
+                            Todos los niveles
+                          </span>
+                        ) : (
                           <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/20 font-bold">
-                            Nivel {nivelNum}
+                            Nivel {nivelNums.join(', ')}
                           </span>
                         )}
                         <span className="ml-auto text-[10px] font-semibold text-slate-400">
@@ -2114,7 +2121,7 @@ export function PisoSectoresTab() {
                           </div>
                         ))}
                         {displayItems.length === 0 && (
-                          <p className="text-slate-500 text-[10px] text-center py-2">Sin articulos en este nivel</p>
+                          <p className="text-slate-500 text-[10px] text-center py-2">Sin articulos</p>
                         )}
                       </div>
                     </div>

@@ -43,3 +43,33 @@ Stage Summary:
 - 2 files changed, 189 insertions(+), 7 deletions(-)
 - Commit: d2fba10, Tag: JHIA-64
 - Deployed to Cloudflare Pages via GitHub Actions
+
+---
+Task ID: JHIA-65
+Agent: Main Agent
+Task: Fix autofocus en Codigo, Salida por niveles, Salida en masa
+
+Work Log:
+- Fixed autofocus: moved autoFocus from Cantidad input to Codigo input in Ingreso and Devolucion modes
+- Added salNivelTab state for level filtering in Salida mode
+- Modified openSalida to reset salNivelTab to 'all'
+- Modified doSalida to filter items by selected nivel and use correct nivel_id
+- Replaced Salida mode UI with IIFE that shows level tabs (red gradient) when 2+ levels exist
+- Level tabs filter salItems to show only items belonging to selected level
+- Added level info banner in salida mode
+- Added mass selection mode: massMode, massSelected (Set), massDialogOpen states
+- Added toggleMassMode, toggleMassSelect, openMassDialog, doMassSalida, updateMassNivel functions
+- Modified cell click handler: massMode ? toggleMassSelect : handleClick
+- Cell visual changes in mass mode: checkbox overlay, ring-2 ring-red-400 for selected
+- Added "Salida en masa" toggle button in top toolbar
+- Added floating bar with position counter and "Procesar salida" button
+- Added "mode active" banner when no positions selected
+- Added Mass Salida Dialog with position details, level selectors, item lists, and confirm
+- Build verified successfully, committed and pushed with tag JHIA-65
+
+Stage Summary:
+- Files modified: src/components/rackly/piso/PisoSectoresTab.tsx (360 insertions, 29 deletions)
+- No database changes
+- No changes to existing single-position functionality (massMode is opt-in via toggle)
+- Commit: 31778fb, Tag: JHIA-65
+- Deployed to Cloudflare Pages via GitHub Actions

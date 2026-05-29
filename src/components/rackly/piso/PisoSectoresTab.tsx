@@ -699,12 +699,14 @@ export function PisoSectoresTab() {
   //  CELL STYLING — Clean 2D buttons
   // ═══════════════════════════════════════════════
   function getCellClasses(pos: PosicionConStock): string {
-    const base = 'w-full h-9 px-1 rounded-lg transition-colors duration-150 cursor-pointer border text-center'
+    const isMulti = pos.stock > 0 && pos.bloques.length > 1
+    const h = isMulti ? 'h-11' : 'h-10'
+    const base = `w-full ${h} px-1 rounded-lg transition-colors duration-150 cursor-pointer border text-center`
     if (pos.stock <= 0) {
       return `${base} bg-emerald-950/40 border-emerald-700/30 text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-500/40`
     }
-    if (pos.bloques.length > 1) {
-      return `${base} bg-amber-950/50 border-amber-700/30 text-amber-200 hover:bg-amber-900/50 hover:border-amber-500/40`
+    if (isMulti) {
+      return `${base} bg-amber-950/50 border-amber-700/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-500/40 ring-1 ring-amber-500/20`
     }
     return `${base} bg-sky-950/50 border-sky-700/30 text-sky-200 hover:bg-sky-900/50 hover:border-sky-500/40`
   }
@@ -899,7 +901,7 @@ export function PisoSectoresTab() {
                   )}
 
                   {/* Positions grid — CSS Grid */}
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(42px,1fr))] gap-1">
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(48px,1fr))] gap-1">
                     {sub.pos.map((pos) => {
                       const isOccupied = pos.stock > 0
                       const isMulti = pos.bloques.length > 1
@@ -907,13 +909,16 @@ export function PisoSectoresTab() {
                         <button
                           key={pos.posicionId}
                           onClick={() => handleClick(pos)}
-                          title={`${sub.codigo}-${pos.posicionNumero}${isOccupied ? ` (${pos.bloques.length} art.)` : ' · Vacio'}`}
+                          title={`${sub.codigo}-${pos.posicionNumero}${isOccupied ? ` | ${pos.bloques.length} tipo(s), ${pos.stock} total` : ' · Vacio'}`}
                           className={getCellClasses(pos)}
                         >
                           <div className="flex flex-col items-center justify-center h-full">
                             <span className="font-bold text-[11px] leading-none">{pos.posicionNumero}</span>
                             {isOccupied && (
-                              <span className="text-[7px] font-bold leading-none mt-0.5 opacity-80">{pos.bloques.length} art.</span>
+                              <span className="text-[8px] font-bold leading-none mt-0.5 opacity-90">{pos.stock}</span>
+                            )}
+                            {isOccupied && isMulti && (
+                              <span className="text-[6px] font-semibold leading-none mt-px opacity-70">{pos.bloques.length}t</span>
                             )}
                           </div>
                         </button>

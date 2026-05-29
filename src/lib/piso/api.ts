@@ -486,14 +486,33 @@ export async function cargarPosicionesSector(
         const qty = typeof r.stock_total === 'number' ? r.stock_total : parseFloat(String(r.stock_total ?? '0')) || 0
         let bloques: { bloque_id: string; bloque_codigo: string; cantidad: number }[] = []
         try {
-          bloques = (typeof r.bloques_json === 'object' && r.bloques_json ? (r.bloques_json as { bloque_id: string; bloque_codigo: string; cantidad: unknown }[]) : []).map((b) => ({
-            bloque_id: b.bloque_id,
-            bloque_codigo: b.bloque_codigo,
+          let rawBloques = r.bloques_json
+          // bloques_json puede venir como string JSON o como objeto ya parseado
+          if (typeof rawBloques === 'string') {
+            try { rawBloques = JSON.parse(rawBloques) } catch { rawBloques = [] }
+          }
+          const arr = (Array.isArray(rawBloques) ? rawBloques : []) as { bloque_id: string; bloque_codigo: string; cantidad: unknown }[]
+          bloques = arr.map((b) => ({
+            bloque_id: b.bloque_id ?? '',
+            bloque_codigo: b.bloque_codigo ?? '',
             cantidad: typeof b.cantidad === 'number' ? b.cantidad : parseFloat(String(b.cantidad ?? '0')) || 0,
           }))
         } catch { /* json parse error */ }
         rpcStockMap.set(r.posicion_id, { stock: qty, bloques })
       }
+
+      // Debug: log primer resultado del RPC para verificar datos
+      if (rpcData.length > 0) {
+        const sample = rpcData[0]
+        console.log('[Piso] RPC sample row:', {
+          posicion_id: sample.posicion_id,
+          stock_total: sample.stock_total,
+          bloques_json_type: typeof sample.bloques_json,
+          bloques_json_val: typeof sample.bloques_json === 'string' ? sample.bloques_json.substring(0, 100) : sample.bloques_json,
+          parsed_bloques: rpcStockMap.get(sample.posicion_id)?.bloques,
+        })
+      }
+      console.log(`[Piso] RPC: ${rpcData.length} posiciones con stock, ${posiciones.length} posiciones totales`)
 
       // 3. Construir resultado para TODAS las posiciones
       const result: PosicionConStock[] = posiciones.map((pos) => {

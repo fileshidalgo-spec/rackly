@@ -1219,7 +1219,7 @@ export function PisoSectoresTab() {
       {/* ═══ DETAIL DIALOG — Frosted glass + breadcrumb + animated badge ═══ */}
       <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setMode('view') } }}>
         <DialogContent
-          className="max-w-[calc(100vw-1rem)] sm:max-w-xl rounded-2xl max-h-[90vh] overflow-y-auto overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+          className="max-w-[calc(100vw-1rem)] sm:max-w-xl rounded-2xl max-h-[85vh] flex flex-col overflow-hidden overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
           style={{
             background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.88))',
             backdropFilter: 'blur(24px) saturate(1.2)',
@@ -1231,7 +1231,7 @@ export function PisoSectoresTab() {
           {/* Subtle inner glow */}
           <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-white/[0.03] to-transparent pointer-events-none rounded-t-2xl" />
 
-          <div className="p-4 sm:p-6 relative">
+          <div className="p-4 sm:p-6 relative flex-1 min-h-0 overflow-y-auto overscroll-contain">
             <DialogHeader>
               <DialogTitle className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-400 to-cyan-500 flex items-center justify-center text-white font-extrabold text-xs shadow-lg shadow-sky-500/25">
@@ -1854,8 +1854,8 @@ export function PisoSectoresTab() {
 
       {/* ═══ TRASLADO CONFIRMATION DIALOG ═══ */}
       <Dialog open={trConfirmOpen} onOpenChange={(open) => { if (!open) setTrConfirmOpen(false) }}>
-        <DialogContent className="sm:max-w-lg max-w-[calc(100vw-1rem)] max-h-[85vh] overflow-y-auto overscroll-contain bg-slate-900 border-slate-700/50 backdrop-blur-xl rounded-2xl p-0 [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100">
-          <DialogHeader className="px-4 sm:px-6 pt-5">
+        <DialogContent className="sm:max-w-lg max-w-[calc(100vw-1rem)] max-h-[85vh] flex flex-col overflow-hidden overscroll-contain bg-slate-900 border-slate-700/50 backdrop-blur-xl rounded-2xl p-0 [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100">
+          <DialogHeader className="px-4 sm:px-6 pt-5 shrink-0">
             <DialogTitle className="flex items-center gap-2 text-base">
               <ArrowRightLeft className="h-5 w-5 text-sky-400" />
               Confirmar Traslado
@@ -1865,7 +1865,7 @@ export function PisoSectoresTab() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="px-4 sm:px-6 space-y-2 max-h-60 overflow-y-auto pr-1">
+          <div className="px-4 sm:px-6 space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
             {(() => {
               const selected = trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0)
               if (selected.length === 0) return <p className="text-xs text-slate-500">No hay articulos seleccionados.</p>
@@ -1928,7 +1928,7 @@ export function PisoSectoresTab() {
             </div>
           )}
 
-          <DialogFooter className="px-4 sm:px-6 pb-5 gap-2 sm:gap-0">
+          <DialogFooter className="px-4 sm:px-6 pb-5 gap-2 sm:gap-0 shrink-0">
             <Button variant="outline" onClick={() => setTrConfirmOpen(false)} size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
               Cancelar
             </Button>
@@ -1942,11 +1942,11 @@ export function PisoSectoresTab() {
 
       {/* ═══ MASS SALIDA DIALOG ═══ */}
       <Dialog open={massDialogOpen} onOpenChange={(open) => { if (!open) setMassDialogOpen(false) }}>
-        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] flex flex-col overflow-hidden overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
           style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9))', backdropFilter: 'blur(24px)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
           <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-red-400 to-transparent opacity-60" />
-          <div className="p-4 sm:p-6">
-            <DialogHeader>
+          <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <DialogHeader className="shrink-0">
               <DialogTitle className="flex items-center gap-2 text-base text-white">
                 <div className="w-8 h-8 rounded-xl bg-red-600/20 flex items-center justify-center">
                   <ArrowUpFromLine className="h-4 w-4 text-red-400" />
@@ -2036,7 +2036,7 @@ export function PisoSectoresTab() {
               </div>
             )}
 
-            <DialogFooter className="gap-2 sm:gap-0 mt-4 pt-3 border-t border-slate-700/30">
+            <DialogFooter className="gap-2 sm:gap-0 mt-4 pt-3 border-t border-slate-700/30 shrink-0">
               <Button variant="outline" onClick={() => setMassDialogOpen(false)} size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
                 Cancelar
               </Button>
@@ -2051,11 +2051,11 @@ export function PisoSectoresTab() {
 
       {/* ═══ MASS SALIDA CONFIRMATION DIALOG ═══ */}
       <Dialog open={massConfirmOpen} onOpenChange={(open) => { if (!open) setMassConfirmOpen(false) }}>
-        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] overflow-y-auto overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] flex flex-col overflow-hidden overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
           style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(30, 41, 59, 0.95))', backdropFilter: 'blur(24px)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
           <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400 to-transparent opacity-60" />
-          <div className="p-4 sm:p-6">
-            <DialogHeader>
+          <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <DialogHeader className="shrink-0">
               <DialogTitle className="flex items-center gap-2 text-base text-white">
                 <div className="w-8 h-8 rounded-xl bg-amber-600/20 flex items-center justify-center">
                   <AlertTriangle className="h-4 w-4 text-amber-400" />
@@ -2147,7 +2147,7 @@ export function PisoSectoresTab() {
               })()}
             </div>
 
-            <DialogFooter className="gap-2 sm:gap-0 mt-4 pt-3 border-t border-slate-700/30">
+            <DialogFooter className="gap-2 sm:gap-0 mt-4 pt-3 border-t border-slate-700/30 shrink-0">
               <Button variant="outline" onClick={() => setMassConfirmOpen(false)} size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
                 No, cancelar
               </Button>

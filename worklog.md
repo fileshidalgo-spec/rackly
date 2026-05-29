@@ -132,3 +132,23 @@ Stage Summary:
 - Archivo modificado: FefoTab.tsx
 - Bug: `else if (delta > 0)` causaba que artículos con salida seguían mostrando stock
 - Fix: usar `impactoStock()` + eliminar guard → filtro final `stock <= 0` hace el trabajo correctamente
+
+---
+Task ID: JHIA-70
+Agent: Main Agent
+Task: Corregir responsividad de ventanas emergentes (dialogs) en Kardex Piso
+
+Work Log:
+- Auditoria completa de 4 dialogs en PisoSectoresTab.tsx (Main Detail, Traslado Confirm, Mass Salida, Mass Confirm)
+- Fix HIGH: Dialog Principal (1222) - Botón X invisible en fondo oscuro → agregado [&>button]:text-slate-400 hover:[&>button]:text-white
+- Fix HIGH: Dialog Traslado Confirm (1857) - Agregado p-0, botón X override, padding responsivo px-4 sm:px-6 en header/contenido/footer
+- Fix HIGH: Mass Confirm Nivel badge (2100) - truncado max-w-[100px] para evitar overflow horizontal con 3+ niveles
+- Fix MEDIUM: Traslado items overflow - agregado gap-2 en flex justify-between, truncate en status label, flex-wrap en info row
+- Fix MEDIUM: Summary totals (2132) - flex-wrap + gap-3 sm:gap-4 para que no overflow en móvil
+- Fix MEDIUM: Todos los botones en todos los dialogs → h-11 (44px touch targets) en 8 pares de botones (Cancelar + Acción)
+- Build exitoso, push a GitHub, deploy automático a Cloudflare Pages
+
+Stage Summary:
+- Archivo modificado: PisoSectoresTab.tsx
+- 9 correcciones aplicadas en total
+- Todos los dialogs ahora tienen: botón X visible, padding responsivo, touch targets 44px, sin overflow horizontal

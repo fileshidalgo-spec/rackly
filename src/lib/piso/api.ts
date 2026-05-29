@@ -1027,6 +1027,81 @@ export async function obtenerPrimerNivel(posicionId: string): Promise<string | n
   return rows.length > 0 ? rows[0].id : null
 }
 
+export type NivelInfo = { id: string; numero: number; codigo_ubicacion: string | null }
+
+/**
+ * Obtiene todos los niveles de una posición, ordenados por número.
+ */
+export async function obtenerNivelesPosicion(posicionId: string): Promise<NivelInfo[]> {
+  const { data, error } = await dataClient
+    .from('piso_niveles')
+    .select('id, numero, codigo_ubicacion')
+    .eq('posicion_id', posicionId)
+    .order('numero')
+  if (error) throw error
+  return (data ?? []) as NivelInfo[]
+}
+
+/**
+ * Obtiene el stock detallado de una posición desglosado por nivel.
+ */
+export async function stockPorNivelPosicion(
+  posicionId: string
+): Promise<{ nivel_id: string; nivel_numero: number; bloque_codigo: string; cantidad: number }[]> {
+  const { data: nivData, error: nivErr } = await dataClient
+    .from('piso_niveles')
+    .select('id, numero')
+    .eq('posicion_id', posicionId)
+    .order('numero')
+  if (nivErr) throw nivErr
+  const niveles = (nivData ?? []) as { id: string; numero: number }[]
+  if (niveles.length === 0) return []
+
+  const nivelIds = niveles.map((n) => n.id)
+  const nivelMap = new Map(niveles.map((n) => [n.id, n.numero]))
+
+  const { data: detData, error: detErr } = await dataClient
+    .from('piso_movimiento_detalles')
+    .select('nivel_id, bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+    .in('nivel_id', nivelIds)
+  if (detErr) throw detErr
+
+  // Calcular stock neto por nivel y bloque
+  const stockMap = new Map<string, number>()
+  for (const d of (detData ?? []) as unknown as {
+    nivel_id: string; bloque_id: string; cantidad: unknown;
+    piso_movimientos: { tipo: string } | null | { tipo: string }[]
+  }[]) {
+    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+    const tipo = Array.isArray(d.piso_movimientos) ? (d.piso_movimientos[0]?.tipo ?? '') : (d.piso_movimientos?.tipo ?? '')
+    const delta = (tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion') ? qty : -qty
+    if (delta === 0) continue
+    stockMap.set(d.nivel_id, (stockMap.get(d.nivel_id) ?? 0) + delta)
+  }
+
+  // Obtener códigos de bloques
+  const bloqueIds = [...new Set((detData ?? []).map((d: unknown) => (d as { bloque_id: string }).bloque_id))]
+  const bloqueMap = new Map<string, string>()
+  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_') && !id.startsWith('manual_'))
+  if (realIds.length > 0) {
+    const { data: bloqData } = await dataClient.from('piso_bloques').select('id, codigo').in('id', realIds)
+    for (const b of (bloqData ?? []) as { id: string; codigo: string }[]) bloqueMap.set(b.id, b.codigo)
+  }
+  for (const id of bloqueIds) {
+    if (!bloqueMap.has(id)) {
+      bloqueMap.set(id, id.startsWith('cat_') ? id.replace('cat_', '') : id.startsWith('manual_') ? id.replace('manual_', '') : id)
+    }
+  }
+
+  const results: { nivel_id: string; nivel_numero: number; bloque_codigo: string; cantidad: number }[] = []
+  for (const [nivelId, stock] of stockMap) {
+    if (stock > 0) {
+      results.push({ nivel_id: nivelId, nivel_numero: nivelMap.get(nivelId) ?? 0, bloque_codigo: '', cantidad: stock })
+    }
+  }
+  return results
+}
+
 /**
  * Lista bloques disponibles para selección.
  * Busca en piso_bloques PRIMERO y luego en catalogo (Racks) como respaldo.

@@ -114,3 +114,21 @@ Stage Summary:
 - 5 archivos modificados: StockTab.tsx, TrasladoTab.tsx, MovimientoForm.tsx, FefoTab.tsx, CatalogoTab.tsx
 - Patrones aplicados: hidden sm:table-cell, hidden md:table-cell, hidden lg:table-cell, truncate min-w-0, px-4 sm:px-6
 - Build exitoso, sin errores
+
+---
+Task ID: JHIA-69
+Agent: Main Agent
+Task: Corregir FEFO - no mostrar artículos con stock 0 o negativo
+
+Work Log:
+- Identificado bug en FefoTab.tsx línea 98: `else if (delta > 0)` impedía crear entradas cuando el primer movimiento era negativo
+- Esto causaba que las salidas no se restaran correctamente del stock en algunos casos
+- Reemplazada lógica inline por `impactoStock()` (misma función usada por SalidaForm, StockTab, TrasladoTab)
+- Eliminado guard `else if (delta > 0)` → ahora siempre crea la entrada y el filtro `stock <= 0` al final la elimina correctamente
+- Patrón ahora consistente con SalidaForm.tsx (que sí funcionaba bien)
+- Build exitoso sin errores
+
+Stage Summary:
+- Archivo modificado: FefoTab.tsx
+- Bug: `else if (delta > 0)` causaba que artículos con salida seguían mostrando stock
+- Fix: usar `impactoStock()` + eliminar guard → filtro final `stock <= 0` hace el trabajo correctamente

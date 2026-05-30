@@ -152,3 +152,25 @@ Stage Summary:
 - Archivo modificado: PisoSectoresTab.tsx
 - 9 correcciones aplicadas en total
 - Todos los dialogs ahora tienen: botón X visible, padding responsivo, touch targets 44px, sin overflow horizontal
+---
+Task ID: JHIA-76
+Agent: Main Agent
+Task: Stock por código - Layout tarjetas en móvil con TODAS las columnas visibles + Eliminar solo admin
+
+Work Log:
+- Leído StockTab.tsx actual en origin/main (JHIA-74): tenía min-w-[700px] forzando scroll horizontal y columnas ocultas con hidden sm:table-cell
+- Usuario solicitó: TODAS las columnas visibles en móvil (bloque, torre, piso, posición, descripción, UN, proveedor, vencimiento, stock, eliminar)
+- Columna eliminar solo visible para rol admin (useAuth hook ya disponible en el proyecto)
+- Creado layout dual: tarjetas compactas para móvil (md:hidden) + tabla completa para desktop (hidden md:block)
+- Mobile cards: Row 1 = Bloq|Tor|Pis|Pos + Badge stock + botón eliminar (admin); Row 2 = descripción; Row 3 = UN + proveedor badge + vencimiento badge
+- Desktop table: removido min-w-[700px] y todos los hidden sm/md/lg:table-cell, eliminar condicional por esAdmin
+- Importado useAuth hook y agregado esAdmin = perfil?.rol === 'admin'
+- GitHub token configurado con remote correcto (fileshidalgo-spec/rackly)
+- Reset local main a origin/main para sincronizar, aplicado cambios de StockTab, commit + push exitoso
+- Tag JHIA-76 creado y pusheado
+
+Stage Summary:
+- Archivo modificado: src/components/rackly/kardex/StockTab.tsx (109 insertions, 28 deletions)
+- Commit: 265d06e, Tag: JHIA-76
+- Deploy automático via GitHub Actions a Cloudflare Pages
+- Eliminar columna solo visible para rol admin

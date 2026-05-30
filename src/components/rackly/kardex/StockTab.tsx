@@ -21,8 +21,11 @@ import {
 } from '@/components/ui/table'
 import { toast } from 'sonner'
 import { Search, Trash2, PackageSearch } from 'lucide-react'
+import { useAuth } from '@/hooks/useAuth'
 
 export function StockTab() {
+  const { perfil } = useAuth()
+  const esAdmin = perfil?.rol === 'admin'
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [codigo, setCodigo] = useState('')
   const [stock, setStock] = useState<
@@ -179,20 +182,95 @@ export function StockTab() {
 
       {stock.length > 0 ? (
         <div className="space-y-3">
-          <div className="overflow-x-auto">
-            <Table className="min-w-[700px]">
+          {/* ── Mobile: Card layout (md+ hidden) ── */}
+          <div className="md:hidden space-y-2">
+            {stock.map((s, i) => {
+              const hoy = new Date(new Date().toDateString())
+              const fVen = s.fVencimiento ? new Date(s.fVencimiento + 'T00:00:00') : null
+              const diffDias = fVen ? (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24) : null
+              const vencido = diffDias !== null && diffDias < 0
+              const naranja = !vencido && diffDias !== null && diffDias <= 15
+              const azul = !vencido && !naranja && diffDias !== null && diffDias <= 30
+
+              const badgeClass = vencido
+                ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+                : naranja
+                ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
+                : azul
+                ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+                : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
+
+              return (
+                <div key={i} className="rounded-lg border bg-card p-3 space-y-2">
+                  {/* Row 1: Ubicación + Stock + Eliminar */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold">
+                      <span className="text-muted-foreground">Bloq</span>
+                      <span className="font-mono">{s.bloque}</span>
+                      <span className="text-muted-foreground mx-0.5">|</span>
+                      <span className="text-muted-foreground">Tor</span>
+                      <span className="font-mono">{s.torre}</span>
+                      <span className="text-muted-foreground mx-0.5">|</span>
+                      <span className="text-muted-foreground">Pis</span>
+                      <span className="font-mono">{s.piso}</span>
+                      <span className="text-muted-foreground mx-0.5">|</span>
+                      <span className="text-muted-foreground">Pos</span>
+                      <span className="font-mono">{s.posicion}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="default" className="text-sm">{s.stock}</Badge>
+                      {esAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  {/* Row 2: Descripción */}
+                  <p className="text-xs text-muted-foreground leading-tight">{s.descripcion}</p>
+                  {/* Row 3: UN + Proveedor + Vencimiento */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span><span className="text-muted-foreground">UN: </span>{s.un}</span>
+                    {s.proveedor ? (
+                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 text-[10px] px-1.5 py-0 font-semibold">
+                        {s.proveedor}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">Prov: —</span>
+                    )}
+                    {s.fVencimiento ? (
+                      <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${badgeClass}`}>
+                        {s.fVencimiento}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">Venc: —</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ── Desktop: Table layout (hidden on mobile) ── */}
+          <div className="hidden md:block overflow-x-auto">
+            <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Bloque</TableHead>
                   <TableHead>Torre</TableHead>
-                  <TableHead className="hidden sm:table-cell">Piso</TableHead>
-                  <TableHead>Pos.</TableHead>
-                  <TableHead className="hidden md:table-cell max-w-[180px]">Descripción</TableHead>
-                  <TableHead className="hidden sm:table-cell">UN</TableHead>
-                  <TableHead className="hidden lg:table-cell">Proveedor</TableHead>
-                  <TableHead className="hidden sm:table-cell">Vencimiento</TableHead>
+                  <TableHead>Piso</TableHead>
+                  <TableHead>Posición</TableHead>
+                  <TableHead>Descripción</TableHead>
+                  <TableHead>UN</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead>Vencimiento</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
-                  <TableHead className="w-12"></TableHead>
+                  {esAdmin && <TableHead className="w-12"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -215,13 +293,13 @@ export function StockTab() {
 
                   return (
                     <TableRow key={i}>
-                      <TableCell className="font-medium">{s.bloque}</TableCell>
-                      <TableCell className="font-medium">{s.torre}</TableCell>
-                      <TableCell className="hidden sm:table-cell">{s.piso}</TableCell>
-                      <TableCell className="font-medium">{s.posicion}</TableCell>
-                      <TableCell className="hidden md:table-cell max-w-[180px] truncate min-w-0">{s.descripcion}</TableCell>
-                      <TableCell className="hidden sm:table-cell">{s.un}</TableCell>
-                      <TableCell className="hidden lg:table-cell">
+                      <TableCell className="font-mono font-medium whitespace-nowrap">{s.bloque}</TableCell>
+                      <TableCell className="whitespace-nowrap">{s.torre}</TableCell>
+                      <TableCell className="font-medium whitespace-nowrap">{s.piso}</TableCell>
+                      <TableCell className="whitespace-nowrap">{s.posicion}</TableCell>
+                      <TableCell className="max-w-[200px] truncate">{s.descripcion}</TableCell>
+                      <TableCell className="whitespace-nowrap">{s.un}</TableCell>
+                      <TableCell>
                         {s.proveedor ? (
                           <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
                             {s.proveedor}
@@ -230,7 +308,7 @@ export function StockTab() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
-                      <TableCell className="hidden sm:table-cell">
+                      <TableCell>
                         {s.fVencimiento ? (
                           <Badge variant="outline" className={`font-semibold ${badgeClass}`}>
                             {s.fVencimiento}
@@ -242,17 +320,20 @@ export function StockTab() {
                       <TableCell className="text-right font-medium">
                         <Badge variant="default">{s.stock}</Badge>
                       </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() =>
-                            handleDelete(s.bloque, s.torre, s.piso, s.posicion)
-                          }
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
+                      {esAdmin && (
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                            onClick={() =>
+                              handleDelete(s.bloque, s.torre, s.piso, s.posicion)
+                            }
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   )
                 })}

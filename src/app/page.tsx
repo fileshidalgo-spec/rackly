@@ -15,6 +15,7 @@ import { TrasladoTab } from '@/components/rackly/kardex/TrasladoTab'
 import { SectoresConfigTab } from '@/components/rackly/piso/SectoresTab'
 import { MovimientosTab } from '@/components/rackly/piso/MovimientosTab'
 import { PisoSectoresTab } from '@/components/rackly/piso/PisoSectoresTab'
+import { PisoStockTab } from '@/components/rackly/piso/PisoStockTab'
 import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Button } from '@/components/ui/button'
@@ -568,6 +569,7 @@ function RacklyApp() {
               {[
                 { val: 'movimientos', icon: History, label: 'Movimientos', color: 'from-emerald-500 to-green-600' },
                 { val: 'sectores', icon: Layers3, label: 'Sectores', color: 'from-sky-500 to-blue-600' },
+                { val: 'stock', icon: PackageSearch, label: 'Stock', color: 'from-cyan-500 to-teal-600' },
                 { val: 'config', icon: Settings, label: 'Configuración', color: 'from-slate-400 to-slate-600' },
               ].map((tab) => (
                 <TabsTrigger
@@ -601,6 +603,23 @@ function RacklyApp() {
             </TabsContent>
 
 
+
+            <TabsContent value="stock" className="mt-5">
+              <Card className="border border-slate-700 shadow-xl shadow-slate-900/30 bg-slate-900">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-600 flex items-center justify-center shadow-md shadow-cyan-500/20">
+                      <PackageSearch className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg text-white">Stock Kardex Piso</CardTitle>
+                      <CardDescription className="text-slate-400">Stock actual por ubicacion con FEFO. Incluye Stock Big Magic.</CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent><PisoStockTab /></CardContent>
+              </Card>
+            </TabsContent>
 
             <TabsContent value="sectores" className="mt-5">
               <PisoSectoresTab />

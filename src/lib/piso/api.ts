@@ -1431,3 +1431,186 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
 
   return null
 }
+
+// ═══ Stock global Piso — todos los lotes FEFO con ubicación ═══
+
+export type StockPisoItem = {
+  bloque_codigo: string
+  bloque_descripcion: string
+  bloque_unidad: string
+  ubicacion: string
+  sector_nombre: string
+  cantidad: number
+  fecha_vencimiento: string
+}
+
+/**
+ * Obtiene todo el stock de Piso con FEFO y ubicación resuelta.
+ * Para cada (bloque_id, nivel_id) calcula el stock FEFO restante
+ * y resuelve la ubicación (sector, columna, subcolumna, posicion).
+ */
+export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
+  // 1. Fetch ALL detalles with movement type
+  const { data: detData, error: detErr } = await dataClient
+    .from('piso_movimiento_detalles')
+    .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
+  if (detErr) throw detErr
+
+  // 2. Group by (bloque_id, nivel_id)
+  const isIngresoType = (tipo: string) =>
+    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+  const getTipo = (pm: unknown): string => {
+    if (!pm) return ''
+    if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { tipo: string }).tipo : ''
+    return (pm as { tipo: string }).tipo ?? ''
+  }
+
+  type RawDet = {
+    bloque_id: string
+    nivel_id: string
+    cantidad: unknown
+    fecha_vencimiento?: string | null
+    movimiento_id: string
+    piso_movimientos: { tipo: string } | null | { tipo: string }[]
+  }
+  const rawDets = (detData ?? []) as RawDet[]
+
+  const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string }[]>()
+  for (const d of rawDets) {
+    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+    if (qty <= 0) continue
+    const tipo = getTipo(d.piso_movimientos)
+    if (!tipo) continue
+    const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
+    const key = `${d.bloque_id}__${d.nivel_id}`
+    const arr = blockNivelMap.get(key) ?? []
+    arr.push({ bloque_id: d.bloque_id, nivel_id: d.nivel_id, tipo, cantidad: qty, fecha_vencimiento: fv })
+    blockNivelMap.set(key, arr)
+  }
+
+  // 3. FEFO per (bloque_id, nivel_id)
+  const fefoResults: { bloque_id: string; nivel_id: string; cantidad: number; fecha_vencimiento: string }[] = []
+  for (const [key, details] of blockNivelMap) {
+    const ingresoPool = new Map<string, number>()
+    let totalExit = 0
+    for (const d of details) {
+      if (isIngresoType(d.tipo)) {
+        ingresoPool.set(d.fecha_vencimiento, (ingresoPool.get(d.fecha_vencimiento) ?? 0) + d.cantidad)
+      } else {
+        totalExit += d.cantidad
+      }
+    }
+    const sortedLots = [...ingresoPool.entries()].sort(([a], [b]) => {
+      if (!a && b) return 1
+      if (a && !b) return -1
+      return a.localeCompare(b)
+    })
+    let pendiente = totalExit
+    for (const [fecha, qty] of sortedLots) {
+      if (pendiente <= 0) {
+        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: qty, fecha_vencimiento: fecha })
+      } else if (qty <= pendiente) {
+        pendiente -= qty
+      } else {
+        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: qty - pendiente, fecha_vencimiento: fecha })
+        pendiente = 0
+      }
+    }
+  }
+
+  if (fefoResults.length === 0) return []
+
+  // 4. Resolve bloque info
+  const bloqueIds = [...new Set(fefoResults.map(r => r.bloque_id))]
+  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
+  const realIds = bloqueIds.filter(id => !id.startsWith('cat_') && !id.startsWith('manual_'))
+  if (realIds.length > 0) {
+    const { data: bData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
+    for (const b of (bData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
+      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
+  }
+  const catIds = bloqueIds.filter(id => id.startsWith('cat_'))
+  if (catIds.length > 0) {
+    const codes = catIds.map(id => id.replace('cat_', ''))
+    const { data: cData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
+    for (const c of (cData ?? []) as { codigo: string; descripcion: string; un: string }[])
+      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+  }
+  for (const id of bloqueIds) {
+    if (id.startsWith('manual_') && !bloqueInfoMap.has(id))
+      bloqueInfoMap.set(id, { codigo: id.replace('manual_', ''), descripcion: 'Articulo nuevo', unidad: 'KG' })
+  }
+
+  // 5. Resolve location for each nivel_id
+  const nivelIds = [...new Set(fefoResults.map(r => r.nivel_id))]
+  const locMap = new Map<string, { ubicacion: string; sector_nombre: string }>()
+  if (nivelIds.length > 0) {
+    const { data: nivData } = await dataClient.from('piso_niveles').select('id, posicion_id').in('id', nivelIds)
+    const nivToPos = new Map<string, string>()
+    for (const n of (nivData ?? []) as { id: string; posicion_id: string }[]) nivToPos.set(n.id, n.posicion_id)
+
+    const posIds = [...nivToPos.values()]
+    if (posIds.length > 0) {
+      const { data: posData } = await dataClient.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds)
+      const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
+      for (const p of (posData ?? []) as { id: string; numero: number; subcolumna_id: string }[])
+        posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id })
+      const subIds = [...new Set([...posMap.values()].map(p => p.subcolumna_id))]
+      if (subIds.length > 0) {
+        const { data: subData } = await dataClient.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds)
+        const subMap = new Map<string, { codigo: string; columna_id: string }>()
+        for (const s of (subData ?? []) as { id: string; codigo: string; columna_id: string }[])
+          subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id })
+        const colIds = [...new Set([...subMap.values()].map(s => s.columna_id))]
+        if (colIds.length > 0) {
+          const { data: colData } = await dataClient.from('piso_columnas').select('id, letra, sector_id').in('id', colIds)
+          const colMap = new Map<string, { letra: string; sector_id: string }>()
+          for (const c of (colData ?? []) as { id: string; letra: string; sector_id: string }[])
+            colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id })
+          const secIds = [...new Set([...colMap.values()].map(c => c.sector_id))]
+          if (secIds.length > 0) {
+            const { data: secData } = await dataClient.from('piso_sectores').select('id, nombre').in('id', secIds)
+            const secMap = new Map<string, string>()
+            for (const s of (secData ?? []) as { id: string; nombre: string }[]) secMap.set(s.id, s.nombre)
+            for (const [nivId, posId] of nivToPos) {
+              const pos = posMap.get(posId)
+              if (!pos) continue
+              const sub = subMap.get(pos.subcolumna_id)
+              if (!sub) continue
+              const col = colMap.get(sub.columna_id)
+              if (!col) continue
+              locMap.set(nivId, {
+                ubicacion: `${col.letra}-${sub.codigo}-Pos ${pos.numero}`,
+                sector_nombre: secMap.get(col.sector_id) ?? '',
+              })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // 6. Build results
+  return fefoResults
+    .filter(r => r.cantidad > 0)
+    .map(r => {
+      const info = bloqueInfoMap.get(r.bloque_id)
+      const loc = locMap.get(r.nivel_id)
+      return {
+        bloque_codigo: info?.codigo ?? r.bloque_id,
+        bloque_descripcion: info?.descripcion ?? '',
+        bloque_unidad: info?.unidad ?? 'KG',
+        ubicacion: loc?.ubicacion ?? '',
+        sector_nombre: loc?.sector_nombre ?? '',
+        cantidad: Math.round(r.cantidad * 1000) / 1000,
+        fecha_vencimiento: r.fecha_vencimiento,
+      }
+    })
+    .sort((a, b) => {
+      if (a.bloque_codigo !== b.bloque_codigo) return a.bloque_codigo.localeCompare(b.bloque_codigo)
+      if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+      if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
+      if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
+      return a.ubicacion.localeCompare(b.ubicacion)
+    })
+}

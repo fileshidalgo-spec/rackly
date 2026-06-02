@@ -192,3 +192,23 @@ Stage Summary:
 - Archivo modificado: src/components/rackly/kardex/MovimientoForm.tsx (163 insertions, 81 deletions)
 - En móvil ahora se ven: piso, vencimiento y proveedor en cada ubicación de Salida
 - Deploy automático via Cloudflare Pages
+---
+Task ID: JHIA-78-fix
+Agent: Main Agent
+Task: Fix mobile scroll deselecting checkboxes in SalidaForm
+
+Work Log:
+- Read MovimientoForm.tsx (SalidaForm) from origin/main after pulling latest (JHIA-78 was already committed)
+- Identified root cause: useEffect on [locations] (lines 561-564) was resetting selected Set to empty every time locations array reference changed
+- The 8-second polling interval in refreshLocations() creates new array → triggers useEffect → clears all checkboxes
+- On mobile, scrolling triggers re-renders making this very noticeable
+- Fix 1: Removed the useEffect that reset selected/qtyMap on locations change
+- Fix 2: Added smart cleanup in refreshLocations - only removes selections for locations that no longer exist (stock=0), preserves valid selections
+- Selections still properly reset when searchCode changes (separate useEffect on [searchCode] still exists)
+- Build passed, committed as eba7025, tag JHIA-78-fix, pushed to origin/main
+
+Stage Summary:
+- Root cause: useEffect([locations]) + 8s polling = constant selection wipe
+- Fix: Remove useEffect, add smart cleanup in refreshLocations instead
+- File modified: src/components/rackly/kardex/MovimientoForm.tsx (12 insertions, 5 deletions)
+- Deploy: Cloudflare Pages auto-deploy from GitHub Actions

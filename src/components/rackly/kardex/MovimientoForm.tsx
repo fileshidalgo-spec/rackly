@@ -726,88 +726,170 @@ function SalidaForm({
         </div>
       )}
 
-      {/* Tabla de ubicaciones */}
+      {/* Lista de ubicaciones — Tarjetas en móvil, tabla en desktop */}
       {locations.length > 0 && !loading && (
-        <div className="overflow-x-auto">
-          <Table className="min-w-[800px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-16 text-center">Bloque</TableHead>
-                <TableHead className="w-16 text-center">Torre</TableHead>
-                <TableHead className="w-16 text-center hidden sm:table-cell">Piso</TableHead>
-                <TableHead className="w-20 text-center">Posición</TableHead>
-                <TableHead className="text-right">Stock</TableHead>
-                <TableHead className="hidden md:table-cell">F. Vencimiento</TableHead>
-                <TableHead className="hidden lg:table-cell">Proveedor</TableHead>
-                <TableHead className="min-w-[140px]">Cant. salida</TableHead>
-                <TableHead className="min-w-[180px]">Acción</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {locations.map((loc) => {
-                const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
-                return (
-                  <TableRow key={key}>
-                    <TableCell className="text-center font-medium">{loc.bloque}</TableCell>
-                    <TableCell className="text-center font-medium">{loc.torre}</TableCell>
-                    <TableCell className="text-center font-medium hidden sm:table-cell">{loc.piso}</TableCell>
-                    <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
-                    <TableCell className="text-right font-bold">{loc.stock}</TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {loc.fVencimiento ? (
-                        <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{formatDate(loc.fVencimiento)}</span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {loc.proveedor ? (
-                        <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
-                          {loc.proveedor}
-                        </Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Input
-                        type="number"
-                        step="any"
-                        min="0.001"
-                        max={loc.stock}
-                        value={qtyMap[key] || ''}
-                        onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
-                        placeholder="Parcial"
-                        className="h-9 text-sm"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => handleSalidaParcial(key)}
-                          disabled={busy}
-                          className="flex-1 h-9 text-xs bg-red-600 hover:bg-red-700 text-white"
-                        >
-                          Salida
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleRetirarTodo(key)}
-                          disabled={busy}
-                          className="flex-1 h-9 text-xs"
-                        >
-                          Todo
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </div>
+        <>
+          {/* ───── Vista móvil: tarjetas ───── */}
+          <div className="md:hidden space-y-3">
+            {locations.map((loc) => {
+              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+              return (
+                <div
+                  key={key}
+                  className="rounded-lg border bg-card p-3 space-y-2 shadow-sm"
+                >
+                  {/* Ubicación */}
+                  <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                    <MapPin className="h-3.5 w-3.5" />
+                    <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
+                  </div>
+
+                  {/* Stock */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold">Stock: {loc.stock} {loc.un}</span>
+                  </div>
+
+                  {/* Vencimiento */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground shrink-0">Venc.:</span>
+                    {loc.fVencimiento ? (
+                      <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+                        {formatDate(loc.fVencimiento)}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </div>
+
+                  {/* Proveedor */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground shrink-0">Prov.:</span>
+                    {loc.proveedor ? (
+                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                        {loc.proveedor}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </div>
+
+                  {/* Cantidad + Acciones */}
+                  <div className="flex gap-2 pt-1">
+                    <Input
+                      type="number"
+                      step="any"
+                      min="0.001"
+                      max={loc.stock}
+                      value={qtyMap[key] || ''}
+                      onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
+                      placeholder="Parcial"
+                      className="h-9 text-sm flex-1"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => handleSalidaParcial(key)}
+                      disabled={busy}
+                      className="h-9 text-xs bg-red-600 hover:bg-red-700 text-white"
+                    >
+                      Salida
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleRetirarTodo(key)}
+                      disabled={busy}
+                      className="h-9 text-xs"
+                    >
+                      Todo
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ───── Vista desktop: tabla ───── */}
+          <div className="hidden md:block overflow-x-auto">
+            <Table className="min-w-[800px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-16 text-center">Bloque</TableHead>
+                  <TableHead className="w-16 text-center">Torre</TableHead>
+                  <TableHead className="w-16 text-center">Piso</TableHead>
+                  <TableHead className="w-20 text-center">Posición</TableHead>
+                  <TableHead className="text-right">Stock</TableHead>
+                  <TableHead>F. Vencimiento</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead className="min-w-[140px]">Cant. salida</TableHead>
+                  <TableHead className="min-w-[180px]">Acción</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {locations.map((loc) => {
+                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+                  return (
+                    <TableRow key={key}>
+                      <TableCell className="text-center font-medium">{loc.bloque}</TableCell>
+                      <TableCell className="text-center font-medium">{loc.torre}</TableCell>
+                      <TableCell className="text-center font-medium">{loc.piso}</TableCell>
+                      <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
+                      <TableCell className="text-right font-bold">{loc.stock}</TableCell>
+                      <TableCell>
+                        {loc.fVencimiento ? (
+                          <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{formatDate(loc.fVencimiento)}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {loc.proveedor ? (
+                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                            {loc.proveedor}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          step="any"
+                          min="0.001"
+                          max={loc.stock}
+                          value={qtyMap[key] || ''}
+                          onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
+                          placeholder="Parcial"
+                          className="h-9 text-sm"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => handleSalidaParcial(key)}
+                            disabled={busy}
+                            className="flex-1 h-9 text-xs bg-red-600 hover:bg-red-700 text-white"
+                          >
+                            Salida
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRetirarTodo(key)}
+                            disabled={busy}
+                            className="flex-1 h-9 text-xs"
+                          >
+                            Todo
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </>
       )}
 
       {/* Sin stock */}

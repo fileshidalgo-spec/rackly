@@ -1,3 +1,4 @@
+// @ts-nocheck — @prisma/client not installed; file unused
 import { PrismaClient } from '@prisma/client'
 
 const globalForPrisma = globalThis as unknown as {

@@ -84,25 +84,64 @@ export async function fetchMovimientos(): Promise<Movimiento[]> {
 export async function addMovimiento(
   m: Omit<Movimiento, 'id' | 'fModificacion'>
 ): Promise<Movimiento[]> {
-  const { error } = await dataClient.from('movimientos').insert({
-    tipo: m.tipo,
-    bloque: m.bloque,
-    torre: m.torre,
-    piso: m.piso,
-    posicion: m.posicion,
-    codigo: m.codigo.trim().toUpperCase(),
-    descripcion: m.descripcion,
-    un: m.un,
-    cantidad: m.cantidad,
-    f_vencimiento: m.fVencimiento || null,
-    turno: m.turno,
-    usuario_id: m.usuarioId,
-    usuario_nombre: m.usuarioNombre ?? null,
-    usuario_correo: m.usuarioCorreo ?? null,
-    proveedor: m.proveedor ? m.proveedor : null,
-  })
-  if (error) throw error
-  return fetchMovimientos()
+  // Usar RPC atómica con advisory lock para evitar race conditions
+  try {
+    const { data, error } = await dataClient.rpc('registrar_movimiento_kardex', {
+      p_tipo: m.tipo,
+      p_bloque: m.bloque,
+      p_torre: m.torre,
+      p_piso: m.piso,
+      p_posicion: m.posicion,
+      p_codigo: m.codigo,
+      p_descripcion: m.descripcion,
+      p_un: m.un,
+      p_cantidad: m.cantidad,
+      p_f_vencimiento: m.fVencimiento || null,
+      p_turno: m.turno,
+      p_usuario_id: m.usuarioId,
+      p_usuario_nombre: m.usuarioNombre ?? null,
+      p_usuario_correo: m.usuarioCorreo ?? null,
+      p_proveedor: m.proveedor ? m.proveedor : null,
+    })
+    // Stock insuficiente es un error controlado, no excepción cruda
+    if (error) {
+      const msg = error.message || ''
+      if (msg.includes('INSUFFICIENT_STOCK')) {
+        const parts = msg.split('|')
+        const detail = parts.length > 1 ? parts[1] : 'Stock insuficiente para esta operación'
+        const err = new Error('INSUFFICIENT_STOCK')
+        ;(err as unknown as Record<string, string>).detail = detail
+        throw err
+      }
+      throw error
+    }
+    return fetchMovimientos()
+  } catch (err: unknown) {
+    // Si la RPC no existe aún (SQL no ejecutado), fallback al insert directo
+    if (err instanceof Error && (err as unknown as Record<string, string>).code === '42883') {
+      console.warn('[JHIA-79] RPC registrar_movimiento_kardex no encontrada, usando insert directo como fallback')
+      const { error } = await dataClient.from('movimientos').insert({
+        tipo: m.tipo,
+        bloque: m.bloque,
+        torre: m.torre,
+        piso: m.piso,
+        posicion: m.posicion,
+        codigo: m.codigo.trim().toUpperCase(),
+        descripcion: m.descripcion,
+        un: m.un,
+        cantidad: m.cantidad,
+        f_vencimiento: m.fVencimiento || null,
+        turno: m.turno,
+        usuario_id: m.usuarioId,
+        usuario_nombre: m.usuarioNombre ?? null,
+        usuario_correo: m.usuarioCorreo ?? null,
+        proveedor: m.proveedor ? m.proveedor : null,
+      })
+      if (error) throw error
+      return fetchMovimientos()
+    }
+    throw err
+  }
 }
 
 export async function deleteMovimiento(id: string): Promise<Movimiento[]> {
@@ -288,58 +327,95 @@ export type TrasladoInput = {
 }
 
 export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[]> {
-  const codigo = t.codigo.trim().toUpperCase()
-  const base = {
-    codigo,
-    descripcion: t.descripcion,
-    un: t.un,
-    f_vencimiento: t.fVencimiento || null,
-    turno: t.turno,
-    usuario_id: t.usuarioId,
-    usuario_nombre: t.usuarioNombre ?? null,
-    usuario_correo: t.usuarioCorreo ?? null,
-    proveedor: t.proveedor ? t.proveedor : null,
+  // Usar RPC atómica con advisory locks en origen Y destino
+  try {
+    const { data, error } = await dataClient.rpc('registrar_traslado_kardex', {
+      p_codigo: t.codigo,
+      p_descripcion: t.descripcion,
+      p_un: t.un,
+      p_cantidad: t.cantidad,
+      p_orig_bloque: t.origen.bloque,
+      p_orig_torre: t.origen.torre,
+      p_orig_piso: t.origen.piso,
+      p_orig_pos: t.origen.posicion,
+      p_dest_bloque: t.destino.bloque,
+      p_dest_torre: t.destino.torre,
+      p_dest_piso: t.destino.piso,
+      p_dest_pos: t.destino.posicion,
+      p_turno: t.turno,
+      p_usuario_id: t.usuarioId,
+      p_usuario_nombre: t.usuarioNombre ?? null,
+      p_usuario_correo: t.usuarioCorreo ?? null,
+      p_f_vencimiento: t.fVencimiento || null,
+      p_proveedor: t.proveedor ? t.proveedor : null,
+      p_cantidad_ajuste: t.cantidadAjuste ?? 0,
+    })
+    // Stock insuficiente en origen
+    if (error) {
+      const msg = error.message || ''
+      if (msg.includes('INSUFFICIENT_STOCK')) {
+        const parts = msg.split('|')
+        const detail = parts.length > 1 ? parts[1] : 'Stock insuficiente en origen para este traslado'
+        const err = new Error('INSUFFICIENT_STOCK')
+        ;(err as unknown as Record<string, string>).detail = detail
+        throw err
+      }
+      throw error
+    }
+    return fetchMovimientos()
+  } catch (err: unknown) {
+    // Fallback si la RPC no existe aún
+    if (err instanceof Error && (err as unknown as Record<string, string>).code === '42883') {
+      console.warn('[JHIA-79] RPC registrar_traslado_kardex no encontrada, usando insert directo como fallback')
+      const codigo = t.codigo.trim().toUpperCase()
+      const base = {
+        codigo,
+        descripcion: t.descripcion,
+        un: t.un,
+        f_vencimiento: t.fVencimiento || null,
+        turno: t.turno,
+        usuario_id: t.usuarioId,
+        usuario_nombre: t.usuarioNombre ?? null,
+        usuario_correo: t.usuarioCorreo ?? null,
+        proveedor: t.proveedor ? t.proveedor : null,
+      }
+      const ajuste = (t.cantidadAjuste ?? 0) !== 0
+        ? [{
+            ...base,
+            tipo: (t.cantidadAjuste ?? 0) > 0 ? 'ingreso' as const : 'salida' as const,
+            bloque: t.origen.bloque,
+            torre: t.origen.torre,
+            piso: t.origen.piso,
+            posicion: t.origen.posicion,
+            cantidad: Math.abs(t.cantidadAjuste!),
+          }]
+        : []
+      const { error } = await dataClient.from('movimientos').insert([
+        ...ajuste,
+        {
+          ...base,
+          tipo: 'salida',
+          bloque: t.origen.bloque,
+          torre: t.origen.torre,
+          piso: t.origen.piso,
+          posicion: t.origen.posicion,
+          cantidad: t.cantidad,
+        },
+        {
+          ...base,
+          tipo: 'traslado',
+          bloque: t.destino.bloque,
+          torre: t.destino.torre,
+          piso: t.destino.piso,
+          posicion: t.destino.posicion,
+          cantidad: t.cantidad,
+        },
+      ])
+      if (error) throw error
+      return fetchMovimientos()
+    }
+    throw err
   }
-
-  // Ajuste automático en origen para corregir diferencias entre stock registrado y realidad:
-  //  - Si qty > stock: ajuste positivo (ingreso) para cubrir lo que falta
-  //  - Si qty < stock: ajuste negativo (salida) para retirar lo que sobra
-  // En ambos casos, el stock del origen queda en 0 después del traslado.
-  const ajuste = (t.cantidadAjuste ?? 0) !== 0
-    ? [{
-        ...base,
-        tipo: (t.cantidadAjuste ?? 0) > 0 ? 'ingreso' as const : 'salida' as const,
-        bloque: t.origen.bloque,
-        torre: t.origen.torre,
-        piso: t.origen.piso,
-        posicion: t.origen.posicion,
-        cantidad: Math.abs(t.cantidadAjuste!),
-      }]
-    : []
-
-  const { error } = await dataClient.from('movimientos').insert([
-    ...ajuste,
-    {
-      ...base,
-      tipo: 'salida',
-      bloque: t.origen.bloque,
-      torre: t.origen.torre,
-      piso: t.origen.piso,
-      posicion: t.origen.posicion,
-      cantidad: t.cantidad,
-    },
-    {
-      ...base,
-      tipo: 'traslado',
-      bloque: t.destino.bloque,
-      torre: t.destino.torre,
-      piso: t.destino.piso,
-      posicion: t.destino.posicion,
-      cantidad: t.cantidad,
-    },
-  ])
-  if (error) throw error
-  return fetchMovimientos()
 }
 
 /**

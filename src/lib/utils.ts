@@ -87,5 +87,14 @@ export function fmtUbicacion(bloque: string, torre: string, piso: string, posici
 // ── Error handling ──────────────────────────────────────
 /** Extrae mensaje de error legible desde unknown */
 export function extractError(err: unknown): string {
+  if (err instanceof Error && err.message === 'INSUFFICIENT_STOCK') {
+    const detail = (err as unknown as Record<string, string>).detail
+    return detail || 'Stock insuficiente para esta operación. Otro usuario pudo haber hecho un movimiento mientras tú operabas.'
+  }
   return err instanceof Error ? err.message : 'Error desconocido'
+}
+
+/** Detecta si un error es de stock insuficiente (race condition capturada por la RPC) */
+export function isInsufficientStockError(err: unknown): boolean {
+  return err instanceof Error && err.message === 'INSUFFICIENT_STOCK'
 }

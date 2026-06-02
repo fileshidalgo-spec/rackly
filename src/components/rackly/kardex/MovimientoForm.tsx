@@ -21,6 +21,7 @@ import {
   isExpired,
   isExpiringSoon,
   extractError,
+  isInsufficientStockError,
   impactoStock,
 } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -217,8 +218,15 @@ function IngresoForm({
         await doInsert(parseFloat(cantidad))
       }
     } catch (err: unknown) {
-      const message = extractError(err)
-      toast.error('Error al dar salida', { description: message })
+      if (isInsufficientStockError(err)) {
+        toast.error('Stock insuficiente', {
+          description: 'Otro usuario pudo haber modificado el stock mientras tú operabas.',
+          duration: 6000,
+        })
+      } else {
+        const message = extractError(err)
+        toast.error('Error al dar salida', { description: message })
+      }
     } finally {
       setSalidaBusy(null)
     }
@@ -576,6 +584,7 @@ function SalidaForm({
     setMassBusy(true)
     let totalProcessed = 0
     let totalErrors = 0
+    let stockErrors = 0
     try {
       for (const key of selected) {
         const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === key)
@@ -597,14 +606,16 @@ function SalidaForm({
             proveedor: loc.proveedor,
           })
           totalProcessed++
-        } catch {
+        } catch (err) {
+          if (isInsufficientStockError(err)) stockErrors++
           totalErrors++
         }
       }
       if (totalErrors > 0) {
-        toast.warning(`Salida completada con ${totalErrors} error${totalErrors > 1 ? 'es' : ''}`, {
-          description: `${totalProcessed} de ${selected.size} ubicaciones procesadas correctamente`,
-        })
+        const desc = stockErrors > 0
+          ? `${totalProcessed} de ${selected.size} correctas. ${stockErrors} fallaron por stock insuficiente (otro usuario modificó el stock).`
+          : `${totalProcessed} de ${selected.size} ubicaciones procesadas correctamente`
+        toast.warning(`Salida completada con ${totalErrors} error${totalErrors > 1 ? 'es' : ''}`, { description: desc, duration: 8000 })
       } else {
         toast.success(`Salida registrada en ${totalProcessed} ubicacion${totalProcessed > 1 ? 'es' : ''}`)
       }
@@ -770,8 +781,17 @@ function SalidaForm({
       setQtyMap({})
       onCreated(result)
     } catch (err: unknown) {
-      const message = extractError(err)
-      toast.error('Error al registrar salida', { description: message })
+      if (isInsufficientStockError(err)) {
+        toast.error('Stock insuficiente', {
+          description: 'Otro usuario pudo haber modificado el stock mientras tú operabas. Los datos se han actualizado.',
+          duration: 6000,
+        })
+        setConfirmState(null)
+        refreshLocations() // refrescar datos reales
+      } else {
+        const message = extractError(err)
+        toast.error('Error al registrar salida', { description: message })
+      }
     } finally {
       setBusy(false)
     }

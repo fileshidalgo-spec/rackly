@@ -47,7 +47,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { Loader2, ArrowRightLeft, PackageSearch, AlertTriangle, ArrowUpFromLine, Package, MapPin, TriangleAlert, CheckCircle2 } from 'lucide-react'
-import { formatDate, isExpired, isExpiringSoon } from '@/lib/utils'
+import { formatDate, isExpired, isExpiringSoon, extractError, isInsufficientStockError } from '@/lib/utils'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 type LocStock = {
@@ -190,8 +190,14 @@ export function TrasladoTab() {
       const updated = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
       setDestinoOcupado(updated)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
-      toast.error('Error al dar salida', { description: message })
+      if (isInsufficientStockError(err)) {
+        toast.error('Stock insuficiente', {
+          description: 'Otro usuario pudo haber modificado el stock mientras tú operabas. Los datos se han actualizado.',
+          duration: 6000,
+        })
+      } else {
+        toast.error('Error al dar salida', { description: extractError(err) })
+      }
     } finally {
       setSalidaBusy(null)
     }
@@ -242,8 +248,14 @@ export function TrasladoTab() {
       setMovs(result)
       resetForm()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
-      toast.error('Error al trasladar', { description: message })
+      if (isInsufficientStockError(err)) {
+        toast.error('Stock insuficiente en origen', {
+          description: 'Otro usuario pudo haber modificado el stock mientras tú operabas. Los datos se han actualizado.',
+          duration: 6000,
+        })
+      } else {
+        toast.error('Error al trasladar', { description: extractError(err) })
+      }
     } finally {
       setBusy(false)
       setConfirm(false)

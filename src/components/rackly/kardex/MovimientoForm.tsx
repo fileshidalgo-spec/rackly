@@ -532,6 +532,99 @@ function SalidaForm({
   const searchCodeRef = useRef(searchCode)
   searchCodeRef.current = searchCode
 
+  // ─── Selección múltiple ───
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [massConfirmOpen, setMassConfirmOpen] = useState(false)
+
+  function toggleSelect(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+  function toggleSelectAll() {
+    if (selected.size === locations.length) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(locations.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`)))
+    }
+  }
+
+  // Reset selección al cambiar búsqueda
+  useEffect(() => {
+    setSelected(new Set())
+  }, [searchCode])
+
+  // Reset selección y cantidades al refrescar ubicaciones
+  useEffect(() => {
+    setSelected(new Set())
+    setQtyMap({})
+  }, [locations])
+
+  // ─── Salida en masa ───
+  const [massBusy, setMassBusy] = useState(false)
+
+  function openMassConfirm() {
+    if (selected.size === 0) {
+      toast.error('Selecciona al menos una ubicación')
+      return
+    }
+    setMassConfirmOpen(true)
+  }
+
+  async function doMassSalida() {
+    setMassBusy(true)
+    let totalProcessed = 0
+    let totalErrors = 0
+    try {
+      for (const key of selected) {
+        const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === key)
+        if (!loc) continue
+        const qtyVal = qtyMap[key] || ''
+        const qtyNum = qtyVal ? parseFloat(qtyVal) : loc.stock
+        if (isNaN(qtyNum) || qtyNum <= 0) {
+          totalErrors++
+          continue
+        }
+        try {
+          await addMovimiento({
+            tipo: 'salida',
+            bloque: loc.bloque, torre: loc.torre, piso: loc.piso, posicion: loc.posicion,
+            codigo: loc.codigo, descripcion: loc.descripcion, un: loc.un,
+            cantidad: Math.min(qtyNum, loc.stock),
+            fVencimiento: loc.fVencimiento ?? '', turno,
+            usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+            proveedor: loc.proveedor,
+          })
+          totalProcessed++
+        } catch {
+          totalErrors++
+        }
+      }
+      if (totalErrors > 0) {
+        toast.warning(`Salida completada con ${totalErrors} error${totalErrors > 1 ? 'es' : ''}`, {
+          description: `${totalProcessed} de ${selected.size} ubicaciones procesadas correctamente`,
+        })
+      } else {
+        toast.success(`Salida registrada en ${totalProcessed} ubicacion${totalProcessed > 1 ? 'es' : ''}`)
+      }
+      setMassConfirmOpen(false)
+      setSelected(new Set())
+      setQtyMap({})
+      setSearchCode('')
+      onCreated([])
+    } catch (err: unknown) {
+      const message = extractError(err)
+      toast.error('Error en salida masiva', { description: message })
+    } finally {
+      setMassBusy(false)
+    }
+  }
+
+  const allSelected = locations.length > 0 && selected.size === locations.length
+
   // Función central para refrescar las ubicaciones
   const refreshLocations = useCallback(async () => {
     const code = searchCodeRef.current.trim()
@@ -726,6 +819,37 @@ function SalidaForm({
         </div>
       )}
 
+      {/* Barra de selección masiva */}
+      {locations.length > 0 && !loading && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            variant={allSelected ? 'default' : 'outline'}
+            onClick={toggleSelectAll}
+            className="h-9 text-xs gap-1.5"
+          >
+            <Checkbox checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected} className="h-3.5 w-3.5 pointer-events-none" />
+            {allSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+          </Button>
+          {selected.size > 0 && (
+            <>
+              <Badge variant="secondary" className="text-xs font-medium">
+                {selected.size} de {locations.length} seleccionada{selected.size > 1 ? 's' : ''}
+              </Badge>
+              <Button
+                size="sm"
+                onClick={openMassConfirm}
+                disabled={busy || massBusy}
+                className="h-9 text-xs gap-1.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-semibold ml-auto"
+              >
+                <ArrowUpFromLine className="h-3.5 w-3.5" />
+                Salida masiva ({selected.size})
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Lista de ubicaciones — Tarjetas en móvil, tabla en desktop */}
       {locations.length > 0 && !loading && (
         <>
@@ -733,15 +857,27 @@ function SalidaForm({
           <div className="md:hidden space-y-3">
             {locations.map((loc) => {
               const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+              const isSelected = selected.has(key)
               return (
                 <div
                   key={key}
-                  className="rounded-lg border bg-card p-3 space-y-2 shadow-sm"
+                  onClick={() => toggleSelect(key)}
+                  className={`rounded-lg border p-3 space-y-2 shadow-sm cursor-pointer transition-all ${
+                    isSelected
+                      ? 'border-red-400 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-300 dark:ring-red-700'
+                      : 'border bg-card'
+                  }`}
                 >
-                  {/* Ubicación */}
-                  <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                    <MapPin className="h-3.5 w-3.5" />
-                    <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
+                  {/* Checkbox + Ubicación */}
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={isSelected}
+                      className="h-4 w-4 pointer-events-none"
+                    />
+                    <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                      <MapPin className="h-3.5 w-3.5" />
+                      <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
+                    </div>
                   </div>
 
                   {/* Stock */}
@@ -774,7 +910,7 @@ function SalidaForm({
                   </div>
 
                   {/* Cantidad + Acciones */}
-                  <div className="flex gap-2 pt-1">
+                  <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
                     <Input
                       type="number"
                       step="any"
@@ -788,7 +924,7 @@ function SalidaForm({
                     <Button
                       size="sm"
                       onClick={() => handleSalidaParcial(key)}
-                      disabled={busy}
+                      disabled={busy || massBusy}
                       className="h-9 text-xs bg-red-600 hover:bg-red-700 text-white"
                     >
                       Salida
@@ -797,7 +933,7 @@ function SalidaForm({
                       size="sm"
                       variant="outline"
                       onClick={() => handleRetirarTodo(key)}
-                      disabled={busy}
+                      disabled={busy || massBusy}
                       className="h-9 text-xs"
                     >
                       Todo
@@ -813,6 +949,13 @@ function SalidaForm({
             <Table className="min-w-[800px]">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10 text-center">
+                    <Checkbox
+                      checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected}
+                      onCheckedChange={toggleSelectAll}
+                      className="h-4 w-4 mx-auto"
+                    />
+                  </TableHead>
                   <TableHead className="w-16 text-center">Bloque</TableHead>
                   <TableHead className="w-16 text-center">Torre</TableHead>
                   <TableHead className="w-16 text-center">Piso</TableHead>
@@ -827,8 +970,16 @@ function SalidaForm({
               <TableBody>
                 {locations.map((loc) => {
                   const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+                  const isSelected = selected.has(key)
                   return (
-                    <TableRow key={key}>
+                    <TableRow
+                      key={key}
+                      onClick={() => toggleSelect(key)}
+                      className={`cursor-pointer transition-colors ${isSelected ? 'bg-red-50 dark:bg-red-950/20' : ''}`}
+                    >
+                      <TableCell className="text-center">
+                        <Checkbox checked={isSelected} className="h-4 w-4 mx-auto pointer-events-none" />
+                      </TableCell>
                       <TableCell className="text-center font-medium">{loc.bloque}</TableCell>
                       <TableCell className="text-center font-medium">{loc.torre}</TableCell>
                       <TableCell className="text-center font-medium">{loc.piso}</TableCell>
@@ -850,7 +1001,7 @@ function SalidaForm({
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <Input
                           type="number"
                           step="any"
@@ -862,12 +1013,12 @@ function SalidaForm({
                           className="h-9 text-sm"
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-2">
                           <Button
                             size="sm"
                             onClick={() => handleSalidaParcial(key)}
-                            disabled={busy}
+                            disabled={busy || massBusy}
                             className="flex-1 h-9 text-xs bg-red-600 hover:bg-red-700 text-white"
                           >
                             Salida
@@ -876,7 +1027,7 @@ function SalidaForm({
                             size="sm"
                             variant="outline"
                             onClick={() => handleRetirarTodo(key)}
-                            disabled={busy}
+                            disabled={busy || massBusy}
                             className="flex-1 h-9 text-xs"
                           >
                             Todo
@@ -973,6 +1124,110 @@ function SalidaForm({
                 <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Procesando...</>
               ) : (
                 'Sí, confirmar'
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ═══ DIÁLOGO DE CONFIRMACIÓN — Salida Masiva ═══ */}
+      <AlertDialog open={massConfirmOpen} onOpenChange={(open) => { if (!open) setMassConfirmOpen(false) }}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+          {/* Header con gradiente rojo */}
+          <div className="bg-gradient-to-r from-red-600 to-red-700 px-4 sm:px-6 py-5 text-white shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+                <ArrowUpFromLine className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+                  Confirmar Salida Masiva
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-red-100 text-sm mt-0.5">
+                  Se registrará salida en {selected.size} ubicacion{selected.size > 1 ? 'es' : ''}
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+
+          {/* Contenido scrolleable con resumen */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            {/* Info del producto */}
+            <div className="px-4 sm:px-6 pt-4 pb-2">
+              <div className="rounded-lg bg-muted/50 p-3 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Código:</span>
+                  <span className="font-mono font-bold">{searchCode}</span>
+                </div>
+                {productoDesc && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Descripción:</span>
+                    <span className="font-medium truncate max-w-[200px]">{productoDesc}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Turno:</span>
+                  <span className="font-medium">{turno}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Separador */}
+            <div className="px-4 sm:px-6 py-2">
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Ubicaciones seleccionadas</span>
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+              </div>
+            </div>
+
+            {/* Lista de ubicaciones */}
+            <div className="px-4 sm:px-6 pb-4 space-y-2">
+              {locations.filter((l) => selected.has(`${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`)).map((loc) => {
+                const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+                const qtyVal = qtyMap[key] || ''
+                const qtyNum = qtyVal ? parseFloat(qtyVal) : loc.stock
+                return (
+                  <div key={key} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <MapPin className="h-4 w-4 text-red-600 dark:text-red-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          B-{loc.bloque} / T-{loc.torre} / P-{loc.piso} / Pos {loc.posicion}
+                        </p>
+                        <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                          <span>Stock: <b className="text-slate-700 dark:text-slate-300">{loc.stock} {loc.un}</b></span>
+                          <span className="text-red-600 font-semibold">→ Retirar: {isNaN(qtyNum) ? loc.stock : Math.min(qtyNum, loc.stock)} {loc.un}</span>
+                          {loc.fVencimiento && <span>Venc: {loc.fVencimiento}</span>}
+                          {loc.proveedor && <span>Prov: {loc.proveedor}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Botones */}
+          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 shrink-0">
+            <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium" disabled={massBusy}>
+              Cancelar
+            </AlertDialogCancel>
+            <Button
+              onClick={(e) => { e.preventDefault(); doMassSalida() }}
+              disabled={massBusy}
+              className="flex-1 h-11 rounded-lg text-sm font-bold bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white shadow-md shadow-red-600/20 gap-2"
+            >
+              {massBusy ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Procesando...</>
+              ) : (
+                <>
+                  <ArrowUpFromLine className="h-4 w-4" />
+                  Confirmar Salida ({selected.size})
+                </>
               )}
             </Button>
           </AlertDialogFooter>

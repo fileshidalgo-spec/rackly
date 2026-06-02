@@ -174,3 +174,21 @@ Stage Summary:
 - Commit: 265d06e, Tag: JHIA-76
 - Deploy automático via GitHub Actions a Cloudflare Pages
 - Eliminar columna solo visible para rol admin
+---
+Task ID: JHIA-77
+Agent: Main Agent
+Task: Kardex Racks - Salida en móvil sin piso, vencimiento, proveedor visible
+
+Work Log:
+- Diagnosticado: SalidaForm en MovimientoForm.tsx usaba hidden sm:table-cell (Piso), hidden md:table-cell (Vencimiento), hidden lg:table-cell (Proveedor)
+- En móvil, las 3 columnas estaban ocultas → usuario no veía piso, fecha de vencimiento ni proveedor
+- Aplicado mismo patrón dual-layout de JHIA-76: tarjetas en móvil (md:hidden) + tabla completa en desktop (hidden md:block)
+- Tarjetas móviles muestran: ubicación (B/T/P/Pos), stock, vencimiento, proveedor, input cantidad + botones Salida/Todo
+- Tabla desktop: removidos todos los hidden sm/md/lg:table-cell, todas las columnas siempre visibles
+- Build exitoso (solo error pre-existente en examples/websocket/frontend.tsx)
+- Commit d134d5d, tag JHIA-77, push exitoso a origin/main
+
+Stage Summary:
+- Archivo modificado: src/components/rackly/kardex/MovimientoForm.tsx (163 insertions, 81 deletions)
+- En móvil ahora se ven: piso, vencimiento y proveedor en cada ubicación de Salida
+- Deploy automático via Cloudflare Pages

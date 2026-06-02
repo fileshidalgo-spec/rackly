@@ -557,11 +557,9 @@ function SalidaForm({
     setSelected(new Set())
   }, [searchCode])
 
-  // Reset selección y cantidades al refrescar ubicaciones
-  useEffect(() => {
-    setSelected(new Set())
-    setQtyMap({})
-  }, [locations])
+  // NOTA: NO resetear selección cuando locations se refresca (polling).
+  // Las selecciones se mantienen mientras el searchCode no cambie.
+  // Solo se limpian manualmente al cambiar búsqueda o al completar una salida.
 
   // ─── Salida en masa ───
   const [massBusy, setMassBusy] = useState(false)
@@ -672,6 +670,15 @@ function SalidaForm({
         if (a.fVencimiento) return -1
         if (b.fVencimiento) return 1
         return 0
+      })
+      // Limpiar selecciones de ubicaciones que ya no tienen stock
+      const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`))
+      setSelected((prev) => {
+        const cleaned = new Set<string>()
+        for (const k of prev) {
+          if (newKeys.has(k)) cleaned.add(k)
+        }
+        return cleaned.size === prev.size ? prev : cleaned
       })
       setLocations(results)
       setProductoDesc(desc)

@@ -21,6 +21,7 @@ import {
 } from '@/lib/piso/api'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
+import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -265,6 +266,9 @@ export function PisoSectoresTab() {
 
   useEffect(() => { mountedRef.current = true; loadSectores(); loadPosiciones(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadPosiciones, loadBloques])
   useEffect(() => { if (sectorFilter !== 'all') loadPosiciones() }, [sectorFilter, loadPosiciones])
+
+  // Realtime: auto-refresh positions when piso_movimientos changes (8s polling + Supabase Realtime)
+  usePisoRealtime(loadPosiciones)
 
   // Filtrar catalogo para autocomplete
   function getFilteredCatalogo(prefix: 'ing' | 'dev', idx: number) {

@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { stockPisoGlobal, type StockPisoItem } from '@/lib/piso/api'
 import { findCatalogoByCodigo, fetchCatalogo, isCatalogoLoaded } from '@/lib/rackly/catalogo'
+import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -16,27 +17,33 @@ export function PisoStockTab() {
   const [loading, setLoading] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
 
+  const mountedRef = useRef(true)
+
   const loadStock = useCallback(async () => {
     setLoading(true)
     try {
       if (!isCatalogoLoaded()) await fetchCatalogo().catch(() => {})
       const data = await stockPisoGlobal()
-      setItems(data)
-      setLastRefresh(new Date())
+      if (mountedRef.current) {
+        setItems(data)
+        setLastRefresh(new Date())
+      }
     } catch (err) {
       console.error('Error cargando stock Piso:', err)
     } finally {
-      setLoading(false)
+      if (mountedRef.current) setLoading(false)
     }
   }, [])
 
-  useEffect(() => { loadStock() }, [loadStock])
-
-  // Auto-refresh every 30s
   useEffect(() => {
-    const t = setInterval(loadStock, 30000)
-    return () => clearInterval(t)
+    mountedRef.current = true
+    loadStock()
+    return () => { mountedRef.current = false }
   }, [loadStock])
+
+  // Realtime: auto-refresh when piso_movimientos changes (8s polling + Supabase Realtime)
+  // Replaces the old 30s polling with instant updates
+  usePisoRealtime(loadStock)
 
   // Get Big Magic stock for the search term
   const bmItem = query.trim() ? findCatalogoByCodigo(query.trim()) : null

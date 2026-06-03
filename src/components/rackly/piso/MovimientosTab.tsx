@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { listarMovimientos, eliminarMovimiento, type Sector } from '@/lib/piso/api'
+import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
@@ -94,15 +95,29 @@ export function MovimientosTab() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; op: number; tipo: string } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
 
+  // Refresh function for realtime + polling
+  const refreshMovimientos = useCallback(async () => {
+    try {
+      const data = await listarMovimientos()
+      if (mountedRef.current) setMovimientos(data)
+    } catch {
+      if (mountedRef.current) setMovimientos([])
+    } finally {
+      if (mountedRef.current) setLoading(false)
+    }
+  }, [])
+
+  const mountedRef = useRef(true)
+
   // Load all movements on mount
   useEffect(() => {
-    listarMovimientos()
-      .then(setMovimientos)
-      .catch(() => {
-        setMovimientos([])
-      })
-      .finally(() => setLoading(false))
-  }, [])
+    mountedRef.current = true
+    refreshMovimientos()
+    return () => { mountedRef.current = false }
+  }, [refreshMovimientos])
+
+  // Realtime: auto-refresh when piso_movimientos changes (8s polling + Supabase Realtime)
+  usePisoRealtime(refreshMovimientos)
 
   // Extract unique users from loaded data
   const usuariosUnicos = useMemo(() => {

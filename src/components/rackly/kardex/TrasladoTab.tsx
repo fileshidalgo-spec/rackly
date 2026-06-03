@@ -331,7 +331,108 @@ export function TrasladoTab() {
             <p className="text-sm font-semibold">1. Selecciona ubicación de origen:</p>
             <p className="text-xs text-muted-foreground">y elige el tipo de traslado</p>
           </div>
-          <div className="overflow-x-auto rounded-xl border border-slate-200/60">
+          {/* ── Mobile: Cards con TODA la info visible ── */}
+          <div className="sm:hidden space-y-3">
+            {locations.map((loc) => {
+              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+              const isSelected = selectedOrigin === key
+              return (
+                <div
+                  key={key}
+                  onClick={() => {
+                    setSelectedOrigin(key)
+                    setTrasladoTotal(true)
+                    setQty(String(loc.stock))
+                    setStep(2)
+                  }}
+                  className={`rounded-xl border-2 p-3 space-y-2.5 cursor-pointer transition-all duration-200 ${
+                    isSelected
+                      ? 'border-blue-500 bg-blue-50/60 dark:bg-blue-950/30 shadow-md shadow-blue-500/10'
+                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 hover:border-blue-300 dark:hover:border-blue-700/50 hover:shadow-sm'
+                  }`}
+                >
+                  {/* Fila 1: Ubicación completa + Stock */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <MapPin className="h-3.5 w-3.5 text-blue-500" />
+                      <span className="font-mono font-bold text-sm text-slate-800 dark:text-slate-200">
+                        B{loc.bloque} · T{loc.torre} · P{loc.piso} · Pos {loc.posicion}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-muted-foreground bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded font-medium">{loc.un}</span>
+                      <span className="font-bold text-base text-slate-800 dark:text-slate-100">{loc.stock}</span>
+                    </div>
+                  </div>
+
+                  {/* Fila 2: Vencimiento + Proveedor */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {loc.fVencimiento ? (
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                        isExpired(loc.fVencimiento)
+                          ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800'
+                          : isExpiringSoon(loc.fVencimiento, 15)
+                            ? 'bg-orange-50 text-orange-600 border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800'
+                            : isExpiringSoon(loc.fVencimiento, 30)
+                              ? 'bg-sky-50 text-sky-600 border-sky-200 dark:bg-sky-950/40 dark:text-sky-400 dark:border-sky-800'
+                              : 'bg-slate-50 text-muted-foreground border-slate-200 dark:bg-slate-800 dark:border-slate-600'
+                      }`}>
+                        Venc: {formatDate(loc.fVencimiento)}
+                      </span>
+                    ) : null}
+                    {loc.proveedor ? (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800">
+                        {loc.proveedor}
+                      </span>
+                    ) : null}
+                    {!loc.fVencimiento && !loc.proveedor && (
+                      <span className="text-[10px] text-slate-400">Sin vencimiento · Sin proveedor</span>
+                    )}
+                  </div>
+
+                  {/* Botones de acción */}
+                  {isSelected ? (
+                    <div className="flex items-center justify-center gap-1.5 pt-1 text-xs font-bold text-blue-700 dark:text-blue-400">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span>{trasladoTotal ? 'Traslado Total' : 'Traslado Parcial'}</span>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 pt-0.5">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSelectedOrigin(key)
+                          setTrasladoTotal(true)
+                          setQty(String(loc.stock))
+                          setStep(2)
+                        }}
+                        className="flex-1 h-9 flex items-center justify-center gap-1.5 rounded-lg text-xs font-bold border-2 border-emerald-200 text-emerald-700 bg-emerald-50/50 hover:bg-emerald-100 active:bg-emerald-200 dark:border-emerald-700 dark:text-emerald-400 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50 transition-colors"
+                      >
+                        <Package className="h-3 w-3" />
+                        Traslado Total
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSelectedOrigin(key)
+                          setTrasladoTotal(false)
+                          setQty('')
+                          setStep(2)
+                        }}
+                        className="flex-1 h-9 flex items-center justify-center gap-1.5 rounded-lg text-xs font-bold border-2 border-sky-200 text-sky-700 bg-sky-50/50 hover:bg-sky-100 active:bg-sky-200 dark:border-sky-700 dark:text-sky-400 dark:bg-sky-950/30 dark:hover:bg-sky-950/50 transition-colors"
+                      >
+                        <ArrowUpFromLine className="h-3 w-3" />
+                        Traslado Parcial
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ── Desktop: Tabla con scroll horizontal ── */}
+          <div className="hidden sm:block overflow-x-auto rounded-xl border border-slate-200/60">
             <Table className="min-w-[700px]">
               <TableHeader>
                 <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">

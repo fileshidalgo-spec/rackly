@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dialog'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
+import { extractError } from '@/lib/utils'
 import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
   Layers3, BoxSelect, X, Plus, Trash2, RefreshCw, Package,
@@ -565,7 +566,7 @@ export function PisoSectoresTab() {
       }
       // Reload positions grid
       await loadPosiciones()
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
+    } catch (err: unknown) { toast.error('Error al registrar ingreso', { description: extractError(err) }) } finally { setBusy(false) }
   }
 
   async function doSalida() {
@@ -595,7 +596,7 @@ export function PisoSectoresTab() {
         setDetail({ ...detail, stock }); setMode('view')
       }
       await loadPosiciones()
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
+    } catch (err: unknown) { toast.error('Error al registrar salida', { description: extractError(err) }) } finally { setBusy(false) }
   }
 
   async function doTraslado() {
@@ -650,7 +651,7 @@ export function PisoSectoresTab() {
       toast.success(parts.join(' · '))
       setTrConfirmOpen(false)
       if (mountedRef.current) { setDetail(null); setTrDestPos(null); loadPosiciones() }
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
+    } catch (err: unknown) { toast.error('Error al trasladar', { description: extractError(err) }) } finally { setBusy(false) }
   }
 
   async function doDevolucion() {
@@ -681,7 +682,7 @@ export function PisoSectoresTab() {
         setDevRows([{ ...EMPTY_ROW }])
       }
       await loadPosiciones()
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusy(false) }
+    } catch (err: unknown) { toast.error('Error al registrar devolución', { description: extractError(err) }) } finally { setBusy(false) }
   }
 
   // ═══ SALIDA EN MASA ═══
@@ -774,7 +775,7 @@ export function PisoSectoresTab() {
       setMassSelected(new Set())
       setMassMode(false)
       await loadPosiciones()
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setMassBusy(false) }
+    } catch (err: unknown) { toast.error('Error en salida masiva', { description: extractError(err) }) } finally { setMassBusy(false) }
   }
 
   // Toggle nivel seleccionado en salida en masa (empty = todos)
@@ -815,7 +816,7 @@ export function PisoSectoresTab() {
       }))
       const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Sectores Piso'); XLSX.writeFile(wb, `RACKLY_SectoresPiso_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusyExport(false) }
+    } catch (err: unknown) { toast.error('Error al exportar', { description: extractError(err) }) } finally { setBusyExport(false) }
   }
 
   // ─── Fecha de vencimiento sub-component ───

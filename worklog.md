@@ -232,3 +232,27 @@ Stage Summary:
 - 170 insertions, 20 deletions
 - Deploy automático via GitHub Actions
 - PENDIENTE: Ejecutar rackly_hardening.sql en Supabase (opcional pero recomendado)
+---
+Task ID: JHIA-80
+Agent: Main Agent
+Task: Agregar polling/realtime automatico para todas las pestañas de Piso
+
+Work Log:
+- Created save point tag savepoint-pre-JHIA-80 at commit 7ebd8eb
+- Created new hook src/hooks/usePisoRealtime.tsx
+  - Watches piso_movimientos and piso_movimiento_detalles tables via Supabase Realtime
+  - 8s polling fallback (uses POLLING_INTERVAL constant)
+  - 500ms debounce on realtime events
+  - Uses ref pattern to avoid stale closures
+- Updated MovimientosTab.tsx (piso): added usePisoRealtime hook + mountedRef for safe unmount
+- Updated PisoStockTab.tsx: replaced 30s setInterval polling with usePisoRealtime (now 8s + realtime)
+- Updated PisoSectoresTab.tsx: added usePisoRealtime hook for auto-refresh of position grid
+- Build verified: compiled successfully
+- Committed as f7de845, tagged JHIA-80, pushed to GitHub
+- Cloudflare deployed successfully (HTTP 200)
+
+Stage Summary:
+- All 3 Piso tabs now have automatic real-time updates (8s polling + Supabase Realtime WebSocket)
+- Before: Piso Movimientos had no polling, Piso Stock had 30s polling, Piso Sectores had no polling
+- After: All 3 tabs refresh within 8s (or instantly via WebSocket) when any user makes a movement
+- Files changed: usePisoRealtime.tsx (new), MovimientosTab.tsx, PisoStockTab.tsx, PisoSectoresTab.tsx

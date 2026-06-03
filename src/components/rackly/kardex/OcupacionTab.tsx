@@ -16,7 +16,7 @@ import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from 
 import { supabase } from '@/lib/supabase/client'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
-import { requiereProveedor } from '@/lib/utils'
+import { requiereProveedor, extractError, isInsufficientStockError } from '@/lib/utils'
 import { PROVEEDORES_FILM } from '@/lib/rackly/constants'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
 import {
@@ -271,7 +271,12 @@ export function OcupacionTab() {
       })
       toast.success('Salida registrada')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
+    } catch (err: unknown) {
+      if (isInsufficientStockError(err)) {
+        toast.error('Stock insuficiente', { description: 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 6000 })
+        refreshDetail(); refreshData()
+      } else { toast.error('Error al registrar salida', { description: extractError(err) }) }
+    } finally { setActionBusy(false) }
   }
 
   async function doTransferir() {
@@ -301,7 +306,12 @@ export function OcupacionTab() {
       await trasladarMovimiento(input)
       toast.success('Traslado registrado')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
+    } catch (err: unknown) {
+      if (isInsufficientStockError(err)) {
+        toast.error('Stock insuficiente en origen', { description: 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 6000 })
+        refreshDetail(); refreshData()
+      } else { toast.error('Error al trasladar', { description: extractError(err) }) }
+    } finally { setActionBusy(false) }
   }
 
   async function handleExport() {

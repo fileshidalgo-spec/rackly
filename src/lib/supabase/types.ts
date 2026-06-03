@@ -430,6 +430,60 @@ export type Database = {
           usuario_primer_nombre: string
         }[]
       }
+      // JHIA-79: RPC atómica con advisory lock para movimientos individuales
+      registrar_movimiento_kardex: {
+        Args: {
+          p_tipo: string
+          p_bloque: string
+          p_torre: string
+          p_piso: string
+          p_posicion: string
+          p_codigo: string
+          p_descripcion: string
+          p_un: string
+          p_cantidad: number
+          p_f_vencimiento: string | null
+          p_turno: string
+          p_usuario_id: string
+          p_usuario_nombre: string | null
+          p_usuario_correo: string | null
+          p_proveedor: string | null
+        }
+        Returns: {
+          success: boolean
+          previous_stock: number
+          new_stock: number
+        }
+      }
+      // JHIA-79: RPC atómica con double advisory lock para traslados
+      registrar_traslado_kardex: {
+        Args: {
+          p_codigo: string
+          p_descripcion: string
+          p_un: string
+          p_cantidad: number
+          p_orig_bloque: string
+          p_orig_torre: string
+          p_orig_piso: string
+          p_orig_pos: string
+          p_dest_bloque: string
+          p_dest_torre: string
+          p_dest_piso: string
+          p_dest_pos: string
+          p_turno: string
+          p_usuario_id: string
+          p_usuario_nombre: string | null
+          p_usuario_correo: string | null
+          p_f_vencimiento: string | null
+          p_proveedor: string | null
+          p_cantidad_ajuste: number
+        }
+        Returns: {
+          success: boolean
+          origin_previous_stock: number
+          origin_new_stock: number
+        }
+      }
     }
     Enums: {
       app_role: 'admin' | 'operario'

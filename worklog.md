@@ -212,3 +212,23 @@ Stage Summary:
 - Fix: Remove useEffect, add smart cleanup in refreshLocations instead
 - File modified: src/components/rackly/kardex/MovimientoForm.tsx (12 insertions, 5 deletions)
 - Deploy: Cloudflare Pages auto-deploy from GitHub Actions
+---
+Task ID: JHIA-hardening
+Agent: Main Agent
+Task: Hardcodeo para 1 mes sin intervención
+
+Work Log:
+- Auditoría completa de 11 puntos de fragilidad (concurrencia, tipos, realtime, errores, etc.)
+- types.ts: Agregadas definiciones TypeScript para las 2 RPCs nuevas (34 parámetros validados en compile-time)
+- OcupacionTab.tsx: doSalida y doTransferir ahora manejan INSUFFICIENT_STOCK con toast específico + auto-refresco
+- PisoSectoresTab.tsx: 6 catch blocks cambiados de genéricos a mensajes descriptivos usando extractError()
+- useMovimientosRealtime.tsx: Channel name estable, ref para onChange, debounce 500ms, logging, reconnection handler
+- ErrorBoundary.tsx: Modo por sección con prop 'name' — un tab que falla no mata los demás
+- rackly_hardening.sql: Fix volatilidad RPCs (STABLE → VOLATILE)
+- Build exitoso, commit 6fe6c0b, tag JHIA-hardening, push a origin/main
+
+Stage Summary:
+- 6 archivos modificados: types.ts, OcupacionTab.tsx, PisoSectoresTab.tsx, useMovimientosRealtime.tsx, ErrorBoundary.tsx, rackly_hardening.sql
+- 170 insertions, 20 deletions
+- Deploy automático via GitHub Actions
+- PENDIENTE: Ejecutar rackly_hardening.sql en Supabase (opcional pero recomendado)

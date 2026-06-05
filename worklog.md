@@ -256,3 +256,26 @@ Stage Summary:
 - Before: Piso Movimientos had no polling, Piso Stock had 30s polling, Piso Sectores had no polling
 - After: All 3 tabs refresh within 8s (or instantly via WebSocket) when any user makes a movement
 - Files changed: usePisoRealtime.tsx (new), MovimientosTab.tsx, PisoStockTab.tsx, PisoSectoresTab.tsx
+---
+Task ID: JHIA-82
+Agent: main
+Task: Fix Kardex Piso refresh cada 8 segundos - polling condicional
+
+Work Log:
+- Diagnosticado: usePisoRealtime hacia polling incondicional cada 8s incluso con WebSocket conectado
+- PisoSectoresTab llamaba setLoading(true) en cada refresh → skeleton shimmer cada 8s
+- PisoStockTab llamaba setLoading(true) en cada refresh → parpadeo del botón
+- Fix 1: usePisoRealtime - polling SOLO cuando WebSocket NO está conectado
+  - Al montar: refresh inicial + intenta conectar WebSocket
+  - Si WebSocket conectado: DETIENE el polling
+  - Si WebSocket caído: REANUDA polling como respaldo
+- Fix 2: PisoStockTab - modo silent (no setLoading) para refresh en background
+- Fix 3: PisoSectoresTab - modo silent (no setLoading) para refresh en background
+- Push exitoso a GitHub: commit 16761b2
+- Netlify deploy automático desde GitHub
+
+Stage Summary:
+- Commit: 16761b2 "fix(JHIA-82): Piso polling condicional"
+- 3 archivos modificados: usePisoRealtime.tsx, PisoStockTab.tsx, PisoSectoresTab.tsx
+- Deploy: https://rackly.pages.dev (Netlify auto-deploy)
+- El polling ahora es solo respaldo; el WebSocket maneja las actualizaciones instantáneas

@@ -1,0 +1,1875 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manual de Usuario - Rackly</title>
+<style>
+  @page {
+    size: 210mm 297mm;
+    margin: 20mm;
+  }
+
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 11pt;
+    line-height: 1.8;
+    color: #2d2d2d;
+    background: #ffffff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ==================== COVER PAGE ==================== */
+  .cover-page {
+    width: 210mm;
+    height: 297mm;
+    background: linear-gradient(135deg, #0a2e4d 0%, #0d4a3a 40%, #155e4a 70%, #0a3d5c 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: #ffffff;
+    text-align: center;
+    page-break-after: always;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .cover-page::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(ellipse at 30% 20%, rgba(255,255,255,0.05) 0%, transparent 50%),
+                radial-gradient(ellipse at 70% 80%, rgba(255,255,255,0.03) 0%, transparent 50%);
+  }
+
+  .cover-content {
+    position: relative;
+    z-index: 1;
+    padding: 0 40mm;
+  }
+
+  .cover-logo {
+    font-size: 42pt;
+    font-weight: 800;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    margin-bottom: 8mm;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.3);
+  }
+
+  .cover-subtitle {
+    font-size: 16pt;
+    font-weight: 400;
+    color: #a8d8c8;
+    margin-bottom: 30mm;
+    letter-spacing: 2px;
+  }
+
+  .cover-line {
+    width: 60mm;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #4ecdc4, transparent);
+    margin: 0 auto 12mm;
+  }
+
+  .cover-info {
+    font-size: 11pt;
+    color: #c8e6dc;
+    line-height: 2.2;
+  }
+
+  .cover-info strong {
+    color: #ffffff;
+    font-weight: 600;
+  }
+
+  .cover-badge {
+    display: inline-block;
+    margin-top: 15mm;
+    padding: 4mm 12mm;
+    border: 1px solid rgba(78, 205, 196, 0.4);
+    border-radius: 6mm;
+    font-size: 9pt;
+    color: #4ecdc4;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+
+  /* ==================== TABLE OF CONTENTS ==================== */
+  .toc-page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 20mm;
+    page-break-after: always;
+  }
+
+  .toc-title {
+    font-size: 20pt;
+    font-weight: 700;
+    color: #0a2e4d;
+    text-align: center;
+    margin-bottom: 12mm;
+    padding-bottom: 4mm;
+    border-bottom: 3px solid #0a2e4d;
+  }
+
+  .toc-section {
+    margin-bottom: 3mm;
+  }
+
+  .toc-section-title {
+    font-size: 11.5pt;
+    font-weight: 700;
+    color: #0a2e4d;
+    padding: 3mm 0 1mm;
+  }
+
+  .toc-subsection {
+    font-size: 10.5pt;
+    font-weight: 400;
+    color: #444;
+    padding: 1.5mm 0 1.5mm 10mm;
+    display: flex;
+    justify-content: space-between;
+    border-bottom: 1px dotted #ccc;
+  }
+
+  .toc-subsection-title {
+    flex: 1;
+  }
+
+  .toc-page-num {
+    color: #0a2e4d;
+    font-weight: 600;
+    min-width: 10mm;
+    text-align: right;
+  }
+
+  /* ==================== CONTENT PAGES ==================== */
+  .content-page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 20mm;
+    page-break-after: always;
+    position: relative;
+  }
+
+  .content-page::after {
+    content: counter(page);
+    position: absolute;
+    bottom: 10mm;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 9pt;
+    color: #888;
+  }
+
+  /* ==================== SECTION HEADERS ==================== */
+  .section-header {
+    padding: 5mm 8mm;
+    margin: -2mm -2mm 6mm -2mm;
+    border-radius: 4px;
+    color: #ffffff;
+    font-size: 16pt;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    page-break-after: avoid;
+  }
+
+  .section-header-blue {
+    background: linear-gradient(135deg, #0a2e4d, #1a5276);
+  }
+
+  .section-header-green {
+    background: linear-gradient(135deg, #0d4a3a, #1a6e52);
+  }
+
+  .section-header-purple {
+    background: linear-gradient(135deg, #2c1654, #5b2c8e);
+  }
+
+  .section-header-teal {
+    background: linear-gradient(135deg, #006d6f, #0097a7);
+  }
+
+  .section-header-wine {
+    background: linear-gradient(135deg, #5c1a1a, #8e3b3b);
+  }
+
+  .subsection-header {
+    font-size: 13pt;
+    font-weight: 700;
+    color: #0a2e4d;
+    margin: 6mm 0 3mm;
+    padding-left: 4mm;
+    border-left: 4px solid #0a2e4d;
+    page-break-after: avoid;
+  }
+
+  .subsection-header-green {
+    color: #0d4a3a;
+    border-left-color: #0d4a3a;
+  }
+
+  .subsection-header-purple {
+    color: #2c1654;
+    border-left-color: #5b2c8e;
+  }
+
+  .sub-subsection-header {
+    font-size: 11.5pt;
+    font-weight: 600;
+    color: #333;
+    margin: 4mm 0 2mm;
+    padding: 1.5mm 4mm;
+    background-color: #f0f6fc;
+    border-radius: 3px;
+  }
+
+  /* ==================== PARAGRAPHS & TEXT ==================== */
+  p {
+    margin-bottom: 3mm;
+    text-align: justify;
+    widows: 2;
+    orphans: 2;
+  }
+
+  .indent {
+    text-indent: 12mm;
+  }
+
+  /* ==================== SCREENSHOT CONTAINERS ==================== */
+  .screenshot-container {
+    margin: 5mm auto;
+    max-width: 100%;
+    text-align: center;
+  }
+
+  .screenshot-container img {
+    max-width: 100%;
+    max-height: 140mm;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15), 0 1px 6px rgba(0,0,0,0.1);
+    border: 1px solid #e0e0e0;
+  }
+
+  .figure-caption {
+    font-size: 9.5pt;
+    color: #555;
+    text-align: center;
+    margin-top: 2mm;
+    font-style: italic;
+  }
+
+  /* ==================== ANNOTATIONS ==================== */
+  .annotation-legend {
+    margin: 4mm auto 5mm;
+    padding: 3mm 5mm;
+    background-color: #f8fafb;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    max-width: 160mm;
+  }
+
+  .annotation-legend-title {
+    font-size: 10pt;
+    font-weight: 700;
+    color: #333;
+    margin-bottom: 2mm;
+  }
+
+  .annotation-item {
+    display: flex;
+    align-items: center;
+    gap: 2.5mm;
+    padding: 1mm 0;
+    font-size: 10pt;
+    color: #444;
+  }
+
+  .annotation-circle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 7mm;
+    height: 7mm;
+    min-width: 7mm;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 8pt;
+    font-weight: 700;
+  }
+
+  .circle-red { background-color: #e74c3c; }
+  .circle-blue { background-color: #2980b9; }
+  .circle-green { background-color: #27ae60; }
+  .circle-orange { background-color: #e67e22; }
+  .circle-purple { background-color: #8e44ad; }
+  .circle-teal { background-color: #0097a7; }
+  .circle-wine { background-color: #c0392b; }
+  .circle-dark { background-color: #2c3e50; }
+  .circle-pink { background-color: #e91e63; }
+  .circle-amber { background-color: #f39c12; }
+  .circle-lime { background-color: #7cb342; }
+  .circle-indigo { background-color: #3f51b5; }
+
+  /* ==================== STEPS ==================== */
+  .steps-list {
+    margin: 4mm 0 5mm;
+    padding-left: 2mm;
+  }
+
+  .step-item {
+    display: flex;
+    gap: 3mm;
+    margin-bottom: 3mm;
+    align-items: flex-start;
+  }
+
+  .step-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 8mm;
+    height: 8mm;
+    min-width: 8mm;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 9pt;
+    font-weight: 700;
+    margin-top: 0.5mm;
+  }
+
+  .step-number-blue { background-color: #0a2e4d; }
+  .step-number-green { background-color: #0d4a3a; }
+  .step-number-purple { background-color: #5b2c8e; }
+  .step-number-teal { background-color: #006d6f; }
+  .step-number-wine { background-color: #8e3b3b; }
+
+  .step-text {
+    flex: 1;
+    font-size: 10.5pt;
+    line-height: 1.7;
+    color: #333;
+  }
+
+  /* ==================== CODE & FIELD NAMES ==================== */
+  code, .field-name {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 9.5pt;
+    background-color: #f1f5f9;
+    color: #334155;
+    padding: 0.8mm 2mm;
+    border-radius: 3px;
+    border: 1px solid #e2e8f0;
+  }
+
+  /* ==================== INFO BOXES ==================== */
+  .info-box {
+    padding: 4mm 5mm;
+    margin: 4mm 0;
+    border-radius: 6px;
+    border-left: 4px solid;
+    page-break-inside: avoid;
+  }
+
+  .info-box-blue {
+    background-color: #eff6ff;
+    border-left-color: #2980b9;
+  }
+
+  .info-box-green {
+    background-color: #ecfdf5;
+    border-left-color: #27ae60;
+  }
+
+  .info-box-amber {
+    background-color: #fffbeb;
+    border-left-color: #f59e0b;
+  }
+
+  .info-box-red {
+    background-color: #fef2f2;
+    border-left-color: #ef4444;
+  }
+
+  .info-box-purple {
+    background-color: #faf5ff;
+    border-left-color: #8b5cf6;
+  }
+
+  .info-box-title {
+    font-weight: 700;
+    font-size: 10pt;
+    margin-bottom: 1.5mm;
+    display: flex;
+    align-items: center;
+    gap: 2mm;
+  }
+
+  .info-box-blue .info-box-title { color: #1a5276; }
+  .info-box-green .info-box-title { color: #0d6b4e; }
+  .info-box-amber .info-box-title { color: #b45309; }
+  .info-box-red .info-box-title { color: #dc2626; }
+  .info-box-purple .info-box-title { color: #6d28d9; }
+
+  .info-box p {
+    font-size: 10pt;
+    margin-bottom: 1mm;
+  }
+
+  /* ==================== TABLES ==================== */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 4mm 0 5mm;
+    font-size: 10pt;
+  }
+
+  thead th {
+    background-color: #0a2e4d;
+    color: #ffffff;
+    padding: 3mm 4mm;
+    text-align: left;
+    font-weight: 600;
+    font-size: 9.5pt;
+  }
+
+  thead th.green-header {
+    background-color: #0d4a3a;
+  }
+
+  thead th.purple-header {
+    background-color: #5b2c8e;
+  }
+
+  tbody td {
+    padding: 2.5mm 4mm;
+    border-bottom: 1px solid #e5e7eb;
+    color: #333;
+  }
+
+  tbody tr:nth-child(even) {
+    background-color: #f9fafb;
+  }
+
+  /* ==================== REQUIREMENTS LIST ==================== */
+  .requirements-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3mm;
+    margin: 4mm 0;
+  }
+
+  .req-card {
+    background-color: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 6px;
+    padding: 3mm 4mm;
+    font-size: 10pt;
+    color: #1e3a5f;
+  }
+
+  .req-card-icon {
+    font-size: 14pt;
+    margin-bottom: 1mm;
+  }
+
+  .req-card-label {
+    font-weight: 600;
+    color: #0a2e4d;
+    margin-bottom: 0.5mm;
+  }
+
+  /* ==================== COLOR LEGEND ==================== */
+  .color-legend {
+    display: flex;
+    gap: 5mm;
+    flex-wrap: wrap;
+    margin: 3mm 0;
+  }
+
+  .color-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 2mm;
+    font-size: 10pt;
+    color: #444;
+  }
+
+  .color-swatch {
+    width: 8mm;
+    height: 8mm;
+    border-radius: 3px;
+    border: 1px solid #ccc;
+  }
+
+  /* ==================== TROUBLESHOOTING ==================== */
+  .troubleshoot-item {
+    margin: 4mm 0;
+    page-break-inside: avoid;
+  }
+
+  .troubleshoot-problem {
+    font-weight: 700;
+    color: #c0392b;
+    font-size: 10.5pt;
+    margin-bottom: 1.5mm;
+    padding: 2mm 4mm;
+    background-color: #fef2f2;
+    border-radius: 4px;
+    border-left: 3px solid #ef4444;
+  }
+
+  .troubleshoot-solution {
+    font-size: 10pt;
+    color: #333;
+    padding: 2mm 4mm;
+    background-color: #f0fdf4;
+    border-radius: 4px;
+    border-left: 3px solid #22c55e;
+  }
+
+  .troubleshoot-solution strong {
+    color: #166534;
+  }
+
+  /* ==================== FOOTER ==================== */
+  .page-footer {
+    position: absolute;
+    bottom: 8mm;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 8pt;
+    color: #aaa;
+  }
+
+  /* ==================== MISC ==================== */
+  .page-break {
+    page-break-before: always;
+  }
+
+  .no-break {
+    page-break-inside: avoid;
+  }
+
+  .highlight {
+    background-color: #fef9c3;
+    padding: 0.5mm 2mm;
+    border-radius: 2px;
+  }
+
+  .strong-text {
+    font-weight: 600;
+    color: #1a1a1a;
+  }
+
+  ul, ol {
+    margin: 2mm 0 4mm 8mm;
+    padding-left: 2mm;
+  }
+
+  li {
+    margin-bottom: 1.5mm;
+    font-size: 10.5pt;
+    color: #333;
+    line-height: 1.7;
+  }
+
+  .separator {
+    border: none;
+    border-top: 1px solid #e5e7eb;
+    margin: 5mm 0;
+  }
+
+  .apa-reference {
+    font-size: 10pt;
+    padding-left: 12mm;
+    text-indent: -12mm;
+    margin-bottom: 3mm;
+    color: #444;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- PORTADA / COVER PAGE                                          -->
+<!-- ============================================================ -->
+<div class="cover-page">
+  <div class="cover-content">
+    <div class="cover-logo">RACKLY</div>
+    <div class="cover-line"></div>
+    <div class="cover-subtitle">Sistema de Gestión de Almacenes</div>
+    <div class="cover-info">
+      <strong>Manual de Usuario</strong><br>
+      Versión 2.0<br>
+      Junio 2026
+    </div>
+    <div class="cover-line"></div>
+    <div class="cover-badge">Documento Confidencial</div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TABLA DE CONTENIDOS                                           -->
+<!-- ============================================================ -->
+<div class="toc-page">
+  <h1 class="toc-title">Tabla de Contenidos</h1>
+
+  <div class="toc-section">
+    <div class="toc-section-title">Sección 1: Introducción</div>
+  </div>
+
+  <div class="toc-section">
+    <div class="toc-section-title">Sección 2: Acceso al Sistema</div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">2.1 Inicio de Sesión</span>
+      <span class="toc-page-num">4</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">2.2 Registro de Nuevo Usuario</span>
+      <span class="toc-page-num">5</span>
+    </div>
+  </div>
+
+  <div class="toc-section">
+    <div class="toc-section-title">Sección 3: Kardex Racks</div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">3.1 Ingreso de Mercadería</span>
+      <span class="toc-page-num">6</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">3.2 Salida de Mercadería</span>
+      <span class="toc-page-num">8</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">3.3 Traslado</span>
+      <span class="toc-page-num">9</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">3.4 Devolución</span>
+      <span class="toc-page-num">10</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">3.5 Consulta de Stock</span>
+      <span class="toc-page-num">11</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">3.6 Ocupación (Mapa 3D)</span>
+      <span class="toc-page-num">12</span>
+    </div>
+  </div>
+
+  <div class="toc-section">
+    <div class="toc-section-title">Sección 4: Kardex Piso</div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">4.1 Vista General</span>
+      <span class="toc-page-num">13</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">4.2 Sectores</span>
+      <span class="toc-page-num">13</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">4.3 Stock Piso</span>
+      <span class="toc-page-num">15</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">4.4 Movimientos</span>
+      <span class="toc-page-num">16</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">4.5 Configuración</span>
+      <span class="toc-page-num">17</span>
+    </div>
+  </div>
+
+  <div class="toc-section">
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">Sección 5: Actualización en Tiempo Real</span>
+      <span class="toc-page-num">18</span>
+    </div>
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">Sección 6: Solución de Problemas</span>
+      <span class="toc-page-num">19</span>
+    </div>
+  </div>
+
+  <div class="toc-section">
+    <div class="toc-subsection">
+      <span class="toc-subsection-title">Referencias</span>
+      <span class="toc-page-num">20</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECCIÓN 1: INTRODUCCIÓN                                      -->
+<!-- ============================================================ -->
+<div class="content-page">
+  <h1 class="section-header section-header-blue">Sección 1: Introducción</h1>
+
+  <h2 style="font-size:12pt; font-weight:700; color:#0a2e4d; margin:4mm 0 3mm;">1.1 ¿Qué es Rackly?</h2>
+
+  <p class="indent">
+    Rackly es un sistema integral de gestión de almacenes diseñado para optimizar el control de inventario en entornos de almacenamiento que utilizan estructuras de racks y áreas de piso. La plataforma permite registrar, consultar y administrar las mercaderías almacenadas en posiciones específicas dentro de un almacén, brindando visibilidad completa sobre la ubicación, cantidad y fecha de vencimiento de cada producto.
+  </p>
+
+  <p class="indent">
+    El sistema se divide en dos módulos principales: <span class="strong-text">Kardex Racks</span>, que gestiona las posiciones verticales de almacenamiento organizadas por bloques, torres, pisos y posiciones; y <span class="strong-text">Kardex Piso</span>, que administra las áreas de almacenamiento a nivel de suelo organizadas por sectores, columnas, subcolumnas, posiciones y niveles. Ambos módulos soportan operaciones de ingreso, salida, traslado y devolución de mercadería.
+  </p>
+
+  <h2 style="font-size:12pt; font-weight:700; color:#0a2e4d; margin:4mm 0 3mm;">1.2 Propósito del Manual</h2>
+
+  <p class="indent">
+    Este manual tiene como propósito proporcionar una guía detallada y completa para que los usuarios del sistema Rackly puedan utilizar todas las funcionalidades disponibles de manera eficiente. El documento está dirigido a operarios de almacén, supervisores y administradores del sistema que necesiten realizar operaciones de control de inventario.
+  </p>
+
+  <p class="indent">
+    El manual sigue el formato de la American Psychological Association en su séptima edición (APA 7), garantizando una presentación profesional y estandarizada de la información.
+  </p>
+
+  <h2 style="font-size:12pt; font-weight:700; color:#0a2e4d; margin:4mm 0 3mm;">1.3 Requisitos del Sistema</h2>
+
+  <p>
+    Para utilizar Rackly de manera óptima, se recomienda cumplir con los siguientes requisitos técnicos:
+  </p>
+
+  <div class="requirements-grid">
+    <div class="req-card">
+      <div class="req-card-label">📱 Dispositivo</div>
+      <p>Dispositivo móvil con pantalla de al menos 5 pulgadas (smartphone, tablet). Se recomienda el uso en dispositivos móviles por la interfaz optimizada.</p>
+    </div>
+    <div class="req-card">
+      <div class="req-card-label">🌐 Navegador</div>
+      <p>Navegador web moderno: Google Chrome, Mozilla Firefox, Safari o Microsoft Edge (versiones actualizadas).</p>
+    </div>
+    <div class="req-card">
+      <div class="req-card-label">📶 Conexión</div>
+      <p>Conexión a Internet estable (Wi-Fi o datos móviles 4G/5G). Mínimo 1 Mbps de velocidad de subida y bajada.</p>
+    </div>
+    <div class="req-card">
+      <div class="req-card-label">👤 Cuenta</div>
+      <p>Credenciales de acceso proporcionadas por el administrador del sistema o registro previo en la plataforma.</p>
+    </div>
+  </div>
+
+  <div class="info-box info-box-green">
+    <div class="info-box-title">✅ Recomendación</div>
+    <p>Se recomienda utilizar Rackly en un navegador móvil (Chrome para Android o Safari para iOS) para una experiencia óptima. La interfaz está diseñada con un enfoque mobile-first que prioriza la usabilidad en pantallas táctiles.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECCIÓN 2: ACCESO AL SISTEMA                                 -->
+<!-- ============================================================ -->
+<div class="content-page">
+  <h1 class="section-header section-header-green">Sección 2: Acceso al Sistema</h1>
+
+  <!-- 2.1 Inicio de Sesión -->
+  <h2 class="subsection-header subsection-header-green">2.1 Inicio de Sesión</h2>
+
+  <p>
+    El inicio de sesión es el primer paso para acceder a las funcionalidades de Rackly. A continuación se describe el proceso paso a paso utilizando la pantalla de login del sistema.
+  </p>
+
+  <div class="screenshot-container no-break">
+    <img src="screenshots/01_login.png" alt="Pantalla de inicio de sesión de Rackly mostrando campos de correo electrónico y contraseña">
+    <p class="figure-caption"><em>Figura 1.</em> Pantalla de inicio de sesión de Rackly.</p>
+  </div>
+
+  <div class="annotation-legend no-break">
+    <div class="annotation-legend-title">Leyenda de anotaciones — Figura 1</div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-red">①</span>
+      Campo de correo electrónico: ingrese su dirección de correo registrada.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-blue">②</span>
+      Campo de contraseña: ingrese su contraseña de acceso.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-green">③</span>
+      Botón «Ver contraseña»: alternar la visibilidad de la contraseña ingresada.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-orange">④</span>
+      Botón «Ingresar»: inicia la sesión con las credenciales proporcionadas.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-purple">⑤</span>
+      Pestaña «Registrarse»: accede al formulario de creación de cuenta nueva.
+    </div>
+  </div>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#0d4a3a; margin:3mm 0 2mm;">Procedimiento de inicio de sesión</h3>
+
+  <div class="steps-list">
+    <div class="step-item">
+      <span class="step-number step-number-green">1</span>
+      <span class="step-text">Abra el navegador web en su dispositivo y diríjase a la URL proporcionada por el administrador del sistema.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-green">2</span>
+      <span class="step-text">En el campo <code>Correo electrónico</code> ①, ingrese la dirección de correo con la que fue registrado en el sistema.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-green">3</span>
+      <span class="step-text">En el campo <code>Contraseña</code> ②, ingrese su contraseña. Si necesita verificar los caracteres ingresados, pulse el botón <code>Ver contraseña</code> ③ para mostrar la contraseña en texto plano.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-green">4</span>
+      <span class="step-text">Pulse el botón <code>Ingresar</code> ④. El sistema validará sus credenciales y lo redirigirá al panel principal de Rackly.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-green">5</span>
+      <span class="step-text">Si las credenciales son incorrectas, aparecerá un mensaje de error indicando que el correo o la contraseña no son válidos. Verifique los datos e intente nuevamente.</span>
+    </div>
+  </div>
+
+  <div class="info-box info-box-amber">
+    <div class="info-box-title">⚠️ Nota importante</div>
+    <p>Si olvida su contraseña, comuníquese con el administrador del sistema para restablecerla. Rackly no permite la recuperación automática de contraseñas por motivos de seguridad.</p>
+  </div>
+</div>
+
+<!-- 2.2 Registro -->
+<div class="content-page">
+  <h1 class="section-header section-header-green">Sección 2: Acceso al Sistema (continuación)</h1>
+
+  <h2 class="subsection-header subsection-header-green">2.2 Registro de Nuevo Usuario</h2>
+
+  <p>
+    Si es la primera vez que utiliza el sistema, deberá crear una cuenta de usuario. El proceso de registro le permite obtener credenciales de acceso individuales.
+  </p>
+
+  <div class="screenshot-container no-break">
+    <img src="screenshots/02_registro.png" alt="Pantalla de registro de nuevo usuario en Rackly">
+    <p class="figure-caption"><em>Figura 2.</em> Pantalla de registro de nuevo usuario en Rackly.</p>
+  </div>
+
+  <div class="annotation-legend no-break">
+    <div class="annotation-legend-title">Leyenda de anotaciones — Figura 2</div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-red">①</span>
+      Campo de nombre completo: ingrese su nombre y apellido.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-blue">②</span>
+      Campo de correo electrónico: ingrese una dirección de correo válida.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-green">③</span>
+      Campo de contraseña: cree una contraseña segura (mínimo 8 caracteres).
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-orange">④</span>
+      Confirmación de contraseña: repita la contraseña para validar.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-purple">⑤</span>
+      Botón «Registrarse»: envía el formulario y crea la cuenta.
+    </div>
+  </div>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#0d4a3a; margin:3mm 0 2mm;">Procedimiento de registro</h3>
+
+  <div class="steps-list">
+    <div class="step-item">
+      <span class="step-number step-number-green">1</span>
+      <span class="step-text">En la pantalla de inicio de sesión, pulse la pestaña <code>Registrarse</code> ⑤ para acceder al formulario de registro.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-green">2</span>
+      <span class="step-text">Complete el campo <code>Nombre completo</code> ① con su nombre y apellido. Este dato se utilizará para identificarlo dentro del sistema.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-green">3</span>
+      <span class="step-text">En el campo <code>Correo electrónico</code> ②, ingrese una dirección de correo válida que será su identificador único de usuario.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-green">4</span>
+      <span class="step-text">En el campo <code>Contraseña</code> ③, cree una contraseña que contenga al menos 8 caracteres. Se recomienda combinar letras mayúsculas, minúsculas, números y caracteres especiales.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-green">5</span>
+      <span class="step-text">En el campo <code>Confirmar contraseña</code> ④, repita exactamente la misma contraseña para verificar que no haya errores de tipeo.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-green">6</span>
+      <span class="step-text">Pulse el botón <code>Registrarse</code> ⑤. Si todos los campos son válidos, el sistema creará su cuenta y lo redirigirá automáticamente a la pantalla de inicio de sesión.</span>
+    </div>
+  </div>
+
+  <div class="info-box info-box-blue">
+    <div class="info-box-title">ℹ️ Información</div>
+    <p>Si el correo electrónico ya se encuentra registrado en el sistema, se mostrará un mensaje de error. En ese caso, intente iniciar sesión directamente o solicite asistencia al administrador.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECCIÓN 3: KARDEX RACKS                                      -->
+<!-- ============================================================ -->
+<div class="content-page">
+  <h1 class="section-header section-header-purple">Sección 3: Kardex Racks</h1>
+
+  <p>
+    El módulo Kardex Racks es el componente central de Rackly para la gestión de mercadería almacenada en estructuras verticales de racks. Este módulo permite realizar operaciones de ingreso, salida, traslado, devolución, consulta de stock y visualización de la ocupación del almacén.
+  </p>
+
+  <!-- 3.1 Ingreso de Mercadería -->
+  <h2 class="subsection-header subsection-header-purple">3.1 Ingreso de Mercadería</h2>
+
+  <p>
+    La función de ingreso de mercadería permite registrar la entrada de productos al almacén, asignándolos a una posición específica dentro de la estructura de racks. Cada rack se identifica mediante cuatro coordenadas: <span class="strong-text">Bloque</span>, <span class="strong-text">Torre</span>, <span class="strong-text">Piso</span> y <span class="strong-text">Posición</span>.
+  </p>
+
+  <div class="screenshot-container no-break">
+    <img src="screenshots/03_ingreso_racks.png" alt="Formulario de ingreso de mercadería en Kardex Racks de Rackly">
+    <p class="figure-caption"><em>Figura 3.</em> Formulario de ingreso de mercadería en la pestaña Kardex Racks.</p>
+  </div>
+
+  <div class="annotation-legend no-break">
+    <div class="annotation-legend-title">Leyenda de anotaciones — Figura 3</div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-red">①</span>
+      Selector de Turno: permite elegir entre «Día» y «Noche» para identificar el turno de trabajo.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-blue">②</span>
+      Selector de Bloque: selecciona el bloque dentro del almacén.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-green">③</span>
+      Selector de Torre: define la torre vertical dentro del bloque seleccionado.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-orange">④</span>
+      Selector de Piso: indica el nivel de altura dentro de la torre.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-purple">⑤</span>
+      Selector de Posición: determina la posición horizontal dentro del piso.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-teal">⑥</span>
+      Campo de búsqueda de producto: permite buscar por código o descripción del producto.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-wine">⑦</span>
+      Campo de Cantidad: ingrese la cantidad de unidades a registrar.
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-dark">⑧</span>
+      Selector de Fecha de Vencimiento y casilla «Sin vencimiento».
+    </div>
+    <div class="annotation-item">
+      <span class="annotation-circle circle-pink">⑨</span>
+      Botón «Registrar Ingreso»: ejecuta el registro del ingreso.
+    </div>
+  </div>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:4mm 0 2mm;">Procedimiento de ingreso de mercadería</h3>
+
+  <div class="steps-list">
+    <div class="step-item">
+      <span class="step-number step-number-purple">1</span>
+      <span class="step-text">Acceda al módulo <code>Kardex Racks</code> desde el menú principal del sistema.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">2</span>
+      <span class="step-text">Seleccione el <code>Turno</code> ① correspondiente a su jornada laboral: «Día» o «Noche». Esta información queda registrada en el movimiento.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">3</span>
+      <span class="step-text">Seleccione el <code>Bloque</code> ② donde desea almacenar la mercadería. Utilice el menú desplegable para ver las opciones disponibles.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">4</span>
+      <span class="step-text">Seleccione la <code>Torre</code> ③ dentro del bloque elegido. Cada bloque puede contener múltiples torres.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">5</span>
+      <span class="step-text">Seleccione el <code>Piso</code> ④ que indica la altura dentro de la torre. Los pisos se numeran generalmente de abajo hacia arriba.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">6</span>
+      <span class="step-text">Seleccione la <code>Posición</code> ⑤ dentro del piso. Esta coordenada determina el lugar exacto en el nivel seleccionado.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">7</span>
+      <span class="step-text">En el campo de <code>Búsqueda de producto</code> ⑥, ingrese el código o la descripción del producto. El sistema mostrará sugerencias automáticas mientras escribe. Seleccione el producto deseado de la lista.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">8</span>
+      <span class="step-text">En el campo <code>Cantidad</code> ⑦, ingrese el número de unidades que serán almacenadas en la posición seleccionada.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">9</span>
+      <span class="step-text">Configure la <code>Fecha de vencimiento</code> ⑧ si el producto lo requiere. Utilice el selector de fecha para elegir la fecha correspondiente. Si el producto no tiene fecha de vencimiento, marque la casilla <code>Sin vencimiento</code>.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">10</span>
+      <span class="step-text">Verifique que todos los campos estén correctamente completados y pulse el botón <code>Registrar Ingreso</code> ⑨. El sistema procesará el registro y mostrará un mensaje de confirmación.</span>
+    </div>
+  </div>
+
+  <div class="info-box info-box-purple">
+    <div class="info-box-title">📋 Validación del sistema</div>
+    <p>El sistema verificará automáticamente que la posición seleccionada tenga capacidad disponible y que los datos ingresados sean válidos antes de procesar el ingreso. En caso de error, se mostrará un mensaje descriptivo.</p>
+  </div>
+</div>
+
+<!-- 3.2 Salida de Mercadería -->
+<div class="content-page">
+  <h1 class="section-header section-header-purple">Sección 3: Kardex Racks (continuación)</h1>
+
+  <h2 class="subsection-header subsection-header-purple">3.2 Salida de Mercadería</h2>
+
+  <p>
+    La función de salida de mercadería permite registrar la extracción de productos del almacén. Esta operación reduce el stock disponible en la posición especificada y queda registrada en el historial de movimientos.
+  </p>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:3mm 0 2mm;">Interfaz de la pestaña Salida</h3>
+
+  <p>
+    Al seleccionar la pestaña <code>Salida</code> dentro de Kardex Racks, se despliega un formulario que permite buscar productos y registrar su extracción. La interfaz incluye los siguientes elementos principales:
+  </p>
+
+  <ul>
+    <li><span class="strong-text">Campo de búsqueda por código:</span> Permite ingresar el código del producto para localizarlo rápidamente en el sistema. A medida que se escribe, se muestran sugerencias de coincidencia.</li>
+    <li><span class="strong-text">Selector de ubicación:</span> Una vez seleccionado el producto, se muestran todas las posiciones donde existe stock del mismo, indicando la cantidad disponible en cada ubicación.</li>
+    <li><span class="strong-text">Campo de cantidad:</span> Permite especificar la cantidad de unidades a extraer. El sistema validará que no se supere el stock disponible.</li>
+    <li><span class="strong-text">Información de stock:</span> Cada posición listada muestra el stock actual, la fecha de vencimiento y el proveedor asociado al lote.</li>
+  </ul>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:4mm 0 2mm;">Salida masiva (múltiples posiciones)</h3>
+
+  <p>
+    El sistema soporta la salida masiva de mercadería, lo que permite extraer productos de múltiples posiciones simultáneamente. Para utilizar esta función:
+  </p>
+
+  <ul>
+    <li>Se muestran casillas de verificación (<code>checkboxes</code>) junto a cada posición con stock disponible.</li>
+    <li>Marque las casillas de las posiciones de las cuales desea extraer mercadería.</li>
+    <li>Especifique la cantidad a extraer de cada posición seleccionada.</li>
+    <li>Pulse el botón de confirmación para procesar todas las salidas de forma conjunta.</li>
+  </ul>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:4mm 0 2mm;">Procedimiento de salida de mercadería</h3>
+
+  <div class="steps-list">
+    <div class="step-item">
+      <span class="step-number step-number-purple">1</span>
+      <span class="step-text">Acceda al módulo <code>Kardex Racks</code> y seleccione la pestaña <code>Salida</code>.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">2</span>
+      <span class="step-text">Seleccione el <code>Turno</code> correspondiente a su jornada laboral actual.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">3</span>
+      <span class="step-text">En el campo de búsqueda, ingrese el <code>código del producto</code> que desea extraer. Seleccione el producto de las sugerencias mostradas.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">4</span>
+      <span class="step-text">Revise la lista de <code>posiciones con stock</code> del producto. Cada entrada muestra la ubicación (Bloque/Torre/Piso/Posición), la cantidad disponible, la fecha de vencimiento y el proveedor.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">5</span>
+      <span class="step-text">Para una salida individual, seleccione la posición deseada e ingrese la cantidad a extraer en el campo correspondiente.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">6</span>
+      <span class="step-text">Para una <code>salida masiva</code>, marque las casillas de verificación junto a las posiciones deseadas y especifique las cantidades para cada una.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">7</span>
+      <span class="step-text">Pulse el botón <code>Registrar Salida</code> para confirmar la operación. El sistema actualizará el stock en las posiciones afectadas y registrará el movimiento.</span>
+    </div>
+  </div>
+
+  <div class="info-box info-box-red">
+    <div class="info-box-title">🚫 Stock insuficiente</div>
+    <p>Si intenta extraer una cantidad mayor al stock disponible en una posición, el sistema mostrará el mensaje «Stock insuficiente» y no permitirá completar la operación. Verifique las cantidades e intente nuevamente.</p>
+  </div>
+</div>
+
+<!-- 3.3 Traslado -->
+<div class="content-page">
+  <h1 class="section-header section-header-purple">Sección 3: Kardex Racks (continuación)</h1>
+
+  <h2 class="subsection-header subsection-header-purple">3.3 Traslado</h2>
+
+  <p>
+    La función de traslado permite mover mercadería de una posición a otra dentro del almacén. Esta operación es útil para reorganizar el espacio de almacenamiento, consolidar productos o preparar pedidos. El sistema ofrece dos modalidades de traslado: <span class="strong-text">Total</span> (mover toda la cantidad) y <span class="strong-text">Parcial</span> (mover solo una parte del stock).
+  </p>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:3mm 0 2mm;">Vista de tarjetas móviles</h3>
+
+  <p>
+    En la pestaña <code>Traslado</code>, los productos y sus ubicaciones se presentan en formato de tarjetas adaptables a dispositivos móviles. Cada tarjeta muestra la siguiente información:
+  </p>
+
+  <div class="info-box info-box-purple">
+    <div class="info-box-title">📌 Contenido de cada tarjeta</div>
+    <p><span class="strong-text">Coordenadas (B/T/P/Pos):</span> Bloque, Torre, Piso y Posición de la ubicación actual.</p>
+    <p><span class="strong-text">Stock disponible:</span> Cantidad de unidades actualmente almacenadas.</p>
+    <p><span class="strong-text">Fecha de vencimiento:</span> Vencimiento del lote almacenado (si aplica).</p>
+    <p><span class="strong-text">Proveedor:</span> Nombre del proveedor del lote.</p>
+  </div>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:4mm 0 2mm;">Tipos de traslado</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Modalidad</th>
+        <th>Descripción</th>
+        <th>Uso recomendado</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>Traslado Total</code></td>
+        <td>Mueve toda la cantidad de mercadería de la posición de origen a la posición de destino. La posición de origen queda vacía.</td>
+        <td>Cuando se necesita vaciar completamente una posición.</td>
+      </tr>
+      <tr>
+        <td><code>Traslado Parcial</code></td>
+        <td>Mueve solo una parte de la mercadería. Se debe especificar la cantidad a trasladar. Ambas posiciones conservan stock.</td>
+        <td>Cuando se necesita redistribuir stock sin vaciar la posición.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:4mm 0 2mm;">Procedimiento de traslado</h3>
+
+  <div class="steps-list">
+    <div class="step-item">
+      <span class="step-number step-number-purple">1</span>
+      <span class="step-text">Acceda al módulo <code>Kardex Racks</code> y seleccione la pestaña <code>Traslado</code>.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">2</span>
+      <span class="step-text">Seleccione el <code>Turno</code> de trabajo actual.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">3</span>
+      <span class="step-text">Busque el producto que desea trasladar ingresando su código o descripción en el campo de búsqueda.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">4</span>
+      <span class="step-text">Revise las tarjetas que muestran las posiciones con stock del producto. Identifique la posición de <code>origen</code>.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">5</span>
+      <span class="step-text">Seleccione la posición de <code>destino</code> utilizando los selectores de Bloque, Torre, Piso y Posición.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">6</span>
+      <span class="step-text">Elija la modalidad de traslado: <code>Total</code> o <code>Parcial</code>. Si selecciona Parcial, ingrese la cantidad a trasladar.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">7</span>
+      <span class="step-text">Pulse el botón <code>Registrar Traslado</code> para confirmar la operación. El sistema actualizará el stock en ambas posiciones.</span>
+    </div>
+  </div>
+
+  <div class="info-box info-box-green">
+    <div class="info-box-title">✅ Confirmación visual</div>
+    <p>Después de un traslado exitoso, el sistema mostrará un resumen de la operación indicando la posición de origen, la posición de destino y las cantidades afectadas.</p>
+  </div>
+</div>
+
+<!-- 3.4 Devolución -->
+<div class="content-page">
+  <h1 class="section-header section-header-purple">Sección 3: Kardex Racks (continuación)</h1>
+
+  <h2 class="subsection-header subsection-header-purple">3.4 Devolución</h2>
+
+  <p>
+    La función de devolución permite registrar la reentrada de mercadería que fue previamente extraída del almacén mediante una operación de salida. Esta operación es común cuando se devuelven productos no utilizados, rechazados por control de calidad o cuando se cancela un despacho.
+  </p>
+
+  <p>
+    Al registrar una devolución, el sistema incrementa el stock en la posición especificada y crea un registro en el historial de movimientos con el tipo «Devolución». Es importante indicar correctamente la posición donde se devuelve la mercadería para mantener la integridad del inventario.
+  </p>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:4mm 0 2mm;">Procedimiento de devolución</h3>
+
+  <div class="steps-list">
+    <div class="step-item">
+      <span class="step-number step-number-purple">1</span>
+      <span class="step-text">Acceda al módulo <code>Kardex Racks</code> y seleccione la pestaña <code>Devolución</code>.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">2</span>
+      <span class="step-text">Seleccione el <code>Turno</code> correspondiente a su jornada laboral.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">3</span>
+      <span class="step-text">Ingrese el <code>código del producto</code> que desea devolver utilizando el campo de búsqueda. Seleccione el producto de la lista de sugerencias.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">4</span>
+      <span class="step-text">Seleccione la posición de destino donde se reingresará la mercadería mediante los selectores de Bloque, Torre, Piso y Posición.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">5</span>
+      <span class="step-text">Ingrese la <code>cantidad</code> de unidades que se están devolviendo.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">6</span>
+      <span class="step-text">Si el producto tiene fecha de vencimiento, configure la fecha correspondiente. Si no aplica, marque la casilla <code>Sin vencimiento</code>.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-purple">7</span>
+      <span class="step-text">Pulse el botón <code>Registrar Devolución</code> para confirmar. El sistema incrementará el stock y registrará la operación.</span>
+    </div>
+  </div>
+
+  <div class="info-box info-box-amber">
+    <div class="info-box-title">⚠️ Rastreo de devoluciones</div>
+    <p>Todas las devoluciones quedan registradas en el historial de movimientos con el identificador «Devolución». Esto permite mantener un registro completo y auditable de todas las operaciones realizadas en el sistema.</p>
+  </div>
+
+  <hr class="separator">
+
+  <!-- 3.5 Consulta de Stock -->
+  <h2 class="subsection-header subsection-header-purple">3.5 Consulta de Stock</h2>
+
+  <p>
+    La pestaña <code>Stock</code> dentro de Kardex Racks permite consultar el inventario actual de mercadería almacenada en las posiciones de racks. Esta funcionalidad es esencial para verificar la disponibilidad de productos, planificar reposiciones y realizar auditorías de inventario.
+  </p>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:3mm 0 2mm;">Opciones de búsqueda y filtrado</h3>
+
+  <p>
+    El módulo de consulta de stock ofrece las siguientes herramientas de búsqueda:
+  </p>
+
+  <ul>
+    <li><span class="strong-text">Búsqueda por código:</span> Ingrese el código exacto del producto para localizarlo rápidamente.</li>
+    <li><span class="strong-text">Búsqueda por descripción:</span> Ingrese parte de la descripción del producto para encontrar coincidencias parciales.</li>
+    <li><span class="strong-text">Filtros avanzados:</span> Filtre por bloque, torre, piso o posición para ver el contenido de áreas específicas del almacén.</li>
+  </ul>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:3mm 0 2mm;">Vista de tarjetas con indicadores de vencimiento</h3>
+
+  <p>
+    Los resultados de la consulta se presentan en formato de tarjetas adaptadas para dispositivos móviles. Cada tarjeta incluye:
+  </p>
+
+  <ul>
+    <li><span class="strong-text">Información del producto:</span> Código, descripción y ubicación completa (B/T/P/Pos).</li>
+    <li><span class="strong-text">Stock disponible:</span> Cantidad de unidades en la posición.</li>
+    <li><span class="strong-text">Badges de vencimiento:</span> Indicadores visuales de colores que alertan sobre la proximidad de la fecha de vencimiento del producto, siguiendo el sistema FEFO (First Expired, First Out).
+      <ul>
+        <li><span class="highlight" style="background-color:#fee2e2;">Rojo:</span> Producto vencido o próximo a vencer.</li>
+        <li><span class="highlight" style="background-color:#fef3c7;">Amarillo:</span> Producto con vencimiento intermedio.</li>
+        <li><span class="highlight" style="background-color:#dcfce7;">Verde:</span> Producto con vencimiento lejano o sin vencimiento.</li>
+      </ul>
+    </li>
+  </ul>
+
+  <div class="info-box info-box-blue">
+    <div class="info-box-title">ℹ️ Sistema FEFO</div>
+    <p>Rackly implementa la metodología FEFO (First Expired, First Out), que prioriza la salida de productos con fecha de vencimiento más cercana. Los badges de colores facilitan la identificación visual de productos que requieren atención prioritaria.</p>
+  </div>
+</div>
+
+<!-- 3.6 Ocupación -->
+<div class="content-page">
+  <h1 class="section-header section-header-purple">Sección 3: Kardex Racks (continuación)</h1>
+
+  <h2 class="subsection-header subsection-header-purple">3.6 Ocupación (Mapa 3D)</h2>
+
+  <p>
+    La pestaña <code>Ocupación</code> proporciona una vista visual del estado de ocupación del almacén. Esta funcionalidad presenta un mapa tridimensional de las posiciones de racks, permitiendo identificar de un vistazo qué posiciones están ocupadas, vacías o contienen múltiples productos.
+  </p>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:3mm 0 2mm;">Cuadrícula visual de ocupación</h3>
+
+  <p>
+    El mapa de ocupación muestra una cuadrícula interactiva donde cada celda representa una posición dentro de la estructura de racks. Las celdas se codifican con colores para indicar su estado:
+  </p>
+
+  <div class="color-legend">
+    <div class="color-legend-item">
+      <div class="color-swatch" style="background-color:#22c55e;"></div>
+      <span>Posición vacía (disponible)</span>
+    </div>
+    <div class="color-legend-item">
+      <div class="color-swatch" style="background-color:#3b82f6;"></div>
+      <span>Posición ocupada (un producto)</span>
+    </div>
+    <div class="color-legend-item">
+      <div class="color-swatch" style="background-color:#f59e0b;"></div>
+      <span>Posición con múltiples productos</span>
+    </div>
+  </div>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:4mm 0 2mm;">Interacción con el mapa</h3>
+
+  <p>
+    Al interactuar con las celdas del mapa de ocupación, se pueden realizar las siguientes acciones:
+  </p>
+
+  <ul>
+    <li><span class="strong-text">Toque simple:</span> Muestra un resumen del contenido de la posición seleccionada (producto, cantidad, vencimiento).</li>
+    <li><span class="strong-text">Navegación por niveles:</span> Utilice los controles para cambiar entre torres y pisos y visualizar diferentes secciones del almacén.</li>
+    <li><span class="strong-text">Vista general:</span> Acceda a una vista consolidada que muestra el porcentaje total de ocupación del almacén.</li>
+  </ul>
+
+  <div class="info-box info-box-green">
+    <div class="info-box-title">✅ Beneficios del mapa de ocupación</div>
+    <p>El mapa de ocupación permite a los supervisores planificar la distribución del espacio de almacenamiento de manera eficiente, identificar rápidamente posiciones disponibles para nuevos ingresos y detectar áreas con alta densidad de productos que podrían requerir reorganización.</p>
+  </div>
+
+  <hr class="separator">
+
+  <h3 style="font-size:11pt; font-weight:600; color:#5b2c8e; margin:3mm 0 2mm;">Resumen del módulo Kardex Racks</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Operación</th>
+        <th>Descripción</th>
+        <th>Impacto en stock</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>Ingreso</code></td>
+        <td>Registro de entrada de mercadería al almacén.</td>
+        <td style="color:#22c55e; font-weight:600;">Aumenta (+)</td>
+      </tr>
+      <tr>
+        <td><code>Salida</code></td>
+        <td>Extracción de mercadería del almacén.</td>
+        <td style="color:#ef4444; font-weight:600;">Disminuye (−)</td>
+      </tr>
+      <tr>
+        <td><code>Traslado</code></td>
+        <td>Movimiento entre posiciones.</td>
+        <td style="color:#f59e0b; font-weight:600;">Neutral (redistribuye)</td>
+      </tr>
+      <tr>
+        <td><code>Devolución</code></td>
+        <td>Reingreso de mercadería extraída.</td>
+        <td style="color:#22c55e; font-weight:600;">Aumenta (+)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECCIÓN 4: KARDEX PISO                                       -->
+<!-- ============================================================ -->
+<div class="content-page">
+  <h1 class="section-header section-header-teal">Sección 4: Kardex Piso</h1>
+
+  <p>
+    El módulo Kardex Piso gestiona las áreas de almacenamiento a nivel de suelo del almacén. A diferencia de Kardex Racks, que utiliza una estructura vertical de bloques, torres, pisos y posiciones, Kardex Piso organiza las áreas de almacenamiento mediante una jerarquía diferente adaptada a las necesidades del piso.
+  </p>
+
+  <!-- 4.1 Vista General -->
+  <h2 class="subsection-header" style="color:#006d6f; border-left-color:#0097a7;">4.1 Vista General</h2>
+
+  <p>
+    La estructura jerárquica de Kardex Piso se organiza de la siguiente manera:
+  </p>
+
+  <div class="info-box info-box-blue">
+    <div class="info-box-title">🏗️ Jerarquía de Kardex Piso</div>
+    <p><span class="strong-text">Sector → Columna → Subcolumna → Posición → Nivel</span></p>
+    <p>El <code>Sector</code> es la división principal del área de piso. Cada sector contiene columnas, que a su vez se subdividen en subcolumnas. Las posiciones definen el espacio horizontal y los niveles indican la altura de apilamiento.</p>
+  </div>
+
+  <p>
+    Kardex Piso funciona de manera independiente de Kardex Racks. Ambos módulos comparten la misma interfaz de usuario pero manejan estructuras de almacenamiento separadas, lo que permite una gestión diferenciada de mercadería en racks y en piso.
+  </p>
+
+  <!-- 4.2 Sectores -->
+  <h2 class="subsection-header" style="color:#006d6f; border-left-color:#0097a7;">4.2 Sectores</h2>
+
+  <p>
+    La pestaña <code>Sectores</code> es el punto de entrada principal de Kardex Piso. Muestra una cuadrícula visual de todos los sectores del almacén, donde cada sector se representa como una tarjeta que contiene sus posiciones internas.
+  </p>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:3mm 0 2mm;">Cuadrícula de sectores con tarjetas de posición</h3>
+
+  <p>
+    Al acceder a un sector específico, se despliegan las tarjetas de posición que contienen la siguiente información:
+  </p>
+
+  <ul>
+    <li><span class="strong-text">Coordenadas completas:</span> Columna, Subcolumna, Posición y Nivel.</li>
+    <li><span class="strong-text">Estado de ocupación:</span> Indicador visual que muestra si la posición está vacía u ocupada.</li>
+    <li><span class="strong-text">Detalle de stock:</span> Al tocar una tarjeta, se muestra el contenido detallado: producto, cantidad, fecha de vencimiento y proveedor.</li>
+  </ul>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:4mm 0 2mm;">Operaciones disponibles en Sectores</h3>
+
+  <p>
+    Desde la vista de sectores se pueden realizar las siguientes operaciones:
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="green-header">Operación</th>
+        <th class="green-header">Descripción</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>Ingreso</code></td>
+        <td>Registrar entrada de mercadería en una posición de piso específica.</td>
+      </tr>
+      <tr>
+        <td><code>Salida</code></td>
+        <td>Extraer mercadería de una posición de piso. Soporta salida masiva.</td>
+      </tr>
+      <tr>
+        <td><code>Traslado</code></td>
+        <td>Mover mercadería entre posiciones de piso (total o parcial).</td>
+      </tr>
+      <tr>
+        <td><code>Devolución</code></td>
+        <td>Reingresar mercadería previamente extraída de una posición de piso.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:4mm 0 2mm;">Salida masiva en Sectores</h3>
+
+  <p>
+    La funcionalidad de salida masiva permite seleccionar múltiples posiciones simultáneamente para extraer mercadería en una sola operación. Para activar esta función:
+  </p>
+
+  <div class="steps-list">
+    <div class="step-item">
+      <span class="step-number step-number-teal">1</span>
+      <span class="step-text">Acceda al sector deseado y visualice las tarjetas de posición.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-teal">2</span>
+      <span class="step-text">Active el modo de selección múltiple pulsando el botón de <code>Selección múltiple</code>.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-teal">3</span>
+      <span class="step-text">Marque las casillas de verificación (<code>checkboxes</code>) de las posiciones de las cuales desea extraer mercadería.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-teal">4</span>
+      <span class="step-text">Especifique la cantidad a extraer de cada posición seleccionada.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-teal">5</span>
+      <span class="step-text">Confirme la operación pulsando el botón de <code>Registrar Salida Masiva</code>.</span>
+    </div>
+  </div>
+</div>
+
+<!-- 4.3 Stock Piso -->
+<div class="content-page">
+  <h1 class="section-header section-header-teal">Sección 4: Kardex Piso (continuación)</h1>
+
+  <h2 class="subsection-header" style="color:#006d6f; border-left-color:#0097a7;">4.3 Stock Piso</h2>
+
+  <p>
+    La pestaña <code>Stock Piso</code> proporciona una vista global del inventario almacenado en todas las posiciones de piso. Permite consultar, buscar y filtrar la mercadería almacenada en las áreas de suelo del almacén.
+  </p>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:3mm 0 2mm;">Herramientas de búsqueda</h3>
+
+  <ul>
+    <li><span class="strong-text">Búsqueda por código:</span> Ingrese el código del producto para localizarlo rápidamente en todas las posiciones de piso.</li>
+    <li><span class="strong-text">Búsqueda por descripción:</span> Ingrese parte de la descripción del producto para encontrar coincidencias.</li>
+    <li><span class="strong-text">Filtros por sector:</span> Filtre los resultados para mostrar solo las posiciones de un sector específico.</li>
+  </ul>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:3mm 0 2mm;">Badges de vencimiento (FEFO)</h3>
+
+  <p>
+    Al igual que en Kardex Racks, Stock Piso implementa indicadores visuales de vencimiento basados en la metodología FEFO (First Expired, First Out):
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="green-header">Color del badge</th>
+        <th class="green-header">Significado</th>
+        <th class="green-header">Acción recomendada</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="highlight" style="background-color:#fee2e2;">Rojo</span></td>
+        <td>Producto vencido o con vencimiento inminente (menos de 7 días).</td>
+        <td>Priorizar salida inmediata.</td>
+      </tr>
+      <tr>
+        <td><span class="highlight" style="background-color:#fef3c7;">Amarillo</span></td>
+        <td>Producto con vencimiento próximo (entre 7 y 30 días).</td>
+        <td>Programar salida en el corto plazo.</td>
+      </tr>
+      <tr>
+        <td><span class="highlight" style="background-color:#dcfce7;">Verde</span></td>
+        <td>Producto con vencimiento lejano o sin fecha de vencimiento.</td>
+        <td>Sin acción urgente requerida.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:4mm 0 2mm;">Comparación de stock con Big Magic</h3>
+
+  <p>
+    La pestaña Stock Piso incluye una funcionalidad de <code>comparación de stock con Big Magic</code>, que permite contrastar el inventario registrado en Rackly con los datos del sistema externo Big Magic. Esta función es útil para detectar discrepancias entre los dos sistemas y garantizar la consistencia del inventario.
+  </p>
+
+  <div class="info-box info-box-amber">
+    <div class="info-box-title">⚠️ Discrepancias de inventario</div>
+    <p>Si la comparación con Big Magic muestra diferencias significativas, se recomienda realizar una verificación física del inventario y corregir las discrepancias mediante las operaciones de ingreso o salida según corresponda.</p>
+  </div>
+</div>
+
+<!-- 4.4 Movimientos -->
+<div class="content-page">
+  <h1 class="section-header section-header-teal">Sección 4: Kardex Piso (continuación)</h1>
+
+  <h2 class="subsection-header" style="color:#006d6f; border-left-color:#0097a7;">4.4 Movimientos</h2>
+
+  <p>
+    La pestaña <code>Movimientos</code> registra y muestra el historial completo de todas las operaciones realizadas en Kardex Piso. Esta funcionalidad permite rastrear cada ingreso, salida, traslado y devolución con detalles como el usuario que realizó la operación, la fecha y hora, y las posiciones afectadas.
+  </p>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:3mm 0 2mm;">Filtros disponibles</h3>
+
+  <p>
+    El historial de movimientos cuenta con los siguientes filtros de búsqueda:
+  </p>
+
+  <ul>
+    <li><span class="strong-text">Filtro por tipo de operación:</span> Seleccione el tipo de movimiento (Ingreso, Salida, Traslado, Devolución) para ver solo las operaciones de esa categoría.</li>
+    <li><span class="strong-text">Filtro por usuario:</span> Seleccione un usuario específico para ver todas las operaciones realizadas por esa persona.</li>
+    <li><span class="strong-text">Filtro por rango de fechas:</span> Defina un período de tiempo para visualizar solo los movimientos realizados dentro de ese intervalo.</li>
+    <li><span class="strong-text">Búsqueda general:</span> Ingrese texto libre para buscar movimientos por código de producto, descripción o número de operación.</li>
+  </ul>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:4mm 0 2mm;">Contadores animados de resumen</h3>
+
+  <p>
+    En la parte superior de la pestaña Movimientos se muestran contadores animados que resumen la actividad del módulo Kardex Piso:
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="green-header">Contador</th>
+        <th class="green-header">Descripción</th>
+        <th class="green-header">Color</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>Total</code></td>
+        <td>Número total de movimientos registrados en el período seleccionado.</td>
+        <td>Gris oscuro</td>
+      </tr>
+      <tr>
+        <td><code>Ingresos</code></td>
+        <td>Cantidad de operaciones de ingreso realizadas.</td>
+        <td style="color:#22c55e;">Verde</td>
+      </tr>
+      <tr>
+        <td><code>Salidas</code></td>
+        <td>Cantidad de operaciones de salida realizadas.</td>
+        <td style="color:#ef4444;">Rojo</td>
+      </tr>
+      <tr>
+        <td><code>Devoluciones</code></td>
+        <td>Cantidad de operaciones de devolución registradas.</td>
+        <td style="color:#f59e0b;">Amarillo</td>
+      </tr>
+      <tr>
+        <td><code>Traslados</code></td>
+        <td>Cantidad de operaciones de traslado realizadas.</td>
+        <td style="color:#3b82f6;">Azul</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="info-box info-box-blue">
+    <div class="info-box-title">ℹ️ Animación de contadores</div>
+    <p>Los contadores incluyen una animación de incremento que se activa al cargar la página o al aplicar filtros, proporcionando una experiencia visual atractiva que facilita la lectura rápida de las estadísticas.</p>
+  </div>
+</div>
+
+<!-- 4.5 Configuración -->
+<div class="content-page">
+  <h1 class="section-header section-header-teal">Sección 4: Kardex Piso (continuación)</h1>
+
+  <h2 class="subsection-header" style="color:#006d6f; border-left-color:#0097a7;">4.5 Configuración</h2>
+
+  <p>
+    La pestaña <code>Configuración</code> permite administrar la estructura física del almacén de piso y el catálogo de productos. Esta sección está destinada principalmente a los administradores del sistema que necesitan definir o modificar las posiciones de almacenamiento y los productos disponibles.
+  </p>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:3mm 0 2mm;">Gestión de la estructura del almacén</h3>
+
+  <p>
+    La configuración permite crear y administrar los componentes de la jerarquía de Kardex Piso:
+  </p>
+
+  <div class="info-box info-box-purple">
+    <div class="info-box-title">🔧 Componentes configurables</div>
+    <p><span class="strong-text">Sectores:</span> Crear, editar o eliminar sectores principales del área de piso.</p>
+    <p><span class="strong-text">Columnas:</span> Definir las columnas dentro de cada sector.</p>
+    <p><span class="strong-text">Subcolumnas:</span> Configurar las subdivisiones de cada columna.</p>
+    <p><span class="strong-text">Posiciones:</span> Establecer las posiciones de almacenamiento dentro de las subcolumnas.</p>
+    <p><span class="strong-text">Niveles:</span> Definir los niveles de altura (apilamiento) de cada posición.</p>
+  </div>
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:4mm 0 2mm;">Gestión del catálogo de productos</h3>
+
+  <p>
+    La sección de catálogo permite administrar los productos que pueden ser registrados en las operaciones de Kardex Piso. Las acciones disponibles incluyen:
+  </p>
+
+  <ul>
+    <li><span class="strong-text">Agregar producto:</span> Registrar un nuevo producto en el sistema con su código y descripción.</li>
+    <li><span class="strong-text">Editar producto:</span> Modificar la información de un producto existente (código, descripción).</li>
+    <li><span class="strong-text">Desactivar producto:</span> Marcar un producto como inactivo para que no aparezca en las búsquedas.</li>
+  </ul>
+
+  <div class="info-box info-box-amber">
+    <div class="info-box-title">⚠️ Permisos de configuración</div>
+    <p>La pestaña Configuración puede estar restringida a usuarios con rol de administrador. Si no tiene acceso a esta sección, comuníquese con el administrador del sistema para realizar cambios en la estructura del almacén o el catálogo de productos.</p>
+  </div>
+
+  <hr class="separator">
+
+  <h3 style="font-size:11pt; font-weight:600; color:#006d6f; margin:3mm 0 2mm;">Resumen del módulo Kardex Piso</h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Pestaña</th>
+        <th>Funcionalidad principal</th>
+        <th>Usuarios típicos</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>Sectores</code></td>
+        <td>Gestión de posiciones y operaciones directas.</td>
+        <td>Operarios, supervisores</td>
+      </tr>
+      <tr>
+        <td><code>Stock Piso</code></td>
+        <td>Consulta global de inventario de piso.</td>
+        <td>Operarios, supervisores</td>
+      </tr>
+      <tr>
+        <td><code>Movimientos</code></td>
+        <td>Historial y estadísticas de operaciones.</td>
+        <td>Supervisores, administradores</td>
+      </tr>
+      <tr>
+        <td><code>Configuración</code></td>
+        <td>Administración de estructura y catálogo.</td>
+        <td>Administradores</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECCIÓN 5: ACTUALIZACIÓN EN TIEMPO REAL                      -->
+<!-- ============================================================ -->
+<div class="content-page">
+  <h1 class="section-header section-header-wine">Sección 5: Actualización en Tiempo Real</h1>
+
+  <p>
+    Rackly implementa un sistema de actualización en tiempo real que garantiza que todos los usuarios conectados vean la información más actualizada del inventario sin necesidad de recargar la página manualmente. Esta funcionalidad es fundamental en un entorno de almacén donde múltiples operarios realizan operaciones simultáneamente.
+  </p>
+
+  <h2 style="font-size:12pt; font-weight:700; color:#5c1a1a; margin:4mm 0 3mm;">5.1 Mecanismo de funcionamiento</h2>
+
+  <p>
+    El sistema de actualización en tiempo real de Rackly utiliza dos tecnologías complementarias:
+  </p>
+
+  <div class="info-box info-box-blue">
+    <div class="info-box-title">🔄 Polling (sondeo periódico)</div>
+    <p>El sistema realiza consultas automáticas al servidor cada <span class="strong-text">8 segundos</span> para verificar si hay cambios en los datos del inventario. Este mecanismo asegura que, incluso si la conexión WebSocket se interrumpe temporalmente, los datos se mantendrán actualizados.</p>
+  </div>
+
+  <div class="info-box info-box-green">
+    <div class="info-box-title">⚡ Supabase Realtime (WebSocket)</div>
+    <p>Adicionalmente, Rackly utiliza <span class="strong-text">Supabase Realtime</span>, un servicio basado en WebSockets que notifica instantáneamente a todos los clientes conectados cuando ocurre un cambio en la base de datos. Esto permite que las actualizaciones se reflejen de manera inmediata sin esperar al próximo ciclo de polling.</p>
+  </div>
+
+  <h2 style="font-size:12pt; font-weight:700; color:#5c1a1a; margin:4mm 0 3mm;">5.2 Sincronización multiusuario</h2>
+
+  <p>
+    Gracias al sistema de actualización en tiempo real, cuando un usuario registra un ingreso, salida, traslado o devolución, todos los demás usuarios conectados al sistema verán reflejado el cambio en sus pantallas de forma automática. Esto incluye:
+  </p>
+
+  <ul>
+    <li>Actualización de cantidades de stock en las posiciones afectadas.</li>
+    <li>Actualización de los contadores de movimientos en la pestaña de Movimientos.</li>
+    <li>Actualización del mapa de ocupación en la pestaña de Ocupación.</li>
+    <li>Aparición de nuevas entradas en el historial de movimientos.</li>
+  </ul>
+
+  <h2 style="font-size:12pt; font-weight:700; color:#5c1a1a; margin:4mm 0 3mm;">5.3 No se requiere acción del usuario</h2>
+
+  <p>
+    El sistema de actualización en tiempo real funciona de manera completamente automática y transparente para el usuario. <span class="strong-text">No es necesario realizar ninguna acción adicional</span> para mantener los datos actualizados. Simplemente continúe trabajando normalmente y el sistema se encargará de sincronizar la información.
+  </p>
+
+  <div class="info-box info-box-green">
+    <div class="info-box-title">✅ Ventajas de la actualización en tiempo real</div>
+    <p><span class="strong-text">Prevención de conflictos:</span> Reduce la posibilidad de que dos operarios intenten operar sobre la misma posición simultáneamente.</p>
+    <p><span class="strong-text">Información always-fresh:</span> Garantiza que todos los usuarios trabajen con datos actualizados al momento de tomar decisiones.</p>
+    <p><span class="strong-text">Experiencia fluida:</span> No requiere recargas manuales ni acciones del usuario para ver cambios.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SECCIÓN 6: SOLUCIÓN DE PROBLEMAS                             -->
+<!-- ============================================================ -->
+<div class="content-page">
+  <h1 class="section-header section-header-blue">Sección 6: Solución de Problemas</h1>
+
+  <p>
+    En esta sección se describen los problemas más comunes que pueden presentarse al utilizar Rackly, junto con sus soluciones correspondientes. Si el problema persiste después de intentar las soluciones sugeridas, comuníquese con el administrador del sistema.
+  </p>
+
+  <h2 style="font-size:12pt; font-weight:700; color:#0a2e4d; margin:4mm 0 3mm;">6.1 Problemas frecuentes</h2>
+
+  <div class="troubleshoot-item">
+    <div class="troubleshoot-problem">Error: «Stock insuficiente» al registrar una salida</div>
+    <div class="troubleshoot-solution">
+      <strong>Causa:</strong> La cantidad solicitada supera el stock disponible en la posición seleccionada.<br>
+      <strong>Solución:</strong> Verifique el stock actual en la posición consultando la pestaña <code>Stock</code>. Reduzca la cantidad de la salida o seleccione una posición diferente que tenga stock suficiente.
+    </div>
+  </div>
+
+  <div class="troubleshoot-item">
+    <div class="troubleshoot-problem">Error: «Correo o contraseña incorrectos» al iniciar sesión</div>
+    <div class="troubleshoot-solution">
+      <strong>Causa:</strong> Las credenciales ingresadas no coinciden con las registradas en el sistema.<br>
+      <strong>Solución:</strong> Verifique que el correo electrónico esté escrito correctamente (incluyendo el dominio). Revise la contraseña asegurándose de no tener activada la tecla de mayúsculas. Utilice el botón «Ver contraseña» para confirmar los caracteres.
+    </div>
+  </div>
+
+  <div class="troubleshoot-item">
+    <div class="troubleshoot-problem">La pantalla no se actualiza con los últimos datos</div>
+    <div class="troubleshoot-solution">
+      <strong>Causa:</strong> Posible pérdida de conexión a Internet o interrupción del servicio WebSocket.<br>
+      <strong>Solución:</strong> Verifique su conexión a Internet. Recargue la página del navegador (<code>F5</code> o arrastrar hacia abajo en dispositivos móviles). El sistema restablecerá la conexión automáticamente.
+    </div>
+  </div>
+
+  <div class="troubleshoot-item">
+    <div class="troubleshoot-problem">El sistema responde con lentitud</div>
+    <div class="troubleshoot-solution">
+      <strong>Causa:</strong> Conexión a Internet débil o servidor bajo alta carga.<br>
+      <strong>Solución:</strong> Verifique la velocidad de su conexión. Cierre otras aplicaciones que puedan estar consumiendo ancho de banda. Si el problema persiste, intente nuevamente en unos minutos.
+    </div>
+  </div>
+
+  <div class="troubleshoot-item">
+    <div class="troubleshoot-problem">No aparece un producto en la búsqueda</div>
+    <div class="troubleshoot-solution">
+      <strong>Causa:</strong> El producto puede no estar registrado en el catálogo o puede estar marcado como inactivo.<br>
+      <strong>Solución:</strong> Verifique el código o descripción del producto. Si el producto es nuevo, solicite al administrador que lo registre en el catálogo mediante la pestaña <code>Configuración</code>.
+    </div>
+  </div>
+
+  <h2 style="font-size:12pt; font-weight:700; color:#0a2e4d; margin:6mm 0 3mm;">6.2 Problemas de conexión</h2>
+
+  <p>
+    Rackly requiere una conexión estable a Internet para funcionar correctamente. Si experimenta problemas de conexión:
+  </p>
+
+  <div class="steps-list">
+    <div class="step-item">
+      <span class="step-number step-number-blue">1</span>
+      <span class="step-text">Verifique que su dispositivo esté conectado a una red Wi-Fi o tenga datos móviles activos.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-blue">2</span>
+      <span class="step-text">Pruebe abriendo otra página web para confirmar que su conexión a Internet funciona correctamente.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-blue">3</span>
+      <span class="step-text">Si utiliza Wi-Fi, intente acercarse al router o cambiar a datos móviles.</span>
+    </div>
+    <div class="step-item">
+      <span class="step-number step-number-blue">4</span>
+      <span class="step-text">Recargue la página de Rackly para restablecer la conexión con el servidor.</span>
+    </div>
+  </div>
+
+  <h2 style="font-size:12pt; font-weight:700; color:#0a2e4d; margin:6mm 0 3mm;">6.3 Optimización para dispositivos móviles</h2>
+
+  <p>
+    Para garantizar la mejor experiencia de uso en dispositivos móviles, se recomienda seguir estas prácticas:
+  </p>
+
+  <ul>
+    <li><span class="strong-text">Navegador actualizado:</span> Mantenga su navegador actualizado a la última versión disponible para asegurar compatibilidad con todas las funcionalidades de Rackly.</li>
+    <li><span class="strong-text">Caché del navegador:</span> Limpiar el caché del navegador periódicamente puede resolver problemas de visualización. En Chrome: Configuración → Privacidad → Borrar datos de navegación.</li>
+    <li><span class="strong-text">Modo de pantalla completa:</span> Utilice el modo de pantalla completa del navegador para aprovechar al máximo el espacio disponible en dispositivos pequeños.</li>
+    <li><span class="strong-text">Evitar múltiples pestañas:</span> Cierre otras pestañas del navegador que no esté utilizando para liberar memoria y mejorar el rendimiento.</li>
+    <li><span class="strong-text">Notificaciones del navegador:</span> Permita las notificaciones del navegador para Rackly si desea recibir alertas sobre actualizaciones importantes.</li>
+  </ul>
+
+  <div class="info-box info-box-blue">
+    <div class="info-box-title">📞 Soporte técnico</div>
+    <p>Si ninguno de los procedimientos anteriores resuelve su problema, comuníquese con el equipo de soporte técnico de Rackly proporcionando una descripción detallada del problema, el dispositivo y navegador utilizados, y capturas de pantalla del error si es posible.</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- REFERENCIAS                                                   -->
+<!-- ============================================================ -->
+<div class="content-page">
+  <h1 class="section-header section-header-blue">Referencias</h1>
+
+  <p class="indent">
+    American Psychological Association. (2020). <em>Publication manual of the American Psychological Association</em> (7th ed.). https://doi.org/10.1037/0000165-000
+  </p>
+
+  <hr class="separator">
+
+  <p style="text-align:center; color:#888; font-size:10pt; margin-top:20mm;">
+    <em>Manual de Usuario — Rackly v2.0</em><br>
+    Documento generado en Junio 2026<br>
+    © Todos los derechos reservados.
+  </p>
+</div>
+
+</body>
+</html>

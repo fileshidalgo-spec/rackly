@@ -7,11 +7,15 @@ import { POLLING_INTERVAL } from '@/lib/rackly/constants'
 /**
  * Hook que mantiene sincronizadas las pestañas de Piso.
  * Escucha cambios en las tablas piso_movimientos y piso_movimiento_detalles
- * mediante Supabase Realtime, con polling cada 8s como respaldo.
+ * mediante Supabase Realtime, con polling SOLO como respaldo cuando el
+ * WebSocket NO está conectado.
  *
- * Usa ref para el callback para evitar stale closures.
- * El callback se invoca cada vez que la base de datos cambia (ingreso, salida,
- * traslado, devolución, eliminación) para que cada componente refresque sus datos.
+ * Comportamiento:
+ * - Al montar: carga inicial (refresh) + intenta conectar WebSocket
+ * - Si WebSocket se conecta: DETIENE el polling (las actualizaciones
+ *   llegan instantáneamente por el canal)
+ * - Si WebSocket falla/timeout: REANUDA el polling como respaldo
+ * - Al desmontar: limpia intervalo y canal
  */
 const CHANNEL_NAME = 'piso-realtime-sync'
 
@@ -26,15 +30,33 @@ export function usePisoRealtime(onChange: () => void) {
 
   useEffect(() => {
     let active = true
+    let wsConnected = false
 
-    // Respaldo: polling cada 8 segundos
-    refresh() // Initial trigger
+    // Polling como respaldo — solo corre cuando WebSocket NO está conectado
+    refresh() // Carga inicial
 
-    const pollInterval = setInterval(() => {
-      if (active) refresh()
+    let pollInterval: ReturnType<typeof setInterval> | null = setInterval(() => {
+      if (active && !wsConnected) refresh()
     }, POLLING_INTERVAL)
 
-    // Realtime: escucha cambios en piso_movimientos (nuevos movimientos, eliminaciones)
+    // Función para iniciar polling (respaldo)
+    const startPolling = () => {
+      if (!pollInterval && active) {
+        pollInterval = setInterval(() => {
+          if (active && !wsConnected) refresh()
+        }, POLLING_INTERVAL)
+      }
+    }
+
+    // Función para detener polling (WebSocket activo)
+    const stopPolling = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval)
+        pollInterval = null
+      }
+    }
+
+    // Realtime: escucha cambios en piso_movimientos y piso_movimiento_detalles
     let channel: ReturnType<typeof supabase.channel> | null = null
     try {
       channel = supabase
@@ -56,10 +78,17 @@ export function usePisoRealtime(onChange: () => void) {
           }
         )
         .subscribe((status, err) => {
+          if (!active) return
+
           if (status === 'SUBSCRIBED') {
-            // Conexión exitosa — no logging para no saturar consola
+            // WebSocket conectado — detener polling
+            wsConnected = true
+            stopPolling()
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            console.warn('[Piso Realtime] Error de canal, el polling cubre mientras se reconecta', err)
+            // WebSocket caído — reanudar polling como respaldo
+            wsConnected = false
+            startPolling()
+            console.warn('[Piso Realtime] WebSocket desconectado, reanudando polling de respaldo')
           }
         })
     } catch (err) {
@@ -68,7 +97,7 @@ export function usePisoRealtime(onChange: () => void) {
 
     return () => {
       active = false
-      clearInterval(pollInterval)
+      stopPolling()
       if (channel) {
         try { supabase.removeChannel(channel) } catch { /* ignore */ }
       }

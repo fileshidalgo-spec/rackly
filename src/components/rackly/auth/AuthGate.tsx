@@ -10,7 +10,7 @@ import {
   cambiarPasswordPropia,
   type Perfil,
 } from '@/lib/rackly/auth'
-import { supabase } from '@/lib/supabase/client'
+import { supabase, dataClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -63,9 +63,52 @@ function esErrorRateLimit(message: string): boolean {
 }
 
 function esErrorCorreoExistente(message: string): boolean {
-  return message.toLowerCase().includes('already registered') ||
-    message.toLowerCase().includes('already been registered') ||
-    message.toLowerCase().includes('user already exists')
+  const lower = message.toLowerCase()
+  return lower.includes('already registered') ||
+    lower.includes('already been registered') ||
+    lower.includes('user already exists')
+}
+
+/**
+ * Verifica si el correo ya está registrado en profiles O en Supabase Auth.
+ * Esto evita gastar intentos del rate limit de Supabase Auth cuando el correo ya existe.
+ */
+async function correoYaExiste(email: string): Promise<boolean> {
+  const lower = email.trim().toLowerCase()
+  // 1) Buscar en tabla profiles
+  try {
+    const { data } = await dataClient
+      .from('profiles')
+      .select('id')
+      .eq('correo', lower)
+      .maybeSingle()
+    if (data) return true
+  } catch {
+    // Si falla la consulta, continuar con el siguiente check
+  }
+  // 2) Buscar en Supabase Auth vía Admin API
+  const SERVICE_ROLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
+  const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (SERVICE_ROLE_KEY && SUPABASE_URL) {
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/auth/v1/admin/users?email=${encodeURIComponent(lower)}`,
+        {
+          headers: {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
+          },
+        }
+      )
+      if (res.ok) {
+        const adminData = await res.json()
+        if (adminData.users && adminData.users.length > 0) return true
+      }
+    } catch {
+      // Si falla, no bloquear el registro
+    }
+  }
+  return false
 }
 
 /* ─── Componente auxiliar: campo contraseña con toggle de visibilidad ─── */
@@ -597,6 +640,15 @@ function LoginScreen({
     }
     setBusy(true)
     try {
+      // Pre-verificar si el correo ya existe para no quemar intentos del rate limit
+      if (await correoYaExiste(correo)) {
+        toast.info('Esta cuenta ya existe', {
+          description:
+            'Inicia sesión con ese correo; si aún no accedes, un administrador debe aprobarla.',
+        })
+        setTab('login')
+        return
+      }
       const data = await signUp(
         correo.trim().toLowerCase(),
         password,

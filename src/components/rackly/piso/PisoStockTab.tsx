@@ -15,12 +15,14 @@ export function PisoStockTab() {
   const [query, setQuery] = useState('')
   const [items, setItems] = useState<StockPisoItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
 
   const mountedRef = useRef(true)
 
-  const loadStock = useCallback(async () => {
-    setLoading(true)
+  const loadStock = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
+    else setRefreshing(true)
     try {
       if (!isCatalogoLoaded()) await fetchCatalogo().catch(() => {})
       const data = await stockPisoGlobal()
@@ -31,7 +33,10 @@ export function PisoStockTab() {
     } catch (err) {
       console.error('Error cargando stock Piso:', err)
     } finally {
-      if (mountedRef.current) setLoading(false)
+      if (mountedRef.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
   }, [])
 
@@ -41,9 +46,9 @@ export function PisoStockTab() {
     return () => { mountedRef.current = false }
   }, [loadStock])
 
-  // Realtime: auto-refresh when piso_movimientos changes (8s polling + Supabase Realtime)
-  // Replaces the old 30s polling with instant updates
-  usePisoRealtime(loadStock)
+  // Realtime: auto-refresh when piso_movimientos changes (polling solo como respaldo si WebSocket cae)
+  const silentRefresh = useCallback(() => loadStock(true), [loadStock])
+  usePisoRealtime(silentRefresh)
 
   // Get Big Magic stock for the search term
   const bmItem = query.trim() ? findCatalogoByCodigo(query.trim()) : null
@@ -103,11 +108,11 @@ export function PisoStockTab() {
           />
         </div>
         <button
-          onClick={loadStock}
+          onClick={() => loadStock()}
           disabled={loading}
           className="h-9 px-3 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-1.5 text-xs font-medium"
         >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" /> : <RefreshCw className="h-3.5 w-3.5" />}
           <span className="hidden sm:inline">Actualizar</span>
         </button>
       </div>

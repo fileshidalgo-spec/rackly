@@ -224,8 +224,8 @@ export function PisoSectoresTab() {
   }, [])
 
   // Cargar posiciones del sector seleccionado
-  const loadPosiciones = useCallback(async () => {
-    setLoading(true)
+  const loadPosiciones = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       if (sectorFilter === 'all') {
         const secs = await listarSectores()
@@ -243,7 +243,7 @@ export function PisoSectoresTab() {
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error'
-      if (mountedRef.current) toast.error('Error al cargar posiciones', { description: msg })
+      if (mountedRef.current && !silent) toast.error('Error al cargar posiciones', { description: msg })
     } finally {
       if (mountedRef.current) setLoading(false)
     }
@@ -267,8 +267,9 @@ export function PisoSectoresTab() {
   useEffect(() => { mountedRef.current = true; loadSectores(); loadPosiciones(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadPosiciones, loadBloques])
   useEffect(() => { if (sectorFilter !== 'all') loadPosiciones() }, [sectorFilter, loadPosiciones])
 
-  // Realtime: auto-refresh positions when piso_movimientos changes (8s polling + Supabase Realtime)
-  usePisoRealtime(loadPosiciones)
+  // Realtime: auto-refresh positions when piso_movimientos changes (polling solo como respaldo si WebSocket cae)
+  const silentRefreshPos = useCallback(() => loadPosiciones(true), [loadPosiciones])
+  usePisoRealtime(silentRefreshPos)
 
   // Filtrar catalogo para autocomplete
   function getFilteredCatalogo(prefix: 'ing' | 'dev', idx: number) {
@@ -1088,7 +1089,7 @@ export function PisoSectoresTab() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={loadPosiciones} className="p-2 rounded-xl border border-slate-700/50 hover:bg-slate-700/80 transition-all duration-500 hover:-rotate-180 bg-slate-800/60 backdrop-blur-sm hover:shadow-lg"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /></button>
+          <button onClick={() => loadPosiciones()} className="p-2 rounded-xl border border-slate-700/50 hover:bg-slate-700/80 transition-all duration-500 hover:-rotate-180 bg-slate-800/60 backdrop-blur-sm hover:shadow-lg"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /></button>
           {/* Salida en masa toggle */}
           <button
             onClick={toggleMassMode}

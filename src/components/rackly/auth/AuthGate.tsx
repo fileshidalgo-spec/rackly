@@ -519,6 +519,11 @@ function LoginScreen({
   const [nombre, setNombre] = useState('')
   const [busy, setBusy] = useState(false)
   const [cooldown, setCooldown] = useState(0)
+  const [attempts, setAttempts] = useState(0)
+
+  // Cooldown proactivo: tras cada error, un delay creciente antes del siguiente intento
+  const COOLDOWN_AFTER_ERROR = 3  // 3s tras primer error, 6s tras segundo, etc.
+  const MAX_COOLDOWN = 30
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -548,6 +553,8 @@ function LoginScreen({
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
+      const newAttempts = attempts + 1
+      setAttempts(newAttempts)
       if (esErrorRateLimit(message)) {
         toast.error('Demasiados intentos', {
           description: 'Por seguridad, espera 60 segundos antes de intentar de nuevo.',
@@ -556,6 +563,9 @@ function LoginScreen({
         setCooldown(60)
       } else {
         toast.error('Error al iniciar sesión', { description: message })
+        // Cooldown proactivo: delay creciente tras cada error para no saturar Supabase
+        const cd = Math.min(COOLDOWN_AFTER_ERROR * newAttempts, MAX_COOLDOWN)
+        if (cd > 0) setCooldown(cd)
       }
     } finally {
       setBusy(false)
@@ -621,6 +631,11 @@ function LoginScreen({
         setCooldown(60)
       } else {
         toast.error('No se pudo crear la cuenta', { description: message })
+        // Cooldown proactivo tras error de registro
+        const newAttempts = attempts + 1
+        setAttempts(newAttempts)
+        const cd = Math.min(COOLDOWN_AFTER_ERROR * newAttempts, MAX_COOLDOWN)
+        if (cd > 0) setCooldown(cd)
       }
     } finally {
       setBusy(false)
@@ -628,8 +643,12 @@ function LoginScreen({
   }
 
   // Cooldown para prevenir intentos repetidos
+  // Resetear contador de intentos cuando el cooldown termina
   useEffect(() => {
-    if (cooldown <= 0) return
+    if (cooldown <= 0) {
+      setAttempts(0)
+      return
+    }
     const timer = setTimeout(() => setCooldown(c => c - 1), 1000)
     return () => clearTimeout(timer)
   }, [cooldown])

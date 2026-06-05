@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { AuthGate } from '@/components/rackly/auth/AuthGate'
 import { SesionBar } from '@/components/rackly/kardex/SesionBar'
@@ -190,7 +190,7 @@ function RacklyApp() {
         {view === 'racks' && (
           <Tabs defaultValue="movimientos" className="w-full">
             {/* Nav Tabs */}
-            <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none">
+            <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none scroll-smooth snap-x snap-mandatory">
               {[
                 { val: 'movimientos', icon: BarChart3, label: 'Movimientos', color: 'from-emerald-500 to-green-600' },
                 { val: 'traslado', icon: ArrowRightLeft, label: 'Traslado', color: 'from-blue-500 to-indigo-600' },
@@ -204,12 +204,13 @@ function RacklyApp() {
                 <TabsTrigger
                   key={tab.val}
                   value={tab.val}
-                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-slate-200 hover:bg-white/60 data-[state=active]:hover:bg-white shrink-0 flex-1"
+                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-slate-200 hover:bg-white/60 data-[state=active]:hover:bg-white shrink-0 snap-start min-w-fit"
                 >
                   <div className={`w-5 h-5 rounded-md bg-gradient-to-br ${tab.color} flex items-center justify-center shadow-sm`}>
                     <tab.icon className="h-3 w-3 text-white" />
                   </div>
                   <span className="hidden md:inline">{tab.label}</span>
+                  <span className="md:hidden text-[10px] leading-none">{tab.label}</span>
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -565,7 +566,7 @@ function RacklyApp() {
         {/* ═══ KARDEX PISO VIEW ═══ */}
         {view === 'piso' && (
           <Tabs defaultValue="movimientos" className="w-full">
-            <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none">
+            <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none scroll-smooth">
               {[
                 { val: 'movimientos', icon: History, label: 'Movimientos', color: 'from-emerald-500 to-green-600' },
                 { val: 'sectores', icon: Layers3, label: 'Sectores', color: 'from-sky-500 to-blue-600' },
@@ -575,12 +576,13 @@ function RacklyApp() {
                 <TabsTrigger
                   key={tab.val}
                   value={tab.val}
-                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-slate-700 data-[state=active]:text-white data-[state=active]:border data-[state=active]:border-slate-600 hover:bg-slate-800/60 data-[state=active]:hover:bg-slate-700 shrink-0 flex-1 text-slate-400"
+                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-slate-700 data-[state=active]:text-white data-[state=active]:border data-[state=active]:border-slate-600 hover:bg-slate-800/60 data-[state=active]:hover:bg-slate-700 shrink-0 snap-start min-w-fit text-slate-400"
                 >
                   <div className={`w-5 h-5 rounded-md bg-gradient-to-br ${tab.color} flex items-center justify-center shadow-sm`}>
                     <tab.icon className="h-3 w-3 text-white" />
                   </div>
                   <span className="hidden md:inline">{tab.label}</span>
+                  <span className="md:hidden text-[10px] leading-none">{tab.label}</span>
                 </TabsTrigger>
               ))}
             </TabsList>

@@ -194,7 +194,7 @@ function RacklyApp() {
         {view === 'racks' && (
           <Tabs defaultValue="movimientos" className="w-full">
             {/* Nav Tabs */}
-            <TabsList className="flex flex-wrap gap-1.5 bg-transparent p-0 pb-1 h-auto rounded-none">
+            <TabsList className="sticky top-0 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
               {[
                 { val: 'movimientos', icon: BarChart3, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
                 { val: 'traslado', icon: ArrowRightLeft, label: 'Traslado', shortLabel: 'Trasl', color: 'from-blue-500 to-indigo-600' },
@@ -236,7 +236,7 @@ function RacklyApp() {
                 <CardContent>
                   {/* Movement type sub-tabs */}
                   <Tabs defaultValue="ingreso" className="w-full">
-                    <TabsList className="flex flex-wrap gap-2 bg-transparent p-0 mb-5 h-auto rounded-none">
+                    <TabsList className="sticky top-0 z-40 flex flex-wrap gap-2 bg-white/80 backdrop-blur-sm p-0 mb-5 h-auto rounded-none">
                       {[
                         { val: 'ingreso', icon: ArrowDownToLine, label: 'Ingreso', gradient: 'from-green-500 to-emerald-600', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', ring: 'ring-green-500/20' },
                         { val: 'salida', icon: ArrowUpFromLine, label: 'Salida', gradient: 'from-red-500 to-rose-600', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', ring: 'ring-red-500/20' },
@@ -305,7 +305,7 @@ function RacklyApp() {
                         Filtros
                       </div>
                       <Select value={filterTipo} onValueChange={setFilterTipo}>
-                        <SelectTrigger className="h-9 w-[150px] text-xs font-medium bg-white">
+                        <SelectTrigger className="h-9 w-[130px] sm:w-[150px] text-xs font-medium bg-white">
                           <SelectValue placeholder="Tipo" />
                         </SelectTrigger>
                         <SelectContent>
@@ -316,7 +316,7 @@ function RacklyApp() {
                         </SelectContent>
                       </Select>
                       <Select value={filterUsuario} onValueChange={setFilterUsuario}>
-                        <SelectTrigger className="h-9 w-[180px] text-xs font-medium bg-white">
+                        <SelectTrigger className="h-9 w-[140px] sm:w-[180px] text-xs font-medium bg-white">
                           <SelectValue placeholder="Usuario" />
                         </SelectTrigger>
                         <SelectContent>
@@ -330,7 +330,7 @@ function RacklyApp() {
                         value={filterCodigo}
                         onChange={(e) => setFilterCodigo(e.target.value)}
                         placeholder="Filtrar por código..."
-                        className="h-9 w-[160px] text-xs font-medium bg-white"
+                        className="h-9 w-[120px] sm:w-[160px] text-xs font-medium bg-white"
                       />
                       {hayFiltrosActivos && (
                         <Button
@@ -410,7 +410,7 @@ function RacklyApp() {
                             </TableCell>
                             {puedeEliminar && (
                               <TableCell>
-                                <Button variant="ghost" size="icon" onClick={() => handleDelete(m.id)} aria-label="Eliminar" className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-500">
+                                <Button variant="ghost" size="icon" onClick={() => handleDelete(m.id)} aria-label="Eliminar" className="text-slate-300 hover:text-red-500 transition-colors md:opacity-0 md:group-hover:opacity-100">
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               </TableCell>
@@ -570,7 +570,7 @@ function RacklyApp() {
         {/* ═══ KARDEX PISO VIEW ═══ */}
         {view === 'piso' && (
           <Tabs defaultValue="movimientos" className="w-full">
-            <TabsList className="flex flex-wrap gap-1.5 bg-transparent p-0 pb-1 h-auto rounded-none">
+            <TabsList className="sticky top-0 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
               {[
                 { val: 'movimientos', icon: History, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
                 { val: 'sectores', icon: Layers3, label: 'Sectores', shortLabel: 'Sector', color: 'from-sky-500 to-blue-600' },

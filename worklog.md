@@ -374,3 +374,25 @@ Stage Summary:
 - Commits: d25771a (F1), 89da56e (F2), 09decae (F3)
 - Build exitoso en todas las fases
 - App sigue funcionando online exactamente igual que antes
+---
+Task ID: 1
+Agent: main
+Task: Diagnosticar y corregir error "Error desconocido" al registrar movimientos + mejorar offline
+
+Work Log:
+- Analizado screenshot: error "Error al registrar salida - Error desconocido" en rackly.pages.dev
+- Identificadas 4 causas raíz: extractError incompleto, fetchMovimientos post-RPC fallido, SyncEngine bloqueado en 'syncing', ping no-cors falso
+- Corregido extractError() en utils.ts: ahora maneja PostgrestError, objetos, strings, null
+- Corregido addMovimiento/trasladarMovimiento: fetchMovimientos() no propaga error si RPC fue exitosa
+- Corregido SyncEngine.offlineAwareAddMovimiento: usa navigator.onLine como backup, no solo estado interno
+- Corregido SyncEngine.offlineAwareTraslado: mismo fix
+- Corregido pingSupabase: usa GET real al REST API en vez de HEAD no-cors
+- Ampliada detección de errores de red en SyncEngine
+- Añadido fallback: si IndexedDB falla, intenta envío directo al servidor
+- Build exitoso, commit cff2565, push a GitHub completado
+
+Stage Summary:
+- Commit: cff2565 - fix: corregir error 'Error desconocido' al registrar movimientos
+- 4 archivos modificados: utils.ts, kardex.ts, sync-engine.ts, worklog.md
+- Build: exitoso sin errores
+- Deploy: push a GitHub, Cloudflare Pages desplegará automáticamente

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   getTodosLosPerfiles,
   cambiarRol,
@@ -60,6 +60,8 @@ export function UsuariosTab() {
   const SUPERVISORES_SET = new Set<string>(ROLES_SUPERVISORES)
   const puedeAprobar = esAdmin || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
 
+  const loadedRef = useRef(false)
+
   async function load() {
     setLoading(true)
     try {
@@ -73,9 +75,12 @@ export function UsuariosTab() {
     }
   }
 
-  if (!loading && perfiles.length === 0) {
-    load()
-  }
+  useEffect(() => {
+    if (!loadedRef.current) {
+      loadedRef.current = true
+      load()
+    }
+  }, [])
 
   async function handleRolChange(userId: string, nuevoRol: Rol) {
     try {

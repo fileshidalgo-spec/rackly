@@ -1,6 +1,7 @@
 'use client'
 
 import { dataClient } from '@/lib/supabase/client'
+import { cacheCatalogo, getCachedCatalogo as getIDBCatalogo } from '@/lib/rackly/offline-db'
 
 export type CatalogoItem = {
   codigo: string
@@ -13,19 +14,52 @@ let _cache: CatalogoItem[] = []
 let _cacheLoaded = false
 
 export async function fetchCatalogo(): Promise<CatalogoItem[]> {
-  const { data, error } = await dataClient
-    .from('catalogo')
-    .select('codigo, un, descripcion, stock_big_magic')
-    .order('codigo')
-  if (error) throw error
-  _cache = ((data ?? []) as Record<string, unknown>[]).map((r) => ({
-    codigo: String(r.codigo ?? ''),
-    un: String(r.un ?? ''),
-    descripcion: String(r.descripcion ?? ''),
-    stock_big_magic: parseFloat(String(r.stock_big_magic ?? '0')) || 0,
-  }))
-  _cacheLoaded = true
-  return _cache
+  try {
+    const { data, error } = await dataClient
+      .from('catalogo')
+      .select('codigo, un, descripcion, stock_big_magic')
+      .order('codigo')
+    if (error) throw error
+    _cache = ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+      codigo: String(r.codigo ?? ''),
+      un: String(r.un ?? ''),
+      descripcion: String(r.descripcion ?? ''),
+      stock_big_magic: parseFloat(String(r.stock_big_magic ?? '0')) || 0,
+    }))
+    _cacheLoaded = true
+
+    // Guardar en IndexedDB para uso offline
+    cacheCatalogo(_cache.map((item) => ({ ...item }))).catch(() => {
+      // Silencioso — si IndexedDB falla, el cache en memoria sigue funcionando
+    })
+
+    return _cache
+  } catch (err) {
+    // Si falla la conexión, intentar cargar desde IndexedDB
+    if (_cache.length > 0) return _cache
+    return loadCatalogoFromIndexedDB()
+  }
+}
+
+/** Cargar catálogo desde IndexedDB (fallback offline) */
+async function loadCatalogoFromIndexedDB(): Promise<CatalogoItem[]> {
+  try {
+    const items = await getIDBCatalogo()
+    if (items.length > 0) {
+      _cache = items.map((r) => ({
+        codigo: String(r.codigo ?? ''),
+        un: String(r.un ?? ''),
+        descripcion: String(r.descripcion ?? ''),
+        stock_big_magic: parseFloat(String(r.stock_big_magic ?? '0')) || 0,
+      }))
+      _cacheLoaded = true
+      console.log(`[Catalogo] Cargado ${_cache.length} items desde IndexedDB (offline)`)
+      return _cache
+    }
+  } catch {
+    // IndexedDB no disponible
+  }
+  return []
 }
 
 export function getCachedCatalogo(): CatalogoItem[] {

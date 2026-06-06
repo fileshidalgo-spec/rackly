@@ -1,12 +1,18 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   fetchMovimientos,
   type Movimiento,
   eliminarUbicacion,
 } from '@/lib/rackly/kardex'
-import { findCatalogoByCodigo, fetchCatalogo, isCatalogoLoaded } from '@/lib/rackly/catalogo'
+import {
+  findCatalogoByCodigo,
+  fetchCatalogo,
+  isCatalogoLoaded,
+  searchCatalogo,
+  type CatalogoItem,
+} from '@/lib/rackly/catalogo'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -20,14 +26,15 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { toast } from 'sonner'
-import { Search, Trash2, PackageSearch } from 'lucide-react'
+import { Search, Trash2, PackageSearch, Warehouse, ArrowRight } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
 export function StockTab() {
   const { perfil } = useAuth()
   const esAdmin = perfil?.rol === 'admin'
   const [movs, setMovs] = useState<Movimiento[]>([])
-  const [codigo, setCodigo] = useState('')
+  const [query, setQuery] = useState('')
+  const [selectedCodigo, setSelectedCodigo] = useState('')
   const [stock, setStock] = useState<
     {
       bloque: string
@@ -42,42 +49,45 @@ export function StockTab() {
     }[]
   >([])
   const [loading, setLoading] = useState(false)
-  const [stockBM, setStockBM] = useState<number | null>(null)
 
   useMovimientosRealtime(setMovs)
 
-  // Cargar catálogo al montar para garantizar que Big Magic siempre funcione
+  // Catálogo para búsqueda y lookup
+  const [catalogoResults, setCatalogoResults] = useState<CatalogoItem[]>([])
+  const [catalogoLoaded, setCatalogoLoaded] = useState(false)
+
+  // Cargar catálogo al montar
   useEffect(() => {
-    if (!isCatalogoLoaded()) {
-      fetchCatalogo().catch(() => {})
+    async function load() {
+      if (!isCatalogoLoaded()) {
+        await fetchCatalogo().catch(() => {})
+      }
+      setCatalogoLoaded(true)
     }
+    load()
   }, [])
 
-  // Buscar stock_big_magic del catálogo cuando cambia el código
+  // Buscar sugerencias del catálogo cuando el usuario escribe
   useEffect(() => {
-    async function lookupBM() {
-      const code = codigo.trim().toUpperCase()
-      if (!code) {
-        setStockBM(null)
-        return
-      }
-      try {
-        // Siempre aseguramos que el catálogo esté cargado
-        if (!isCatalogoLoaded()) {
-          await fetchCatalogo()
-        }
-        const cat = findCatalogoByCodigo(code)
-        setStockBM(cat ? cat.stock_big_magic : 0)
-      } catch {
-        setStockBM(0)
-      }
+    if (!catalogoLoaded || !query.trim()) {
+      setCatalogoResults([])
+      return
     }
-    lookupBM()
-  }, [codigo])
+    if (!isCatalogoLoaded()) return
+    const results = searchCatalogo(query.trim(), 8)
+    setCatalogoResults(results)
+  }, [query, catalogoLoaded])
 
-  const stockData = (() => {
-    if (!codigo.trim() || movs.length === 0) return []
-    const code = codigo.trim().toUpperCase()
+  // Datos del artículo seleccionado del catálogo
+  const selectedItem = useMemo(() => {
+    if (!selectedCodigo) return null
+    return findCatalogoByCodigo(selectedCodigo)
+  }, [selectedCodigo])
+
+  // Calcular stock por ubicación para el código seleccionado
+  const stockData = useMemo(() => {
+    if (!selectedCodigo || movs.length === 0) return []
+    const code = selectedCodigo.trim().toUpperCase()
     const locMap = new Map<
       string,
       {
@@ -98,7 +108,6 @@ export function StockTab() {
       const current = locMap.get(key)
       if (current) {
         current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
-        // Mantener la fecha de vencimiento más próxima (más antigua)
         if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
           current.fVencimiento = m.fVencimiento
         }
@@ -116,7 +125,6 @@ export function StockTab() {
         })
       }
     }
-    // Ordenar: vencimiento más próximo primero, sin fecha al final
     return Array.from(locMap.values())
       .filter((l) => l.stock > 0)
       .sort((a, b) => {
@@ -125,11 +133,18 @@ export function StockTab() {
         if (b.fVencimiento) return 1
         return 0
       })
-  })()
+  }, [selectedCodigo, movs])
 
   useEffect(() => {
     setStock(stockData)
   }, [stockData])
+
+  // Manejar selección de un código
+  function selectCodigo(codigo: string) {
+    setSelectedCodigo(codigo.toUpperCase())
+    setQuery(codigo.toUpperCase())
+    setCatalogoResults([])
+  }
 
   async function handleDelete(
     bloque: string,
@@ -139,7 +154,7 @@ export function StockTab() {
   ) {
     if (!confirm('¿Eliminar todos los movimientos de esta ubicación?')) return
     try {
-      const next = await eliminarUbicacion(codigo, bloque, torre, piso, posicion)
+      const next = await eliminarUbicacion(selectedCodigo, bloque, torre, piso, posicion)
       setMovs(next)
       toast.success('Ubicación eliminada')
     } catch (err: unknown) {
@@ -148,22 +163,167 @@ export function StockTab() {
     }
   }
 
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        <div className="relative flex-1">
+  // Badge color según días para vencer
+  function getBadgeClass(fVencimiento: string) {
+    const hoy = new Date(new Date().toDateString())
+    const fVen = fVencimiento ? new Date(fVencimiento + 'T00:00:00') : null
+    const diffDias = fVen ? (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24) : null
+    const vencido = diffDias !== null && diffDias < 0
+    const naranja = !vencido && diffDias !== null && diffDias <= 15
+    const azul = !vencido && !naranja && diffDias !== null && diffDias <= 30
+
+    return vencido
+      ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+      : naranja
+      ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
+      : azul
+      ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+      : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
+  }
+
+  // ── Sin código seleccionado: buscar por código o descripción ──
+  if (!selectedCodigo) {
+    return (
+      <div className="space-y-4">
+        {/* Barra de búsqueda */}
+        <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            value={codigo}
-            onChange={(e) => setCodigo(e.target.value)}
-            placeholder="Buscar por código..."
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              // Si el usuario escribió un código exacto, seleccionarlo directo
+              const val = e.target.value.trim().toUpperCase()
+              if (isCatalogoLoaded() && findCatalogoByCodigo(val)) {
+                // No seleccionar automáticamente, dejar que el usuario elija
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && query.trim()) {
+                // Buscar el primer resultado y seleccionarlo
+                if (catalogoResults.length > 0) {
+                  selectCodigo(catalogoResults[0].codigo)
+                } else {
+                  // Si no hay resultados en catálogo, buscar de todas formas
+                  selectCodigo(query.trim())
+                }
+              }
+              if (e.key === 'Escape') {
+                setQuery('')
+                setCatalogoResults([])
+              }
+            }}
+            placeholder="Buscar por código o descripción..."
             className="pl-9"
           />
+          {query && (
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => { setQuery(''); setCatalogoResults([]) }}
+            >
+              ✕
+            </button>
+          )}
         </div>
+
+        {/* Sugerencias del catálogo */}
+        {catalogoResults.length > 0 && (
+          <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
+            <div className="px-3 py-2 border-b bg-muted/30">
+              <p className="text-xs font-medium text-muted-foreground">
+                {catalogoResults.length} resultado{catalogoResults.length > 1 ? 's' : ''} en el catálogo
+              </p>
+            </div>
+            {catalogoResults.map((item) => (
+              <button
+                key={item.codigo}
+                type="button"
+                className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-accent/50 transition-colors text-left border-b last:border-b-0"
+                onClick={() => selectCodigo(item.codigo)}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-semibold text-sm">{item.codigo}</span>
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">{item.un}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate mt-0.5">{item.descripcion}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  {item.stock_big_magic > 0 && (
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-amber-600 dark:text-amber-400">BM</span>
+                      <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{item.stock_big_magic}</span>
+                    </div>
+                  )}
+                </div>
+                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Sin búsqueda activa */}
+        {!query && (
+          <p className="text-muted-foreground text-center py-8">
+            Escribe un código o descripción para buscar stock.
+          </p>
+        )}
+
+        {/* Búsqueda sin resultados */}
+        {query.trim() && catalogoResults.length === 0 && catalogoLoaded && (
+          <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
+            <PackageSearch className="h-5 w-5" />
+            <span>No se encontró &quot;{query}&quot; en el catálogo.</span>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Con código seleccionado: mostrar stock por ubicación o info de Big Magic ──
+  return (
+    <div className="space-y-4">
+      {/* Barra de búsqueda con código seleccionado */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setSelectedCodigo('')
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              setSelectedCodigo('')
+              setQuery('')
+            }
+          }}
+          placeholder="Buscar por código o descripción..."
+          className="pl-9"
+        />
+        <button
+          type="button"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded border hover:border-foreground/30 transition-colors"
+          onClick={() => { setSelectedCodigo(''); setQuery('') }}
+        >
+          × Cambiar
+        </button>
       </div>
 
-      {/* Card de Stock Big Magic — siempre visible al buscar un código */}
-      {codigo.trim() && stockBM !== null && (
+      {/* Info del artículo seleccionado */}
+      {selectedItem && (
+        <div className="rounded-lg border bg-card p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="font-mono font-bold text-sm">{selectedItem.codigo}</span>
+            <Badge variant="outline" className="text-xs">{selectedItem.un}</Badge>
+          </div>
+          <p className="text-sm">{selectedItem.descripcion}</p>
+        </div>
+      )}
+
+      {/* Card de Stock Big Magic */}
+      {selectedItem && (
         <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
@@ -175,88 +335,74 @@ export function StockTab() {
             </div>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{stockBM}</p>
+            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{selectedItem.stock_big_magic}</p>
           </div>
         </div>
       )}
 
+      {/* Stock por ubicación */}
       {stock.length > 0 ? (
         <div className="space-y-3">
-          {/* ── Mobile: Card layout (md+ hidden) ── */}
+          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Warehouse className="h-3.5 w-3.5" />
+            Stock por ubicación en RACKLY
+          </p>
+
+          {/* ── Mobile: Card layout ── */}
           <div className="md:hidden space-y-2">
-            {stock.map((s, i) => {
-              const hoy = new Date(new Date().toDateString())
-              const fVen = s.fVencimiento ? new Date(s.fVencimiento + 'T00:00:00') : null
-              const diffDias = fVen ? (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24) : null
-              const vencido = diffDias !== null && diffDias < 0
-              const naranja = !vencido && diffDias !== null && diffDias <= 15
-              const azul = !vencido && !naranja && diffDias !== null && diffDias <= 30
-
-              const badgeClass = vencido
-                ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
-                : naranja
-                ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
-                : azul
-                ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
-                : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
-
-              return (
-                <div key={i} className="rounded-lg border bg-card p-3 space-y-2">
-                  {/* Row 1: Ubicación + Stock + Eliminar */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold">
-                      <span className="text-muted-foreground">Bloq</span>
-                      <span className="font-mono">{s.bloque}</span>
-                      <span className="text-muted-foreground mx-0.5">|</span>
-                      <span className="text-muted-foreground">Tor</span>
-                      <span className="font-mono">{s.torre}</span>
-                      <span className="text-muted-foreground mx-0.5">|</span>
-                      <span className="text-muted-foreground">Pis</span>
-                      <span className="font-mono">{s.piso}</span>
-                      <span className="text-muted-foreground mx-0.5">|</span>
-                      <span className="text-muted-foreground">Pos</span>
-                      <span className="font-mono">{s.posicion}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="default" className="text-sm">{s.stock}</Badge>
-                      {esAdmin && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </div>
+            {stock.map((s, i) => (
+              <div key={i} className="rounded-lg border bg-card p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold">
+                    <span className="text-muted-foreground">Bloq</span>
+                    <span className="font-mono">{s.bloque}</span>
+                    <span className="text-muted-foreground mx-0.5">|</span>
+                    <span className="text-muted-foreground">Tor</span>
+                    <span className="font-mono">{s.torre}</span>
+                    <span className="text-muted-foreground mx-0.5">|</span>
+                    <span className="text-muted-foreground">Pis</span>
+                    <span className="font-mono">{s.piso}</span>
+                    <span className="text-muted-foreground mx-0.5">|</span>
+                    <span className="text-muted-foreground">Pos</span>
+                    <span className="font-mono">{s.posicion}</span>
                   </div>
-                  {/* Row 2: Descripción */}
-                  <p className="text-xs text-muted-foreground leading-tight">{s.descripcion}</p>
-                  {/* Row 3: UN + Proveedor + Vencimiento */}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                    <span><span className="text-muted-foreground">UN: </span>{s.un}</span>
-                    {s.proveedor ? (
-                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 text-[10px] px-1.5 py-0 font-semibold">
-                        {s.proveedor}
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground">Prov: —</span>
-                    )}
-                    {s.fVencimiento ? (
-                      <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${badgeClass}`}>
-                        {s.fVencimiento}
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground">Venc: —</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="default" className="text-sm">{s.stock}</Badge>
+                    {esAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                        onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     )}
                   </div>
                 </div>
-              )
-            })}
+                <p className="text-xs text-muted-foreground leading-tight">{s.descripcion}</p>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <span><span className="text-muted-foreground">UN: </span>{s.un}</span>
+                  {s.proveedor ? (
+                    <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 text-[10px] px-1.5 py-0 font-semibold">
+                      {s.proveedor}
+                    </Badge>
+                  ) : (
+                    <span className="text-muted-foreground">Prov: —</span>
+                  )}
+                  {s.fVencimiento ? (
+                    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${getBadgeClass(s.fVencimiento)}`}>
+                      {s.fVencimiento}
+                    </Badge>
+                  ) : (
+                    <span className="text-muted-foreground">Venc: —</span>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
 
-          {/* ── Desktop: Table layout (hidden on mobile) ── */}
+          {/* ── Desktop: Table layout ── */}
           <div className="hidden md:block overflow-x-auto">
             <Table>
               <TableHeader>
@@ -274,72 +420,53 @@ export function StockTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {stock.map((s, i) => {
-                  const hoy = new Date(new Date().toDateString())
-                  const fVen = s.fVencimiento ? new Date(s.fVencimiento + 'T00:00:00') : null
-                  const diffDias = fVen ? (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24) : null
-                  const vencido = diffDias !== null && diffDias < 0
-                  const naranja = !vencido && diffDias !== null && diffDias <= 15
-                  const azul = !vencido && !naranja && diffDias !== null && diffDias <= 30
-                  const verde = !vencido && !naranja && !azul
-
-                  const badgeClass = vencido
-                    ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
-                    : naranja
-                    ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
-                    : azul
-                    ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
-                    : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
-
-                  return (
-                    <TableRow key={i}>
-                      <TableCell className="font-mono font-medium whitespace-nowrap">{s.bloque}</TableCell>
-                      <TableCell className="whitespace-nowrap">{s.torre}</TableCell>
-                      <TableCell className="font-medium whitespace-nowrap">{s.piso}</TableCell>
-                      <TableCell className="whitespace-nowrap">{s.posicion}</TableCell>
-                      <TableCell className="max-w-[200px] truncate">{s.descripcion}</TableCell>
-                      <TableCell className="whitespace-nowrap">{s.un}</TableCell>
-                      <TableCell>
-                        {s.proveedor ? (
-                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
-                            {s.proveedor}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {s.fVencimiento ? (
-                          <Badge variant="outline" className={`font-semibold ${badgeClass}`}>
-                            {s.fVencimiento}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        <Badge variant="default">{s.stock}</Badge>
-                      </TableCell>
-                      {esAdmin && (
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                            onClick={() =>
-                              handleDelete(s.bloque, s.torre, s.piso, s.posicion)
-                            }
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
+                {stock.map((s, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-mono font-medium whitespace-nowrap">{s.bloque}</TableCell>
+                    <TableCell className="whitespace-nowrap">{s.torre}</TableCell>
+                    <TableCell className="font-medium whitespace-nowrap">{s.piso}</TableCell>
+                    <TableCell className="whitespace-nowrap">{s.posicion}</TableCell>
+                    <TableCell className="max-w-[200px] truncate">{s.descripcion}</TableCell>
+                    <TableCell className="whitespace-nowrap">{s.un}</TableCell>
+                    <TableCell>
+                      {s.proveedor ? (
+                        <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+                          {s.proveedor}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
                       )}
-                    </TableRow>
-                  )
-                })}
+                    </TableCell>
+                    <TableCell>
+                      {s.fVencimiento ? (
+                        <Badge variant="outline" className={`font-semibold ${getBadgeClass(s.fVencimiento)}`}>
+                          {s.fVencimiento}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      <Badge variant="default">{s.stock}</Badge>
+                    </TableCell>
+                    {esAdmin && (
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
+
           {/* Total sum */}
           <div className="flex justify-end">
             <Badge variant="outline" className="text-sm px-3 py-1">
@@ -347,15 +474,52 @@ export function StockTab() {
             </Badge>
           </div>
         </div>
-      ) : codigo.trim() ? (
-        <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
-          <PackageSearch className="h-5 w-5" />
-          <span>Sin stock en RACKLY para &quot;{codigo}&quot;</span>
-        </div>
       ) : (
-        <p className="text-muted-foreground text-center py-8">
-          Escribe un código para ver el stock por ubicación.
-        </p>
+        /* Sin stock en ubicaciones — mostrar info del catálogo + Big Magic */
+        <div className="space-y-3">
+          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Warehouse className="h-3.5 w-3.5" />
+            Sin stock en ubicaciones de RACKLY
+          </p>
+
+          {selectedItem ? (
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800/50 dark:to-slate-800 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-500/10 flex items-center justify-center">
+                  <PackageSearch className="h-4 w-4 text-slate-500" />
+                </div>
+                <p className="text-sm font-medium">Datos del artículo</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Código</p>
+                  <p className="font-mono font-bold">{selectedItem.codigo}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">UN</p>
+                  <p className="font-bold">{selectedItem.un}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Descripción</p>
+                  <p className="text-sm">{selectedItem.descripcion}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Stock Big Magic</p>
+                  <p className="text-xl font-bold text-amber-700 dark:text-amber-300">{selectedItem.stock_big_magic}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Stock en Racks</p>
+                  <p className="text-xl font-bold text-slate-400">0</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
+              <PackageSearch className="h-5 w-5" />
+              <span>Sin stock en RACKLY para &quot;{selectedCodigo}&quot; (no encontrado en catálogo)</span>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

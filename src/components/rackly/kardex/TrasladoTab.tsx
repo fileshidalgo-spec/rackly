@@ -808,7 +808,7 @@ export function TrasladoTab() {
             )}
           </div>
 
-          <Button onClick={handleConfirm} disabled={!destBloque || !destTorre || !destPos || qtyNum <= 0} className="gap-2">
+          <Button onClick={handleConfirm} disabled={!destBloque || !destTorre || !destPiso || !destPos || qtyNum <= 0} className="gap-2">
             <ArrowRightLeft className="h-4 w-4" />
             Confirmar traslado
           </Button>

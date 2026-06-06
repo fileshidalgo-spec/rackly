@@ -73,11 +73,14 @@ export function MovimientoForm({ tipo, onCreated }: Props) {
     return () => clearInterval(interval)
   }, [])
 
+  if (!perfil) {
+    return <div className='p-4 text-muted-foreground animate-pulse'>Cargando usuario...</div>
+  }
   if (tipo === 'salida') {
-    return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil!} />
+    return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil} />
   }
   // ingreso y devolucion usan el mismo formulario, solo cambia el tipo
-  return <IngresoForm turno={turno} onCreated={onCreated} perfil={perfil!} tipo={tipo} />
+  return <IngresoForm turno={turno} onCreated={onCreated} perfil={perfil} tipo={tipo} />
 }
 
 /* ═══════════════════════════════════════════
@@ -358,7 +361,7 @@ function IngresoForm({
           <div className="space-y-1 col-span-2 sm:col-span-1">
             <Label className="text-xs text-muted-foreground">F. Vencimiento</Label>
             <div className="flex items-center gap-1.5">
-              <Input type="date" value={fVencimiento} onChange={(e) => setFVencimiento(e.target.value)} disabled={sinVencimiento} className="h-10" />
+              <Input type="date" value={fVencimiento} onChange={(e) => setFVencimiento(e.target.value)} disabled={sinVencimiento} className="h-10 [color-scheme:dark]" />
               <Checkbox checked={sinVencimiento} onCheckedChange={(v) => setSinVencimiento(!!v)} />
             </div>
           </div>
@@ -690,26 +693,29 @@ function SalidaForm({
     try {
       let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string }>
       try {
-        // Intentar obtener del servidor
-        const { fetchMovimientos } = await import('@/lib/rackly/kardex')
-        movs = await fetchMovimientos()
+        // Intentar obtener del servidor - consulta optimizada por código
+        const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
+        movs = await fetchMovimientosByCodigo(code)
       } catch {
-        // Fallback: usar movimientos cacheados en IndexedDB
+        // Fallback: usar movimientos cacheados en IndexedDB y filtrar por código
         const cached = await SyncEngine.getCachedMovimientosForStock()
-        movs = cached
+        movs = cached.filter((m) => m.codigo === code.toUpperCase())
       }
       const upperCode = code.toUpperCase()
       const locMap = new Map<string, LocWithKey>()
+      // Ya vienen filtrados del servidor, pero verificamos por si es fallback
       const relevant = movs.filter((m) => m.codigo === upperCode)
       let desc = ''
       let un = ''
       for (const m of relevant) {
         if (!desc && m.descripcion) desc = m.descripcion
         if (!un && m.un) un = m.un
+        const impact = impactoStock(m.tipo, m.cantidad)
+        if (isNaN(impact) || !isFinite(impact)) continue
         const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
         const current = locMap.get(key)
         if (current) {
-          current.stock += impactoStock(m.tipo, m.cantidad)
+          current.stock += impact
         } else {
           locMap.set(key, {
             bloque: m.bloque,
@@ -719,7 +725,7 @@ function SalidaForm({
             codigo: m.codigo,
             descripcion: m.descripcion,
             un: m.un,
-            stock: impactoStock(m.tipo, m.cantidad),
+            stock: impact,
             fVencimiento: m.fVencimiento || undefined,
             proveedor: m.proveedor,
           })
@@ -759,8 +765,9 @@ function SalidaForm({
       setLocations(results)
       setProductoDesc(desc)
       setProductoUn(un)
-    } catch {
-      // silencioso
+    } catch (err) {
+      console.error('[MovimientoForm] refreshLocations error:', err)
+      toast.error('Error al buscar stock', { description: extractError(err) })
     }
   }, [])
 

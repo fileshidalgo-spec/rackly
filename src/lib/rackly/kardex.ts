@@ -81,6 +81,17 @@ export async function fetchMovimientos(): Promise<Movimiento[]> {
   return all.map(fromRow)
 }
 
+export async function fetchMovimientosByCodigo(codigo: string): Promise<Movimiento[]> {
+  const upperCode = codigo.trim().toUpperCase()
+  const { data, error } = await dataClient
+    .from('movimientos')
+    .select('*')
+    .eq('codigo', upperCode)
+    .order('f_modificacion', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(fromRow)
+}
+
 export async function addMovimiento(
   m: Omit<Movimiento, 'id' | 'fModificacion'>,
   uuidSync?: string
@@ -93,7 +104,7 @@ export async function addMovimiento(
       p_torre: m.torre,
       p_piso: m.piso,
       p_posicion: m.posicion,
-      p_codigo: m.codigo,
+      p_codigo: m.codigo.trim().toUpperCase(),
       p_descripcion: m.descripcion,
       p_un: m.un,
       p_cantidad: m.cantidad,

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { AuthGate } from '@/components/rackly/auth/AuthGate'
 import { SesionBar } from '@/components/rackly/kardex/SesionBar'
+import { ConnectionIndicator } from '@/components/rackly/kardex/ConnectionIndicator'
 import { MovimientoForm } from '@/components/rackly/kardex/MovimientoForm'
 import { StockTab } from '@/components/rackly/kardex/StockTab'
 import { CatalogoTab } from '@/components/rackly/kardex/CatalogoTab'
@@ -181,7 +182,10 @@ function RacklyApp() {
               </button>
             </div>
           </div>
-          <SesionBar />
+          <div className="flex items-center gap-2">
+            <ConnectionIndicator />
+            <SesionBar />
+          </div>
         </div>
       </header>
 

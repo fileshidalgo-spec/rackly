@@ -82,7 +82,8 @@ export async function fetchMovimientos(): Promise<Movimiento[]> {
 }
 
 export async function addMovimiento(
-  m: Omit<Movimiento, 'id' | 'fModificacion'>
+  m: Omit<Movimiento, 'id' | 'fModificacion'>,
+  uuidSync?: string
 ): Promise<Movimiento[]> {
   // Usar RPC atómica con advisory lock para evitar race conditions
   try {
@@ -102,6 +103,7 @@ export async function addMovimiento(
       p_usuario_nombre: m.usuarioNombre ?? null,
       p_usuario_correo: m.usuarioCorreo ?? null,
       p_proveedor: m.proveedor ? m.proveedor : null,
+      p_uuid_sync: uuidSync || null,
     })
     // Stock insuficiente es un error controlado, no excepción cruda
     if (error) {
@@ -136,6 +138,7 @@ export async function addMovimiento(
         usuario_nombre: m.usuarioNombre ?? null,
         usuario_correo: m.usuarioCorreo ?? null,
         proveedor: m.proveedor ? m.proveedor : null,
+        uuid_sync: uuidSync || null,
       })
       if (error) throw error
       return fetchMovimientos()

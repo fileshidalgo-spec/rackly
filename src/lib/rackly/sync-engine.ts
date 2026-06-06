@@ -187,13 +187,20 @@ class SyncEngineSingleton {
     try {
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 5000)
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/`, {
-        method: 'HEAD',
-        mode: 'no-cors',
+      // Usar consulta real al REST API (no no-cors) para verificar conectividad real.
+      // Si el servidor responde con status 200 o 401, hay conexión.
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/profil?p=rackly`, {
+        method: 'GET',
+        headers: {
+          'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''}`,
+          'Content-Type': 'application/json',
+        },
         signal: controller.signal,
       })
       clearTimeout(timeout)
 
+      // Cualquier respuesta del servidor (200, 401, 404) significa conectividad
       this.updateState({
         lastPingTime: Date.now(),
         connectivity: 'online',
@@ -201,7 +208,7 @@ class SyncEngineSingleton {
       return true
     } catch {
       if (navigator.onLine) {
-        // El navegador dice online pero no hay conexión real
+        // El navegador dice online pero no hay conexión real al servidor
         this.updateState({ connectivity: 'offline' })
       }
       return false
@@ -517,41 +524,56 @@ class SyncEngineSingleton {
     m: Parameters<typeof addMovimiento>[0],
     uuidSync?: string
   ): Promise<{ movs: Movimiento[]; wasOffline: boolean }> {
-    // Si estamos online, intentar enviar normalmente
-    if (this.state.connectivity === 'online') {
+    // Intentar enviar al servidor si: online, o syncing/error PERO navigator dice online
+    const shouldTryOnline = this.state.connectivity === 'online' || navigator.onLine
+
+    if (shouldTryOnline) {
       try {
         const movs = await addMovimiento(m, uuidSync)
         return { movs, wasOffline: false }
       } catch (err) {
- // Si falla por conexión, guardar offline
-        const isNetworkError = !navigator.onLine || 
-          (err instanceof TypeError && err.message.includes('fetch')) ||
-          (err instanceof Error && err.message.includes('Failed to fetch'))
-        if (!isNetworkError) throw err // No es de red, propagar el error
-        // Caer al flujo offline
+        // Detectar si fue un error de red/conexión
+        const errMsg = err instanceof Error ? err.message : ''
+        const isNetworkError = !navigator.onLine ||
+          (err instanceof TypeError && errMsg.includes('fetch')) ||
+          errMsg.includes('Failed to fetch') ||
+          errMsg.includes('NetworkError') ||
+          errMsg.includes('Network request failed') ||
+          errMsg.includes('Load failed') ||
+          errMsg.includes('ERR_CONNECTION') ||
+          errMsg.includes('Aborted')
+        if (!isNetworkError) throw err // Error de negocio (ej: INSUFFICIENT_STOCK), propagar
+        // Error de red — caer al flujo offline
+        console.warn('[SyncEngine] Error de red, guardando offline:', errMsg)
       }
     }
 
     // Flujo offline: guardar en IndexedDB
-    await this.enqueueMovement({
-      tipo: m.tipo,
-      bloque: m.bloque,
-      torre: m.torre,
-      piso: m.piso,
-      posicion: m.posicion,
-      codigo: m.codigo,
-      descripcion: m.descripcion,
-      un: m.un,
-      cantidad: m.cantidad,
-      fVencimiento: m.fVencimiento,
-      turno: m.turno,
-      usuarioId: m.usuarioId,
-      usuarioNombre: m.usuarioNombre || '',
-      usuarioCorreo: m.usuarioCorreo || '',
-      proveedor: m.proveedor,
-    })
-
-    return { movs: [], wasOffline: true }
+    try {
+      await this.enqueueMovement({
+        tipo: m.tipo,
+        bloque: m.bloque,
+        torre: m.torre,
+        piso: m.piso,
+        posicion: m.posicion,
+        codigo: m.codigo,
+        descripcion: m.descripcion,
+        un: m.un,
+        cantidad: m.cantidad,
+        fVencimiento: m.fVencimiento,
+        turno: m.turno,
+        usuarioId: m.usuarioId,
+        usuarioNombre: m.usuarioNombre || '',
+        usuarioCorreo: m.usuarioCorreo || '',
+        proveedor: m.proveedor,
+      })
+      return { movs: [], wasOffline: true }
+    } catch (offlineErr) {
+      // IndexedDB no disponible — intentar enviar al servidor como último recurso
+      console.error('[SyncEngine] IndexedDB no disponible, intentando enviar directo:', offlineErr)
+      const movs = await addMovimiento(m, uuidSync)
+      return { movs, wasOffline: false }
+    }
   }
 
   /**
@@ -562,43 +584,57 @@ class SyncEngineSingleton {
   async offlineAwareTraslado(
     t: Parameters<typeof trasladarMovimiento>[0]
   ): Promise<{ movs: Movimiento[]; wasOffline: boolean }> {
-    if (this.state.connectivity === 'online') {
+    // Intentar enviar al servidor si: online, o syncing/error PERO navigator dice online
+    const shouldTryOnline = this.state.connectivity === 'online' || navigator.onLine
+
+    if (shouldTryOnline) {
       try {
         const movs = await trasladarMovimiento(t)
         return { movs, wasOffline: false }
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : ''
         const isNetworkError = !navigator.onLine ||
-          (err instanceof TypeError && err.message.includes('fetch')) ||
-          (err instanceof Error && err.message.includes('Failed to fetch'))
+          (err instanceof TypeError && errMsg.includes('fetch')) ||
+          errMsg.includes('Failed to fetch') ||
+          errMsg.includes('NetworkError') ||
+          errMsg.includes('Network request failed') ||
+          errMsg.includes('Load failed')
         if (!isNetworkError) throw err
+        console.warn('[SyncEngine] Error de red en traslado, guardando offline:', errMsg)
       }
     }
 
     // Flujo offline
-    await this.enqueueMovement({
-      tipo: 'traslado',
-      bloque: t.origen.bloque,
-      torre: t.origen.torre,
-      piso: t.origen.piso,
-      posicion: t.origen.posicion,
-      codigo: t.codigo,
-      descripcion: t.descripcion,
-      un: t.un,
-      cantidad: t.cantidad,
-      fVencimiento: t.fVencimiento || '',
-      turno: t.turno,
-      usuarioId: t.usuarioId,
-      usuarioNombre: t.usuarioNombre || '',
-      usuarioCorreo: t.usuarioCorreo || '',
-      proveedor: t.proveedor,
-      destBloque: t.destino.bloque,
-      destTorre: t.destino.torre,
-      destPiso: t.destino.piso,
-      destPosicion: t.destino.posicion,
-      cantidadAjuste: t.cantidadAjuste,
-    })
-
-    return { movs: [], wasOffline: true }
+    try {
+      await this.enqueueMovement({
+        tipo: 'traslado',
+        bloque: t.origen.bloque,
+        torre: t.origen.torre,
+        piso: t.origen.piso,
+        posicion: t.origen.posicion,
+        codigo: t.codigo,
+        descripcion: t.descripcion,
+        un: t.un,
+        cantidad: t.cantidad,
+        fVencimiento: t.fVencimiento || '',
+        turno: t.turno,
+        usuarioId: t.usuarioId,
+        usuarioNombre: t.usuarioNombre || '',
+        usuarioCorreo: t.usuarioCorreo || '',
+        proveedor: t.proveedor,
+        destBloque: t.destino.bloque,
+        destTorre: t.destino.torre,
+        destPiso: t.destino.piso,
+        destPosicion: t.destino.posicion,
+        cantidadAjuste: t.cantidadAjuste,
+      })
+      return { movs: [], wasOffline: true }
+    } catch (offlineErr) {
+      // IndexedDB no disponible — intentar enviar al servidor como último recurso
+      console.error('[SyncEngine] IndexedDB no disponible, intentando traslado directo:', offlineErr)
+      const movs = await trasladarMovimiento(t)
+      return { movs, wasOffline: false }
+    }
   }
 
   /** Verificar si estamos offline */

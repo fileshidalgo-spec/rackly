@@ -85,16 +85,60 @@ export function fmtUbicacion(bloque: string, torre: string, piso: string, posici
 }
 
 // ── Error handling ──────────────────────────────────────
-/** Extrae mensaje de error legible desde unknown */
+/** Extrae mensaje de error legible desde unknown.
+ *  Maneja: Error nativo, PostgrestError (Supabase), objetos con message/detalle,
+ *  strings, y tipos desconocidos.
+ */
 export function extractError(err: unknown): string {
+  if (!err) return 'Error desconocido'
+
+  // Error de stock insuficiente (custom)
   if (err instanceof Error && err.message === 'INSUFFICIENT_STOCK') {
     const detail = (err as unknown as Record<string, string>).detail
     return detail || 'Stock insuficiente para esta operación. Otro usuario pudo haber hecho un movimiento mientras tú operabas.'
   }
-  return err instanceof Error ? err.message : 'Error desconocido'
+
+  // Error nativo
+  if (err instanceof Error) {
+    const msg = err.message || ''
+    // PostgrestError de Supabase — usar message + detalles adicionales si existen
+    const rec = err as unknown as Record<string, unknown>
+    if (rec.code || rec.hint || rec.details) {
+      const parts = [msg]
+      if (rec.details && typeof rec.details === 'string') parts.push(rec.details)
+      if (rec.hint && typeof rec.hint === 'string') parts.push(rec.hint)
+      return parts.filter(Boolean).join('. ')
+    }
+    if (msg) return msg
+  }
+
+  // String
+  if (typeof err === 'string') return err
+
+  // Objeto con message
+  if (typeof err === 'object') {
+    const rec = err as Record<string, unknown>
+    if (typeof rec.message === 'string') return rec.message
+    if (typeof rec.error === 'string') return rec.error
+    if (typeof rec.msg === 'string') return rec.msg
+    // Fallback: stringify
+    try {
+      return JSON.stringify(err)
+    } catch {
+      return 'Error desconocido'
+    }
+  }
+
+  return 'Error desconocido'
 }
 
 /** Detecta si un error es de stock insuficiente (race condition capturada por la RPC) */
 export function isInsufficientStockError(err: unknown): boolean {
-  return err instanceof Error && err.message === 'INSUFFICIENT_STOCK'
+  if (err instanceof Error && err.message === 'INSUFFICIENT_STOCK') return true
+  // También detectar si el mensaje contiene la clave del servidor
+  if (err instanceof Error && err.message.includes('INSUFFICIENT_STOCK')) return true
+  // PostgrestError con details/hint
+  const rec = err as Record<string, unknown>
+  if (typeof rec.details === 'string' && rec.details.includes('INSUFFICIENT_STOCK')) return true
+  return false
 }

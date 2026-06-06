@@ -279,3 +279,39 @@ Stage Summary:
 - 3 archivos modificados: usePisoRealtime.tsx, PisoStockTab.tsx, PisoSectoresTab.tsx
 - Deploy: https://rackly.pages.dev (Netlify auto-deploy)
 - El polling ahora es solo respaldo; el WebSocket maneja las actualizaciones instantáneas
+---
+Task ID: session-reg-fix
+Agent: Main Agent
+Task: Fix registro de usuarios - rate limit y pre-check de correo
+
+Work Log:
+- Diagnosticado error "Demasiados intentos de registro": Supabase Auth tiene rate limiting en signUp()
+- Cada intento de registro hacía 3 llamadas a Supabase (signUp + auto-confirm Admin API + signIn), agotando el rate limit
+- Agregada función correoYaExiste() para pre-verificar si el correo ya existe en profiles antes de llamar signUp()
+- Primer intento incluía verificación en Supabase Auth Admin API → causaba trampa: bloqueaba registro pero usuario no podía iniciar sesión
+- Fix final: correoYaExiste() solo verifica tabla profiles (no Auth Admin API)
+- Agregados más patrones de detección de "correo existente" en esErrorCorreoExistente()
+- Commits: 9f076c8 (fix labels móvil), 084f022 (flex-wrap tabs), 3c6e65e (fix registro)
+
+Stage Summary:
+- Archivos: AuthGate.tsx, page.tsx
+- Usuarios nuevos pueden registrarse normalmente sin topar con rate limits innecesarios
+---
+Task ID: session-stock-search
+Agent: Main Agent
+Task: Stock tab - búsqueda por código o descripción + info Big Magic sin stock
+
+Work Log:
+- Agregada función searchCatalogo() en catalogo.ts: busca por código exacto, código parcial, y descripción
+- Reescrito StockTab.tsx con búsqueda mejorada:
+  - Barra de búsqueda ahora muestra sugerencias del catálogo al escribir (código + descripción)
+  - Al seleccionar un artículo, muestra stock por ubicación
+  - Si NO hay stock en ubicaciones: muestra tarjeta con código, descripción, UN, y stock Big Magic
+  - Botón "× Cambiar" para volver a buscar
+  - Enter selecciona primer resultado, Escape limpia búsqueda
+- Commits: 084f022 (tabs flex-wrap), 55e1e06 (stock search + big magic)
+
+Stage Summary:
+- Archivos: catalogo.ts (searchCatalogo), StockTab.tsx (rewrite completo)
+- Búsqueda ahora funciona por código O descripción
+- Cuando no hay stock en racks, se muestra info completa del artículo + stock Big Magic

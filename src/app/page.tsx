@@ -190,27 +190,27 @@ function RacklyApp() {
         {view === 'racks' && (
           <Tabs defaultValue="movimientos" className="w-full">
             {/* Nav Tabs */}
-            <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none scroll-smooth snap-x snap-mandatory">
+            <TabsList className="flex flex-wrap gap-1.5 bg-transparent p-0 pb-1 h-auto rounded-none">
               {[
-                { val: 'movimientos', icon: BarChart3, label: 'Movimientos', color: 'from-emerald-500 to-green-600' },
-                { val: 'traslado', icon: ArrowRightLeft, label: 'Traslado', color: 'from-blue-500 to-indigo-600' },
-                { val: 'kardex', icon: BookOpen, label: 'Catálogo', color: 'from-amber-500 to-orange-600' },
-                { val: 'stock', icon: PackageSearch, label: 'Stock', color: 'from-cyan-500 to-teal-600' },
-                { val: 'ocupacion', icon: LayoutGrid, label: 'Ocupación', color: 'from-violet-500 to-purple-600' },
-                { val: 'descarga', icon: Download, label: 'Descarga', color: 'from-rose-500 to-pink-600' },
-                { val: 'fefo', icon: CalendarClock, label: 'FEFO', color: 'from-orange-500 to-red-500' },
-                { val: 'usuarios', icon: Shield, label: 'Usuarios', color: 'from-slate-500 to-slate-700' },
+                { val: 'movimientos', icon: BarChart3, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
+                { val: 'traslado', icon: ArrowRightLeft, label: 'Traslado', shortLabel: 'Trasl', color: 'from-blue-500 to-indigo-600' },
+                { val: 'kardex', icon: BookOpen, label: 'Catálogo', shortLabel: 'Cat', color: 'from-amber-500 to-orange-600' },
+                { val: 'stock', icon: PackageSearch, label: 'Stock', shortLabel: 'Stock', color: 'from-cyan-500 to-teal-600' },
+                { val: 'ocupacion', icon: LayoutGrid, label: 'Ocupación', shortLabel: 'Ocup', color: 'from-violet-500 to-purple-600' },
+                { val: 'descarga', icon: Download, label: 'Descarga', shortLabel: 'Desc', color: 'from-rose-500 to-pink-600' },
+                { val: 'fefo', icon: CalendarClock, label: 'FEFO', shortLabel: 'FEFO', color: 'from-orange-500 to-red-500' },
+                { val: 'usuarios', icon: Shield, label: 'Usuarios', shortLabel: 'Users', color: 'from-slate-500 to-slate-700' },
               ].map((tab) => (
                 <TabsTrigger
                   key={tab.val}
                   value={tab.val}
-                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-slate-200 hover:bg-white/60 data-[state=active]:hover:bg-white shrink-0 snap-start min-w-fit"
+                  className="gap-1.5 px-2.5 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-slate-200 hover:bg-white/60 data-[state=active]:hover:bg-white basis-[calc(25%-6px)] md:basis-auto shrink-0"
                 >
                   <div className={`w-5 h-5 rounded-md bg-gradient-to-br ${tab.color} flex items-center justify-center shadow-sm`}>
                     <tab.icon className="h-3 w-3 text-white" />
                   </div>
+                  <span className="md:hidden text-[10px] leading-tight">{tab.shortLabel}</span>
                   <span className="hidden md:inline">{tab.label}</span>
-                  <span className="md:hidden text-[10px] leading-none">{tab.label}</span>
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -566,23 +566,23 @@ function RacklyApp() {
         {/* ═══ KARDEX PISO VIEW ═══ */}
         {view === 'piso' && (
           <Tabs defaultValue="movimientos" className="w-full">
-            <TabsList className="flex gap-1.5 overflow-x-auto bg-transparent p-0 pb-1 scrollbar-none h-auto rounded-none scroll-smooth">
+            <TabsList className="flex flex-wrap gap-1.5 bg-transparent p-0 pb-1 h-auto rounded-none">
               {[
-                { val: 'movimientos', icon: History, label: 'Movimientos', color: 'from-emerald-500 to-green-600' },
-                { val: 'sectores', icon: Layers3, label: 'Sectores', color: 'from-sky-500 to-blue-600' },
-                { val: 'stock', icon: PackageSearch, label: 'Stock', color: 'from-cyan-500 to-teal-600' },
-                { val: 'config', icon: Settings, label: 'Configuración', color: 'from-slate-400 to-slate-600' },
+                { val: 'movimientos', icon: History, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
+                { val: 'sectores', icon: Layers3, label: 'Sectores', shortLabel: 'Sector', color: 'from-sky-500 to-blue-600' },
+                { val: 'stock', icon: PackageSearch, label: 'Stock', shortLabel: 'Stock', color: 'from-cyan-500 to-teal-600' },
+                { val: 'config', icon: Settings, label: 'Configuración', shortLabel: 'Config', color: 'from-slate-400 to-slate-600' },
               ].map((tab) => (
                 <TabsTrigger
                   key={tab.val}
                   value={tab.val}
-                  className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-slate-700 data-[state=active]:text-white data-[state=active]:border data-[state=active]:border-slate-600 hover:bg-slate-800/60 data-[state=active]:hover:bg-slate-700 shrink-0 snap-start min-w-fit text-slate-400"
+                  className="gap-1.5 px-2.5 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-slate-700 data-[state=active]:text-white data-[state=active]:border data-[state=active]:border-slate-600 hover:bg-slate-800/60 data-[state=active]:hover:bg-slate-700 basis-[calc(25%-6px)] md:basis-auto shrink-0 text-slate-400"
                 >
                   <div className={`w-5 h-5 rounded-md bg-gradient-to-br ${tab.color} flex items-center justify-center shadow-sm`}>
                     <tab.icon className="h-3 w-3 text-white" />
                   </div>
+                  <span className="md:hidden text-[10px] leading-tight">{tab.shortLabel}</span>
                   <span className="hidden md:inline">{tab.label}</span>
-                  <span className="md:hidden text-[10px] leading-none">{tab.label}</span>
                 </TabsTrigger>
               ))}
             </TabsList>

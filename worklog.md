@@ -315,3 +315,62 @@ Stage Summary:
 - Archivos: catalogo.ts (searchCatalogo), StockTab.tsx (rewrite completo)
 - Búsqueda ahora funciona por código O descripción
 - Cuando no hay stock en racks, se muestra info completa del artículo + stock Big Magic
+
+---
+Task ID: JHIA-83
+Agent: main
+Task: Ordenar stock sin fecha de vencimiento por bloque 1→7
+
+Work Log:
+- Modificado sorting en MovimientoForm.tsx (SalidaForm refreshLocations)
+- Modificado sorting en StockTab.tsx (stockData useMemo)
+- Modificado sorting en TrasladoTab.tsx (setLocations)
+- FEFO se mantiene: artículos con fecha van primero por fecha más próxima
+- Sin fecha: ordenan por bloque → torre → piso → posición (numérico ascendente)
+- Build exitoso, commit 14c47df
+
+Stage Summary:
+- Articles with expiration date: sorted by FEFO (earliest first)
+- Articles without expiration date: sorted by block 1→7, tower, floor, position
+- 3 files changed
+
+---
+Task ID: JHIA-84
+Agent: main
+Task: Implementar modo offline-first (4 fases)
+
+Work Log:
+FASE 1 — Infraestructura:
+- Creado src/lib/rackly/offline-db.ts (IndexedDB wrapper)
+  - Stores: pendingMovements, cachedMovimientos, cachedCatalogo, cachedUsuarios, syncMeta
+- Creado src/lib/rackly/sync-engine.ts (SyncEngine singleton)
+  - Detección de conectividad: navigator.onLine + ping periódico a Supabase
+  - Cola FIFO de movimientos pendientes
+  - Sincronización secuencial con idempotencia UUID
+  - Caché automático de movimientos del servidor
+- Creado src/hooks/useConnectivity.ts (React hook)
+- Creado src/components/rackly/kardex/ConnectionIndicator.tsx
+  - Badge visual: online/offline/syncing/error
+  - Contador de pendientes
+  - Diálogo de resolución de conflictos
+- Modificado addMovimiento en kardex.ts: acepta uuid_sync
+- Modificado page.tsx: ConnectionIndicator en header
+- SQL ejecutado por usuario: ALTER TABLE movimientos ADD COLUMN uuid_sync TEXT UNIQUE
+
+FASE 2 — Escritura offline:
+- SyncEngine: offlineAwareAddMovimiento() y offlineAwareTraslado()
+- MovimientoForm.tsx: doInsert, handleSalidaDesdeAlerta, doMassSalida, doSalida
+- TrasladoTab.tsx: handleSalidaDesdeAlerta, doTraslado
+- Toasts diferenciados online/offline
+- Auto-fallback a IndexedDB si falla envío por red
+
+FASE 3 — Lectura offline:
+- catalogo.ts: fetchCatalogo() cachea en IndexedDB, fallback offline
+- MovimientoForm SalidaForm: refreshLocations usa movimientos cacheados
+
+Stage Summary:
+- Punto de retorno: tag SAFE-POINT-BEFORE-OFFLINE-20260606
+- 4 fases implementadas y comprometidas
+- Commits: d25771a (F1), 89da56e (F2), 09decae (F3)
+- Build exitoso en todas las fases
+- App sigue funcionando online exactamente igual que antes

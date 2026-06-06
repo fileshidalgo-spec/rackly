@@ -187,20 +187,21 @@ class SyncEngineSingleton {
     try {
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 5000)
-      // Usar consulta real al REST API (no no-cors) para verificar conectividad real.
-      // Si el servidor responde con status 200 o 401, hay conexión.
-      const response = await fetch(`${SUPABASE_URL}/rest/v1/profil?p=rackly`, {
+      // Ping al REST API de Supabase para verificar conectividad real.
+      // Cualquier respuesta del servidor (200, 401, 400) significa que hay conexión.
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id&limit=1`, {
         method: 'GET',
         headers: {
           'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
           'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''}`,
           'Content-Type': 'application/json',
+          'Prefer': 'count=exact',
         },
         signal: controller.signal,
       })
       clearTimeout(timeout)
 
-      // Cualquier respuesta del servidor (200, 401, 404) significa conectividad
+      // Cualquier respuesta del servidor (200, 401, 400, 403) significa conectividad
       this.updateState({
         lastPingTime: Date.now(),
         connectivity: 'online',

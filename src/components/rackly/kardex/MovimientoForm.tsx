@@ -702,12 +702,26 @@ function SalidaForm({
         }
       }
       const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
-      // Ordenar: vencimiento más próximo primero, sin fecha al final
+      // Ordenar: FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
       results.sort((a, b) => {
-        if (a.fVencimiento && b.fVencimiento) return (a.fVencimiento || '').localeCompare(b.fVencimiento || '')
-        if (a.fVencimiento) return -1
-        if (b.fVencimiento) return 1
-        return 0
+        const aHasDate = !!a.fVencimiento
+        const bHasDate = !!b.fVencimiento
+        if (aHasDate && bHasDate) return a.fVencimiento!.localeCompare(b.fVencimiento!)
+        if (aHasDate && !bHasDate) return -1
+        if (!aHasDate && bHasDate) return 1
+        // Ambos sin fecha: ordenar por bloque, torre, piso, posición
+        const aB = parseInt(a.bloque, 10) || 0
+        const bB = parseInt(b.bloque, 10) || 0
+        if (aB !== bB) return aB - bB
+        const aT = parseInt(a.torre, 10) || 0
+        const bT = parseInt(b.torre, 10) || 0
+        if (aT !== bT) return aT - bT
+        const aP = parseInt(a.piso, 10) || 0
+        const bP = parseInt(b.piso, 10) || 0
+        if (aP !== bP) return aP - bP
+        const aPos = parseInt(a.posicion, 10) || 0
+        const bPos = parseInt(b.posicion, 10) || 0
+        return aPos - bPos
       })
       // Limpiar selecciones de ubicaciones que ya no tienen stock
       const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`))

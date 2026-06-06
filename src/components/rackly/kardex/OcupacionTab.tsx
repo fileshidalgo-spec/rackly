@@ -689,7 +689,7 @@ export function OcupacionTab() {
                       value={ingSinFecha ? '' : ingFVenc}
                       onChange={e => { setIngFVenc(e.target.value); if (e.target.value) setIngSinFecha(false) }}
                       disabled={ingSinFecha}
-                      className="flex-1 h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50 disabled:opacity-40"
+                      className="flex-1 h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50 disabled:opacity-40 [color-scheme:dark]"
                     />
                     <button
                       type="button"

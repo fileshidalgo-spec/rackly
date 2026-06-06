@@ -189,11 +189,11 @@ export function FefoTab() {
           <div className="flex items-center gap-2 flex-1 flex-wrap">
             <span className="text-xs font-medium text-slate-400">Desde</span>
             <Input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)}
-              className="h-9 min-w-0 flex-1 sm:w-[150px] bg-slate-700/60 border-slate-600/50 text-white text-sm focus:border-sky-400" />
+              className="h-9 min-w-0 flex-1 sm:w-[150px] bg-slate-700/60 border-slate-600/50 text-white text-sm focus:border-sky-400 [color-scheme:dark]" />
             <span className="text-slate-500 text-base">→</span>
             <span className="text-xs font-medium text-slate-400">Hasta</span>
             <Input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)}
-              className="h-9 min-w-0 flex-1 sm:w-[150px] bg-slate-700/60 border-slate-600/50 text-white text-sm focus:border-sky-400" />
+              className="h-9 min-w-0 flex-1 sm:w-[150px] bg-slate-700/60 border-slate-600/50 text-white text-sm focus:border-sky-400 [color-scheme:dark]" />
           </div>
           {hasActiveFilters && (
             <Button onClick={clearFilters} variant="outline" size="sm"

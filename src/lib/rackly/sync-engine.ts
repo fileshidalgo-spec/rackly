@@ -499,6 +499,112 @@ class SyncEngineSingleton {
       return []
     }
   }
+
+  // ═══════════════════════════════════════════════════════════
+  // OFFLINE-AWARE WRAPPERS — Usados por los componentes
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Registrar un movimiento (ingreso/salida/devolución) con soporte offline.
+   * Si hay internet → envía al servidor normalmente.
+   * Si no hay internet → guarda en IndexedDB para sincronizar después.
+   * 
+   * Retorna: { movs, wasOffline }
+   * - movs: array de movimientos actualizados (vacío si fue offline)
+   * - wasOffline: true si se guardó offline
+   */
+  async offlineAwareAddMovimiento(
+    m: Parameters<typeof addMovimiento>[0],
+    uuidSync?: string
+  ): Promise<{ movs: Movimiento[]; wasOffline: boolean }> {
+    // Si estamos online, intentar enviar normalmente
+    if (this.state.connectivity === 'online') {
+      try {
+        const movs = await addMovimiento(m, uuidSync)
+        return { movs, wasOffline: false }
+      } catch (err) {
+ // Si falla por conexión, guardar offline
+        const isNetworkError = !navigator.onLine || 
+          (err instanceof TypeError && err.message.includes('fetch')) ||
+          (err instanceof Error && err.message.includes('Failed to fetch'))
+        if (!isNetworkError) throw err // No es de red, propagar el error
+        // Caer al flujo offline
+      }
+    }
+
+    // Flujo offline: guardar en IndexedDB
+    await this.enqueueMovement({
+      tipo: m.tipo,
+      bloque: m.bloque,
+      torre: m.torre,
+      piso: m.piso,
+      posicion: m.posicion,
+      codigo: m.codigo,
+      descripcion: m.descripcion,
+      un: m.un,
+      cantidad: m.cantidad,
+      fVencimiento: m.fVencimiento,
+      turno: m.turno,
+      usuarioId: m.usuarioId,
+      usuarioNombre: m.usuarioNombre || '',
+      usuarioCorreo: m.usuarioCorreo || '',
+      proveedor: m.proveedor,
+    })
+
+    return { movs: [], wasOffline: true }
+  }
+
+  /**
+   * Registrar un traslado con soporte offline.
+   * Si hay internet → envía al servidor normalmente.
+   * Si no hay internet → guarda en IndexedDB (como un solo movimiento pendiente).
+   */
+  async offlineAwareTraslado(
+    t: Parameters<typeof trasladarMovimiento>[0]
+  ): Promise<{ movs: Movimiento[]; wasOffline: boolean }> {
+    if (this.state.connectivity === 'online') {
+      try {
+        const movs = await trasladarMovimiento(t)
+        return { movs, wasOffline: false }
+      } catch (err) {
+        const isNetworkError = !navigator.onLine ||
+          (err instanceof TypeError && err.message.includes('fetch')) ||
+          (err instanceof Error && err.message.includes('Failed to fetch'))
+        if (!isNetworkError) throw err
+      }
+    }
+
+    // Flujo offline
+    await this.enqueueMovement({
+      tipo: 'traslado',
+      bloque: t.origen.bloque,
+      torre: t.origen.torre,
+      piso: t.origen.piso,
+      posicion: t.origen.posicion,
+      codigo: t.codigo,
+      descripcion: t.descripcion,
+      un: t.un,
+      cantidad: t.cantidad,
+      fVencimiento: t.fVencimiento || '',
+      turno: t.turno,
+      usuarioId: t.usuarioId,
+      usuarioNombre: t.usuarioNombre || '',
+      usuarioCorreo: t.usuarioCorreo || '',
+      proveedor: t.proveedor,
+      destBloque: t.destino.bloque,
+      destTorre: t.destino.torre,
+      destPiso: t.destino.piso,
+      destPosicion: t.destino.posicion,
+      cantidadAjuste: t.cantidadAjuste,
+    })
+
+    return { movs: [], wasOffline: true }
+  }
+
+  /** Verificar si estamos offline */
+  isOffline(): boolean {
+    return this.state.connectivity === 'offline' || this.state.connectivity === 'error'
+  }
 }
 
 // Singleton exportado

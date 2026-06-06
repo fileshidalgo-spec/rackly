@@ -9,6 +9,7 @@ import {
   type StockEnUbicacion,
   type Turno,
 } from '@/lib/rackly/kardex'
+import { SyncEngine } from '@/lib/rackly/sync-engine'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { BLOQUES, PISOS, PROVEEDORES_FILM } from '@/lib/rackly/constants'
 import { torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
@@ -151,7 +152,7 @@ function IngresoForm({
 
   async function doInsert(qty: number) {
     try {
-      const movs = await addMovimiento({
+      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
         tipo,
         bloque,
         torre,
@@ -168,7 +169,14 @@ function IngresoForm({
         usuarioCorreo: perfil.correo,
         proveedor: proveedor || undefined,
       })
-      toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
+      if (wasOffline) {
+        toast.success(tipo === 'devolucion' ? 'Devolución guardada (offline)' : 'Ingreso guardado (offline)', {
+          description: 'Se sincronizará al reconectarse',
+          duration: 5000,
+        })
+      } else {
+        toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
+      }
       setCodigo('')
       setDescripcion('')
       setUn('')
@@ -189,7 +197,7 @@ function IngresoForm({
   async function handleSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
     setSalidaBusy(stockItem.codigo)
     try {
-      const movs = await addMovimiento({
+      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
         tipo: 'salida',
         bloque,
         torre,
@@ -206,16 +214,24 @@ function IngresoForm({
         usuarioCorreo: perfil.correo,
         proveedor: stockItem.proveedor,
       })
-      toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
-      onCreated(movs)
-      // Refrescar datos del alerta
-      const updated = await stockEnUbicacion(bloque, torre, piso, posicion)
-      if (updated.length > 0) {
-        setConfirmData(updated)
-      } else {
+      if (wasOffline) {
+        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
+          description: 'Se sincronizará al reconectarse',
+          duration: 5000,
+        })
         setConfirmData(null)
-        // Ya no hay productos, hacer el ingreso directamente
-        await doInsert(parseFloat(cantidad))
+      } else {
+        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
+        onCreated(movs)
+        // Refrescar datos del alerta
+        const updated = await stockEnUbicacion(bloque, torre, piso, posicion)
+        if (updated.length > 0) {
+          setConfirmData(updated)
+        } else {
+          setConfirmData(null)
+          // Ya no hay productos, hacer el ingreso directamente
+          await doInsert(parseFloat(cantidad))
+        }
       }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
@@ -616,7 +632,7 @@ function SalidaForm({
         }
         const finalQty = Math.min(qtyNum, loc.stock)
         try {
-          await addMovimiento({
+          const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
             tipo: 'salida',
             bloque: loc.bloque, torre: loc.torre, piso: loc.piso, posicion: loc.posicion,
             codigo: loc.codigo, descripcion: loc.descripcion, un: loc.un,
@@ -799,7 +815,7 @@ function SalidaForm({
     const { loc, qtyNum } = confirmState
     setBusy(true)
     try {
-      const result = await addMovimiento({
+      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
         tipo: 'salida',
         bloque: loc.bloque,
         torre: loc.torre,
@@ -816,11 +832,18 @@ function SalidaForm({
         usuarioCorreo: perfil.correo,
         proveedor: loc.proveedor,
       })
-      toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
+      if (wasOffline) {
+        toast.success(`Salida de ${qtyNum} ${loc.un} guardada (offline)`, {
+          description: 'Se sincronizará al reconectarse',
+          duration: 5000,
+        })
+      } else {
+        toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
+      }
       setConfirmState(null)
       setSearchCode('')
       setQtyMap({})
-      onCreated(result)
+      onCreated(movs)
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         toast.error('Stock insuficiente', {

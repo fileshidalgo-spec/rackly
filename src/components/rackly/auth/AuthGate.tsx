@@ -66,49 +66,29 @@ function esErrorCorreoExistente(message: string): boolean {
   const lower = message.toLowerCase()
   return lower.includes('already registered') ||
     lower.includes('already been registered') ||
-    lower.includes('user already exists')
+    lower.includes('user already exists') ||
+    lower.includes('identity already exists') ||
+    lower.includes('to use a different email')
 }
 
 /**
- * Verifica si el correo ya está registrado en profiles O en Supabase Auth.
- * Esto evita gastar intentos del rate limit de Supabase Auth cuando el correo ya existe.
+ * Verifica si el correo ya está registrado en la tabla profiles.
+ * Solo verifica profiles (no Supabase Auth) para evitar bloquear usuarios
+ * que tienen cuentas a medio crear en Auth sin perfil asociado.
  */
 async function correoYaExiste(email: string): Promise<boolean> {
   const lower = email.trim().toLowerCase()
-  // 1) Buscar en tabla profiles
   try {
     const { data } = await dataClient
       .from('profiles')
       .select('id')
       .eq('correo', lower)
       .maybeSingle()
-    if (data) return true
+    return !!data
   } catch {
-    // Si falla la consulta, continuar con el siguiente check
+    // Si falla la consulta, permitir el registro (dejar que Supabase decida)
+    return false
   }
-  // 2) Buscar en Supabase Auth vía Admin API
-  const SERVICE_ROLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
-  const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
-  if (SERVICE_ROLE_KEY && SUPABASE_URL) {
-    try {
-      const res = await fetch(
-        `${SUPABASE_URL}/auth/v1/admin/users?email=${encodeURIComponent(lower)}`,
-        {
-          headers: {
-            'apikey': SERVICE_ROLE_KEY,
-            'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
-          },
-        }
-      )
-      if (res.ok) {
-        const adminData = await res.json()
-        if (adminData.users && adminData.users.length > 0) return true
-      }
-    } catch {
-      // Si falla, no bloquear el registro
-    }
-  }
-  return false
 }
 
 /* ─── Componente auxiliar: campo contraseña con toggle de visibilidad ─── */

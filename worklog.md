@@ -396,3 +396,30 @@ Stage Summary:
 - 4 archivos modificados: utils.ts, kardex.ts, sync-engine.ts, worklog.md
 - Build: exitoso sin errores
 - Deploy: push a GitHub, Cloudflare Pages desplegará automáticamente
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix date input bug + Salida/Movimiento errors + Mobile UI + Offline verification
+
+Work Log:
+- Investigated date picker invisible on dark theme: missing [color-scheme:dark] on 4 date inputs
+- Fixed all date inputs: MovimientoForm.tsx (line 361), FefoTab.tsx (lines 192, 196), OcupacionTab.tsx (line 692)
+- Investigated Salida/Movimiento errors: found 12 issues (2 critical, 4 high, 4 medium, 2 low)
+- Fixed CRITICAL: perfil! null assertion → null guard with loading state
+- Fixed HIGH: Silent error swallowing in refreshLocations → toast.error with description
+- Fixed HIGH: Case sensitivity mismatch RPC vs fallback → trim().toUpperCase() on p_codigo
+- Fixed HIGH: Missing destPiso validation in TrasladoTab → added !destPiso to disabled condition
+- Fixed MEDIUM: NaN propagation guard in stock calculation
+- Fixed MEDIUM: Performance optimization - fetchMovimientosByCodigo instead of fetching ALL movements every 8s
+- Fixed 4 mobile UI issues: sticky TabsList, delete button visible on touch, filter bar responsive widths, toast top-center
+- Verified offline infrastructure is fully implemented: OfflineDB (IndexedDB), SyncEngine (singleton), ConnectionIndicator (UI), useConnectivity (hook)
+- Confirmed all forms already use offlineAwareAddMovimiento/offlineAwareTraslado wrappers
+- All builds passed, pushed 3 commits to GitHub
+
+Stage Summary:
+- Commit d47a7b1: fix fecha visible, perfil null guard, errores silenciosos, case mismatch, perf optimizacion (6 files)
+- Commit 5f60f7d: fix 4 mobile UI issues (2 files)
+- Date picker: added [color-scheme:dark] to all type=date inputs
+- 6 critical/high/medium bugs fixed in MovimientoForm, kardex.ts, TrasladoTab
+- Offline system verified: fully operational (SyncEngine + IndexedDB + ConnectionIndicator)
+- Push successful to GitHub main branch

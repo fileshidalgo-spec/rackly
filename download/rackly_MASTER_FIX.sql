@@ -70,7 +70,8 @@ CREATE OR REPLACE FUNCTION public.registrar_movimiento_kardex(
   p_usuario_id UUID,
   p_usuario_nombre TEXT,
   p_usuario_correo TEXT,
-  p_proveedor TEXT
+  p_proveedor TEXT,
+  p_uuid_sync TEXT DEFAULT NULL
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -111,12 +112,12 @@ BEGIN
 
   -- Insertar el movimiento
   INSERT INTO movimientos (tipo, bloque, torre, piso, posicion, codigo, descripcion, un,
-    cantidad, f_vencimiento, turno, usuario_id, usuario_nombre, usuario_correo, proveedor)
+    cantidad, f_vencimiento, turno, usuario_id, usuario_nombre, usuario_correo, proveedor, uuid_sync)
   VALUES (
     p_tipo, p_bloque, p_torre, p_piso, p_posicion, v_codigo_clean,
     p_descripcion, p_un, p_cantidad,
     p_f_vencimiento, p_turno, p_usuario_id,
-    p_usuario_nombre, p_usuario_correo, p_proveedor
+    p_usuario_nombre, p_usuario_correo, p_proveedor, p_uuid_sync
   );
 
   -- Retornar resultado

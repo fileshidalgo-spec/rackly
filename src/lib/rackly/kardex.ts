@@ -146,6 +146,7 @@ export async function addMovimiento(
       p_usuario_nombre: m.usuarioNombre ?? null,
       p_usuario_correo: m.usuarioCorreo ?? null,
       p_proveedor: m.proveedor ? m.proveedor : null,
+      p_uuid_sync: uuidSync || null,
     })
     // Stock insuficiente es un error controlado, no excepción cruda
     if (error) {

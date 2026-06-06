@@ -599,7 +599,8 @@ class SyncEngineSingleton {
           errMsg.includes('Failed to fetch') ||
           errMsg.includes('NetworkError') ||
           errMsg.includes('Network request failed') ||
-          errMsg.includes('Load failed')
+          errMsg.includes('Load failed') ||
+          errMsg.includes('Aborted')
         if (!isNetworkError) throw err
         console.warn('[SyncEngine] Error de red en traslado, guardando offline:', errMsg)
       }

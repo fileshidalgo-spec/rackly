@@ -92,6 +92,38 @@ export async function fetchMovimientosByCodigo(codigo: string): Promise<Movimien
   return (data ?? []).map(fromRow)
 }
 
+/** Fallback: insert directo cuando la RPC no existe en Supabase */
+async function addMovimientoFallback(
+  m: Omit<Movimiento, 'id' | 'fModificacion'>,
+  uuidSync?: string
+): Promise<Movimiento[]> {
+  console.warn('[addMovimiento] RPC no encontrada, usando insert directo como fallback')
+  const { error } = await dataClient.from('movimientos').insert({
+    tipo: m.tipo,
+    bloque: m.bloque,
+    torre: m.torre,
+    piso: m.piso,
+    posicion: m.posicion,
+    codigo: m.codigo.trim().toUpperCase(),
+    descripcion: m.descripcion,
+    un: m.un,
+    cantidad: m.cantidad,
+    f_vencimiento: m.fVencimiento || null,
+    turno: m.turno,
+    usuario_id: m.usuarioId,
+    usuario_nombre: m.usuarioNombre ?? null,
+    usuario_correo: m.usuarioCorreo ?? null,
+    proveedor: m.proveedor ? m.proveedor : null,
+    uuid_sync: uuidSync || null,
+  })
+  if (error) throw error
+  try {
+    return await fetchMovimientos()
+  } catch {
+    return []
+  }
+}
+
 export async function addMovimiento(
   m: Omit<Movimiento, 'id' | 'fModificacion'>,
   uuidSync?: string
@@ -114,17 +146,21 @@ export async function addMovimiento(
       p_usuario_nombre: m.usuarioNombre ?? null,
       p_usuario_correo: m.usuarioCorreo ?? null,
       p_proveedor: m.proveedor ? m.proveedor : null,
-      p_uuid_sync: uuidSync || null,
     })
     // Stock insuficiente es un error controlado, no excepción cruda
     if (error) {
       const msg = error.message || ''
+      const code = (error as unknown as Record<string, string>).code || ''
       if (msg.includes('INSUFFICIENT_STOCK')) {
         const parts = msg.split('|')
         const detail = parts.length > 1 ? parts[1] : 'Stock insuficiente para esta operación'
         const err = new Error('INSUFFICIENT_STOCK')
         ;(err as unknown as Record<string, string>).detail = detail
         throw err
+      }
+      // Si la RPC no existe (404 / 42883 / 'Could not find'), usar fallback
+      if (code === '42883' || code === 'PGRST202' || msg.includes('Could not find') || msg.includes('does not exist') || msg.includes('404')) {
+        return await addMovimientoFallback(m, uuidSync)
       }
       throw error
     }
@@ -139,33 +175,10 @@ export async function addMovimiento(
     }
   } catch (err: unknown) {
     // Si la RPC no existe aún (SQL no ejecutado), fallback al insert directo
-    if (err instanceof Error && (err as unknown as Record<string, string>).code === '42883') {
-      console.warn('[JHIA-79] RPC registrar_movimiento_kardex no encontrada, usando insert directo como fallback')
-      const { error } = await dataClient.from('movimientos').insert({
-        tipo: m.tipo,
-        bloque: m.bloque,
-        torre: m.torre,
-        piso: m.piso,
-        posicion: m.posicion,
-        codigo: m.codigo.trim().toUpperCase(),
-        descripcion: m.descripcion,
-        un: m.un,
-        cantidad: m.cantidad,
-        f_vencimiento: m.fVencimiento || null,
-        turno: m.turno,
-        usuario_id: m.usuarioId,
-        usuario_nombre: m.usuarioNombre ?? null,
-        usuario_correo: m.usuarioCorreo ?? null,
-        proveedor: m.proveedor ? m.proveedor : null,
-        uuid_sync: uuidSync || null,
-      })
-      if (error) throw error
-      // Igual: si fetchMovimientos falla, el insert ya se hizo
-      try {
-        return await fetchMovimientos()
-      } catch {
-        return []
-      }
+    const errMsg = err instanceof Error ? err.message : ''
+    const errCode = err instanceof Error ? (err as unknown as Record<string, string>).code || '' : ''
+    if (errCode === '42883' || errCode === 'PGRST202' || errMsg.includes('Could not find') || errMsg.includes('does not exist')) {
+      return await addMovimientoFallback(m, uuidSync)
     }
     throw err
   }
@@ -353,6 +366,61 @@ export type TrasladoInput = {
   cantidadAjuste?: number
 }
 
+/** Fallback: insert directo para traslado cuando la RPC no existe en Supabase */
+async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento[]> {
+  console.warn('[trasladarMovimiento] RPC no encontrada, usando insert directo como fallback')
+  const codigo = t.codigo.trim().toUpperCase()
+  const base = {
+    codigo,
+    descripcion: t.descripcion,
+    un: t.un,
+    f_vencimiento: t.fVencimiento || null,
+    turno: t.turno,
+    usuario_id: t.usuarioId,
+    usuario_nombre: t.usuarioNombre ?? null,
+    usuario_correo: t.usuarioCorreo ?? null,
+    proveedor: t.proveedor ? t.proveedor : null,
+  }
+  const ajuste = (t.cantidadAjuste ?? 0) !== 0
+    ? [{
+        ...base,
+        tipo: (t.cantidadAjuste ?? 0) > 0 ? 'ingreso' as const : 'salida' as const,
+        bloque: t.origen.bloque,
+        torre: t.origen.torre,
+        piso: t.origen.piso,
+        posicion: t.origen.posicion,
+        cantidad: Math.abs(t.cantidadAjuste!),
+      }]
+    : []
+  const { error } = await dataClient.from('movimientos').insert([
+    ...ajuste,
+    {
+      ...base,
+      tipo: 'salida',
+      bloque: t.origen.bloque,
+      torre: t.origen.torre,
+      piso: t.origen.piso,
+      posicion: t.origen.posicion,
+      cantidad: t.cantidad,
+    },
+    {
+      ...base,
+      tipo: 'traslado',
+      bloque: t.destino.bloque,
+      torre: t.destino.torre,
+      piso: t.destino.piso,
+      posicion: t.destino.posicion,
+      cantidad: t.cantidad,
+    },
+  ])
+  if (error) throw error
+  try {
+    return await fetchMovimientos()
+  } catch {
+    return []
+  }
+}
+
 export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[]> {
   // Usar RPC atómica con advisory locks en origen Y destino
   try {
@@ -380,12 +448,17 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
     // Stock insuficiente en origen
     if (error) {
       const msg = error.message || ''
+      const code = (error as unknown as Record<string, string>).code || ''
       if (msg.includes('INSUFFICIENT_STOCK')) {
         const parts = msg.split('|')
         const detail = parts.length > 1 ? parts[1] : 'Stock insuficiente en origen para este traslado'
         const err = new Error('INSUFFICIENT_STOCK')
         ;(err as unknown as Record<string, string>).detail = detail
         throw err
+      }
+      // Si la RPC no existe (404 / 42883 / 'Could not find'), usar fallback
+      if (code === '42883' || code === 'PGRST202' || msg.includes('Could not find') || msg.includes('does not exist') || msg.includes('404')) {
+        return await trasladarMovimientoFallback(t)
       }
       throw error
     }
@@ -398,58 +471,10 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
     }
   } catch (err: unknown) {
     // Fallback si la RPC no existe aún
-    if (err instanceof Error && (err as unknown as Record<string, string>).code === '42883') {
-      console.warn('[JHIA-79] RPC registrar_traslado_kardex no encontrada, usando insert directo como fallback')
-      const codigo = t.codigo.trim().toUpperCase()
-      const base = {
-        codigo,
-        descripcion: t.descripcion,
-        un: t.un,
-        f_vencimiento: t.fVencimiento || null,
-        turno: t.turno,
-        usuario_id: t.usuarioId,
-        usuario_nombre: t.usuarioNombre ?? null,
-        usuario_correo: t.usuarioCorreo ?? null,
-        proveedor: t.proveedor ? t.proveedor : null,
-      }
-      const ajuste = (t.cantidadAjuste ?? 0) !== 0
-        ? [{
-            ...base,
-            tipo: (t.cantidadAjuste ?? 0) > 0 ? 'ingreso' as const : 'salida' as const,
-            bloque: t.origen.bloque,
-            torre: t.origen.torre,
-            piso: t.origen.piso,
-            posicion: t.origen.posicion,
-            cantidad: Math.abs(t.cantidadAjuste!),
-          }]
-        : []
-      const { error } = await dataClient.from('movimientos').insert([
-        ...ajuste,
-        {
-          ...base,
-          tipo: 'salida',
-          bloque: t.origen.bloque,
-          torre: t.origen.torre,
-          piso: t.origen.piso,
-          posicion: t.origen.posicion,
-          cantidad: t.cantidad,
-        },
-        {
-          ...base,
-          tipo: 'traslado',
-          bloque: t.destino.bloque,
-          torre: t.destino.torre,
-          piso: t.destino.piso,
-          posicion: t.destino.posicion,
-          cantidad: t.cantidad,
-        },
-      ])
-      if (error) throw error
-      try {
-        return await fetchMovimientos()
-      } catch {
-        return []
-      }
+    const errMsg = err instanceof Error ? err.message : ''
+    const errCode = err instanceof Error ? (err as unknown as Record<string, string>).code || '' : ''
+    if (errCode === '42883' || errCode === 'PGRST202' || errMsg.includes('Could not find') || errMsg.includes('does not exist')) {
+      return await trasladarMovimientoFallback(t)
     }
     throw err
   }

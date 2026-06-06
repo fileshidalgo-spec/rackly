@@ -117,7 +117,15 @@ export async function addMovimiento(
       }
       throw error
     }
-    return fetchMovimientos()
+    // RPC exitosa: el movimiento ya fue registrado en la DB.
+    // Intentar refrescar la lista de movimientos, pero si falla (timeout, red)
+    // NO propagar el error — el movimiento ya está guardado.
+    try {
+      return await fetchMovimientos()
+    } catch {
+      console.warn('[addMovimiento] RPC exitosa pero fetchMovimientos() falló. Movimiento ya registrado.')
+      return []
+    }
   } catch (err: unknown) {
     // Si la RPC no existe aún (SQL no ejecutado), fallback al insert directo
     if (err instanceof Error && (err as unknown as Record<string, string>).code === '42883') {
@@ -141,7 +149,12 @@ export async function addMovimiento(
         uuid_sync: uuidSync || null,
       })
       if (error) throw error
-      return fetchMovimientos()
+      // Igual: si fetchMovimientos falla, el insert ya se hizo
+      try {
+        return await fetchMovimientos()
+      } catch {
+        return []
+      }
     }
     throw err
   }
@@ -365,7 +378,13 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       }
       throw error
     }
-    return fetchMovimientos()
+    // RPC exitosa: refrescar movimientos, pero no fallar si fetchMovimientos falla
+    try {
+      return await fetchMovimientos()
+    } catch {
+      console.warn('[trasladarMovimiento] RPC exitosa pero fetchMovimientos() falló. Traslado ya registrado.')
+      return []
+    }
   } catch (err: unknown) {
     // Fallback si la RPC no existe aún
     if (err instanceof Error && (err as unknown as Record<string, string>).code === '42883') {
@@ -415,7 +434,11 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
         },
       ])
       if (error) throw error
-      return fetchMovimientos()
+      try {
+        return await fetchMovimientos()
+      } catch {
+        return []
+      }
     }
     throw err
   }

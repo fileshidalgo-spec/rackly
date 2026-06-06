@@ -571,6 +571,13 @@ function SalidaForm({
 
   // ─── Salida en masa ───
   const [massBusy, setMassBusy] = useState(false)
+  // Refs para leer estado actualizado dentro del loop async
+  const locationsRef = useRef(locations)
+  locationsRef.current = locations
+  const qtyMapRef = useRef(qtyMap)
+  qtyMapRef.current = qtyMap
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
 
   function openMassConfirm() {
     if (selected.size === 0) {
@@ -582,48 +589,68 @@ function SalidaForm({
 
   async function doMassSalida() {
     setMassBusy(true)
+    const totalToProcess = selectedRef.current.size
     let totalProcessed = 0
     let totalErrors = 0
     let stockErrors = 0
+    const errorDetails: string[] = []
     try {
-      for (const key of selected) {
-        const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === key)
-        if (!loc) continue
-        const qtyVal = qtyMap[key] || ''
-        const qtyNum = qtyVal ? parseFloat(qtyVal) : loc.stock
-        if (isNaN(qtyNum) || qtyNum <= 0) {
+      // Usar los values actuales al momento de iniciar (no refs que cambian durante el loop)
+      const selectedKeys = Array.from(selectedRef.current)
+      const locsSnap = [...locationsRef.current]
+      const qtySnap = { ...qtyMapRef.current }
+
+      for (const key of selectedKeys) {
+        const loc = locsSnap.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === key)
+        if (!loc) {
+          errorDetails.push(`Ubicación ${key} no encontrada`)
           totalErrors++
           continue
         }
+        const qtyVal = qtySnap[key] || ''
+        const qtyNum = qtyVal ? parseFloat(qtyVal.trim()) : loc.stock
+        if (isNaN(qtyNum) || qtyNum <= 0) {
+          errorDetails.push(`Cantidad inválida en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}`)
+          totalErrors++
+          continue
+        }
+        const finalQty = Math.min(qtyNum, loc.stock)
         try {
           await addMovimiento({
             tipo: 'salida',
             bloque: loc.bloque, torre: loc.torre, piso: loc.piso, posicion: loc.posicion,
             codigo: loc.codigo, descripcion: loc.descripcion, un: loc.un,
-            cantidad: Math.min(qtyNum, loc.stock),
+            cantidad: finalQty,
             fVencimiento: loc.fVencimiento ?? '', turno,
             usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
             proveedor: loc.proveedor,
           })
           totalProcessed++
         } catch (err) {
-          if (isInsufficientStockError(err)) stockErrors++
+          if (isInsufficientStockError(err)) {
+            stockErrors++
+            errorDetails.push(`Stock insuficiente en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion} (otro usuario modificó el stock)`)
+          } else {
+            const msg = extractError(err)
+            errorDetails.push(`Error en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}: ${msg}`)
+          }
           totalErrors++
         }
       }
       if (totalErrors > 0) {
-        const desc = stockErrors > 0
-          ? `${totalProcessed} de ${selected.size} correctas. ${stockErrors} fallaron por stock insuficiente (otro usuario modificó el stock).`
-          : `${totalProcessed} de ${selected.size} ubicaciones procesadas correctamente`
-        toast.warning(`Salida completada con ${totalErrors} error${totalErrors > 1 ? 'es' : ''}`, { description: desc, duration: 8000 })
+        const desc = totalProcessed > 0
+          ? `${totalProcessed} de ${totalToProcess} correctas:\n${errorDetails.slice(0, 5).join('\n')}${errorDetails.length > 5 ? `\n...y ${errorDetails.length - 5} más` : ''}`
+          : `Errores:\n${errorDetails.join('\n')}`
+        toast.warning(`Salida completada con ${totalErrors} error${totalErrors > 1 ? 'es' : ''}`, { description: desc, duration: 10000 })
       } else {
         toast.success(`Salida registrada en ${totalProcessed} ubicacion${totalProcessed > 1 ? 'es' : ''}`)
       }
       setMassConfirmOpen(false)
       setSelected(new Set())
       setQtyMap({})
-      setSearchCode('')
-      onCreated([])
+      // Refrescar datos en vez de limpiar todo
+      await refreshLocations()
+      onCreated([]) // trigger re-render
     } catch (err: unknown) {
       const message = extractError(err)
       toast.error('Error en salida masiva', { description: message })

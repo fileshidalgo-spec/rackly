@@ -38,6 +38,35 @@ export function findCatalogoByCodigo(codigo: string): CatalogoItem | undefined {
   return _cache.find((i) => i.codigo.trim().toUpperCase() === target)
 }
 
+/**
+ * Busca en el catálogo por código exacto O por descripción que contenga el texto.
+ * Retorna hasta `limit` resultados ordenados: primero coincidencia exacta de código,
+ * luego por coincidencia parcial de código, luego por descripción.
+ */
+export function searchCatalogo(query: string, limit = 10): CatalogoItem[] {
+  if (!query || !query.trim()) return []
+  const q = query.trim().toUpperCase()
+
+  const exactCode: CatalogoItem[] = []
+  const partialCode: CatalogoItem[] = []
+  const byDescription: CatalogoItem[] = []
+
+  for (const item of _cache) {
+    const codeNorm = item.codigo.trim().toUpperCase()
+    const descNorm = item.descripcion.trim().toUpperCase()
+
+    if (codeNorm === q) {
+      exactCode.push(item)
+    } else if (codeNorm.includes(q)) {
+      partialCode.push(item)
+    } else if (descNorm.includes(q)) {
+      byDescription.push(item)
+    }
+  }
+
+  return [...exactCode, ...partialCode, ...byDescription].slice(0, limit)
+}
+
 export function isCatalogoLoaded(): boolean {
   return _cacheLoaded
 }

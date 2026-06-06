@@ -688,8 +688,16 @@ function SalidaForm({
       return
     }
     try {
-      const { fetchMovimientos } = await import('@/lib/rackly/kardex')
-      const movs = await fetchMovimientos()
+      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string }>
+      try {
+        // Intentar obtener del servidor
+        const { fetchMovimientos } = await import('@/lib/rackly/kardex')
+        movs = await fetchMovimientos()
+      } catch {
+        // Fallback: usar movimientos cacheados en IndexedDB
+        const cached = await SyncEngine.getCachedMovimientosForStock()
+        movs = cached
+      }
       const upperCode = code.toUpperCase()
       const locMap = new Map<string, LocWithKey>()
       const relevant = movs.filter((m) => m.codigo === upperCode)

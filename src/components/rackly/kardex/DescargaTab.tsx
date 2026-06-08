@@ -52,7 +52,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
       // Sheet 2: Stock actual
       const locMap = new Map<string, Record<string, unknown>>()
       for (const m of movs) {
-        const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+        const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
         const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
         const current = locMap.get(key)
         if (current) {
@@ -217,8 +217,8 @@ function UpDataSection() {
       const rows: UploadStockRow[] = []
       for (const row of data) {
         const codigo = String(row[codeCol] ?? '').trim()
-        const cantidad = Number(row[cantCol]) || 0
-        if (!codigo || codigo === codeCol || cantidad <= 0) continue
+        const cantidad = Number(row[cantCol])
+        if (!codigo || codigo === codeCol || !Number.isFinite(cantidad) || cantidad <= 0) continue
         rows.push({
           codigo: codigo.toUpperCase(),
           descripcion: String(row[descCol] ?? '').trim(),

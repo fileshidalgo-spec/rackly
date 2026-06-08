@@ -16,7 +16,10 @@ export function useMovimientosRealtime(
   onChange: (movs: Movimiento[]) => void
 ) {
   const onChangeRef = useRef(onChange)
-  onChangeRef.current = onChange
+
+  useEffect(() => {
+    onChangeRef.current = onChange
+  })
 
   useEffect(() => {
     let active = true

@@ -657,9 +657,10 @@ function SalidaForm({
         }
       }
       if (totalErrors > 0) {
+        const stockNote = stockErrors > 0 ? ` (${stockErrors} por stock insuficiente)` : ''
         const desc = totalProcessed > 0
-          ? `${totalProcessed} de ${totalToProcess} correctas:\n${errorDetails.slice(0, 5).join('\n')}${errorDetails.length > 5 ? `\n...y ${errorDetails.length - 5} más` : ''}`
-          : `Errores:\n${errorDetails.join('\n')}`
+          ? `${totalProcessed} de ${totalToProcess} correctas${stockNote}:\n${errorDetails.slice(0, 5).join('\n')}${errorDetails.length > 5 ? `\n...y ${errorDetails.length - 5} más` : ''}`
+          : `Errores${stockNote}:\n${errorDetails.join('\n')}`
         toast.warning(`Salida completada con ${totalErrors} error${totalErrors > 1 ? 'es' : ''}`, { description: desc, duration: 10000 })
       } else {
         toast.success(`Salida registrada en ${totalProcessed} ubicacion${totalProcessed > 1 ? 'es' : ''}`)

@@ -444,3 +444,22 @@ Stage Summary:
 - TypeScript compiles with 0 errors
 - The fix automatically cleans orphan profiles and prevents future false positives
 - User `ereynaldovaldivia@gmail.com` can now register normally (orphan profile will be auto-cleaned)
+
+---
+Task ID: F1-F4-comprehensive-fix
+Agent: main
+Task: Implement 4-phase fix plan without breaking app functionality
+
+Work Log:
+- Phase 1 (Security): Removed hardcoded Supabase URL+JWT from kardex.ts (2 functions), replaced with dataClient. Cleaned GitHub PAT from git remote. Deleted netlify.toml and db.ts.disabled.
+- Phase 2 (Functional): Added SyncEngine.offlineAware to OcupacionTab (doIngreso, doSalida, doTransferir). Fixed TrasladoTab lot grouping (key now includes fVencimiento). Fixed no-op ternary in TrasladoTab. Fixed Spanish accents in ErrorBoundary. Added error detection variants.
+- Phase 3 (Optimization): Added atomic init pattern to SyncEngine (_doInit + initPromise). Removed dead code from StockTab. Verified calcularStockUbicacion already had proper filters.
+- Phase 4 (UX): Added sin_fecha status to FefoTab with proper styling, filter button, sorting (always last), and display (—).
+
+Stage Summary:
+- 10 files modified, 82 insertions, 62 deletions
+- TypeScript: 0 errors across all 4 phases
+- Next.js build: successful across all 4 phases
+- No hardcoded credentials remain in source code
+- All functional changes are additive (offline support, lot separation) — no existing behavior removed
+- Commit pending, needs git push for deployment

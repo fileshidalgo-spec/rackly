@@ -487,10 +487,8 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
  * Borra en lotes de 1000 IDs para no exceder límites de URL.
  */
 export async function deleteAllMovimientos(): Promise<{ deleted: boolean; error?: string }> {
-  const { createClient } = await import('@supabase/supabase-js')
-  const SERVICE_URL = 'https://owjryvcrhpmgtkkdcrkm.supabase.co'
-  const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93anJ5dmNyaHBtZ3Rra2RjcmttIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTE5MTA4NSwiZXhwIjoyMDk0NzY3MDg1fQ.c4P6F9KZ1iXj9X_d9OjNHMgMeczT0Be8k74rtZNboxg'
-  const admin = createClient(SERVICE_URL, SERVICE_KEY)
+  // Usar dataClient (service role) ya configurado — sin credenciales hardcodeadas
+  const admin = dataClient
 
   // Obtener todos los IDs
   const allIds: string[] = []
@@ -549,10 +547,8 @@ export async function addMovimientosBatch(
   usuarioNombre?: string,
   usuarioCorreo?: string,
 ): Promise<{ inserted: number; errors: string[] }> {
-  const { createClient } = await import('@supabase/supabase-js')
-  const SERVICE_URL = 'https://owjryvcrhpmgtkkdcrkm.supabase.co'
-  const SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93anJ5dmNyaHBtZ3Rra2RjcmttIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTE5MTA4NSwiZXhwIjoyMDk0NzY3MDg1fQ.c4P6F9KZ1iXj9X_d9OjNHMgMeczT0Be8k74rtZNboxg'
-  const admin = createClient(SERVICE_URL, SERVICE_KEY)
+  // Usar dataClient (service role) ya configurado — sin credenciales hardcodeadas
+  const admin = dataClient
 
   const turno = (await import('./turno')).calcularTurno()
   const errors: string[] = []

@@ -67,7 +67,9 @@ function esErrorCorreoExistente(message: string): boolean {
   return lower.includes('already registered') ||
     lower.includes('already been registered') ||
     lower.includes('user already exists') ||
+    lower.includes('user_already_exists') ||
     lower.includes('identity already exists') ||
+    lower.includes('identity_already_exists') ||
     lower.includes('to use a different email')
 }
 

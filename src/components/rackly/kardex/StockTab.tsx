@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import {
-  fetchMovimientos,
   type Movimiento,
   eliminarUbicacion,
 } from '@/lib/rackly/kardex'
@@ -48,7 +47,6 @@ export function StockTab() {
       fVencimiento: string
     }[]
   >([])
-  const [loading, setLoading] = useState(false)
 
   useMovimientosRealtime(setMovs)
 

@@ -21,7 +21,7 @@ type FefoItem = {
   fVencimiento: string
   un: string
   proveedor?: string
-  status: 'vigente' | 'proximo' | 'urgente' | 'vencido'
+  status: 'vigente' | 'proximo' | 'urgente' | 'vencido' | 'sin_fecha'
 }
 
 // ── Colores explícitos por estado (sin clases dinámicas) ──
@@ -30,30 +30,35 @@ const STATUS_BTN_ACTIVE: Record<string, string> = {
   proximo: 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300',
   urgente: 'bg-amber-500/20 border-amber-500/50 text-amber-300',
   vencido: 'bg-red-500/20 border-red-500/50 text-red-300',
+  sin_fecha: 'bg-slate-500/20 border-slate-500/50 text-slate-300',
 }
 const STATUS_BTN_DOT: Record<string, string> = {
   vigente: 'bg-emerald-400',
   proximo: 'bg-cyan-400',
   urgente: 'bg-amber-400',
   vencido: 'bg-red-400',
+  sin_fecha: 'bg-slate-400',
 }
 const STATUS_BADGE: Record<string, string> = {
   vigente: 'bg-emerald-500/25 text-emerald-200 border border-emerald-500/40',
   proximo: 'bg-cyan-500/25 text-cyan-200 border border-cyan-500/40',
   urgente: 'bg-amber-500/25 text-amber-200 border border-amber-500/40',
   vencido: 'bg-red-500/25 text-red-200 border border-red-500/40',
+  sin_fecha: 'bg-slate-500/25 text-slate-200 border border-slate-500/40',
 }
 const STATUS_BADGE_DOT: Record<string, string> = {
   vigente: 'bg-emerald-300',
   proximo: 'bg-cyan-300',
   urgente: 'bg-amber-300',
   vencido: 'bg-red-300',
+  sin_fecha: 'bg-slate-300',
 }
 const DIAS_COLOR: Record<string, string> = {
   vigente: 'text-emerald-300',
   proximo: 'text-cyan-300',
   urgente: 'text-amber-300',
   vencido: 'text-red-300',
+  sin_fecha: 'text-slate-400',
 }
 
 export function FefoTab() {
@@ -61,11 +66,12 @@ export function FefoTab() {
   const [search, setSearch] = useState('')
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
-  const [filtros, setFiltros] = useState({
+  const [filtros, setFiltros] = useState<Record<string, boolean>>({
     vigente: true,
     proximo: true,
     urgente: true,
     vencido: true,
+    sin_fecha: true,
   })
   const [busy, setBusy] = useState(false)
 
@@ -73,7 +79,7 @@ export function FefoTab() {
 
   const hasActiveFilters = useMemo(() => {
     return search.trim() !== '' || fechaDesde !== '' || fechaHasta !== '' ||
-      !filtros.vigente || !filtros.proximo || !filtros.urgente || !filtros.vencido
+      !filtros.vigente || !filtros.proximo || !filtros.urgente || !filtros.vencido || !filtros.sin_fecha
   }, [search, fechaDesde, fechaHasta, filtros])
 
   function clearFilters() {
@@ -108,7 +114,16 @@ export function FefoTab() {
     const items: FefoItem[] = []
     const now = new Date()
     for (const [, loc] of locMap) {
-      if (loc.stock <= 0 || !loc.fVencimiento) continue
+      if (loc.stock <= 0) continue
+      if (!loc.fVencimiento) {
+        items.push({
+          codigo: loc.codigo, descripcion: loc.descripcion, un: loc.un,
+          bloque: loc.bloque, torre: loc.torre, piso: loc.piso, posicion: loc.posicion,
+          stock: loc.stock, fVencimiento: '', diasRestantes: -1, proveedor: loc.proveedor,
+          status: 'sin_fecha',
+        })
+        continue
+      }
       const venc = new Date(loc.fVencimiento)
       const diff = Math.ceil((venc.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
       let status: FefoItem['status']
@@ -119,7 +134,12 @@ export function FefoTab() {
       items.push({ ...loc, diasRestantes: diff, status })
     }
 
-    return items.sort((a, b) => a.diasRestantes - b.diasRestantes)
+    return items.sort((a, b) => {
+      // Sin fecha siempre al final
+      if (a.status === 'sin_fecha' && b.status !== 'sin_fecha') return 1
+      if (a.status !== 'sin_fecha' && b.status === 'sin_fecha') return -1
+      return a.diasRestantes - b.diasRestantes
+    })
   }, [movs])
 
   const filtered = useMemo(() => {
@@ -130,7 +150,7 @@ export function FefoTab() {
     }
     if (fechaDesde) data = data.filter((i) => i.fVencimiento >= fechaDesde)
     if (fechaHasta) data = data.filter((i) => i.fVencimiento <= fechaHasta)
-    return data.filter((i) => filtros[i.status])
+    return data.filter((i) => filtros[i.status] !== false)
   }, [fefoData, search, fechaDesde, fechaHasta, filtros])
 
   const counts = useMemo(() => ({
@@ -138,6 +158,7 @@ export function FefoTab() {
     proximo: fefoData.filter((i) => i.status === 'proximo').length,
     urgente: fefoData.filter((i) => i.status === 'urgente').length,
     vencido: fefoData.filter((i) => i.status === 'vencido').length,
+    sin_fecha: fefoData.filter((i) => i.status === 'sin_fecha').length,
   }), [fefoData])
 
   async function handleExport() {
@@ -211,8 +232,9 @@ export function FefoTab() {
             ['proximo', '≤ 30 días'],
             ['urgente', '≤ 15 días'],
             ['vencido', 'Vencidos'],
+            ['sin_fecha', 'Sin fecha'],
           ] as const).map(([key, label]) => {
-            const active = filtros[key as keyof typeof filtros]
+            const active = filtros[key]
             return (
               <button key={key} type="button"
                 onClick={() => setFiltros((f) => ({ ...f, [key]: !f[key as keyof typeof f] }))}
@@ -279,9 +301,9 @@ export function FefoTab() {
                     <span className="text-slate-600">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-slate-200 font-medium hidden md:table-cell">{item.fVencimiento}</td>
+                <td className="px-4 py-3 text-slate-200 font-medium hidden md:table-cell">{item.fVencimiento || '—'}</td>
                 <td className={`px-4 py-3 text-right font-bold text-base ${DIAS_COLOR[item.status]}`}>
-                  {item.diasRestantes}
+                  {item.status === 'sin_fecha' ? '—' : item.diasRestantes}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${STATUS_BADGE[item.status]}`}>

@@ -100,13 +100,10 @@ export function TrasladoTab() {
     const locMap = new Map<string, LocStock>()
     const relevant = movs.filter((m) => m.codigo === code)
     for (const m of relevant) {
-      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
       const current = locMap.get(key)
       if (current) {
         current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
-        if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
-          current.fVencimiento = m.fVencimiento
-        }
       } else {
         locMap.set(key, {
           bloque: m.bloque,
@@ -150,7 +147,7 @@ export function TrasladoTab() {
     setStep(1)
   }
 
-  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedOrigin)
+  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}` === selectedOrigin)
 
   const qtyNum = parseFloat(qty) || 0
   const saldoRestante = origin ? origin.stock - qtyNum : 0
@@ -210,8 +207,8 @@ export function TrasladoTab() {
       } else {
         toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
       }
-      setMovs(movs.length > 0 ? movs : movs)
       if (!wasOffline) {
+        setMovs(await fetchMovimientos())
         // Refrescar datos del alerta
         const updated = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
         setDestinoOcupado(updated)
@@ -368,7 +365,7 @@ export function TrasladoTab() {
           {/* ── Mobile: Cards con TODA la info visible ── */}
           <div className="sm:hidden space-y-3">
             {locations.map((loc) => {
-              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}`
               const isSelected = selectedOrigin === key
               return (
                 <div
@@ -483,7 +480,7 @@ export function TrasladoTab() {
               </TableHeader>
               <TableBody>
                 {locations.map((loc) => {
-                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}`
                   const isSelected = selectedOrigin === key
                   return (
                     <TableRow

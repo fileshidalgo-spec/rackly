@@ -463,3 +463,32 @@ Stage Summary:
 - No hardcoded credentials remain in source code
 - All functional changes are additive (offline support, lot separation) — no existing behavior removed
 - Commit pending, needs git push for deployment
+
+---
+Task ID: 8
+Agent: main (Super Z)
+Task: Comprehensive post-fix review + deployment verification
+
+Work Log:
+- TypeScript check: 0 errors (tsc --noEmit)
+- Next.js build: Successful static export (4/4 pages)
+- StockTab: Already has lot separation by codigo||fVencimiento (line 105) — from previous session fix
+- AuthGate: Orphan profile fix verified, correoExisteEnAuth uses Admin API
+- SyncEngine: initPromise singleton pattern prevents double-init in Strict Mode
+- OcupacionTab: Offline-aware wrappers verified (offlineAwareAddMovimiento, offlineAwareTraslado)
+- TrasladoTab: Lot grouping by codigo||fVencimiento verified in all 3 locations
+- FefoTab: sin_fecha category properly handled with filter, sort, display
+- kardex.ts: No hardcoded Supabase URLs, all functions use dataClient from env
+- GitHub Actions deploy.yml: Correctly configured with Supabase secrets + Cloudflare wrangler
+- Removed unused `pg` dependency from package.json (Node-only, not usable in static export)
+- Verified no hardcoded credentials in source code
+- Verified no TODO/FIXME/HACK in source code
+- Z-AI chat: No integration found in the codebase (not implemented)
+- Git push failed: no credential helper configured in container
+
+Stage Summary:
+- All code changes from 4 phases + this cleanup are committed locally (7 unpushed commits)
+- Build is clean: 0 TypeScript errors, successful static export
+- Service role key exposure is architectural (static export) — documented risk for internal tool
+- `pg` dependency removed from production deps
+- Push requires manual git push from user's machine with GitHub credentials

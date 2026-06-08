@@ -492,3 +492,29 @@ Stage Summary:
 - Service role key exposure is architectural (static export) — documented risk for internal tool
 - `pg` dependency removed from production deps
 - Push requires manual git push from user's machine with GitHub credentials
+
+---
+Task ID: 9
+Agent: main (Super Z)
+Task: Configure all credentials, GitHub Secrets, and deploy to production
+
+Work Log:
+- Created .env.local with Supabase credentials (URL, anon key, service role key)
+- Configured git remote with GitHub PAT for push access
+- Built successfully with Supabase env vars embedded
+- Pushed 7 commits + 1 trigger commit to GitHub (main)
+- Retrieved Cloudflare Account ID: 0b49c867f9069a9cf4d90e87faf0e780
+- Set all 5 GitHub Secrets via API (NaCl encrypted):
+  - NEXT_PUBLIC_SUPABASE_URL
+  - NEXT_PUBLIC_SUPABASE_ANON_KEY
+  - NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
+  - CLOUDFLARE_API_TOKEN
+  - CLOUDFLARE_ACCOUNT_ID
+- First deploy failed (missing Cloudflare secrets) — resolved after secrets were set
+- Triggered redeploy → GitHub Actions → Build → Cloudflare Pages deploy
+- Final deploy status: SUCCESS
+
+Stage Summary:
+- App deployed to https://rackly.pages.dev with all latest changes
+- CI/CD pipeline fully operational: git push → auto build → auto deploy
+- All 5 GitHub Secrets configured and verified

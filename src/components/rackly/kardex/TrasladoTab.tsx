@@ -159,7 +159,8 @@ export function TrasladoTab() {
 
   async function handleConfirm() {
     if (!origin) return
-    if (selectedOrigin === `${destBloque}-${destTorre}-${destPiso || '1'}-${destPos}`) {
+    const destKey = `${destBloque}-${destTorre}-${destPiso || '1'}-${destPos}`
+    if (selectedOrigin === destKey || selectedOrigin === `${destKey}||`) {
       toast.error('El destino no puede ser igual al origen')
       return
     }

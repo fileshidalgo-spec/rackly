@@ -216,7 +216,10 @@ export async function getTodosLosPerfiles(): Promise<Perfil[]> {
   const roles = rolesRes.data ?? []
   const roleMap = new Map<string, Rol>()
   for (const r of roles as { user_id: string; role: string }[]) {
-    roleMap.set(r.user_id, r.role as Rol)
+    // Mantener admin si existe, sino el primer rol no-admin encontrado
+    if (r.role === 'admin' || !roleMap.has(r.user_id)) {
+      roleMap.set(r.user_id, r.role as Rol)
+    }
   }
   return perfiles.map((p: Record<string, unknown>) => ({
     id: p.id as string,

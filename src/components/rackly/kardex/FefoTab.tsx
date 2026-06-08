@@ -86,7 +86,7 @@ export function FefoTab() {
     setSearch('')
     setFechaDesde('')
     setFechaHasta('')
-    setFiltros({ vigente: true, proximo: true, urgente: true, vencido: true })
+    setFiltros({ vigente: true, proximo: true, urgente: true, vencido: true, sin_fecha: true })
   }
 
   const fefoData = useMemo(() => {

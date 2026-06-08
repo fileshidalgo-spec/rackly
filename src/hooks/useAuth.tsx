@@ -29,7 +29,16 @@ const Ctx = createContext<AuthCtx>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [perfil, setPerfil] = useState<Perfil | null>(null)
   const [loading, setLoading] = useState(true)
-  const [passwordRecovery, setPasswordRecovery] = useState(false)
+  const [passwordRecovery, setPasswordRecovery] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const hash = window.location.hash
+      if (hash.includes('type=recovery') || hash.includes('type=_recovery')) {
+        console.log('[RACKLY] Tokens de recuperación detectados en URL')
+        return true
+      }
+    }
+    return false
+  })
 
   async function refresh(): Promise<Perfil | null> {
     try {
@@ -45,13 +54,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true
-
-    // Detectar tokens de recuperación en la URL (#access_token=...&type=recovery)
-    const hash = window.location.hash
-    if (hash.includes('type=recovery') || hash.includes('type=_recovery')) {
-      console.log('[RACKLY] Tokens de recuperación detectados en URL')
-      setPasswordRecovery(true)
-    }
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return
@@ -112,7 +114,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       active = false
       sub.subscription.unsubscribe()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function clearPasswordRecovery() {

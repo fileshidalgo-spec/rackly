@@ -161,6 +161,7 @@ export function UsuariosTab() {
                     <Select
                       value={p.rol}
                       onValueChange={(v) => handleRolChange(p.id, v as Rol)}
+                      disabled={p.id === perfil?.id}
                     >
                       <SelectTrigger className="w-32">
                         <SelectValue />
@@ -273,6 +274,7 @@ export function UsuariosTab() {
                   <Select
                     value={p.rol}
                     onValueChange={(v) => handleRolChange(p.id, v as Rol)}
+                    disabled={p.id === perfil?.id}
                   >
                     <SelectTrigger className="w-full max-w-[200px]">
                       <SelectValue />

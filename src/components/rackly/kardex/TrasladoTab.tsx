@@ -67,8 +67,6 @@ type LocStock = {
 export function TrasladoTab() {
   const { perfil } = useAuth()
 
-  if (!perfil) return <div className="p-4 text-muted-foreground animate-pulse">Cargando...</div>
-
   const [step, setStep] = useState<1 | 2>(1)
   const [codigo, setCodigo] = useState('')
   const [descripcion, setDescripcion] = useState('')
@@ -90,6 +88,8 @@ export function TrasladoTab() {
   const [movs, setMovs] = useState<Movimiento[]>([])
 
   useMovimientosRealtime(setMovs)
+
+  if (!perfil) return <div className="p-4 text-muted-foreground animate-pulse">Cargando...</div>
 
   function handleCatalogoPick(item: CatalogoItem) {
     setCodigo(item.codigo)

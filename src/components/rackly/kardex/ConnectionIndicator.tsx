@@ -64,6 +64,12 @@ export function ConnectionIndicator() {
   const hasIssues = pendingCount > 0 || errorCount > 0 || conflictCount > 0
 
   // Configuración visual según estado
+  const FALLBACK_CONFIG = {
+    icon: WifiOff,
+    label: 'Desconocido',
+    bgClass: 'bg-slate-200 text-slate-700 border-slate-300',
+    iconClass: 'text-slate-600',
+  }
   const config = {
     online: {
       icon: Wifi,
@@ -89,7 +95,7 @@ export function ConnectionIndicator() {
       bgClass: 'bg-slate-200 text-slate-700 border-slate-300',
       iconClass: 'text-slate-600',
     },
-  }[connectivity]
+  }[connectivity] ?? FALLBACK_CONFIG
 
   const Icon = config.icon
 

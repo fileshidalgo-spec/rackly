@@ -21,7 +21,10 @@ const CHANNEL_NAME = 'piso-realtime-sync'
 
 export function usePisoRealtime(onChange: () => void) {
   const onChangeRef = useRef(onChange)
-  onChangeRef.current = onChange
+
+  useEffect(() => {
+    onChangeRef.current = onChange
+  })
 
   // Memoized refresh to avoid recreating on every render
   const refresh = useCallback(() => {

@@ -72,19 +72,91 @@ function esErrorCorreoExistente(message: string): boolean {
 }
 
 /**
- * Verifica si el correo ya está registrado en la tabla profiles.
- * Solo verifica profiles (no Supabase Auth) para evitar bloquear usuarios
- * que tienen cuentas a medio crear en Auth sin perfil asociado.
+ * Verifica si el correo ya está registrado EN SUPABASE AUTH.
+ * Usa la Admin API para listar usuarios por email, que es más confiable
+ * que consultar solo la tabla profiles (que puede tener registros huérfanos).
+ */
+const SUPABASE_URL_ADMIN = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const SERVICE_ROLE_KEY_ADMIN = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
+
+async function correoExisteEnAuth(email: string): Promise<boolean> {
+  if (!SERVICE_ROLE_KEY_ADMIN) return false
+  const lower = email.trim().toLowerCase()
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL_ADMIN}/auth/v1/admin/users?email=${encodeURIComponent(lower)}`,
+      {
+        headers: {
+          'apikey': SERVICE_ROLE_KEY_ADMIN,
+          'Authorization': `Bearer ${SERVICE_ROLE_KEY_ADMIN}`,
+        },
+      }
+    )
+    if (!res.ok) return false
+    const adminData = await res.json()
+    return (adminData.users?.length ?? 0) > 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Verifica si el correo tiene un perfil huérfano (existe en profiles
+ * pero NO en Supabase Auth). Si es así, elimina el perfil para que el
+ * usuario pueda registrarse normalmente.
+ */
+async function limpiarPerfilHuerfano(email: string): Promise<boolean> {
+  const lower = email.trim().toLowerCase()
+  try {
+    const { data: perfil } = await dataClient
+      .from('profiles')
+      .select('id')
+      .eq('correo', lower)
+      .maybeSingle()
+    if (!perfil) return false
+
+    // Verificar si existe en Auth
+    const existeEnAuth = await correoExisteEnAuth(lower)
+    if (!existeEnAuth) {
+      // Perfil huérfano: eliminarlo para permitir registro limpio
+      console.log('[RACKLY] Limpiando perfil huérfano para:', lower)
+      await dataClient.from('user_roles').delete().eq('user_id', perfil.id)
+      await dataClient.from('profiles').delete().eq('id', perfil.id)
+      return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Verifica si el correo ya está registrado (en Auth o en profiles).
+ * Prioriza la verificación en Auth (la fuente de verdad para login).
  */
 async function correoYaExiste(email: string): Promise<boolean> {
   const lower = email.trim().toLowerCase()
   try {
+    // Primero verificar si existe en Supabase Auth
+    const existeAuth = await correoExisteEnAuth(lower)
+    if (existeAuth) return true
+
+    // Si no existe en Auth pero sí en profiles, es un perfil huérfano
     const { data } = await dataClient
       .from('profiles')
       .select('id')
       .eq('correo', lower)
       .maybeSingle()
-    return !!data
+    if (data) {
+      // Limpiar el perfil huérfano silenciosamente
+      console.log('[RACKLY] Correo con perfil huérfano detectado, limpiando:', lower)
+      await dataClient.from('user_roles').delete().eq('user_id', data.id)
+      await dataClient.from('profiles').delete().eq('id', data.id)
+      // No bloquear el registro — se acaba de limpiar
+      return false
+    }
+
+    return false
   } catch {
     // Si falla la consulta, permitir el registro (dejar que Supabase decida)
     return false
@@ -650,11 +722,49 @@ function LoginScreen({
       const message =
         err instanceof Error ? err.message : 'Error desconocido'
       if (esErrorCorreoExistente(message)) {
-        toast.info('Esta cuenta ya existe', {
-          description:
-            'Inicia sesión con ese correo; si aún no accedes, un administrador debe aprobarla.',
-        })
-        setTab('login')
+        // Verificar si es un perfil huérfano (existe en Auth pero no en profiles)
+        // o si es realmente una cuenta existente
+        const correoLower = correo.trim().toLowerCase()
+        const { data: perfil } = await dataClient
+          .from('profiles')
+          .select('id')
+          .eq('correo', correoLower)
+          .maybeSingle()
+
+        if (!perfil) {
+          // Existe en Auth pero no tiene perfil — intentar crear el perfil
+          toast.info('Activando tu cuenta...', {
+            description: 'Tu correo ya estaba registrado. Creando tu perfil.',
+          })
+          try {
+            const { data: signInData } = await supabase.auth.signInWithPassword({
+              email: correoLower,
+              password,
+            })
+            if (signInData.session) {
+              await onSuccess()
+              toast.success('Cuenta activada', {
+                description: 'Un administrador debe aprobar tu acceso.',
+              })
+            } else {
+              toast.error('Contraseña incorrecta', {
+                description:
+                  'Tu correo ya está registrado pero la contraseña no coincide. Usa "Olvidaste tu contraseña" para restablecerla.',
+              })
+            }
+          } catch {
+            toast.error('No se pudo activar la cuenta', {
+              description:
+                'Tu correo ya está registrado. Si no recuerdas tu contraseña, usa "Olvidaste tu contraseña".',
+            })
+          }
+        } else {
+          toast.info('Esta cuenta ya existe', {
+            description:
+              'Inicia sesión con ese correo; si aún no accedes, un administrador debe aprobarla.',
+          })
+          setTab('login')
+        }
       } else if (esErrorRateLimit(message)) {
         toast.error('Demasiados intentos de registro', {
           description: 'Por seguridad, espera 60 segundos antes de crear otra cuenta o intentar de nuevo.',

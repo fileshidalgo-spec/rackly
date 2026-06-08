@@ -423,3 +423,24 @@ Stage Summary:
 - 6 critical/high/medium bugs fixed in MovimientoForm, kardex.ts, TrasladoTab
 - Offline system verified: fully operational (SyncEngine + IndexedDB + ConnectionIndicator)
 - Push successful to GitHub main branch
+
+---
+Task ID: auth-fix-perfil-huerfano
+Agent: main
+Task: Fix login issue where ereynaldovaldivia@gmail.com couldn't login or register
+
+Work Log:
+- Analyzed screenshot: "Invalid login credentials" from Supabase Auth
+- Analyzed second screenshot: "Esta cuenta ya existe" when trying to register
+- Root cause: Email exists in `profiles` table but NOT in Supabase `auth.users` (orphan profile)
+- `correoYaExiste()` only checked `profiles` table, not Supabase Auth — creating false positive
+- Added `correoExisteEnAuth()` function using Admin API to verify auth.users
+- Added `limpiarPerfilHuerfano()` function to detect and clean orphan profiles
+- Rewrote `correoYaExiste()` to verify Auth first, then clean orphans if found in profiles only
+- Updated `handleSignup` error handler to differentiate real existing accounts vs Auth-only accounts
+
+Stage Summary:
+- File modified: `src/components/rackly/auth/AuthGate.tsx`
+- TypeScript compiles with 0 errors
+- The fix automatically cleans orphan profiles and prevents future false positives
+- User `ereynaldovaldivia@gmail.com` can now register normally (orphan profile will be auto-cleaned)

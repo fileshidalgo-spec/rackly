@@ -518,3 +518,24 @@ Stage Summary:
 - App deployed to https://rackly.pages.dev with all latest changes
 - CI/CD pipeline fully operational: git push → auto build → auto deploy
 - All 5 GitHub Secrets configured and verified
+
+---
+Task ID: 10
+Agent: main (Super Z)
+Task: Fix login error - ERR_NAME_NOT_RESOLVED (typo in Supabase URL)
+
+Work Log:
+- User reported "sale error en iniciar sesión" with console error: `ERR_NAME_NOT_RESOLVED` for `owjryvcrhpmgtkdkcrkm.supabase.co`
+- Decoded anon key JWT payload: `ref: "owjryvcrhpmgtkkdcrkm"` (with `kkd`)
+- Found typo in .env.local URL: `owjryvcrhpmgtkdkcrkm` (with `kdk`) — letters `d` and `k` were swapped
+- Verified correct URL `owjryvcrhpmgtkkdcrkm.supabase.co` resolves and responds (HTTP 401/400 = server exists)
+- Fixed .env.local URL locally
+- Updated GitHub Secret `NEXT_PUBLIC_SUPABASE_URL` with correct URL (NaCl encrypted, base64 encoded)
+- Triggered redeploy with empty commit dd68f1f
+- Verified deployed JS bundles contain correct URL: `https://owjryvcrhpmgtkkdcrkm.supabase.co`
+
+Stage Summary:
+- Root cause: Supabase URL had `kdk` instead of `kkd` (transposed letters)
+- Fix: Updated GitHub Secret + triggered redeploy
+- Deploy: SUCCESS (run 27171001844)
+- Verified: JS bundles in production contain correct URL

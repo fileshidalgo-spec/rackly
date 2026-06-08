@@ -606,10 +606,11 @@ export async function eliminarUbicacion(
   bloque: string,
   torre: string,
   piso: string,
-  posicion: string
+  posicion: string,
+  fVencimiento?: string
 ): Promise<Movimiento[]> {
   const target = codigo.trim().toUpperCase()
-  const { error } = await dataClient
+  let query = dataClient
     .from('movimientos')
     .delete()
     .eq('codigo', target)
@@ -617,6 +618,11 @@ export async function eliminarUbicacion(
     .eq('torre', torre)
     .eq('piso', piso)
     .eq('posicion', posicion)
+  // Si se especifica fVencimiento, filtrar solo ese lote
+  if (fVencimiento) {
+    query = query.eq('f_vencimiento', fVencimiento)
+  }
+  const { error } = await query
   if (error) throw error
   return fetchMovimientos()
 }

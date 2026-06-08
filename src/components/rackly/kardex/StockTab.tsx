@@ -104,13 +104,10 @@ export function StockTab() {
     >()
     const relevant = movs.filter((m) => m.codigo === code)
     for (const m of relevant) {
-      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
       const current = locMap.get(key)
       if (current) {
         current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
-        if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
-          current.fVencimiento = m.fVencimiento
-        }
       } else {
         locMap.set(key, {
           bloque: m.bloque,
@@ -165,11 +162,12 @@ export function StockTab() {
     bloque: string,
     torre: string,
     piso: string,
-    posicion: string
+    posicion: string,
+    fVencimiento?: string
   ) {
-    if (!confirm('¿Eliminar todos los movimientos de esta ubicación?')) return
+    if (!confirm('¿Eliminar los movimientos de este lote en esta ubicación?')) return
     try {
-      const next = await eliminarUbicacion(selectedCodigo, bloque, torre, piso, posicion)
+      const next = await eliminarUbicacion(selectedCodigo, bloque, torre, piso, posicion, fVencimiento)
       setMovs(next)
       toast.success('Ubicación eliminada')
     } catch (err: unknown) {
@@ -388,7 +386,7 @@ export function StockTab() {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                        onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion)}
+                        onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -470,7 +468,7 @@ export function StockTab() {
                           variant="ghost"
                           size="icon"
                           className="text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion)}
+                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

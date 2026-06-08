@@ -575,7 +575,7 @@ function SalidaForm({
     if (selected.size === locations.length) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(locations.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`)))
+      setSelected(new Set(locations.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}`)))
     }
   }
 
@@ -620,7 +620,7 @@ function SalidaForm({
       const qtySnap = { ...qtyMapRef.current }
 
       for (const key of selectedKeys) {
-        const loc = locsSnap.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === key)
+        const loc = locsSnap.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}` === key)
         if (!loc) {
           errorDetails.push(`Ubicación ${key} no encontrada`)
           totalErrors++
@@ -712,7 +712,7 @@ function SalidaForm({
         if (!un && m.un) un = m.un
         const impact = impactoStock(m.tipo, m.cantidad)
         if (isNaN(impact) || !isFinite(impact)) continue
-        const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+        const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
         const current = locMap.get(key)
         if (current) {
           current.stock += impact
@@ -754,7 +754,7 @@ function SalidaForm({
         return aPos - bPos
       })
       // Limpiar selecciones de ubicaciones que ya no tienen stock
-      const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`))
+      const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}`))
       setSelected((prev) => {
         const cleaned = new Set<string>()
         for (const k of prev) {
@@ -798,7 +798,7 @@ function SalidaForm({
   }, [searchCode, refreshLocations])
 
   async function handleSalidaParcial(locKey: string) {
-    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
+    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}` === locKey)
     if (!loc) return
     const qtyVal = qtyMap[locKey] || ''
     const qtyNum = parseFloat(qtyVal)
@@ -814,7 +814,7 @@ function SalidaForm({
   }
 
   function handleRetirarTodo(locKey: string) {
-    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
+    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}` === locKey)
     if (!loc) return
     setConfirmState({ loc, qtyNum: loc.stock, full: true })
   }
@@ -962,7 +962,7 @@ function SalidaForm({
           {/* ───── Vista móvil: tarjetas ───── */}
           <div className="md:hidden space-y-3">
             {locations.map((loc) => {
-              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}`
               const isSelected = selected.has(key)
               return (
                 <div
@@ -1075,7 +1075,7 @@ function SalidaForm({
               </TableHeader>
               <TableBody>
                 {locations.map((loc) => {
-                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}`
                   const isSelected = selected.has(key)
                   return (
                     <TableRow
@@ -1289,8 +1289,8 @@ function SalidaForm({
 
             {/* Lista de ubicaciones */}
             <div className="px-4 sm:px-6 pb-4 space-y-2">
-              {locations.filter((l) => selected.has(`${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`)).map((loc) => {
-                const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+              {locations.filter((l) => selected.has(`${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ""}`)).map((loc) => {
+                const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ""}`
                 const qtyVal = qtyMap[key] || ''
                 const qtyNum = qtyVal ? parseFloat(qtyVal) : loc.stock
                 return (

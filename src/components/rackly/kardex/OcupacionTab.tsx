@@ -13,6 +13,7 @@ import {
   type TrasladoInput,
 } from '@/lib/rackly/kardex'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
+import { SyncEngine } from '@/lib/rackly/sync-engine'
 import { supabase } from '@/lib/supabase/client'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
@@ -243,15 +244,21 @@ export function OcupacionTab() {
     if (showProveedor && !ingProveedor) { toast.error('Selecciona un proveedor para este artículo'); return }
     setActionBusy(true)
     try {
-      await addMovimiento({
+      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
         tipo: ingTipo, bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
         codigo: ingCodigo.trim().toUpperCase(), descripcion: ingDescripcion, un: ingUn, cantidad: q,
         fVencimiento: ingSinFecha ? '' : ingFVenc,
         turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         proveedor: showProveedor ? ingProveedor : undefined,
       })
-      toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
-      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
+      if (wasOffline) {
+        toast.success(ingTipo === 'ingreso' ? 'Ingreso guardado (offline)' : 'Devolución guardada (offline)', {
+          description: 'Se sincronizará al reconectarse', duration: 5000,
+        })
+      } else {
+        toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
+      }
+      if (mountedRef.current && !wasOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
   }
 
@@ -264,13 +271,17 @@ export function OcupacionTab() {
     if (qty > item.stock) { toast.error(`Cantidad excede stock (${item.stock})`); return }
     setActionBusy(true)
     try {
-      await addMovimiento({
+      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
         tipo: 'salida', bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
         codigo: item.codigo, descripcion: item.descripcion, un: item.un, cantidad: qty,
         fVencimiento: item.fVencimiento ?? '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
       })
-      toast.success('Salida registrada')
-      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
+      if (wasOffline) {
+        toast.success(`Salida de ${qty} ${item.un} (offline)`, { description: 'Se sincronizará al reconectarse', duration: 5000 })
+      } else {
+        toast.success('Salida registrada')
+      }
+      if (mountedRef.current && !wasOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         toast.error('Stock insuficiente', { description: 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 6000 })
@@ -303,9 +314,11 @@ export function OcupacionTab() {
         fVencimiento: trItem.fVencimiento ?? '',
         cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
       }
-      await trasladarMovimiento(input)
-      toast.success('Traslado registrado')
-      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
+      const { wasOffline: wasTrOffline } = await SyncEngine.offlineAwareTraslado(input)
+      toast.success(wasTrOffline ? 'Traslado guardado (offline)' : 'Traslado registrado', {
+        ...(wasTrOffline ? { description: 'Se sincronizará al reconectarse', duration: 5000 } : {}),
+      })
+      if (mountedRef.current && !wasTrOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         toast.error('Stock insuficiente en origen', { description: 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 6000 })

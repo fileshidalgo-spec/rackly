@@ -71,10 +71,25 @@ class SyncEngineSingleton {
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private countsInterval: ReturnType<typeof setInterval> | null = null
   private destroyed = false
+  private initPromise: Promise<void> | null = null
 
   // ── Init ──────────────────────────────
   async init(): Promise<void> {
+    // Patrón singleton async: evitar doble init en React Strict Mode
+    if (this.initPromise) return this.initPromise
     if (this.state.initialized) return
+
+    this.initPromise = this._doInit()
+    try {
+      await this.initPromise
+    } catch {
+      // Si falla, limpiar la promise para permitir reintentos
+      this.initPromise = null
+      throw new Error('[SyncEngine] Falló la inicialización')
+    }
+  }
+
+  private async _doInit(): Promise<void> {
 
     try {
       // Abrir IndexedDB

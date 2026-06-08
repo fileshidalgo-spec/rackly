@@ -487,10 +487,8 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
  * Borra en lotes de 1000 IDs para no exceder límites de URL.
  */
 export async function deleteAllMovimientos(): Promise<{ deleted: boolean; error?: string }> {
-  const { createClient } = await import('@supabase/supabase-js')
-  const SERVICE_URL = 'https://owjryvcrhpmgtkkdcrkm.supabase.co'
-  const SERVICE_KEY = '***SERVICE_ROLE_ROTADA***'
-  const admin = createClient(SERVICE_URL, SERVICE_KEY)
+  // Usar dataClient (service role) ya configurado — sin credenciales hardcodeadas
+  const admin = dataClient
 
   // Obtener todos los IDs
   const allIds: string[] = []
@@ -549,10 +547,8 @@ export async function addMovimientosBatch(
   usuarioNombre?: string,
   usuarioCorreo?: string,
 ): Promise<{ inserted: number; errors: string[] }> {
-  const { createClient } = await import('@supabase/supabase-js')
-  const SERVICE_URL = 'https://owjryvcrhpmgtkkdcrkm.supabase.co'
-  const SERVICE_KEY = '***SERVICE_ROLE_ROTADA***'
-  const admin = createClient(SERVICE_URL, SERVICE_KEY)
+  // Usar dataClient (service role) ya configurado — sin credenciales hardcodeadas
+  const admin = dataClient
 
   const turno = (await import('./turno')).calcularTurno()
   const errors: string[] = []

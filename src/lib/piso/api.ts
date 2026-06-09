@@ -1061,12 +1061,23 @@ export async function registrarIngresoPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
+  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[],
+  opts?: { posicion_id?: string; codigo_inc?: string }
 ): Promise<void> {
   // Crear cabecera
+  const insertPayload: Record<string, unknown> = {
+    tipo: 'ingreso',
+    turno,
+    usuario_id: usuarioId,
+    usuario_nombre: usuarioNombre,
+    usuario_correo: usuarioCorreo,
+  }
+  if (opts?.posicion_id) insertPayload.posicion_id = opts.posicion_id
+  if (opts?.codigo_inc) insertPayload.codigo_inc = opts.codigo_inc
+
   const { data: movData, error: movErr } = await dataClient
     .from('piso_movimientos')
-    .insert({ tipo: 'ingreso', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+    .insert(insertPayload)
     .select('id')
     .single()
   if (movErr) throw movErr

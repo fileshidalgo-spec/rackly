@@ -149,7 +149,8 @@ export function MovimientosTab() {
         const matchesDetalle = m.detalles.some(
           (d) => (d.bloque_codigo ?? '').toLowerCase().includes(q) || String(d.cantidad).includes(q)
         )
-        if (!matchesOp && !matchesUser && !matchesDetalle) return false
+        const matchesInc = (m.codigo_inc ?? '').toLowerCase().includes(q)
+        if (!matchesOp && !matchesUser && !matchesDetalle && !matchesInc) return false
       }
 
       return true

@@ -482,17 +482,18 @@ export function PisoSectoresTab() {
       }
       if (!bloqueId) { toast.error('No se pudo crear/encontrar el articulo'); setBusy(false); return }
 
-      // Register as ingreso with codigo_inc via direct insert
-      const { error } = await dataClient.from('piso_movimientos').insert({
-        tipo: 'ingreso',
-        turno: calcularTurno(),
-        usuario_id: perfil.id,
-        usuario_nombre: perfil.nombre ?? '',
-        usuario_correo: perfil.correo ?? '',
-        sector_id: null,
-        codigo_inc: incCodigoInc.trim(),
-      }).select('id').single()
-      if (error) throw error
+      // Registrar ingreso INC con detalles de stock (usando registrarIngresoPosicion)
+      const detalles = [{
+        nivel_id: nivelId,
+        bloque_id: bloqueId,
+        cantidad: qty,
+        fecha_vencimiento: incSinVencimiento ? '' : incFechaVencimiento,
+      }]
+      await registrarIngresoPosicion(
+        calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '',
+        detalles,
+        { posicion_id: detail.posicionId, codigo_inc: incCodigoInc.trim() }
+      )
 
       toast.success('INC registrado')
       setMode('view')
@@ -501,6 +502,8 @@ export function PisoSectoresTab() {
       setIncUn('')
       setIncCantidad('')
       setIncCodigoInc('')
+      setIncFechaVencimiento('')
+      setIncSinVencimiento(false)
       loadBloques()
       const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
       if (mountedRef.current && detail) {

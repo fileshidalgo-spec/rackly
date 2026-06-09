@@ -67,6 +67,7 @@ import {
   Shield,
   Filter,
   BarChart3,
+  TriangleAlert,
 } from 'lucide-react'
 
 function fmtCantidad(n: number) {
@@ -241,6 +242,7 @@ function RacklyApp() {
                         { val: 'ingreso', icon: ArrowDownToLine, label: 'Ingreso', gradient: 'from-green-500 to-emerald-600', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', ring: 'ring-green-500/20' },
                         { val: 'salida', icon: ArrowUpFromLine, label: 'Salida', gradient: 'from-red-500 to-rose-600', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', ring: 'ring-red-500/20' },
                         { val: 'devolucion', icon: ArrowRightLeft, label: 'Devolución', gradient: 'from-orange-500 to-amber-600', bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', ring: 'ring-orange-500/20' },
+                        { val: 'inc', icon: TriangleAlert, label: 'INC', gradient: 'from-rose-500 to-pink-600', bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', ring: 'ring-rose-500/20' },
                       ].map((t) => (
                         <TabsTrigger
                           key={t.val}
@@ -262,6 +264,9 @@ function RacklyApp() {
                     </TabsContent>
                     <TabsContent value="devolucion" className="mt-0">
                       <MovimientoForm tipo="devolucion" onCreated={setMovs} />
+                    </TabsContent>
+                    <TabsContent value="inc" className="mt-0">
+                      <MovimientoForm tipo="inc" onCreated={setMovs} />
                     </TabsContent>
                   </Tabs>
                 </CardContent>

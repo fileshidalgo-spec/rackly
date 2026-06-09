@@ -124,10 +124,34 @@ async function addMovimientoFallback(
   }
 }
 
+/** Chequeo de idempotencia: verificar si un movimiento con este uuid_sync ya existe */
+async function checkExistingByUuidSync(uuidSync: string): Promise<boolean> {
+  const { data, error } = await dataClient
+    .from('movimientos')
+    .select('id')
+    .eq('uuid_sync', uuidSync)
+    .limit(1)
+  if (error) {
+    console.warn('[checkExistingByUuidSync] Error consultando:', error.message)
+    return false // Si falla la consulta, seguir con el insert normal
+  }
+  return (data ?? []).length > 0
+}
+
 export async function addMovimiento(
   m: Omit<Movimiento, 'id' | 'fModificacion'>,
   uuidSync?: string
 ): Promise<Movimiento[]> {
+  // Idempotencia: si viene uuidSync, verificar si ya existe en el servidor
+  if (uuidSync) {
+    const exists = await checkExistingByUuidSync(uuidSync)
+    if (exists) {
+      console.log('[addMovimiento] Movimiento ya existe (uuid_sync):', uuidSync, '— saltando insert.')
+      // Ya existe: refrescar y retornar como si hubiera sido exitoso
+      try { return await fetchMovimientos() } catch { return [] }
+    }
+  }
+
   // Usar RPC atómica con advisory lock para evitar race conditions
   try {
     const { data, error } = await dataClient.rpc('registrar_movimiento_kardex', {

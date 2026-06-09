@@ -539,3 +539,35 @@ Stage Summary:
 - Fix: Updated GitHub Secret + triggered redeploy
 - Deploy: SUCCESS (run 27171001844)
 - Verified: JS bundles in production contain correct URL
+
+---
+Task ID: 11
+Agent: Super Z (main)
+Task: Investigar y corregir doble ingreso cuando se pierde internet durante registro
+
+Work Log:
+- Investigó el flujo completo de offlineAwareAddMovimiento en sync-engine.ts
+- Identificó causa raíz: UUID de idempotencia no se compartía entre intento online y fallback offline
+- Cuando se pierde red después de enviar RPC, el movimiento se inserta en servidor pero la app no recibe respuesta
+- Al reconectar, enqueueMovement genera un NUEVO UUID y re-inserta → duplicado
+- Confirmó que handleOffline reseteaba syncInProgress, causando re-procesamiento de movimientos "syncing"
+
+Fixes aplicados:
+1. sync-engine.ts: offlineAwareAddMovimiento genera syncId = uuidSync || crypto.randomUUID() ANTES del intento online y lo reutiliza en enqueueMovement
+2. sync-engine.ts: enqueueMovement ahora acepta existingUuidSync opcional para reusar el UUID de idempotencia
+3. sync-engine.ts: offlineAwareTraslado aplica mismo fix con syncId compartido
+4. sync-engine.ts: handleOffline ya NO resetea syncInProgress (evita re-procesar movimientos "syncing")
+5. kardex.ts: checkExistingByUuidSync() verifica si uuid_sync ya existe antes de insertar (defensa adicional)
+6. Migration SQL creada: 20260609_add_uuid_sync_unique.sql (UNIQUE index, pendiente ejecución en Supabase Dashboard)
+
+Build y deploy:
+- Build exitoso (next build)
+- Commit: 61150c9
+- Deploy: Run 27207531378 → success
+- Cloudflare Pages actualizado
+
+Stage Summary:
+- Causa raíz del doble ingreso: UUID de idempotencia no se compartía entre online y offline paths
+- 3 cambios en sync-engine.ts + 1 en kardex.ts
+- Defensa triple: UUID compartido + checkExistingByUuidSync + detección de duplicado en sync
+- Pendiente: Ejecutar UNIQUE index en Supabase Dashboard SQL Editor para defensa a nivel de DB

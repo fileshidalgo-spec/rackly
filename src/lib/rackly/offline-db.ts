@@ -34,6 +34,7 @@ export type PendingMovement = {
   usuarioNombre: string
   usuarioCorreo: string
   proveedor?: string
+  codigo_inc?: string
   // Metadata de sincronización
   createdAt: number // timestamp Unix (ms)
   status: 'pending' | 'syncing' | 'error' | 'conflict'

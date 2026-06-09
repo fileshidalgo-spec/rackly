@@ -97,6 +97,7 @@ export function FefoTab() {
     }>()
 
     for (const m of movs) {
+      if (m.codigoInc) continue // INC items don't participate in FEFO
       const key = `${m.codigo}||${m.fVencimiento || ''}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
       const delta = impactoStock(m.tipo, m.cantidad)
       const existing = locMap.get(key)

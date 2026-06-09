@@ -358,6 +358,7 @@ class SyncEngineSingleton {
               fVencimiento: mov.fVencimiento || undefined,
               proveedor: mov.proveedor,
               cantidadAjuste: mov.cantidadAjuste,
+              codigoInc: mov.codigo_inc || undefined,
             }
           )
         } else {
@@ -379,6 +380,7 @@ class SyncEngineSingleton {
               usuarioNombre: mov.usuarioNombre,
               usuarioCorreo: mov.usuarioCorreo,
               proveedor: mov.proveedor,
+              codigoInc: mov.codigo_inc || undefined,
             },
             mov.uuidSync
           )
@@ -492,6 +494,7 @@ class SyncEngineSingleton {
           usuarioNombre: mov.usuarioNombre,
           usuarioCorreo: mov.usuarioCorreo,
           proveedor: mov.proveedor,
+          codigoInc: mov.codigo_inc || undefined,
         },
         mov.uuidSync
       )
@@ -591,6 +594,7 @@ class SyncEngineSingleton {
         usuarioNombre: m.usuarioNombre || '',
         usuarioCorreo: m.usuarioCorreo || '',
         proveedor: m.proveedor,
+        codigo_inc: m.codigoInc || '',
       }, syncId) // ← Pasar el MISMO UUID para idempotencia
       return { movs: [], wasOffline: true }
     } catch (offlineErr) {
@@ -656,6 +660,7 @@ class SyncEngineSingleton {
         destPiso: t.destino.piso,
         destPosicion: t.destino.posicion,
         cantidadAjuste: t.cantidadAjuste,
+        codigo_inc: t.codigoInc || '',
       }, syncId) // ← Pasar el MISMO UUID
       return { movs: [], wasOffline: true }
     } catch (offlineErr) {

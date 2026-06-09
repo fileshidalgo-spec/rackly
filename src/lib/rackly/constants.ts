@@ -72,3 +72,10 @@ export const LOCALE = 'es-PE'
 
 // ── Versión ─────────────────────────────────────────────
 export const VERSION = '2.0'
+
+// ── INC (Insumo No Conforme) ─────────────────────────
+export const INC_PREFIX = 'INC'
+/** Verifica si un movimiento es un insumo no conforme */
+export function esInsumoNoConforme(codigoInc?: string | null): boolean {
+  return !!codigoInc && codigoInc.trim().length > 0
+}

@@ -571,3 +571,28 @@ Stage Summary:
 - 3 cambios en sync-engine.ts + 1 en kardex.ts
 - Defensa triple: UUID compartido + checkExistingByUuidSync + detección de duplicado en sync
 - Pendiente: Ejecutar UNIQUE index en Supabase Dashboard SQL Editor para defensa a nivel de DB
+
+---
+Task ID: 12
+Agent: Super Z (main) + subagents
+Task: Implementar INC (Insumo No Conforme) — stock separado y trazabilidad
+
+Work Log:
+- Creado punto de guardado: git tag v2.0-pre-inc
+- Agregado campo codigo_inc a tipos y funciones core
+- constants.ts: INC_PREFIX + esInsumoNoConforme() helper
+- kardex.ts: Movimiento.codigoInc, StockEnUbicacion.codigoInc, grupo key con codigoInc, RPC con p_codigo_inc
+- offline-db.ts: PendingMovement.codigo_inc
+- sync-engine.ts: pasa codigo_inc en offline-aware + syncPendingMovements
+- OcupacionTab: sección INC separada + botón registro INC + formulario completo
+- StockTab: filtro Todos/Disponibles/Solo INC + badge codigoInc
+- FefoTab: excluye INC del FEFO (m.codigoInc → continue)
+- TrasladoTab: LocStock.codigoInc + pasa en doTraslado
+- Build exitoso, deploy exitoso (Run 27214133474)
+
+Stage Summary:
+- 8 archivos modificados, 255 inserciones, 23 eliminaciones
+- Tag de savepoint: v2.0-pre-inc
+- Deploy: success en Cloudflare Pages
+- PENDIENTE: Ejecutar en Supabase SQL Editor:
+  ALTER TABLE public.movimientos ADD COLUMN IF NOT EXISTS codigo_inc TEXT;

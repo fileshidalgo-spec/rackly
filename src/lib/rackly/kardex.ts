@@ -360,6 +360,7 @@ export async function stockEnUbicacion(
         fVencimiento: (r.f_vencimiento as string) ?? '',
         usuarioPrimerNombre: (r.usuario_primer_nombre as string) ?? '',
         proveedor: (r.proveedor as string) ?? '',
+        codigoInc: (r.codigo_inc as string) ?? undefined,
       }))
     } catch {
       return []

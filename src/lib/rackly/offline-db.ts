@@ -66,6 +66,7 @@ export type CachedMovimiento = {
   usuarioNombre?: string
   usuarioCorreo?: string
   proveedor?: string
+  codigoInc?: string
   cachedAt: number
 }
 

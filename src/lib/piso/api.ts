@@ -1442,6 +1442,7 @@ export type StockPisoItem = {
   sector_nombre: string
   cantidad: number
   fecha_vencimiento: string
+  codigo_inc?: string
 }
 
 /**
@@ -1453,7 +1454,7 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
   // 1. Fetch ALL detalles with movement type
   const { data: detData, error: detErr } = await dataClient
     .from('piso_movimiento_detalles')
-    .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
+    .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)')
   if (detErr) throw detErr
 
   // 2. Group by (bloque_id, nivel_id)
@@ -1471,31 +1472,43 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
     cantidad: unknown
     fecha_vencimiento?: string | null
     movimiento_id: string
-    piso_movimientos: { tipo: string } | null | { tipo: string }[]
+    piso_movimientos: { tipo: string; codigo_inc?: string | null } | null | { tipo: string; codigo_inc?: string | null }[]
   }
   const rawDets = (detData ?? []) as RawDet[]
 
-  const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string }[]>()
+  const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[]>()
   for (const d of rawDets) {
     const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
     if (qty <= 0) continue
     const tipo = getTipo(d.piso_movimientos)
     if (!tipo) continue
     const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
+    const getCodigoInc = (pm: unknown): string => {
+      if (!pm) return ''
+      if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { codigo_inc?: string | null }).codigo_inc || '' : ''
+      return (pm as { codigo_inc?: string | null }).codigo_inc || ''
+    }
+    const codigoInc = getCodigoInc(d.piso_movimientos)
     const key = `${d.bloque_id}__${d.nivel_id}`
     const arr = blockNivelMap.get(key) ?? []
-    arr.push({ bloque_id: d.bloque_id, nivel_id: d.nivel_id, tipo, cantidad: qty, fecha_vencimiento: fv })
+    arr.push({ bloque_id: d.bloque_id, nivel_id: d.nivel_id, tipo, cantidad: qty, fecha_vencimiento: fv, codigo_inc: codigoInc })
     blockNivelMap.set(key, arr)
   }
 
   // 3. FEFO per (bloque_id, nivel_id)
-  const fefoResults: { bloque_id: string; nivel_id: string; cantidad: number; fecha_vencimiento: string }[] = []
+  const fefoResults: { bloque_id: string; nivel_id: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[] = []
   for (const [key, details] of blockNivelMap) {
-    const ingresoPool = new Map<string, number>()
+    const ingresoPool = new Map<string, { cantidad: number; codigo_inc: string }>()
     let totalExit = 0
     for (const d of details) {
       if (isIngresoType(d.tipo)) {
-        ingresoPool.set(d.fecha_vencimiento, (ingresoPool.get(d.fecha_vencimiento) ?? 0) + d.cantidad)
+        const existing = ingresoPool.get(d.fecha_vencimiento)
+        if (existing) {
+          existing.cantidad += d.cantidad
+          if (!existing.codigo_inc && d.codigo_inc) existing.codigo_inc = d.codigo_inc
+        } else {
+          ingresoPool.set(d.fecha_vencimiento, { cantidad: d.cantidad, codigo_inc: d.codigo_inc })
+        }
       } else {
         totalExit += d.cantidad
       }
@@ -1506,13 +1519,13 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
       return a.localeCompare(b)
     })
     let pendiente = totalExit
-    for (const [fecha, qty] of sortedLots) {
+    for (const [fecha, pool] of sortedLots) {
       if (pendiente <= 0) {
-        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: qty, fecha_vencimiento: fecha })
-      } else if (qty <= pendiente) {
-        pendiente -= qty
+        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
+      } else if (pool.cantidad <= pendiente) {
+        pendiente -= pool.cantidad
       } else {
-        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: qty - pendiente, fecha_vencimiento: fecha })
+        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad - pendiente, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
         pendiente = 0
       }
     }
@@ -1604,6 +1617,7 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
         sector_nombre: loc?.sector_nombre ?? '',
         cantidad: Math.round(r.cantidad * 1000) / 1000,
         fecha_vencimiento: r.fecha_vencimiento,
+        codigo_inc: r.codigo_inc || undefined,
       }
     })
     .sort((a, b) => {

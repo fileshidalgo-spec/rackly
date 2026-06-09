@@ -9,10 +9,11 @@ import { Badge } from '@/components/ui/badge'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
-import { Search, PackageSearch, Loader2, RefreshCw, MapPin } from 'lucide-react'
+import { Search, PackageSearch, Loader2, RefreshCw, MapPin, AlertTriangle } from 'lucide-react'
 
 export function PisoStockTab() {
   const [query, setQuery] = useState('')
+  const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>('todos')
   const [items, setItems] = useState<StockPisoItem[]>([])
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -55,13 +56,20 @@ export function PisoStockTab() {
 
   // Filter items by code or description
   const term = query.trim().toUpperCase()
-  const filtered = term
+  const bySearch = term
     ? items.filter(
         i =>
           i.bloque_codigo.toUpperCase().includes(term) ||
-          i.bloque_descripcion.toUpperCase().includes(term)
+          i.bloque_descripcion.toUpperCase().includes(term) ||
+          (i.codigo_inc && i.codigo_inc.toUpperCase().includes(term))
       )
     : items
+  // Filter by INC status
+  const filtered = bySearch.filter((i) => {
+    if (stockFilter === 'inc') return !!i.codigo_inc
+    if (stockFilter === 'disponibles') return !i.codigo_inc
+    return true
+  })
 
   // Aggregate total stock per code
   const stockPorCodigo = new Map<string, number>()
@@ -96,6 +104,26 @@ export function PisoStockTab() {
 
   return (
     <div className="space-y-4">
+      {/* Filter buttons: Todos / Disponibles / Solo INC */}
+      <div className="flex items-center gap-1.5">
+        {(['todos', 'disponibles', 'inc'] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setStockFilter(f)}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
+              stockFilter === f
+                ? f === 'inc'
+                  ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300 shadow-sm shadow-rose-500/10'
+                  : 'bg-sky-500/20 border border-sky-500/40 text-sky-300 shadow-sm shadow-sky-500/10'
+                : 'bg-slate-800/60 border border-slate-700/40 text-slate-400 hover:text-slate-300'
+            }`}
+          >
+            {f === 'inc' && <AlertTriangle className="h-3 w-3" />}
+            {f === 'todos' ? 'Todos' : f === 'disponibles' ? 'Disponibles' : 'Solo INC'}
+          </button>
+        ))}
+      </div>
+
       {/* Search bar */}
       <div className="flex gap-2">
         <div className="relative flex-1">
@@ -188,6 +216,11 @@ export function PisoStockTab() {
                       <p className="text-[10px] text-slate-500 leading-tight truncate">{r.bloque_descripcion}</p>
                       <div className="flex items-center gap-2">
                         {vencimientoBadge(r.fecha_vencimiento)}
+                        {r.codigo_inc && (
+                          <Badge className="bg-rose-500/15 text-rose-400 border border-rose-500/30 text-[9px] font-semibold gap-0.5 px-1 py-0">
+                            <AlertTriangle className="h-2 w-2" /> {r.codigo_inc}
+                          </Badge>
+                        )}
                         {r.sector_nombre && (
                           <Badge variant="outline" className="text-[9px] px-1 py-0 border-slate-600 text-slate-500">
                             {r.sector_nombre}

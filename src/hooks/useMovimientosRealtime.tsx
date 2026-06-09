@@ -12,6 +12,9 @@ import { fetchMovimientos, type Movimiento } from '@/lib/rackly/kardex'
  */
 const CHANNEL_NAME = 'movs-realtime-sync'
 
+// Referencia a nivel de módulo para limpiar el canal correctamente entre remounts
+let moduleChannel: ReturnType<typeof supabase.channel> | null = null
+
 export function useMovimientosRealtime(
   onChange: (movs: Movimiento[]) => void
 ) {
@@ -37,10 +40,15 @@ export function useMovimientosRealtime(
       if (active) refresh()
     }, 8000)
 
+    // Limpiar canal previo (React Strict Mode / remount)
+    if (moduleChannel) {
+      try { supabase.removeChannel(moduleChannel) } catch { /* ignore */ }
+      moduleChannel = null
+    }
+
     // Realtime: refresco instantáneo cuando se inserta/borra un movimiento
-    let channel: ReturnType<typeof supabase.channel> | null = null
     try {
-      channel = supabase
+      moduleChannel = supabase
         .channel(CHANNEL_NAME)
         .on(
           'postgres_changes',
@@ -51,11 +59,11 @@ export function useMovimientosRealtime(
           }
         )
         .subscribe((status, err) => {
+          if (!active) return
           if (status === 'SUBSCRIBED') {
             // Conexión exitosa
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
             console.warn('[Realtime] Error de canal, reconectando...', err)
-            // El polling cubre mientras se reconecta
           }
         })
     } catch (err) {
@@ -65,8 +73,9 @@ export function useMovimientosRealtime(
     return () => {
       active = false
       clearInterval(pollInterval)
-      if (channel) {
-        try { supabase.removeChannel(channel) } catch { /* ignore */ }
+      if (moduleChannel) {
+        try { supabase.removeChannel(moduleChannel) } catch { /* ignore */ }
+        moduleChannel = null
       }
     }
   }, [])

@@ -25,6 +25,7 @@ export type Movimiento = {
   usuarioNombre?: string
   usuarioCorreo?: string
   proveedor?: string
+  codigoInc?: string // maps from codigo_inc column
 }
 
 export type OcupacionCelda = {
@@ -56,6 +57,7 @@ function fromRow(r: Record<string, unknown>): Movimiento {
     usuarioNombre: (r.usuario_nombre as string) ?? undefined,
     usuarioCorreo: (r.usuario_correo as string) ?? undefined,
     proveedor: (r.proveedor as string) ?? undefined,
+    codigoInc: (r.codigo_inc as string) ?? undefined,
   }
 }
 
@@ -115,6 +117,7 @@ async function addMovimientoFallback(
     usuario_correo: m.usuarioCorreo ?? null,
     proveedor: m.proveedor ? m.proveedor : null,
     uuid_sync: uuidSync || null,
+    codigo_inc: m.codigoInc || null,
   })
   if (error) throw error
   try {
@@ -171,6 +174,7 @@ export async function addMovimiento(
       p_usuario_correo: m.usuarioCorreo ?? null,
       p_proveedor: m.proveedor ? m.proveedor : null,
       p_uuid_sync: uuidSync || null,
+      p_codigo_inc: m.codigoInc || null,
     })
     // Stock insuficiente es un error controlado, no excepción cruda
     if (error) {
@@ -249,6 +253,7 @@ export type StockEnUbicacion = {
   fVencimiento?: string
   usuarioPrimerNombre?: string
   proveedor?: string
+  codigoInc?: string
 }
 
 export async function stockEnUbicacion(
@@ -283,17 +288,17 @@ export async function stockEnUbicacion(
       from += BATCH
     }
 
-    // Agrupar por (codigo, f_vencimiento)
+    // Agrupar por (codigo, f_vencimiento, codigo_inc)
     const groups = new Map<string, {
       codigo: string; descripcion: string; un: string;
       stock: number; fVencimiento: string;
-      usuarioPrimerNombre: string; proveedor: string;
+      usuarioPrimerNombre: string; proveedor: string; codigoInc: string;
     }>()
 
     for (const r of allRows) {
       const m = fromRow(r)
       const fvKey = m.fVencimiento || ''
-      const key = `${m.codigo}||${fvKey}`
+      const key = `${m.codigo}||${fvKey}||${m.codigoInc || ''}`
 
       let group = groups.get(key)
       if (!group) {
@@ -305,6 +310,7 @@ export async function stockEnUbicacion(
           fVencimiento: m.fVencimiento,
           usuarioPrimerNombre: m.usuarioNombre?.split(' ')[0] ?? '',
           proveedor: m.proveedor ?? '',
+          codigoInc: m.codigoInc || '',
         }
         groups.set(key, group)
       }
@@ -334,6 +340,7 @@ export async function stockEnUbicacion(
       fVencimiento: g.fVencimiento || undefined,
       usuarioPrimerNombre: g.usuarioPrimerNombre || undefined,
       proveedor: g.proveedor || undefined,
+      codigoInc: g.codigoInc || undefined,
     }))
   } catch {
     // Fallback al RPC original si falla la consulta directa
@@ -387,6 +394,7 @@ export type TrasladoInput = {
   usuarioCorreo?: string
   fVencimiento?: string
   proveedor?: string
+  codigoInc?: string
   /** Cantidad de ajuste en origen. Positivo = ingreso (qty > stock), Negativo = salida (qty < stock) */
   cantidadAjuste?: number
 }
@@ -405,6 +413,7 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
     usuario_nombre: t.usuarioNombre ?? null,
     usuario_correo: t.usuarioCorreo ?? null,
     proveedor: t.proveedor ? t.proveedor : null,
+    codigo_inc: t.codigoInc || null,
   }
   const ajuste = (t.cantidadAjuste ?? 0) !== 0
     ? [{
@@ -469,6 +478,7 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       p_f_vencimiento: t.fVencimiento || null,
       p_proveedor: t.proveedor ? t.proveedor : null,
       p_cantidad_ajuste: t.cantidadAjuste ?? 0,
+      p_codigo_inc: t.codigoInc || null,
     })
     // Stock insuficiente en origen
     if (error) {
@@ -597,6 +607,7 @@ export async function addMovimientosBatch(
       usuario_nombre: usuarioNombre ?? null,
       usuario_correo: usuarioCorreo ?? null,
       proveedor: r.proveedor ? r.proveedor : null,
+      codigo_inc: null,
     }))
 
     const { error } = await admin.from('movimientos').insert(inserts)

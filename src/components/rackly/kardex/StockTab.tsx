@@ -25,7 +25,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { toast } from 'sonner'
-import { Search, Trash2, PackageSearch, Warehouse, ArrowRight } from 'lucide-react'
+import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
 export function StockTab() {
@@ -34,6 +34,7 @@ export function StockTab() {
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [query, setQuery] = useState('')
   const [selectedCodigo, setSelectedCodigo] = useState('')
+  const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>('todos')
   const [stock, setStock] = useState<
     {
       bloque: string
@@ -45,6 +46,7 @@ export function StockTab() {
       un: string
       proveedor?: string
       fVencimiento: string
+      codigoInc?: string
     }[]
   >([])
 
@@ -98,11 +100,12 @@ export function StockTab() {
         un: string
         proveedor?: string
         fVencimiento: string
+        codigoInc?: string
       }
     >()
     const relevant = movs.filter((m) => m.codigo === code)
     for (const m of relevant) {
-      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
+      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
       const current = locMap.get(key)
       if (current) {
         current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
@@ -117,11 +120,16 @@ export function StockTab() {
           un: m.un,
           proveedor: m.proveedor || undefined,
           fVencimiento: m.fVencimiento || '',
+          codigoInc: m.codigoInc || undefined,
         })
       }
     }
-    return Array.from(locMap.values())
-      .filter((l) => l.stock > 0)
+    return Array.from(locMap.values()).filter((l) => {
+      if (l.stock <= 0) return false
+      if (stockFilter === 'inc') return !!l.codigoInc
+      if (stockFilter === 'disponibles') return !l.codigoInc
+      return true
+    })
       .sort((a, b) => {
         // FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
         const aHasDate = !!a.fVencimiento
@@ -143,7 +151,7 @@ export function StockTab() {
         const bPos = parseInt(b.posicion, 10) || 0
         return aPos - bPos
       })
-  }, [selectedCodigo, movs])
+  }, [selectedCodigo, movs, stockFilter])
 
   useEffect(() => {
     setStock(stockData)
@@ -354,10 +362,35 @@ export function StockTab() {
       {/* Stock por ubicación */}
       {stock.length > 0 ? (
         <div className="space-y-3">
-          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <Warehouse className="h-3.5 w-3.5" />
-            Stock por ubicación en RACKLY
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <Warehouse className="h-3.5 w-3.5" />
+              Stock por ubicación en RACKLY
+            </p>
+          </div>
+
+          {/* ── INC Filter buttons ── */}
+          <div className="flex gap-2">
+            {([['todos', 'Todos'], ['disponibles', 'Disponibles'], ['inc', 'Solo INC']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setStockFilter(key)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                  stockFilter === key
+                    ? key === 'inc'
+                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                      : key === 'disponibles'
+                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                        : 'bg-sky-500/20 border-sky-500/50 text-sky-300'
+                    : 'bg-slate-700/30 border-slate-600/30 text-slate-500 hover:text-slate-400'
+                }`}
+              >
+                {key === 'inc' && <AlertTriangle className="w-3 h-3" />}
+                {label}
+              </button>
+            ))}
+          </div>
 
           {/* ── Mobile: Card layout ── */}
           <div className="md:hidden space-y-2">
@@ -408,6 +441,11 @@ export function StockTab() {
                   ) : (
                     <span className="text-muted-foreground">Venc: —</span>
                   )}
+                  {s.codigoInc && (
+                    <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 text-[10px] px-1.5 py-0 font-semibold">
+                      <AlertTriangle className="w-3 h-3 mr-0.5" /> {s.codigoInc}
+                    </Badge>
+                  )}
                 </div>
               </div>
             ))}
@@ -426,6 +464,7 @@ export function StockTab() {
                   <TableHead>UN</TableHead>
                   <TableHead>Proveedor</TableHead>
                   <TableHead>Vencimiento</TableHead>
+                  <TableHead>INC</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
                   {esAdmin && <TableHead className="w-12"></TableHead>}
                 </TableRow>
@@ -452,6 +491,15 @@ export function StockTab() {
                       {s.fVencimiento ? (
                         <Badge variant="outline" className={`font-semibold ${getBadgeClass(s.fVencimiento)}`}>
                           {s.fVencimiento}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {s.codigoInc ? (
+                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 font-semibold text-xs">
+                          <AlertTriangle className="w-3 h-3 mr-0.5" /> {s.codigoInc}
                         </Badge>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>

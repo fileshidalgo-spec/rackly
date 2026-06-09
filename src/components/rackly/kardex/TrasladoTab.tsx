@@ -62,6 +62,7 @@ type LocStock = {
   fVencimiento: string
   codigo: string
   proveedor?: string
+  codigoInc?: string
 }
 
 export function TrasladoTab() {
@@ -100,7 +101,7 @@ export function TrasladoTab() {
     const locMap = new Map<string, LocStock>()
     const relevant = movs.filter((m) => m.codigo === code)
     for (const m of relevant) {
-      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
+      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
       const current = locMap.get(key)
       if (current) {
         current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
@@ -116,6 +117,7 @@ export function TrasladoTab() {
           fVencimiento: m.fVencimiento || '',
           codigo: m.codigo,
           proveedor: m.proveedor,
+          codigoInc: m.codigoInc || undefined,
         })
       }
     }
@@ -147,7 +149,7 @@ export function TrasladoTab() {
     setStep(1)
   }
 
-  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}` === selectedOrigin)
+  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}||${l.codigoInc || ''}` === selectedOrigin)
 
   const qtyNum = parseFloat(qty) || 0
   const saldoRestante = origin ? origin.stock - qtyNum : 0
@@ -256,6 +258,7 @@ export function TrasladoTab() {
         usuarioCorreo: perfil.correo,
         fVencimiento: origin.fVencimiento,
         proveedor: origin.proveedor,
+        codigoInc: origin.codigoInc,
         // Se genera ajuste automático solo si aplica: qty > stock o (qty < stock y el usuario elige corregir)
         cantidadAjuste: ajusteActivo ? diferencia : undefined,
       })
@@ -366,7 +369,7 @@ export function TrasladoTab() {
           {/* ── Mobile: Cards con TODA la info visible ── */}
           <div className="sm:hidden space-y-3">
             {locations.map((loc) => {
-              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}`
+              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}||${loc.codigoInc || ''}`
               const isSelected = selectedOrigin === key
               return (
                 <div
@@ -417,7 +420,12 @@ export function TrasladoTab() {
                         {loc.proveedor}
                       </span>
                     ) : null}
-                    {!loc.fVencimiento && !loc.proveedor && (
+                    {loc.codigoInc && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 flex items-center gap-0.5">
+                        <AlertTriangle className="w-3 h-3" /> {loc.codigoInc}
+                      </span>
+                    )}
+                    {!loc.fVencimiento && !loc.proveedor && !loc.codigoInc && (
                       <span className="text-[10px] text-slate-400">Sin vencimiento · Sin proveedor</span>
                     )}
                   </div>
@@ -476,12 +484,13 @@ export function TrasladoTab() {
                   <TableHead className="font-semibold text-xs uppercase tracking-wider hidden sm:table-cell">UN</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider hidden md:table-cell">F. Vencimiento</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider hidden lg:table-cell">Proveedor</TableHead>
+                  <TableHead className="font-semibold text-xs uppercase tracking-wider hidden lg:table-cell">INC</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Acción</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {locations.map((loc) => {
-                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}`
+                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}||${loc.codigoInc || ''}`
                   const isSelected = selectedOrigin === key
                   return (
                     <TableRow
@@ -525,6 +534,15 @@ export function TrasladoTab() {
                         {loc.proveedor ? (
                           <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold text-xs">
                             {loc.proveedor}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell">
+                        {loc.codigoInc ? (
+                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 font-semibold text-xs">
+                            <AlertTriangle className="w-3 h-3 mr-0.5" /> {loc.codigoInc}
                           </Badge>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>

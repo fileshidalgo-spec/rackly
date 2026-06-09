@@ -83,6 +83,7 @@ export function MovimientosTab() {
       usuario_nombre: string | null
       usuario_correo: string | null
       detalles: { bloque_codigo?: string; cantidad: number; nivel_codigo?: string; sector_nombre?: string; posicion_label?: string; fecha_vencimiento?: string | null }[]
+      codigo_inc?: string | null
     }[]
   >([])
   const [loading, setLoading] = useState(true)
@@ -568,6 +569,12 @@ export function MovimientosTab() {
                         {getTipoIcon(m.tipo)}
                         {m.tipo}
                       </Badge>
+                      {m.codigo_inc && (
+                        <Badge className="bg-rose-500/15 text-rose-400 border border-rose-500/30 text-[9px] font-semibold gap-0.5 rounded-lg px-1.5 py-0.5">
+                          <TriangleAlert className="h-2.5 w-2.5" />
+                          {m.codigo_inc}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs text-slate-300 text-center">
                       <span className="bg-slate-700/30 rounded-lg px-2 py-0.5 text-[10px] font-medium">{m.turno}</span>

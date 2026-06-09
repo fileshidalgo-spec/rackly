@@ -20,6 +20,7 @@ import {
   type PosicionConStock,
 } from '@/lib/piso/api'
 import { calcularTurno } from '@/lib/rackly/turno'
+import { dataClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { Button } from '@/components/ui/button'
@@ -50,7 +51,7 @@ type SalItem = {
   selected: boolean
 }
 type BloqueOption = { id: string; codigo: string; descripcion: string; unidad: string }
-type ActionMode = 'view' | 'ingreso' | 'salida' | 'traslado' | 'devolucion'
+type ActionMode = 'view' | 'ingreso' | 'salida' | 'traslado' | 'devolucion' | 'inc'
 
 type RowEntry = {
   bloque_id: string
@@ -178,6 +179,15 @@ export function PisoSectoresTab() {
 
   // Devolucion state
   const [devRows, setDevRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
+
+  // INC state
+  const [incCodigo, setIncCodigo] = useState('')
+  const [incDescripcion, setIncDescripcion] = useState('')
+  const [incUn, setIncUn] = useState('')
+  const [incCantidad, setIncCantidad] = useState('')
+  const [incCodigoInc, setIncCodigoInc] = useState('')
+  const [incFechaVencimiento, setIncFechaVencimiento] = useState('')
+  const [incSinVencimiento, setIncSinVencimiento] = useState(false)
 
   // Niveles de la posición seleccionada
   const [niveles, setNiveles] = useState<NivelInfo[]>([])
@@ -416,6 +426,92 @@ export function PisoSectoresTab() {
     setDevRows([{ ...EMPTY_ROW }])
     setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
     setMode('devolucion')
+  }
+
+  function openInc() {
+    setIncCodigo('')
+    setIncDescripcion('')
+    setIncUn('')
+    setIncCantidad('')
+    setIncCodigoInc('')
+    setIncFechaVencimiento('')
+    setIncSinVencimiento(false)
+    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
+    setMode('inc')
+  }
+
+  function handleIncCatalogoPick(bloque: BloqueOption) {
+    justSelectedRef.current = true
+    setIncCodigo(bloque.codigo)
+    setIncDescripcion(bloque.descripcion)
+    setIncUn(bloque.unidad)
+  }
+
+  function getFilteredIncCatalogo() {
+    const q = incCodigo.trim().toLowerCase()
+    if (!q) return bloquesCatalogo.slice(0, 50)
+    return bloquesCatalogo.filter((b) =>
+      b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q)
+    )
+  }
+
+  async function doIngresoINC() {
+    if (!detail || !perfil) return
+    if (!incCodigo.trim() || !incCantidad || !incCodigoInc.trim()) {
+      toast.error('Completa codigo, cantidad y codigo INC')
+      return
+    }
+    const qty = parseFloat(incCantidad)
+    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad invalida'); return }
+    const nivelId = getNivelId()
+    if (!nivelId) { toast.error('No hay niveles disponibles'); return }
+    setBusy(true)
+    try {
+      // Resolve bloque_id
+      const upper = incCodigo.trim().toUpperCase()
+      let bloqueId = ''
+      const existing = await buscarBloquePorCodigo(upper)
+      if (existing) {
+        bloqueId = existing.id
+      } else {
+        const created = await crearBloque(upper, incDescripcion || '', incUn || 'KG')
+        if (created.length > 0) {
+          const found = created.find((b) => b.codigo === upper)
+          if (found) bloqueId = found.id
+        }
+      }
+      if (!bloqueId) { toast.error('No se pudo crear/encontrar el articulo'); setBusy(false); return }
+
+      // Register as ingreso with codigo_inc via direct insert
+      const { error } = await dataClient.from('piso_movimientos').insert({
+        tipo: 'ingreso',
+        turno: calcularTurno(),
+        usuario_id: perfil.id,
+        usuario_nombre: perfil.nombre ?? '',
+        usuario_correo: perfil.correo ?? '',
+        sector_id: null,
+        codigo_inc: incCodigoInc.trim(),
+      }).select('id').single()
+      if (error) throw error
+
+      toast.success('INC registrado')
+      setMode('view')
+      setIncCodigo('')
+      setIncDescripcion('')
+      setIncUn('')
+      setIncCantidad('')
+      setIncCodigoInc('')
+      loadBloques()
+      const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
+      if (mountedRef.current && detail) {
+        setDetail({ ...detail, stock })
+      }
+      await loadPosiciones()
+    } catch (err: unknown) {
+      toast.error('Error al registrar INC', { description: extractError(err) })
+    } finally {
+      setBusy(false)
+    }
   }
 
   // Actualizar campo de busqueda — solo actualiza texto, no auto-selecciona
@@ -1258,9 +1354,10 @@ export function PisoSectoresTab() {
                     mode === 'ingreso' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 shadow-sm shadow-emerald-500/10' :
                     mode === 'salida' ? 'bg-red-500/15 text-red-400 border-red-500/30 shadow-sm shadow-red-500/10' :
                     mode === 'traslado' ? 'bg-sky-500/15 text-sky-400 border-sky-500/30 shadow-sm shadow-sky-500/10' :
+                    mode === 'inc' ? 'bg-rose-500/15 text-rose-400 border-rose-500/30 shadow-sm shadow-rose-500/10' :
                     'bg-amber-500/15 text-amber-400 border-amber-500/30 shadow-sm shadow-amber-500/10'
                   }`}>
-                    {mode === 'ingreso' ? '↓ Ingreso' : mode === 'salida' ? '↑ Salida' : mode === 'traslado' ? '⇄ Traslado' : '↺ Devolucion'}
+                    {mode === 'ingreso' ? '↓ Ingreso' : mode === 'salida' ? '↑ Salida' : mode === 'traslado' ? '⇄ Traslado' : mode === 'inc' ? '⚠ INC' : '↺ Devolucion'}
                   </span>
                 )}
               </DialogTitle>
@@ -1354,6 +1451,7 @@ export function PisoSectoresTab() {
                       <Button onClick={openSalida} size="sm" className="gap-1.5 bg-red-600/90 hover:bg-red-600 text-white text-xs rounded-xl shadow-lg shadow-red-500/15 transition-all duration-300 hover:shadow-red-500/25 hover:scale-[1.02]"><ArrowUpFromLine className="h-3.5 w-3.5" /> Salida</Button>
                       <Button onClick={openTraslado} size="sm" className="gap-1.5 bg-sky-600/90 hover:bg-sky-600 text-white text-xs rounded-xl shadow-lg shadow-sky-500/15 transition-all duration-300 hover:shadow-sky-500/25 hover:scale-[1.02]"><ArrowRightLeft className="h-3.5 w-3.5" /> Traslado</Button>
                       <Button onClick={openDevolucion} size="sm" className="gap-1.5 bg-amber-600/90 hover:bg-amber-600 text-white text-xs rounded-xl shadow-lg shadow-amber-500/15 transition-all duration-300 hover:shadow-amber-500/25 hover:scale-[1.02]"><RotateCcw className="h-3.5 w-3.5" /> Devolucion</Button>
+                      <Button onClick={openInc} size="sm" className="gap-1.5 col-span-2 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300 hover:shadow-rose-500/25 hover:scale-[1.02]"><AlertTriangle className="h-3.5 w-3.5" /> INC — Insumo No Conforme</Button>
                     </div>
                   </div>
                 ) : (
@@ -1368,6 +1466,7 @@ export function PisoSectoresTab() {
                     <div className="grid grid-cols-2 gap-2 max-w-xs mx-auto">
                       <Button onClick={openIngreso} size="sm" className="gap-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/15 transition-all duration-300 hover:scale-[1.02]"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
                       <Button onClick={openDevolucion} size="sm" className="gap-1.5 bg-amber-600/90 hover:bg-amber-600 text-white text-xs rounded-xl shadow-lg shadow-amber-500/15 transition-all duration-300 hover:scale-[1.02]"><RotateCcw className="h-3.5 w-3.5" /> Devolucion</Button>
+                      <Button onClick={openInc} size="sm" className="gap-1.5 col-span-2 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300 hover:shadow-rose-500/25 hover:scale-[1.02]"><AlertTriangle className="h-3.5 w-3.5" /> INC — Insumo No Conforme</Button>
                     </div>
                   </div>
                 )
@@ -1850,6 +1949,113 @@ export function PisoSectoresTab() {
                   <div className="flex gap-2 pt-2">
                     <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
                     <Button onClick={doDevolucion} disabled={busy} size="sm" className="h-11 gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all duration-300 hover:shadow-amber-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Registrar devolucion</Button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── INC MODE ── */}
+              {mode === 'inc' && (
+                <div className="space-y-4 mt-4">
+                  <div className="rounded-xl border border-rose-500/25 bg-rose-950/10 p-3 space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs font-bold text-rose-400">Registro INC — Insumo No Conforme</p>
+                        <p className="text-[10px] text-slate-400">Producto que no cumple con especificaciones de calidad</p>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-400">Posicion: <span className="text-sky-300 font-mono">{detail?.columnaLetra} / {detail?.subcolumnaCodigo} / Pos {detail?.posicionNumero}</span></p>
+
+                  <NivelSelector
+                    label="Nivel destino"
+                    nivelId={selectedNivelId}
+                    onNivelChange={setSelectedNivelId}
+                    nivelesList={niveles}
+                    accentColor="red"
+                  />
+
+                  {/* Codigo */}
+                  <div className="rounded-xl border border-rose-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-rose-500/40">
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-12 sm:col-span-4">
+                        <Label className="text-[10px] text-rose-400 font-semibold">Codigo *</Label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={incCodigo}
+                            onChange={(e) => setIncCodigo(e.target.value)}
+                            onBlur={() => setTimeout(async () => {
+                              if (justSelectedRef.current) { justSelectedRef.current = false; return }
+                              if (!incCodigo.trim() || incDescripcion) return
+                              const upper = incCodigo.trim().toUpperCase()
+                              const bloque = await buscarBloquePorCodigo(upper)
+                              if (bloque) {
+                                setIncDescripcion(bloque.descripcion)
+                                setIncUn(bloque.unidad)
+                              }
+                            }, 150)}
+                            placeholder="Buscar codigo..."
+                            className="w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 border-slate-700/50 focus:ring-rose-500/40 backdrop-blur-sm transition-all duration-300"
+                          />
+                          {/* Autocomplete dropdown for INC */}
+                          {!incDescripcion && incCodigo.trim().length > 0 && (
+                            <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-700/80 bg-slate-900/95 backdrop-blur-sm shadow-2xl shadow-black/40">
+                              {getFilteredIncCatalogo().slice(0, 10).map((b) => (
+                                <button
+                                  key={b.id}
+                                  onClick={() => handleIncCatalogoPick(b)}
+                                  className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/80 text-slate-300 border-b border-slate-800/50 last:border-0 transition-all duration-200"
+                                >
+                                  <span className="font-mono text-rose-400">{b.codigo}</span>
+                                  <span className="text-slate-500 ml-1.5">— {b.descripcion || b.unidad}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="col-span-6 sm:col-span-4">
+                        <Label className="text-[10px] text-slate-500">Descripcion</Label>
+                        <input type="text" value={incDescripcion} readOnly placeholder="Auto o manual"
+                          className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-3 cursor-default backdrop-blur-sm transition-all duration-300" />
+                      </div>
+                      <div className="col-span-6 sm:col-span-4">
+                        <Label className="text-[10px] text-slate-500">UN</Label>
+                        <input type="text" value={incUn} readOnly placeholder="Auto o manual"
+                          className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-3 cursor-default backdrop-blur-sm transition-all duration-300" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-6 sm:col-span-4">
+                        <Label className="text-[10px] text-rose-400 font-semibold">Cantidad *</Label>
+                        <input type="number" step="any" min="0.001" value={incCantidad} onChange={(e) => setIncCantidad(e.target.value)} placeholder="0"
+                          className="w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 border-rose-500/40 focus:ring-rose-500/40 backdrop-blur-sm transition-all duration-300" />
+                      </div>
+                      <div className="col-span-6 sm:col-span-4">
+                        <Label className="text-[10px] text-rose-400 font-semibold">Codigo INC *</Label>
+                        <input type="text" value={incCodigoInc} onChange={(e) => setIncCodigoInc(e.target.value)} placeholder="Ej: INC026-120"
+                          className="w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-rose-300 placeholder:text-rose-500/40 px-3 font-mono focus:outline-none focus:ring-2 border-rose-500/40 focus:ring-rose-500/40 backdrop-blur-sm transition-all duration-300" />
+                      </div>
+                      <div className="col-span-12 sm:col-span-4">
+                        <FechaVencimientoField
+                          prefix="ing"
+                          idx={0}
+                          row={{ ...EMPTY_ROW, fecha_vencimiento: incFechaVencimiento, sin_vencimiento: incSinVencimiento }}
+                          onFechaChange={(_, val) => setIncFechaVencimiento(val)}
+                          onToggleSin={() => setIncSinVencimiento(!incSinVencimiento)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button onClick={() => setMode('view')} className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl text-xs font-bold border border-slate-700/50 text-slate-400 hover:bg-slate-700/40 hover:text-slate-200 transition-all duration-300">← Cancelar</button>
+                    <Button onClick={() => doIngresoINC()} disabled={busy} className="flex-1 gap-1.5 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300">
+                      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+                      Registrar INC
+                    </Button>
                   </div>
                 </div>
               )}

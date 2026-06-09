@@ -60,7 +60,7 @@ import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, ArrowRightLef
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 type Props = {
-  tipo: TipoMovimiento
+  tipo: TipoMovimiento | 'inc'
   onCreated: (movs: Movimiento[]) => void
 }
 
@@ -78,6 +78,9 @@ export function MovimientoForm({ tipo, onCreated }: Props) {
   }
   if (tipo === 'salida') {
     return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil} />
+  }
+  if (tipo === 'inc') {
+    return <IncForm turno={turno} onCreated={onCreated} perfil={perfil} />
   }
   // ingreso y devolucion usan el mismo formulario, solo cambia el tipo
   return <IngresoForm turno={turno} onCreated={onCreated} perfil={perfil} tipo={tipo} />
@@ -1341,5 +1344,228 @@ function SalidaForm({
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  )
+}
+
+/* ═══════════════════════════════════════════
+   INC FORM — Ingreso de Insumo No Conforme
+   ═══════════════════════════════════════════ */
+function IncForm({
+  turno,
+  onCreated,
+  perfil,
+}: {
+  turno: Turno
+  onCreated: (movs: Movimiento[]) => void
+  perfil: { id: string; nombre: string; correo: string }
+}) {
+  const [bloque, setBloque] = useState('')
+  const [torre, setTorre] = useState('')
+  const [piso, setPiso] = useState('')
+  const [posicion, setPosicion] = useState('')
+  const [codigo, setCodigo] = useState('')
+  const [descripcion, setDescripcion] = useState('')
+  const [un, setUn] = useState('')
+  const [cantidad, setCantidad] = useState('')
+  const [codigoInc, setCodigoInc] = useState('')
+  const [fVencimiento, setFVencimiento] = useState('')
+  const [sinVencimiento, setSinVencimiento] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const torres = torresDeBloque(bloque)
+  const posiciones = posicionesDeBloque(bloque)
+
+  function handleCatalogoPick(item: CatalogoItem) {
+    setCodigo(item.codigo)
+    setDescripcion(item.descripcion)
+    setUn(item.un)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!bloque || !torre || !piso || !posicion || !codigo.trim() || !cantidad || !codigoInc.trim()) {
+      toast.error('Completa ubicación, código, cantidad y código INC')
+      return
+    }
+    const qty = parseFloat(cantidad)
+    if (isNaN(qty) || qty <= 0) {
+      toast.error('La cantidad debe ser mayor a 0')
+      return
+    }
+    setBusy(true)
+    try {
+      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+        tipo: 'ingreso',
+        bloque,
+        torre,
+        piso,
+        posicion,
+        codigo: codigo.trim().toUpperCase(),
+        descripcion,
+        un,
+        cantidad: qty,
+        fVencimiento: sinVencimiento ? '' : fVencimiento,
+        turno,
+        usuarioId: perfil.id,
+        usuarioNombre: perfil.nombre,
+        usuarioCorreo: perfil.correo,
+        codigoInc: codigoInc.trim(),
+      })
+      if (wasOffline) {
+        toast.success('INC guardado (offline)', {
+          description: 'Se sincronizará al reconectarse',
+          duration: 5000,
+        })
+      } else {
+        toast.success('Insumo No Conforme registrado')
+      }
+      // Limpiar formulario
+      setCodigo('')
+      setDescripcion('')
+      setUn('')
+      setCantidad('')
+      setCodigoInc('')
+      setFVencimiento('')
+      setSinVencimiento(false)
+      onCreated(movs)
+    } catch (err: unknown) {
+      const message = extractError(err)
+      toast.error('Error al registrar INC', { description: message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      {/* Banner INC */}
+      <div className="flex items-center gap-2 mb-4 p-3 rounded-lg border bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800">
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center flex-shrink-0 shadow-sm">
+          <TriangleAlert className="h-4 w-4 text-white" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">
+            Registro INC — Insumo No Conforme
+          </p>
+          <p className="text-xs text-muted-foreground">Registra un insumo que no cumple con las especificaciones de calidad.</p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Ubicación */}
+        <div className="space-y-1">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Ubicación</Label>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Bloque</Label>
+              <Select value={bloque} onValueChange={(v) => { setBloque(v); setTorre(''); setPiso(''); setPosicion('') }}>
+                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Bloque" /></SelectTrigger>
+                <SelectContent>
+                  {BLOQUES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Torre</Label>
+              <Select value={torre} onValueChange={setTorre} disabled={!bloque}>
+                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Torre" /></SelectTrigger>
+                <SelectContent>
+                  {torres.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Piso</Label>
+              <Select value={piso} onValueChange={setPiso} disabled={!bloque}>
+                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Piso" /></SelectTrigger>
+                <SelectContent>
+                  {PISOS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Posición</Label>
+              <Select value={posicion} onValueChange={setPosicion} disabled={!bloque}>
+                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Pos." /></SelectTrigger>
+                <SelectContent>
+                  {posiciones.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1 col-span-2 sm:col-span-1">
+              <Label className="text-xs text-muted-foreground">Turno</Label>
+              <Input value={turno} readOnly className="h-10 bg-muted text-sm" />
+            </div>
+          </div>
+        </div>
+
+        {/* Producto */}
+        <div className="space-y-1">
+          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Producto</Label>
+          <CatalogoSearchInput
+            onPick={handleCatalogoPick}
+            value={codigo}
+            onChange={(v) => {
+              setCodigo(v)
+              const cat = findCatalogoByCodigo(v)
+              if (cat) {
+                setDescripcion(cat.descripcion)
+                setUn(cat.un)
+              }
+            }}
+          />
+        </div>
+
+        {descripcion && (
+          <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/20 p-3 space-y-2 transition-all">
+            <div className="flex items-start gap-3 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-muted-foreground">Descripción</p>
+                <p className="text-sm font-medium truncate">{descripcion}</p>
+              </div>
+              <div className="min-w-[60px]">
+                <p className="text-xs text-muted-foreground">UN</p>
+                <p className="text-sm font-medium">{un || '—'}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Cantidad + Código INC + Vencimiento */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Cantidad</Label>
+            <Input type="number" step="any" min="0.001" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0" className="h-10" />
+          </div>
+          <div className="space-y-1 sm:col-span-2">
+            <Label className="text-xs text-muted-foreground font-semibold">
+              Código INC <span className="text-rose-500">*</span>
+            </Label>
+            <Input
+              value={codigoInc}
+              onChange={(e) => setCodigoInc(e.target.value)}
+              placeholder="Ej: INC026-120"
+              className="h-10 border-rose-300 dark:border-rose-700 bg-rose-50/50 dark:bg-rose-950/20 focus-visible:ring-rose-500/30"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <div className="space-y-1 col-span-2 sm:col-span-1">
+            <Label className="text-xs text-muted-foreground">F. Vencimiento</Label>
+            <div className="flex items-center gap-1.5">
+              <Input type="date" value={fVencimiento} onChange={(e) => setFVencimiento(e.target.value)} disabled={sinVencimiento} className="h-10 [color-scheme:dark]" />
+              <Checkbox checked={sinVencimiento} onCheckedChange={(v) => setSinVencimiento(!!v)} />
+            </div>
+          </div>
+        </div>
+
+        <Button type="submit" disabled={busy} className="w-full h-11 text-white text-sm font-medium sm:w-auto bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-700 hover:to-pink-700 shadow-md shadow-rose-600/20">
+          {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+          <TriangleAlert className="h-4 w-4 mr-2" />
+          Registrar INC
+        </Button>
+      </form>
+    </>
   )
 }

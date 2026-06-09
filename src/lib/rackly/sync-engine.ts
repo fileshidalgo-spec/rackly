@@ -184,8 +184,9 @@ class SyncEngineSingleton {
   private handleOffline = (): void => {
     console.log('[SyncEngine] Navegador reporta: OFFLINE')
     this.updateState({ connectivity: 'offline' })
-    // Cancelar sincronización en curso (los retries se reintentarán al reconectar)
-    this.syncInProgress = false
+    // NO resetear syncInProgress aquí — dejar que la sincronización en curso falle
+    // naturalmente. Resetearlo causaría que movimientos marcados como 'syncing'
+    // se reintenten al reconectar, creando duplicados.
   }
 
   private startPing(): void {
@@ -250,9 +251,12 @@ class SyncEngineSingleton {
   }
 
   // ── Enqueue Movement ─────────────────
-  /** Encolar un movimiento para sincronización offline */
-  async enqueueMovement(movement: Omit<PendingMovement, 'id' | 'uuidSync' | 'createdAt' | 'status' | 'retries'>): Promise<PendingMovement> {
-    const id = crypto.randomUUID()
+  /** Encolar un movimiento para sincronización offline.
+   *  Si se provee un uuidSync externo, se usa ese (idempotencia con intento online previo).
+   *  Si no, se genera uno nuevo.
+   */
+  async enqueueMovement(movement: Omit<PendingMovement, 'id' | 'uuidSync' | 'createdAt' | 'status' | 'retries'>, existingUuidSync?: string): Promise<PendingMovement> {
+    const id = existingUuidSync || crypto.randomUUID()
     const uuidSync = id // El id generado local es el uuid_sync del servidor
     const pending: PendingMovement = {
       ...movement,
@@ -540,12 +544,17 @@ class SyncEngineSingleton {
     m: Parameters<typeof addMovimiento>[0],
     uuidSync?: string
   ): Promise<{ movs: Movimiento[]; wasOffline: boolean }> {
+    // GENERAR UUID de idempotencia ANTES del intento online.
+    // Este mismo UUID se usa tanto para el intento online como para la cola offline,
+    // garantizando que si el servidor recibe ambos, la UNIQUE constraint lo rechace.
+    const syncId = uuidSync || crypto.randomUUID()
+
     // Intentar enviar al servidor si: online, o syncing/error PERO navigator dice online
     const shouldTryOnline = this.state.connectivity === 'online' || navigator.onLine
 
     if (shouldTryOnline) {
       try {
-        const movs = await addMovimiento(m, uuidSync)
+        const movs = await addMovimiento(m, syncId)
         return { movs, wasOffline: false }
       } catch (err) {
         // Detectar si fue un error de red/conexión
@@ -559,12 +568,12 @@ class SyncEngineSingleton {
           errMsg.includes('ERR_CONNECTION') ||
           errMsg.includes('Aborted')
         if (!isNetworkError) throw err // Error de negocio (ej: INSUFFICIENT_STOCK), propagar
-        // Error de red — caer al flujo offline
-        console.warn('[SyncEngine] Error de red, guardando offline:', errMsg)
+        // Error de red — caer al flujo offline con el MISMO UUID
+        console.warn('[SyncEngine] Error de red, guardando offline con syncId:', syncId, errMsg)
       }
     }
 
-    // Flujo offline: guardar en IndexedDB
+    // Flujo offline: guardar en IndexedDB con el MISMO uuid de idempotencia
     try {
       await this.enqueueMovement({
         tipo: m.tipo,
@@ -582,12 +591,12 @@ class SyncEngineSingleton {
         usuarioNombre: m.usuarioNombre || '',
         usuarioCorreo: m.usuarioCorreo || '',
         proveedor: m.proveedor,
-      })
+      }, syncId) // ← Pasar el MISMO UUID para idempotencia
       return { movs: [], wasOffline: true }
     } catch (offlineErr) {
       // IndexedDB no disponible — intentar enviar al servidor como último recurso
       console.error('[SyncEngine] IndexedDB no disponible, intentando enviar directo:', offlineErr)
-      const movs = await addMovimiento(m, uuidSync)
+      const movs = await addMovimiento(m, syncId)
       return { movs, wasOffline: false }
     }
   }
@@ -600,6 +609,9 @@ class SyncEngineSingleton {
   async offlineAwareTraslado(
     t: Parameters<typeof trasladarMovimiento>[0]
   ): Promise<{ movs: Movimiento[]; wasOffline: boolean }> {
+    // Generar UUID de idempotencia para el traslado
+    const syncId = crypto.randomUUID()
+
     // Intentar enviar al servidor si: online, o syncing/error PERO navigator dice online
     const shouldTryOnline = this.state.connectivity === 'online' || navigator.onLine
 
@@ -617,11 +629,11 @@ class SyncEngineSingleton {
           errMsg.includes('Load failed') ||
           errMsg.includes('Aborted')
         if (!isNetworkError) throw err
-        console.warn('[SyncEngine] Error de red en traslado, guardando offline:', errMsg)
+        console.warn('[SyncEngine] Error de red en traslado, guardando offline con syncId:', syncId, errMsg)
       }
     }
 
-    // Flujo offline
+    // Flujo offline — usar el MISMO UUID para idempotencia
     try {
       await this.enqueueMovement({
         tipo: 'traslado',
@@ -644,7 +656,7 @@ class SyncEngineSingleton {
         destPiso: t.destino.piso,
         destPosicion: t.destino.posicion,
         cantidadAjuste: t.cantidadAjuste,
-      })
+      }, syncId) // ← Pasar el MISMO UUID
       return { movs: [], wasOffline: true }
     } catch (offlineErr) {
       // IndexedDB no disponible — intentar enviar al servidor como último recurso

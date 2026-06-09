@@ -359,38 +359,38 @@ export function StockTab() {
         </div>
       )}
 
+      {/* ── INC Filter buttons (always visible when a code is selected) ── */}
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+          <Warehouse className="h-3.5 w-3.5" />
+          {stock.length > 0 ? 'Stock por ubicación en RACKLY' : 'Sin stock en ubicaciones de RACKLY'}
+        </p>
+      </div>
+      <div className="flex gap-2">
+        {([['todos', 'Todos'], ['disponibles', 'Disponibles'], ['inc', 'Solo INC']] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setStockFilter(key)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+              stockFilter === key
+                ? key === 'inc'
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                  : key === 'disponibles'
+                    ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                    : 'bg-sky-500/20 border-sky-500/50 text-sky-300'
+                : 'bg-slate-700/30 border-slate-600/30 text-slate-500 hover:text-slate-400'
+            }`}
+          >
+            {key === 'inc' && <AlertTriangle className="w-3 h-3" />}
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Stock por ubicación */}
       {stock.length > 0 ? (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-              <Warehouse className="h-3.5 w-3.5" />
-              Stock por ubicación en RACKLY
-            </p>
-          </div>
-
-          {/* ── INC Filter buttons ── */}
-          <div className="flex gap-2">
-            {([['todos', 'Todos'], ['disponibles', 'Disponibles'], ['inc', 'Solo INC']] as const).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setStockFilter(key)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
-                  stockFilter === key
-                    ? key === 'inc'
-                      ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
-                      : key === 'disponibles'
-                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
-                        : 'bg-sky-500/20 border-sky-500/50 text-sky-300'
-                    : 'bg-slate-700/30 border-slate-600/30 text-slate-500 hover:text-slate-400'
-                }`}
-              >
-                {key === 'inc' && <AlertTriangle className="w-3 h-3" />}
-                {label}
-              </button>
-            ))}
-          </div>
 
           {/* ── Mobile: Card layout ── */}
           <div className="md:hidden space-y-2">
@@ -536,10 +536,6 @@ export function StockTab() {
       ) : (
         /* Sin stock en ubicaciones — mostrar info del catálogo + Big Magic */
         <div className="space-y-3">
-          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <Warehouse className="h-3.5 w-3.5" />
-            Sin stock en ubicaciones de RACKLY
-          </p>
 
           {selectedItem ? (
             <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800/50 dark:to-slate-800 p-4">

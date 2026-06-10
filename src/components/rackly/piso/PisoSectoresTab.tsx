@@ -1612,11 +1612,15 @@ export function PisoSectoresTab() {
             {detail && (<>
               {/* ── VIEW MODE ── */}
               {mode === 'view' && (() => {
-                const displayStock = viewNivelTab === 'all'
+                const isAllView = viewNivelTab === 'all'
+                const displayStock = isAllView
                   ? detail.stock
                   : (stockByNivel[viewNivelTab] ?? [])
                 const selectedNivelLabel = niveles.find((n) => n.id === viewNivelTab)
-                return displayStock.length > 0 ? (
+                const hasAnyStock = isAllView
+                  ? niveles.some(n => (stockByNivel[n.id] ?? []).length > 0)
+                  : displayStock.length > 0
+                return hasAnyStock ? (
                   <div className="space-y-2.5 mt-4">
                     {/* Level tabs — only show if position has multiple levels AND not in singleNivelMode */}
                     {!singleNivelMode && niveles.length > 1 && (
@@ -1624,12 +1628,12 @@ export function PisoSectoresTab() {
                         <button
                           onClick={() => setViewNivelTab('all')}
                           className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
-                            viewNivelTab === 'all'
+                            isAllView
                               ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white shadow-lg shadow-sky-500/25'
                               : 'text-slate-400 hover:text-slate-300'
                           }`}
                         >
-                          Todos ({detail.stock.length})
+                          Todos
                         </button>
                         {niveles.map((n) => {
                           const count = (stockByNivel[n.id] ?? []).length
@@ -1659,12 +1663,65 @@ export function PisoSectoresTab() {
                         <span className="text-[9px] text-slate-500">· {(stockByNivel[viewNivelTab] ?? []).reduce((s, it) => s + it.cantidad, 0).toFixed(2)} total</span>
                       </div>
                     )}
-                    {displayStock.map((s, idx) => (
+                    {/* "Todos" view: grouped by nivel */}
+                    {isAllView && (
+                      <>
+                        {niveles.map((niv) => {
+                          const nivStock = stockByNivel[niv.id] ?? []
+                          if (nivStock.length === 0) return null
+                          const nivTotal = nivStock.reduce((s, it) => s + it.cantidad, 0)
+                          return (
+                            <div key={niv.id} className="space-y-1.5">
+                              <div className="flex items-center gap-2 px-2 py-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                                <span className="text-[10px] font-bold text-sky-300 uppercase tracking-wider">
+                                  Nivel {niv.numero}{niv.codigo_ubicacion ? ` — ${niv.codigo_ubicacion}` : ''}
+                                </span>
+                                <span className="text-[9px] text-slate-500">· {nivStock.length} articulo(s) · {nivTotal.toFixed(2)} total</span>
+                              </div>
+                              {nivStock.map((s, idx) => (
+                                <div key={`${s.bloque_id}-${s.fecha_vencimiento}-${idx}`}
+                                  className="rounded-xl border border-slate-700/40 bg-slate-800/50 backdrop-blur-sm p-3.5 hover:border-slate-600/50 transition-all duration-300 hover:shadow-lg group/item">
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                                      <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-slate-700/60 flex items-center justify-center text-[9px] font-bold text-slate-300 border border-slate-600/40">
+                                        {idx + 1}
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-mono text-sky-300 font-bold text-sm">{s.bloque_codigo}</span>
+                                          {s.fecha_vencimiento && (
+                                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/20 flex items-center gap-0.5">
+                                              <Calendar className="h-2.5 w-2.5" /> {s.fecha_vencimiento}
+                                            </span>
+                                          )}
+                                          {!s.fecha_vencimiento && (
+                                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-700/40 text-slate-400 border border-slate-600/30 flex items-center gap-0.5">
+                                              <CalendarOff className="h-2.5 w-2.5" /> Sin fecha
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
+                                      </div>
+                                    </div>
+                                    <div className="text-right flex-shrink-0 ml-3">
+                                      <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
+                                      <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })}
+                      </>
+                    )}
+                    {/* Single level view (not "all") */}
+                    {!isAllView && displayStock.map((s, idx) => (
                       <div key={`${s.bloque_id}-${s.fecha_vencimiento}-${idx}`}
                         className="rounded-xl border border-slate-700/40 bg-slate-800/50 backdrop-blur-sm p-3.5 hover:border-slate-600/50 transition-all duration-300 hover:shadow-lg group/item">
                         <div className="flex items-start justify-between">
                           <div className="flex items-start gap-3 flex-1 min-w-0">
-                            {/* Card number badge */}
                             <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-slate-700/60 flex items-center justify-center text-[9px] font-bold text-slate-300 border border-slate-600/40">
                               {idx + 1}
                             </div>

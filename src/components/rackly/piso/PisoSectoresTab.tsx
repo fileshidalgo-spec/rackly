@@ -343,8 +343,8 @@ export function PisoSectoresTab() {
 
 
 
-  // Click posicion
-  async function handleClick(pos: PosicionConStock | null) {
+  // Click posicion (nivelId opcional para seleccionar nivel especifico desde la tabla)
+  async function handleClick(pos: PosicionConStock | null, nivelId?: string) {
     if (!pos) return
     try {
       const [stock, nivs] = await Promise.all([
@@ -362,7 +362,7 @@ export function PisoSectoresTab() {
       if (mountedRef.current) {
         setDetail({ posicionId: pos.posicionId, posicionNumero: pos.posicionNumero, subcolumnaCodigo: pos.subcolumnaCodigo, columnaLetra: pos.columnaLetra, stock })
         setNiveles(nivs)
-        setSelectedNivelId(nivs.length > 0 ? nivs[0].id : '')
+        setSelectedNivelId(nivelId || (nivs.length > 0 ? nivs[0].id : ''))
         setStockByNivel(stockPerNivel)
         setViewNivelTab('all')
         setMode('view')
@@ -400,12 +400,12 @@ export function PisoSectoresTab() {
 
   function openIngreso() {
     setIngRows([{ ...EMPTY_ROW }])
-    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
+    // No resetear nivel — mantener el que el usuario seleccionó
     setMode('ingreso')
   }
 
   function openSalida() {
-    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
+    // No resetear nivel — mantener el que el usuario seleccionó
     setSalNivelTab('all')
     if (detail) setSalItems(detail.stock.map((s) => ({
       bloque_id: s.bloque_id,
@@ -1419,7 +1419,7 @@ export function PisoSectoresTab() {
                                     return (
                                       <div key={i} className="flex-1 p-0.5 border-r border-slate-700/20 last:border-r-0">
                                         <button
-                                          onClick={() => posData ? handleClick(posData) : undefined}
+                                          onClick={() => posData ? handleClick(posData, nivel?.nivelId) : undefined}
                                           className={`${cellColor} w-full h-9 sm:h-10 rounded-md flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95`}
                                           title={count > 0
                                             ? bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' INC' : ''}`).join('\n')

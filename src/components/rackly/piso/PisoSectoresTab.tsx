@@ -144,6 +144,7 @@ export function PisoSectoresTab() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [busyExport, setBusyExport] = useState(false)
+  const [selectedColumn, setSelectedColumn] = useState<string | null>(null) // null = dashboard, 'A' = columna A
 
   const mountedRef = useRef(true)
   const justSelectedRef = useRef(false)
@@ -275,7 +276,7 @@ export function PisoSectoresTab() {
   }, [])
 
   useEffect(() => { mountedRef.current = true; loadSectores(); loadPosiciones(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadPosiciones, loadBloques])
-  useEffect(() => { if (sectorFilter !== 'all') loadPosiciones() }, [sectorFilter, loadPosiciones])
+  useEffect(() => { if (sectorFilter !== 'all') { loadPosiciones(); setSelectedColumn(null) } }, [sectorFilter, loadPosiciones])
 
   // Realtime: auto-refresh positions when piso_movimientos changes (polling solo como respaldo si WebSocket cae)
   const silentRefreshPos = useCallback(() => loadPosiciones(true), [loadPosiciones])
@@ -1218,9 +1219,100 @@ export function PisoSectoresTab() {
         </div>
       </div>
 
-      {/* ═══ RACK GRID — Clean 2D column cards ═══ */}
-      <div className="space-y-4">
-        {columnas.map((col) => (
+      {/* ═══ COLUMN SELECTOR DASHBOARD ═══ */}
+      {selectedColumn === null ? (
+        <div className="space-y-4">
+          {/* Sector title */}
+          <div className="flex items-center gap-2.5 px-1">
+            <Layers3 className="h-4 w-4 text-sky-400" />
+            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+              {sectores.find(s => s.id === sectorFilter)?.nombre || 'Selecciona un sector'}
+            </span>
+            <span className="text-[10px] text-slate-500">— {columnas.length} columnas</span>
+          </div>
+          {/* Column cards grid */}
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
+            {columnas.map((col) => {
+              const colTotal = col.subcols.reduce((s, sc) => s + sc.pos.length, 0)
+              const colOcc = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0).length, 0)
+              const colPct = colTotal > 0 ? Math.round((colOcc / colTotal) * 100) : 0
+              const colMulti = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0 && p.bloques.length > 1).length, 0)
+              const isEmpty = colOcc === 0
+              const isFull = colPct >= 100
+              return (
+                <button
+                  key={col.letra}
+                  onClick={() => setSelectedColumn(col.letra)}
+                  className={`group relative rounded-xl border p-3 text-center transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 flex flex-col items-center gap-1.5 ${
+                    isEmpty
+                      ? 'border-emerald-500/20 bg-emerald-950/20 hover:border-emerald-400/40 hover:shadow-emerald-500/10'
+                      : isFull
+                        ? 'border-red-500/20 bg-red-950/20 hover:border-red-400/40 hover:shadow-red-500/10'
+                        : 'border-sky-500/20 bg-sky-950/20 hover:border-sky-400/40 hover:shadow-sky-500/10'
+                  }`}
+                >
+                  {/* Column letter */}
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg font-extrabold shadow-md ${
+                    isEmpty
+                      ? 'bg-emerald-500/20 text-emerald-300'
+                      : isFull
+                        ? 'bg-red-500/20 text-red-300'
+                        : 'bg-gradient-to-br from-sky-400 to-cyan-500 text-white shadow-sky-500/25'
+                  }`}>
+                    {col.letra}
+                  </div>
+                  {/* Stats */}
+                  <div className="flex items-center gap-1 text-[10px]">
+                    <span className="font-bold text-slate-200">{colOcc}</span>
+                    <span className="text-slate-500">/</span>
+                    <span className="text-slate-400">{colTotal}</span>
+                  </div>
+                  {/* Progress bar */}
+                  <div className="w-full h-1 rounded-full bg-slate-700/60 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        isEmpty ? 'bg-emerald-500/40' : isFull ? 'bg-red-500/60' : 'bg-gradient-to-r from-sky-400 to-cyan-500'
+                      }`}
+                      style={{ width: `${colPct}%` }}
+                    />
+                  </div>
+                  {/* Multi-art badge */}
+                  {colMulti > 0 && (
+                    <span className="text-[8px] font-bold text-amber-400 bg-amber-400/10 px-1 py-px rounded">{colMulti} mix</span>
+                  )}
+                  {isEmpty && (
+                    <span className="text-[8px] font-semibold text-emerald-400/60">Vacía</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : (
+        /* ═══ SINGLE COLUMN VIEW ═══ */
+        <div className="space-y-4">
+          {/* Back button + column title */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSelectedColumn(null)}
+              className="p-2 rounded-xl border border-slate-700/50 hover:bg-slate-700/80 transition-all duration-300 bg-slate-800/60 backdrop-blur-sm hover:shadow-lg text-slate-400 hover:text-white"
+            >
+              <ChevronDown className="h-4 w-4 rotate-90" />
+            </button>
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-400 to-cyan-500 flex items-center justify-center text-white font-extrabold text-sm shadow-lg shadow-sky-500/25">
+              {selectedColumn}
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="text-sm font-bold text-slate-200">Columna {selectedColumn}</span>
+              <span className="text-[10px] text-slate-500 ml-2">
+                {columnas.find(c => c.letra === selectedColumn)?.subcols.reduce((s, sc) => s + sc.pos.length, 0) || 0} posiciones
+              </span>
+            </div>
+          </div>
+
+          {/* Column content — same as before but filtered */}
+          <div className="space-y-4">
+            {columnas.filter(c => c.letra === selectedColumn).map((col) => (
           <div
             key={col.letra}
             className="rounded-xl border border-slate-700/50 bg-slate-800/60 overflow-hidden"
@@ -1283,7 +1375,9 @@ export function PisoSectoresTab() {
 
           </div>
         ))}
-      </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ MASS SALIDA FLOATING BAR ═══ */}
       {massMode && massSelected.size > 0 && (

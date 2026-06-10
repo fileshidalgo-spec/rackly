@@ -18,6 +18,8 @@ import {
   registrarDevolucionPosicion,
   type Sector,
   type PosicionConStock,
+  cargarVistaColumna,
+  type VistaPosicion,
 } from '@/lib/piso/api'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { dataClient } from '@/lib/supabase/client'
@@ -145,6 +147,8 @@ export function PisoSectoresTab() {
   const [busy, setBusy] = useState(false)
   const [busyExport, setBusyExport] = useState(false)
   const [selectedColumn, setSelectedColumn] = useState<string | null>(null) // null = dashboard, 'A' = columna A
+  const [colDetail, setColDetail] = useState<VistaPosicion[]>([]) // datos de la tabla
+  const [colDetailLoading, setColDetailLoading] = useState(false)
 
   const mountedRef = useRef(true)
   const justSelectedRef = useRef(false)
@@ -276,10 +280,37 @@ export function PisoSectoresTab() {
   }, [])
 
   useEffect(() => { mountedRef.current = true; loadSectores(); loadPosiciones(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadPosiciones, loadBloques])
-  useEffect(() => { if (sectorFilter !== 'all') { loadPosiciones(); setSelectedColumn(null) } }, [sectorFilter, loadPosiciones])
+  useEffect(() => { if (sectorFilter !== 'all') { loadPosiciones(); setSelectedColumn(null); setColDetail([]) } }, [sectorFilter, loadPosiciones])
+
+  // Cargar vista de columna cuando se selecciona una
+  const loadColumnDetail = useCallback(async (letra: string) => {
+    if (sectorFilter === 'all') return
+    setColDetailLoading(true)
+    try {
+      const data = await cargarVistaColumna(sectorFilter, letra)
+      if (mountedRef.current) setColDetail(data)
+    } catch (err) {
+      console.error('[Piso] Error cargando vista columna:', err)
+      if (mountedRef.current) toast.error('Error al cargar columna')
+    } finally {
+      if (mountedRef.current) setColDetailLoading(false)
+    }
+  }, [sectorFilter])
+
+  function handleSelectColumn(letra: string) {
+    setSelectedColumn(letra)
+    loadColumnDetail(letra)
+  }
 
   // Realtime: auto-refresh positions when piso_movimientos changes (polling solo como respaldo si WebSocket cae)
-  const silentRefreshPos = useCallback(() => loadPosiciones(true), [loadPosiciones])
+  const silentRefreshPos = useCallback(() => {
+    loadPosiciones(true)
+    if (selectedColumn && sectorFilter !== 'all') {
+      cargarVistaColumna(sectorFilter, selectedColumn).then(d => {
+        if (mountedRef.current) setColDetail(d)
+      }).catch(() => {})
+    }
+  }, [loadPosiciones, selectedColumn, sectorFilter])
   usePisoRealtime(silentRefreshPos)
 
   // Filtrar catalogo para autocomplete
@@ -511,6 +542,7 @@ export function PisoSectoresTab() {
         setDetail({ ...detail, stock })
       }
       await loadPosiciones()
+      if (selectedColumn) loadColumnDetail(selectedColumn)
     } catch (err: unknown) {
       toast.error('Error al registrar INC', { description: extractError(err) })
     } finally {
@@ -671,6 +703,7 @@ export function PisoSectoresTab() {
       }
       // Reload positions grid
       await loadPosiciones()
+      if (selectedColumn) loadColumnDetail(selectedColumn)
     } catch (err: unknown) { toast.error('Error al registrar ingreso', { description: extractError(err) }) } finally { setBusy(false) }
   }
 
@@ -701,6 +734,7 @@ export function PisoSectoresTab() {
         setDetail({ ...detail, stock }); setMode('view')
       }
       await loadPosiciones()
+      if (selectedColumn) loadColumnDetail(selectedColumn)
     } catch (err: unknown) { toast.error('Error al registrar salida', { description: extractError(err) }) } finally { setBusy(false) }
   }
 
@@ -755,7 +789,7 @@ export function PisoSectoresTab() {
       if (adjustedCount > 0) parts.push(`${adjustedCount} salida(s) por ajuste`)
       toast.success(parts.join(' · '))
       setTrConfirmOpen(false)
-      if (mountedRef.current) { setDetail(null); setTrDestPos(null); loadPosiciones() }
+      if (mountedRef.current) { setDetail(null); setTrDestPos(null); loadPosiciones(); if (selectedColumn) loadColumnDetail(selectedColumn) }
     } catch (err: unknown) { toast.error('Error al trasladar', { description: extractError(err) }) } finally { setBusy(false) }
   }
 
@@ -787,6 +821,7 @@ export function PisoSectoresTab() {
         setDevRows([{ ...EMPTY_ROW }])
       }
       await loadPosiciones()
+      if (selectedColumn) loadColumnDetail(selectedColumn)
     } catch (err: unknown) { toast.error('Error al registrar devolución', { description: extractError(err) }) } finally { setBusy(false) }
   }
 
@@ -880,6 +915,7 @@ export function PisoSectoresTab() {
       setMassSelected(new Set())
       setMassMode(false)
       await loadPosiciones()
+      if (selectedColumn) loadColumnDetail(selectedColumn)
     } catch (err: unknown) { toast.error('Error en salida masiva', { description: extractError(err) }) } finally { setMassBusy(false) }
   }
 
@@ -1230,152 +1266,193 @@ export function PisoSectoresTab() {
             </span>
             <span className="text-[10px] text-slate-500">— {columnas.length} columnas</span>
           </div>
-          {/* Column cards grid */}
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
-            {columnas.map((col) => {
-              const colTotal = col.subcols.reduce((s, sc) => s + sc.pos.length, 0)
-              const colOcc = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0).length, 0)
-              const colPct = colTotal > 0 ? Math.round((colOcc / colTotal) * 100) : 0
-              const colMulti = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0 && p.bloques.length > 1).length, 0)
-              const isEmpty = colOcc === 0
-              const isFull = colPct >= 100
-              return (
-                <button
-                  key={col.letra}
-                  onClick={() => setSelectedColumn(col.letra)}
-                  className={`group relative rounded-xl border p-3 text-center transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 flex flex-col items-center gap-1.5 ${
-                    isEmpty
-                      ? 'border-emerald-500/20 bg-emerald-950/20 hover:border-emerald-400/40 hover:shadow-emerald-500/10'
-                      : isFull
-                        ? 'border-red-500/20 bg-red-950/20 hover:border-red-400/40 hover:shadow-red-500/10'
-                        : 'border-sky-500/20 bg-sky-950/20 hover:border-sky-400/40 hover:shadow-sky-500/10'
-                  }`}
-                >
-                  {/* Column letter */}
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg font-extrabold shadow-md ${
-                    isEmpty
-                      ? 'bg-emerald-500/20 text-emerald-300'
-                      : isFull
-                        ? 'bg-red-500/20 text-red-300'
-                        : 'bg-gradient-to-br from-sky-400 to-cyan-500 text-white shadow-sky-500/25'
-                  }`}>
+          {/* Column selector — dark container with solid colored buttons */}
+          <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-2.5">
+              {columnas.map((col) => {
+                const colOcc = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0).length, 0)
+                const colTotal = col.subcols.reduce((s, sc) => s + sc.pos.length, 0)
+                const isEmpty = colOcc === 0
+                return (
+                  <button
+                    key={col.letra}
+                    onClick={() => handleSelectColumn(col.letra)}
+                    className={`relative rounded-xl h-12 flex items-center justify-center text-base font-extrabold text-white transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 ${
+                      isEmpty
+                        ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/40'
+                        : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'
+                    }`}
+                  >
                     {col.letra}
-                  </div>
-                  {/* Stats */}
-                  <div className="flex items-center gap-1 text-[10px]">
-                    <span className="font-bold text-slate-200">{colOcc}</span>
-                    <span className="text-slate-500">/</span>
-                    <span className="text-slate-400">{colTotal}</span>
-                  </div>
-                  {/* Progress bar */}
-                  <div className="w-full h-1 rounded-full bg-slate-700/60 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${
-                        isEmpty ? 'bg-emerald-500/40' : isFull ? 'bg-red-500/60' : 'bg-gradient-to-r from-sky-400 to-cyan-500'
-                      }`}
-                      style={{ width: `${colPct}%` }}
-                    />
-                  </div>
-                  {/* Multi-art badge */}
-                  {colMulti > 0 && (
-                    <span className="text-[8px] font-bold text-amber-400 bg-amber-400/10 px-1 py-px rounded">{colMulti} mix</span>
-                  )}
-                  {isEmpty && (
-                    <span className="text-[8px] font-semibold text-emerald-400/60">Vacía</span>
-                  )}
-                </button>
-              )
-            })}
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-slate-900 border border-slate-600 text-[9px] font-bold text-slate-300 flex items-center justify-center px-1">
+                      {colOcc}/{colTotal}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
           </div>
         </div>
       ) : (
-        /* ═══ SINGLE COLUMN VIEW ═══ */
+        /* ═══ SINGLE COLUMN TABLE VIEW ═══ */
         <div className="space-y-4">
           {/* Back button + column title */}
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setSelectedColumn(null)}
-              className="p-2 rounded-xl border border-slate-700/50 hover:bg-slate-700/80 transition-all duration-300 bg-slate-800/60 backdrop-blur-sm hover:shadow-lg text-slate-400 hover:text-white"
+              onClick={() => { setSelectedColumn(null); setColDetail([]) }}
+              className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 hover:bg-slate-700 transition-all duration-300 text-slate-400 hover:text-white"
             >
               <ChevronDown className="h-4 w-4 rotate-90" />
             </button>
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-400 to-cyan-500 flex items-center justify-center text-white font-extrabold text-sm shadow-lg shadow-sky-500/25">
+            <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-white font-extrabold text-sm shadow-lg ${
+              colDetail.some(p => p.tieneInc) ? 'bg-rose-600 shadow-rose-900/40' : 'bg-blue-600 shadow-blue-900/40'
+            }`}>
               {selectedColumn}
             </div>
             <div className="flex-1 min-w-0">
               <span className="text-sm font-bold text-slate-200">Columna {selectedColumn}</span>
-              <span className="text-[10px] text-slate-500 ml-2">
-                {columnas.find(c => c.letra === selectedColumn)?.subcols.reduce((s, sc) => s + sc.pos.length, 0) || 0} posiciones
-              </span>
+              <span className="text-[10px] text-slate-500 ml-2">{colDetail.length} posiciones</span>
             </div>
           </div>
 
-          {/* Column content — same as before but filtered */}
-          <div className="space-y-4">
-            {columnas.filter(c => c.letra === selectedColumn).map((col) => (
-          <div
-            key={col.letra}
-            className="rounded-xl border border-slate-700/50 bg-slate-800/60 overflow-hidden"
-          >
-            {/* Column header */}
-            <div className="px-4 py-2.5 border-b border-slate-700/40 flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-sky-600 flex items-center justify-center text-white font-extrabold text-sm">
-                {col.letra}
-              </div>
-              <div className="flex-1 min-w-0">
-                <span className="text-xs font-bold text-slate-200">Columna {col.letra}</span>
-                <span className="text-[10px] text-slate-500 ml-2">{col.subcols.length} subcol &middot; {col.subcols.reduce((s, sc) => s + sc.pos.length, 0)} pos</span>
+          {/* Table */}
+          {colDetailLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
+                <span className="text-xs text-slate-400">Cargando columna...</span>
               </div>
             </div>
+          ) : colDetail.length === 0 ? (
+            <div className="rounded-xl border border-slate-700/50 bg-slate-800/60 p-10 text-center">
+              <p className="text-sm text-slate-400">No hay posiciones en esta columna</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-700/50 bg-slate-800 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-700/60">
+                      <th className="sticky left-0 z-10 bg-emerald-800/80 px-3 py-2.5 text-left text-[11px] font-bold text-white uppercase tracking-wider border-r border-slate-700/40">
+                        Pos
+                      </th>
+                      {(() => {
+                        // Calcular max niveles
+                        const maxNiv = Math.max(...colDetail.map(p => p.niveles.length), 0)
+                        return Array.from({ length: maxNiv }, (_, i) => (
+                          <th key={i} className="px-3 py-2.5 text-center text-[11px] font-bold text-slate-300 uppercase tracking-wider bg-slate-800 border-r border-slate-700/40 last:border-r-0">
+                            N{i + 1}
+                          </th>
+                        ))
+                      })()}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {colDetail.map((pos) => {
+                      const maxNiv = Math.max(...colDetail.map(p => p.niveles.length), 0)
+                      // Determinar color de la posición (por celda de posición)
+                      const totalArticulos = pos.niveles.reduce((s, n) => s + n.bloques.length, 0)
+                      const hasInc = pos.tieneInc
 
-            <div className="p-3">
-              {col.subcols.map((sub) => (
-                <div key={sub.codigo} className={col.subcols.length > 1 ? 'mb-4 last:mb-0' : ''}>
-                  {/* Subcolumn header */}
-                  {col.subcols.length > 1 && (
-                    <div className="flex items-center gap-2 px-1 py-1 mb-2">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{sub.codigo}</span>
-                      <span className="text-[9px] text-slate-500">{sub.pos.filter((p) => p.stock > 0).length}/{sub.pos.length}</span>
-                      <div className="flex-1 h-px bg-slate-700/40" />
-                    </div>
-                  )}
+                      // Para la celda de posición
+                      let posHeaderClass = 'bg-emerald-700/80 text-emerald-100'
+                      if (hasInc) posHeaderClass = 'bg-rose-700/80 text-rose-100'
+                      else if (totalArticulos > 1) posHeaderClass = 'bg-orange-700/80 text-orange-100'
+                      else if (totalArticulos === 1) posHeaderClass = 'bg-blue-700/80 text-blue-100'
 
-                  {/* Positions grid — CSS Grid */}
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(50px,1fr))] gap-1">
-                    {sub.pos.map((pos) => {
-                      const isOccupied = pos.stock > 0
-                      const artCount = pos.bloques.length
-                      const isMulti = artCount > 1
-                      const isMassSel = massSelected.has(pos.posicionId)
+                      // Corresponding PosicionConStock for click handler
+                      const posData = posiciones.find(p => p.posicionId === pos.posicionId)
+
                       return (
-                        <button
-                          key={pos.posicionId}
-                          onClick={() => massMode ? toggleMassSelect(pos.posicionId) : handleClick(pos)}
-                          title={`${sub.codigo}-${pos.posicionNumero}${isOccupied ? ` | ${pos.bloques.map((b) => b.bloque_codigo).join(', ')}` : ' · Vacio'}`}
-                          className={`${getCellClasses(pos)} ${massMode && isMassSel ? 'ring-2 ring-red-400 bg-red-950/60 scale-105 z-10' : massMode && isOccupied ? 'hover:ring-1 hover:ring-red-400/50' : ''} transition-all duration-200`}
-                        >
-                          <div className="flex flex-col items-center justify-center h-full">
-                            {massMode && (
-                              <div className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center transition-all duration-200 mb-0.5 ${isMassSel ? 'bg-red-500 border-red-500' : 'border-slate-500 bg-slate-800/60'}`}>
-                                {isMassSel && <Check className="h-2 w-2 text-white" />}
-                              </div>
-                            )}
-                            <span className="font-bold text-[11px] leading-none">{pos.posicionNumero}</span>
-                            {isOccupied && !massMode && (
-                              <span className="text-[8px] font-bold leading-none mt-0.5 opacity-90">{artCount} art.</span>
-                            )}
-                          </div>
-                        </button>
+                        <tr key={pos.posicionId} className="border-b border-slate-700/30 last:border-b-0 hover:bg-slate-700/20 transition-colors">
+                          {/* Position label */}
+                          <td className={`sticky left-0 z-10 px-3 py-2 font-bold text-xs border-r border-slate-700/40 ${posHeaderClass}`}>
+                            <button
+                              onClick={() => posData ? handleClick(posData) : undefined}
+                              className="hover:underline cursor-pointer"
+                              title="Ver detalle"
+                            >
+                              P{pos.posicionNumero}
+                            </button>
+                          </td>
+                          {/* Level cells */}
+                          {Array.from({ length: maxNiv }, (_, i) => {
+                            const nivel = pos.niveles[i]
+                            if (!nivel) {
+                              return (
+                                <td key={i} className="px-2 py-1.5 border-r border-slate-700/30 last:border-r-0">
+                                  <div className="h-9" />
+                                </td>
+                              )
+                            }
+                            const cellHasInc = nivel.bloques.some(b => b.codigo_inc)
+                            const cellArtCount = nivel.bloques.length
+                            const cellEmpty = cellArtCount === 0
+
+                            let cellClass = 'bg-slate-50' // vacío
+                            if (cellHasInc) cellClass = 'bg-rose-100'
+                            else if (cellArtCount > 1) cellClass = 'bg-orange-100'
+                            else if (cellArtCount === 1) cellClass = 'bg-blue-100'
+
+                            let textClass = 'text-slate-400'
+                            if (cellHasInc) textClass = 'text-rose-800'
+                            else if (cellArtCount > 1) textClass = 'text-orange-800'
+                            else if (cellArtCount === 1) textClass = 'text-blue-800'
+
+                            return (
+                              <td
+                                key={i}
+                                className={`px-2 py-1.5 border-r border-slate-700/30 last:border-r-0 cursor-pointer transition-colors hover:opacity-80 ${cellClass}`}
+                                onClick={() => posData ? handleClick(posData) : undefined}
+                                title={nivel.bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' ⚠ INC' : ''}`).join('\n')}
+                              >
+                                <div className="min-h-[36px] flex flex-col items-center justify-center gap-0.5 px-1">
+                                  {cellEmpty ? (
+                                    <span className={`text-[10px] font-medium ${textClass}`}>—</span>
+                                  ) : (
+                                    nivel.bloques.map((b, bi) => (
+                                      <div key={bi} className="text-center leading-tight w-full">
+                                        <div className={`text-[10px] font-bold ${textClass} truncate`}>{b.bloque_codigo}</div>
+                                        <div className={`text-[9px] font-medium ${textClass} opacity-80`}>{b.cantidad} {b.bloque_unidad}</div>
+                                        {b.codigo_inc && (
+                                          <div className="text-[8px] font-bold text-rose-600">INC</div>
+                                        )}
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </td>
+                            )
+                          })}
+                        </tr>
                       )
                     })}
-                  </div>
+                  </tbody>
+                </table>
+              </div>
+              {/* Legend */}
+              <div className="flex items-center gap-4 px-4 py-2.5 bg-slate-800 border-t border-slate-700/40 text-[10px]">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded bg-emerald-100 border border-emerald-300" />
+                  <span className="text-slate-400">Vacío</span>
                 </div>
-              ))}
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded bg-blue-100 border border-blue-300" />
+                  <span className="text-slate-400">1 artículo</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded bg-orange-100 border border-orange-300" />
+                  <span className="text-slate-400">2+ artículos</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded bg-rose-100 border border-rose-300" />
+                  <span className="text-slate-400">INC</span>
+                </div>
+                <div className="flex-1" />
+                <span className="text-slate-500">Toca una celda para ver detalle</span>
+              </div>
             </div>
-
-          </div>
-        ))}
-          </div>
+          )}
         </div>
       )}
 

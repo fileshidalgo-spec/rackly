@@ -1341,6 +1341,10 @@ export function PisoSectoresTab() {
 
                 return sortedKeys.map((subCode) => {
                   const subPositions = subGroups.get(subCode)!
+                  // Sort by position number
+                  const sorted = [...subPositions].sort((a, b) => a.posicionNumero - b.posicionNumero)
+                  // Find max number of levels across all positions
+                  const maxNiveles = Math.max(...sorted.map(p => p.niveles.length), 1)
 
                   return (
                     <div key={subCode} className="space-y-2.5">
@@ -1353,40 +1357,96 @@ export function PisoSectoresTab() {
                         <span className="text-[10px] text-slate-500">{subPositions.length} pos</span>
                       </div>
 
-                      {/* Botones de posición */}
-                      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-11 gap-2 sm:gap-2.5 p-3 sm:p-4 rounded-xl bg-slate-800 border border-slate-700/50">
-                        {subPositions.map((pos) => {
-                          const totalArticulos = pos.niveles.reduce((s, n) => s + n.bloques.length, 0)
-                          const hasInc = pos.tieneInc
+                      {/* Tabla POS × Niveles con botones coloreados */}
+                      <div className="rounded-xl bg-slate-800 border border-slate-700/50 overflow-x-auto">
+                        <div className="min-w-full">
+                        {/* Header row */}
+                        <div className="flex min-w-[500px]">
+                          <div className="w-14 sm:w-16 shrink-0 px-2 py-2 bg-slate-900/80 border-b border-r border-slate-700/50">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">POS</span>
+                          </div>
+                          <div className="flex-1 flex border-b border-slate-700/50">
+                            {Array.from({ length: maxNiveles }, (_, i) => (
+                              <div key={i} className="flex-1 min-w-[70px] px-1.5 py-2 text-center border-r border-slate-700/30 last:border-r-0">
+                                <span className="text-[10px] font-bold text-slate-400">N{i + 1}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
 
-                          // Color del botón
-                          let btnClass = 'bg-emerald-600 hover:bg-emerald-500' // vacío
-                          if (hasInc) btnClass = 'bg-rose-600 hover:bg-rose-500' // INC
-                          else if (totalArticulos > 1) btnClass = 'bg-orange-500 hover:bg-orange-400' // 2+
-                          else if (totalArticulos === 1) btnClass = 'bg-blue-600 hover:bg-blue-500' // 1 art
+                        {/* Position rows */}
+                        <div className="divide-y divide-slate-700/30">
+                          {sorted.map((pos) => {
+                            const totalArticulos = pos.niveles.reduce((s, n) => s + n.bloques.length, 0)
+                            const hasInc = pos.tieneInc
 
-                          const posData = posiciones.find(p => p.posicionId === pos.posicionId)
+                            // Color for POS cell
+                            let posColor = 'bg-emerald-600 hover:bg-emerald-500'
+                            if (hasInc) posColor = 'bg-rose-600 hover:bg-rose-500'
+                            else if (totalArticulos > 1) posColor = 'bg-orange-500 hover:bg-orange-400'
+                            else if (totalArticulos === 1) posColor = 'bg-blue-600 hover:bg-blue-500'
 
-                          return (
-                            <button
-                              key={pos.posicionId}
-                              onClick={() => posData ? handleClick(posData) : undefined}
-                              className={`${btnClass} rounded-xl h-14 sm:h-16 flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95`}
-                              title={totalArticulos > 0
-                                ? pos.niveles.flatMap(n => n.bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' INC' : ''}`)).join('\n')
-                                : 'Vacío'}
-                            >
-                              <span className="text-sm sm:text-base font-extrabold leading-none">
-                                {pos.posicionNumero}
-                              </span>
-                              {totalArticulos > 0 && (
-                                <span className="text-[9px] sm:text-[10px] font-bold mt-1 opacity-90 leading-none">
-                                  {totalArticulos} art
-                                </span>
-                              )}
-                            </button>
-                          )
-                        })}
+                            const posData = posiciones.find(p => p.posicionId === pos.posicionId)
+
+                            return (
+                              <div key={pos.posicionId} className="flex min-w-[500px]">
+                                {/* POS button */}
+                                <div className="w-14 sm:w-16 shrink-0 p-1 border-r border-slate-700/30">
+                                  <button
+                                    onClick={() => posData ? handleClick(posData) : undefined}
+                                    className={`${posColor} w-full h-10 sm:h-11 rounded-lg flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95`}
+                                    title={`Pos ${pos.posicionNumero} — ${totalArticulos} artículo(s)`}
+                                  >
+                                    <span className="text-xs sm:text-sm font-extrabold leading-none">P{pos.posicionNumero}</span>
+                                    {totalArticulos > 0 && (
+                                      <span className="text-[8px] sm:text-[9px] font-bold mt-0.5 opacity-90 leading-none">{totalArticulos} art</span>
+                                    )}
+                                  </button>
+                                </div>
+
+                                {/* Level cells */}
+                                <div className="flex-1 flex">
+                                  {Array.from({ length: maxNiveles }, (_, i) => {
+                                    const nivel = pos.niveles.find(n => n.nivelNumero === i + 1)
+                                    const bloques = nivel?.bloques ?? []
+                                    const count = bloques.length
+                                    const nivelHasInc = bloques.some(b => b.codigo_inc)
+
+                                    let cellColor = 'bg-slate-700/40 hover:bg-slate-700/60 text-slate-500' // empty
+                                    if (nivelHasInc) cellColor = 'bg-rose-600/90 hover:bg-rose-500 text-white'
+                                    else if (count > 1) cellColor = 'bg-orange-500/90 hover:bg-orange-400 text-white'
+                                    else if (count === 1) cellColor = 'bg-blue-600/90 hover:bg-blue-500 text-white'
+
+                                    return (
+                                      <div key={i} className="flex-1 min-w-[70px] p-1 border-r border-slate-700/20 last:border-r-0">
+                                        <button
+                                          onClick={() => posData ? handleClick(posData) : undefined}
+                                          className={`${cellColor} w-full h-10 sm:h-11 rounded-lg flex flex-col items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 text-center`}
+                                          title={count > 0
+                                            ? bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' INC' : ''}`).join('\n')
+                                            : 'Vacío'}
+                                        >
+                                          {count > 0 ? (
+                                            <>
+                                              <span className="text-[9px] sm:text-[10px] font-bold leading-none truncate max-w-full px-0.5">{bloques[0].bloque_codigo}</span>
+                                              <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90 leading-none">{bloques[0].cantidad} {bloques[0].bloque_unidad}</span>
+                                              {count > 1 && (
+                                                <span className="text-[7px] sm:text-[8px] font-bold mt-0.5 opacity-75 leading-none">+{count - 1}</span>
+                                              )}
+                                            </>
+                                          ) : (
+                                            <span className="text-[10px] font-bold opacity-40">—</span>
+                                          )}
+                                        </button>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                        </div>
                       </div>
                     </div>
                   )

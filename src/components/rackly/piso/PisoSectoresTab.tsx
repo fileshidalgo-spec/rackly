@@ -360,13 +360,29 @@ export function PisoSectoresTab() {
         nivs.forEach((n, i) => { stockPerNivel[n.id] = nivelStocks[i] })
       }
       if (mountedRef.current) {
-        setDetail({ posicionId: pos.posicionId, posicionNumero: pos.posicionNumero, subcolumnaCodigo: pos.subcolumnaCodigo, columnaLetra: pos.columnaLetra, stock })
+        // Si se clickeó un nivel específico, filtrar stock solo a ese nivel
+        const filteredStock = nivelId ? stock.filter(s => {
+          // Buscar en qué nivel está este bloque
+          for (const niv of nivs) {
+            if (niv.id === nivelId) {
+              const nivelStock = stockPerNivel[niv.id] ?? []
+              if (nivelStock.some(ns => ns.bloque_id === s.bloque_id && ns.fecha_vencimiento === s.fecha_vencimiento)) {
+                return true
+              }
+            }
+          }
+          return false
+        }) : stock
+
+        setDetail({ posicionId: pos.posicionId, posicionNumero: pos.posicionNumero, subcolumnaCodigo: pos.subcolumnaCodigo, columnaLetra: pos.columnaLetra, stock: filteredStock })
         setNiveles(nivs)
         setSelectedNivelId(nivelId || (nivs.length > 0 ? nivs[0].id : ''))
         setStockByNivel(stockPerNivel)
-        setViewNivelTab('all')
+        // Si viene de un clic en nivel específico, mostrar solo ese nivel; sino 'all'
+        setViewNivelTab(nivelId || 'all')
         setMode('view')
-        setSalItems(stock.map((s) => ({
+        // Inicializar salItems/trItems con el stock filtrado (por nivel o todos)
+        const itemsForActions = filteredStock.map((s) => ({
           bloque_id: s.bloque_id,
           bloque_codigo: s.bloque_codigo,
           bloque_descripcion: s.bloque_descripcion,
@@ -375,18 +391,9 @@ export function PisoSectoresTab() {
           stockActual: s.cantidad,
           fecha_vencimiento: s.fecha_vencimiento || '',
           selected: false,
-        })))
-        setTrItems(stock.map((s) => ({
-          bloque_id: s.bloque_id,
-          bloque_codigo: s.bloque_codigo,
-          bloque_descripcion: s.bloque_descripcion,
-          bloque_unidad: s.bloque_unidad,
-          cantidad: String(s.cantidad),
-          stockActual: s.cantidad,
-          selected: false,
-          saldoMode: 'saldo',
-          fecha_vencimiento: s.fecha_vencimiento || '',
-        })))
+        }))
+        setSalItems(itemsForActions)
+        setTrItems(itemsForActions.map((s) => ({ ...s, saldoMode: 'saldo' as const })))
       }
     } catch { toast.error('Error al cargar detalle') }
   }
@@ -532,9 +539,20 @@ export function PisoSectoresTab() {
       setIncFechaVencimiento('')
       setIncSinVencimiento(false)
       loadBloques()
-      const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
+      const [stock, nivelStocks] = await Promise.all([
+        stockDetallePosicion(detail.posicionId),
+        niveles.length > 0 ? Promise.all(niveles.map((n) => stockDetalleNivel(n.id))) : Promise.resolve([]),
+      ])
+      const newSBN: Record<string, DetailStock[]> = {}
+      niveles.forEach((n, i) => { newSBN[n.id] = (nivelStocks as DetailStock[][])[i] ?? [] })
       if (mountedRef.current && detail) {
-        setDetail({ ...detail, stock })
+        const currentTab = viewNivelTab
+        const filteredStock = currentTab !== 'all' ? stock.filter(s => {
+          const ns = newSBN[currentTab] ?? []
+          return ns.some(n => n.bloque_id === s.bloque_id && n.fecha_vencimiento === s.fecha_vencimiento)
+        }) : stock
+        setStockByNivel(newSBN)
+        setDetail({ ...detail, stock: filteredStock })
       }
       await loadPosiciones()
       if (selectedColumn) loadColumnDetail(selectedColumn)
@@ -688,11 +706,25 @@ export function PisoSectoresTab() {
       toast.success('Ingreso registrado')
       // Reload everything in parallel for real-time update
       loadBloques()
-      const [stock] = await Promise.all([
+      const [stock, reloadedPerNivel] = await Promise.all([
         stockDetallePosicion(detail.posicionId),
+        (async () => {
+          const perNivel: Record<string, DetailStock[]> = {}
+          for (const n of niveles) {
+            perNivel[n.id] = await stockDetalleNivel(n.id)
+          }
+          return perNivel
+        })(),
       ])
       if (mountedRef.current && detail) {
-        setDetail({ ...detail, stock })
+        // Mantener filtro de nivel si estaba activo
+        const currentTab = viewNivelTab
+        const filteredStock = currentTab !== 'all' ? stock.filter(s => {
+          const nivelStock = reloadedPerNivel[currentTab] ?? []
+          return nivelStock.some(ns => ns.bloque_id === s.bloque_id && ns.fecha_vencimiento === s.fecha_vencimiento)
+        }) : stock
+        setDetail({ ...detail, stock: filteredStock })
+        setStockByNivel(reloadedPerNivel)
         setMode('view')
         setIngRows([{ ...EMPTY_ROW }])
       }
@@ -717,16 +749,20 @@ export function PisoSectoresTab() {
       await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Salida registrada')
       // Recargar stock y stock por nivel
-      const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
-      // Recalcular stockByNivel
-      if (niveles.length > 0) {
-        const nivelStocks = await Promise.all(niveles.map((n) => stockDetalleNivel(n.id)))
-        const newStockByNivel: Record<string, DetailStock[]> = {}
-        niveles.forEach((n, i) => { newStockByNivel[n.id] = nivelStocks[i] })
-        if (mountedRef.current) setStockByNivel(newStockByNivel)
-      }
+      const [stock, nivelStocks] = await Promise.all([
+        stockDetallePosicion(detail.posicionId),
+        niveles.length > 0 ? Promise.all(niveles.map((n) => stockDetalleNivel(n.id))) : Promise.resolve([]),
+      ])
+      const newStockByNivel: Record<string, DetailStock[]> = {}
+      niveles.forEach((n, i) => { newStockByNivel[n.id] = (nivelStocks as DetailStock[][])[i] ?? [] })
       if (mountedRef.current && detail) {
-        setDetail({ ...detail, stock }); setMode('view')
+        const currentTab = viewNivelTab
+        const filteredStock = currentTab !== 'all' ? stock.filter(s => {
+          const ns = newStockByNivel[currentTab] ?? []
+          return ns.some(n => n.bloque_id === s.bloque_id && n.fecha_vencimiento === s.fecha_vencimiento)
+        }) : stock
+        setStockByNivel(newStockByNivel)
+        setDetail({ ...detail, stock: filteredStock }); setMode('view')
       }
       await loadPosiciones()
       if (selectedColumn) loadColumnDetail(selectedColumn)
@@ -810,9 +846,20 @@ export function PisoSectoresTab() {
       await registrarDevolucionPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Devolucion registrada')
       loadBloques()
-      const [stock] = await Promise.all([stockDetallePosicion(detail.posicionId)])
+      const [stock, nivelStocks] = await Promise.all([
+        stockDetallePosicion(detail.posicionId),
+        niveles.length > 0 ? Promise.all(niveles.map((n) => stockDetalleNivel(n.id))) : Promise.resolve([]),
+      ])
+      const newSBN: Record<string, DetailStock[]> = {}
+      niveles.forEach((n, i) => { newSBN[n.id] = (nivelStocks as DetailStock[][])[i] ?? [] })
       if (mountedRef.current && detail) {
-        setDetail({ ...detail, stock }); setMode('view')
+        const currentTab = viewNivelTab
+        const filteredStock = currentTab !== 'all' ? stock.filter(s => {
+          const ns = newSBN[currentTab] ?? []
+          return ns.some(n => n.bloque_id === s.bloque_id && n.fecha_vencimiento === s.fecha_vencimiento)
+        }) : stock
+        setStockByNivel(newSBN)
+        setDetail({ ...detail, stock: filteredStock }); setMode('view')
         setDevRows([{ ...EMPTY_ROW }])
       }
       await loadPosiciones()

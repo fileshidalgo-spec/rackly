@@ -1639,3 +1639,190 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
       return a.ubicacion.localeCompare(b.ubicacion)
     })
 }
+
+// ═══════════════════════════════════════════════════════════
+//  VISTA COLUMNA — Tabla de posiciones × niveles
+// ═══════════════════════════════════════════════════════════
+
+export type VistaNivelStock = {
+  nivelId: string
+  nivelNumero: number
+  bloques: { bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; codigo_inc: string }[]
+}
+
+export type VistaPosicion = {
+  posicionId: string
+  posicionNumero: number
+  subcolumnaCodigo: string
+  tieneInc: boolean
+  niveles: VistaNivelStock[]
+}
+
+/**
+ * Carga toda la información de una columna para la vista de tabla:
+ * posiciones → niveles → stock por nivel (con detección de INC).
+ * Usa ~4 queries en total (muy eficiente).
+ */
+export async function cargarVistaColumna(
+  sectorId: string,
+  columnaLetra: string
+): Promise<VistaPosicion[]> {
+  // 1. Obtener columna ID
+  const { data: colData, error: colErr } = await dataClient
+    .from('piso_columnas')
+    .select('id')
+    .eq('sector_id', sectorId)
+    .eq('letra', columnaLetra)
+    .single()
+  if (colErr || !colData) return []
+
+  // 2. Obtener subcolumnas → posiciones → niveles en una sola query anidada
+  const { data: treeData, error: treeErr } = await dataClient
+    .from('piso_subcolumnas')
+    .select(`
+      id, codigo,
+      piso_posiciones(id, numero, piso_niveles(id, numero))
+    `)
+    .eq('columna_id', colData.id)
+    .order('codigo')
+  if (treeErr || !treeData) return []
+
+  // Build flat structure
+  type FlatNivel = { id: string; numero: number; posicionId: string; posicionNumero: number; subcolCodigo: string }
+  const niveles: FlatNivel[] = []
+  for (const sc of treeData as { id: string; codigo: string; piso_posiciones: { id: string; numero: number; piso_niveles: { id: string; numero: number }[] | null }[] }[]) {
+    for (const pos of sc.piso_posiciones ?? []) {
+      for (const niv of pos.piso_niveles ?? []) {
+        niveles.push({
+          id: niv.id,
+          numero: niv.numero,
+          posicionId: pos.id,
+          posicionNumero: pos.numero,
+          subcolCodigo: sc.codigo,
+        })
+      }
+    }
+  }
+
+  if (niveles.length === 0) {
+    // Return positions without niveles
+    const result: VistaPosicion[] = []
+    for (const sc of treeData as { id: string; codigo: string; piso_posiciones: { id: string; numero: number; piso_niveles: unknown[] | null }[] }[]) {
+      for (const pos of (sc.piso_posiciones ?? [])) {
+        result.push({
+          posicionId: pos.id,
+          posicionNumero: pos.numero,
+          subcolumnaCodigo: sc.codigo,
+          tieneInc: false,
+          niveles: [],
+        })
+      }
+    }
+    return result.sort((a, b) => a.posicionNumero - b.posicionNumero)
+  }
+
+  const nivelIds = niveles.map(n => n.id)
+
+  // 3. Obtener TODOS los detalles de movimiento para estos niveles (1 sola query)
+  const { data: movData, error: movErr } = await dataClient
+    .from('piso_movimiento_detalles')
+    .select('nivel_id, bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)')
+    .in('nivel_id', nivelIds)
+  const movDetalles = (movData ?? []) as {
+    nivel_id: string; bloque_id: string; cantidad: unknown; fecha_vencimiento: string | null;
+    movimiento_id: string;
+    piso_movimientos: { tipo: string; codigo_inc: string | null } | null | { tipo: string; codigo_inc: string | null }[]
+  }[]
+
+  // 4. Calcular stock por nivel por bloque (neto: ingresos - salidas)
+  const isIngreso = (tipo: string) => tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+  const getMovInfo = (pm: typeof movDetalles[0]['piso_movimientos']): { tipo: string; codigo_inc: string } => {
+    if (!pm) return { tipo: '', codigo_inc: '' }
+    if (Array.isArray(pm)) return pm.length > 0 ? { tipo: pm[0].tipo, codigo_inc: pm[0].codigo_inc || '' } : { tipo: '', codigo_inc: '' }
+    return { tipo: (pm as { tipo: string; codigo_inc: string | null }).tipo, codigo_inc: (pm as { tipo: string; codigo_inc: string | null }).codigo_inc || '' }
+  }
+
+  // Stock neto por (nivel_id, bloque_id): cantidad y si tiene INC
+  const stockMap = new Map<string, { cantidad: number; codigo_inc: string }>()
+  const bloqueIds = new Set<string>()
+
+  for (const d of movDetalles) {
+    const { tipo, codigo_inc } = getMovInfo(d.piso_movimientos)
+    if (!tipo) continue
+    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+    if (qty <= 0) continue
+    bloqueIds.add(d.bloque_id)
+    const key = `${d.nivel_id}::${d.bloque_id}`
+    const existing = stockMap.get(key) || { cantidad: 0, codigo_inc: '' }
+    if (isIngreso(tipo)) {
+      existing.cantidad += qty
+      if (codigo_inc && !existing.codigo_inc) existing.codigo_inc = codigo_inc
+    } else {
+      existing.cantidad -= qty
+    }
+    stockMap.set(key, existing)
+  }
+
+  // 5. Obtener info de bloques (1 query)
+  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
+  const realIds = [...bloqueIds].filter(id => !id.startsWith('cat_') && !id.startsWith('manual_'))
+  if (realIds.length > 0) {
+    const { data: bData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
+    for (const b of (bData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
+      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
+    }
+  }
+  const catIds = [...bloqueIds].filter(id => id.startsWith('cat_'))
+  if (catIds.length > 0) {
+    const codes = catIds.map(id => id.replace('cat_', ''))
+    const { data: cData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
+    for (const c of (cData ?? []) as { codigo: string; descripcion: string; un: string }[]) {
+      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+    }
+  }
+
+  // 6. Build result: agrupar por posición
+  const posMap = new Map<string, VistaPosicion>()
+  for (const n of niveles) {
+    if (!posMap.has(n.posicionId)) {
+      posMap.set(n.posicionId, {
+        posicionId: n.posicionId,
+        posicionNumero: n.posicionNumero,
+        subcolumnaCodigo: n.subcolCodigo,
+        tieneInc: false,
+        niveles: [],
+      })
+    }
+    const pos = posMap.get(n.posicionId)!
+
+    // Find stock items for this nivel
+    const items: VistaNivelStock['bloques'] = []
+    for (const [key, val] of stockMap) {
+      const [nId, bId] = key.split('::')
+      if (nId !== n.id || val.cantidad <= 0) continue
+      const info = bloqueInfoMap.get(bId) || { codigo: bId, descripcion: '', unidad: '' }
+      items.push({
+        bloque_codigo: info.codigo,
+        bloque_descripcion: info.descripcion,
+        bloque_unidad: info.unidad,
+        cantidad: Math.round(val.cantidad * 1000) / 1000,
+        codigo_inc: val.codigo_inc,
+      })
+      if (val.codigo_inc) pos.tieneInc = true
+    }
+    items.sort((a, b) => a.bloque_codigo.localeCompare(b.bloque_codigo))
+
+    pos.niveles.push({
+      nivelId: n.id,
+      nivelNumero: n.numero,
+      bloques: items,
+    })
+  }
+
+  // Sort niveles within each position
+  for (const pos of posMap.values()) {
+    pos.niveles.sort((a, b) => a.nivelNumero - b.nivelNumero)
+  }
+
+  return [...posMap.values()].sort((a, b) => a.posicionNumero - b.posicionNumero)
+}

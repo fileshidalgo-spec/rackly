@@ -635,3 +635,24 @@ Stage Summary:
 - Fix: INC movements bypass RPC and use direct insert (always ingreso type, no stock validation needed)
 - Files changed: src/lib/rackly/kardex.ts, supabase/migrations/20260611_add_codigo_inc_to_rpcs.sql
 - IMPORTANT: Existing INC records in DB have NULL codigo_inc (lost data). User needs to re-register INCs.
+---
+Task ID: 1
+Agent: main
+Task: Rediseñar selector de columnas y vista de detalle de columna en PisoSectoresTab
+
+Work Log:
+- Analizé 3 imágenes del usuario: selector actual (transparente), estilo deseado (botones sólidos), y formato de tabla deseado (P1-P11 × N1-Nx)
+- Creé nueva API function `cargarVistaColumna()` en api.ts que carga posiciones×niveles con stock e INC en solo 4 queries
+- Rediseñé selector de columnas: contenedor bg-slate-800 sólido, botones redondeados verde (vacía) y azul (con stock) con badge de conteo
+- Rediseñé vista de detalle como tabla HTML: filas=P1-P11, columnas=N1-Nx, colores por estado (verde=vacío, azul=1 art, naranja=2+ art, rosa=INC)
+- Click en cualquier celda de la tabla abre el dialog de detalle existente (ingreso/salida/traslado/devolución/INC)
+- Las operaciones recargan tanto el grid como la vista de columna
+- Legend en el pie de la tabla explica los colores
+- Build exitoso sin errores
+
+Stage Summary:
+- Selector de columnas: verde=Vacía, azul=Con stock, estilo sólido sin transparencias
+- Tabla de detalle: verde=Vacío, azul=1 artículo, naranja=2+ artículos, rosa=INC
+- API eficiente: cargarVistaColumna() usa solo 4 queries para toda la tabla
+- Funcionalidad completa preservada (todas las operaciones, salida en masa, exportar)
+

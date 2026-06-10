@@ -164,6 +164,39 @@ export async function addMovimiento(
     }
   }
 
+  // ── INC: usar insert directo porque la RPC no incluye codigo_inc ──
+  // Los movimientos INC son siempre tipo 'ingreso' (no necesitan validación de stock).
+  // La RPC registrar_movimiento_kardex no tiene el parámetro p_codigo_inc, así que
+  // Supabase lo ignora silenciosamente y el campo queda NULL.
+  if (m.codigoInc) {
+    console.log('[addMovimiento] INC detectado, usando insert directo para preservar codigo_inc')
+    const { error } = await dataClient.from('movimientos').insert({
+      tipo: m.tipo,
+      bloque: m.bloque,
+      torre: m.torre,
+      piso: m.piso,
+      posicion: m.posicion,
+      codigo: m.codigo.trim().toUpperCase(),
+      descripcion: m.descripcion,
+      un: m.un,
+      cantidad: m.cantidad,
+      f_vencimiento: m.fVencimiento || null,
+      turno: m.turno,
+      usuario_id: m.usuarioId,
+      usuario_nombre: m.usuarioNombre ?? null,
+      usuario_correo: m.usuarioCorreo ?? null,
+      proveedor: m.proveedor ? m.proveedor : null,
+      uuid_sync: uuidSync || null,
+      codigo_inc: m.codigoInc,
+    })
+    if (error) throw error
+    try {
+      return await fetchMovimientos()
+    } catch {
+      return []
+    }
+  }
+
   // Usar RPC atómica con advisory lock para evitar race conditions
   try {
     const { data, error } = await dataClient.rpc('registrar_movimiento_kardex', {

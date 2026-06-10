@@ -15,7 +15,7 @@ export function SectoresConfigTab() {
   const { perfil } = useAuth()
   const [sectores, setSectores] = useState<Sector[]>([])
   const [loading, setLoading] = useState(false)
-  const [form, setForm] = useState({ nombre: '', prefijo: '', n_columnas: 2, n_subcolumnas: 2, n_posiciones: 10, n_niveles: 5 })
+  const [form, setForm] = useState({ nombre: '', n_columnas: 2, n_subcolumnas: 2, n_posiciones: 10, n_niveles: 5 })
 
   async function load() {
     setLoading(true)
@@ -34,21 +34,21 @@ export function SectoresConfigTab() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.nombre.trim() || !form.prefijo.trim()) {
-      toast.error('Nombre y prefijo son requeridos')
+    if (!form.nombre.trim()) {
+      toast.error('Nombre es requerido')
       return
     }
     try {
       const data = await crearSector(
         form.nombre.trim(),
-        form.prefijo.trim().toUpperCase(),
+        form.nombre.trim().substring(0, 3).toUpperCase(),
         form.n_columnas,
         form.n_subcolumnas,
         form.n_posiciones,
         form.n_niveles
       )
       setSectores(data)
-      setForm({ nombre: '', prefijo: '', n_columnas: 2, n_subcolumnas: 2, n_posiciones: 10, n_niveles: 5 })
+      setForm({ nombre: '', n_columnas: 2, n_subcolumnas: 2, n_posiciones: 10, n_niveles: 5 })
       toast.success('Sector creado')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
@@ -80,11 +80,7 @@ export function SectoresConfigTab() {
                   <Input value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })}
                     placeholder="Nombre del sector" className="bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:ring-sky-500/50" />
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-slate-400">Prefijo</Label>
-                  <Input value={form.prefijo} onChange={(e) => setForm({ ...form, prefijo: e.target.value })}
-                    placeholder="A, B, C..." maxLength={3} className="bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:ring-sky-500/50" />
-                </div>
+
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
                     <Label className="text-xs text-slate-400">Columnas</Label>
@@ -135,8 +131,7 @@ export function SectoresConfigTab() {
                   <span className="font-medium text-white">{s.nombre}</span>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  <Badge className="bg-sky-600 text-white border-0">{s.prefijo}</Badge>
-                  <Badge variant="outline" className="border-slate-600 text-slate-400">{s.n_columnas}col</Badge>
+<Badge variant="outline" className="border-slate-600 text-slate-400">{s.n_columnas}col</Badge>
                   <Badge variant="outline" className="border-slate-600 text-slate-400">{s.n_subcolumnas}sub</Badge>
                   <Badge variant="outline" className="border-slate-600 text-slate-400">{s.n_posiciones}pos</Badge>
                   <Badge variant="outline" className="border-slate-600 text-slate-400">{s.n_niveles}niv</Badge>

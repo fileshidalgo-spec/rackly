@@ -64,20 +64,24 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
   return multiples
 }
 
-// Calcula ocupación desde movimientos — rastrea stock POR LOTE (código + vencimiento).
+// Calcula ocupación desde movimientos — rastrea stock POR LOTE (código + vencimiento + INC).
 // Normaliza códigos (trim + uppercase) para evitar falsos multi-artículo por diferencias de formato.
 function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
-  // Mapa: ubicacion_key → (lote_key "codigo||fVencimiento" → stock)
-  const cellMap = new Map<string, Map<string, number>>()
+  // Mapa: ubicacion_key → (lote_key "codigo||fVencimiento||codigoInc" → { stock, codigoInc? })
+  const cellMap = new Map<string, Map<string, { stock: number; codigoInc?: string; codigo: string }>>()
   for (const m of movs) {
     const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
     const code = m.codigo.trim().toUpperCase()
-    const lotKey = `${code}||${m.fVencimiento || ''}`
+    const lotKey = `${code}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
     let lotMap = cellMap.get(key)
     if (!lotMap) { lotMap = new Map(); cellMap.set(key, lotMap) }
     const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
-    const current = lotMap.get(lotKey) ?? 0
-    lotMap.set(lotKey, current + delta)
+    const existing = lotMap.get(lotKey)
+    if (existing) {
+      existing.stock += delta
+    } else {
+      lotMap.set(lotKey, { stock: delta, codigoInc: m.codigoInc, codigo: code })
+    }
   }
   // Construir resultado: solo celdas con stock total > 0
   const result: OcupacionCelda[] = []
@@ -85,16 +89,26 @@ function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
     let totalStock = 0
     const codigos = new Set<string>()
     let lotes = 0
-    for (const [lotKey, stock] of lotMap) {
-      if (stock > 0) {
-        totalStock += stock
+    const incItems: { codigo: string; codigoInc: string; cantidad: number }[] = []
+    for (const [lotKey, lotData] of lotMap) {
+      if (lotData.stock > 0) {
+        totalStock += lotData.stock
         lotes++
-        codigos.add(lotKey.split('||')[0])
+        const codigo = lotKey.split('||')[0]
+        codigos.add(codigo)
+        if (lotData.codigoInc) {
+          incItems.push({ codigo, codigoInc: lotData.codigoInc, cantidad: lotData.stock })
+        }
       }
     }
     if (totalStock > 0) {
       const [bloque, torre, piso, posicion] = key.split('-')
-      result.push({ bloque, torre, piso, posicion, stock: totalStock, codigos: Array.from(codigos), lotes })
+      result.push({
+        bloque, torre, piso, posicion, stock: totalStock,
+        codigos: Array.from(codigos), lotes,
+        tieneInc: incItems.length > 0,
+        incItems,
+      })
     }
   }
   return result
@@ -471,10 +485,11 @@ export function OcupacionTab() {
           <SelectTrigger className="w-40 bg-slate-800/60 border-slate-600/40 text-slate-300 text-xs"><SelectValue placeholder="Filtrar bloque" /></SelectTrigger>
           <SelectContent className="bg-slate-800 border-slate-600/40"><SelectItem value="all" className="text-slate-300 focus:bg-slate-700">Todos</SelectItem>{BLOQUES.map(b => <SelectItem key={b} value={b} className="text-slate-300 focus:bg-slate-700">Bloque {b}</SelectItem>)}</SelectContent>
         </Select>
-        <div className="flex items-center gap-4 text-[10px] text-slate-400">
+        <div className="flex items-center gap-4 text-[10px] text-slate-400 flex-wrap">
           <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600" /><span>Ocupado</span></div>
           <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600 relative"><span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full" /></div><span>Multi-lote</span></div>
           <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-amber-400 to-orange-500" /><span>Multi-art.</span></div>
+          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-rose-400 to-pink-600" /><span>INC</span></div>
           <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-emerald-400 to-green-600" /><span>Vacío</span></div>
         </div>
       </div>
@@ -531,26 +546,64 @@ export function OcupacionTab() {
                                   {posA.map(pos => {
                                     const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
                                     const isOcc = cell && cell.stock > 0
-                                    const isMultiArt = isOcc && cell.codigos.length > 1
-                                    const isMultiLote = isOcc && !isMultiArt && cell.lotes > 1
-                                    let cls = 'relative flex-1 min-w-[24px] h-11 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
-                                    if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
-                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25'
-                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15'
-                                    return <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOcc ? ` · Stock: ${cell.stock}${isMultiArt ? ` · ${cell.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell.lotes} lotes` : ''}` : ' · Vacío'}`}>{pos}{isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}</button>
+                                    const isInc = isOcc && cell!.tieneInc
+                                    const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
+                                    const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
+                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+                                    if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
+                                    else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
+                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
+                                    let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
+                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} (INC: ${i.codigoInc}) ×${i.cantidad}`).join(' | '); title += ` · INC: ${ii} · Stock: ${cell!.stock}` }
+                                    else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+                                    else { title += ' · Vacío' }
+                                    const firstInc = isInc ? cell!.incItems[0] : null
+                                    return (
+                                      <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
+                                        {pos}
+                                        {isInc && firstInc && (
+                                          <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
+                                            {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}
+                                            {cell!.incItems.length > 1 && <span className="text-[5px] text-rose-200/60 ml-px">+{cell!.incItems.length - 1}</span>}
+                                          </span>
+                                        )}
+                                        {isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}
+                                        {isInc && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-rose-200 rounded-full ring-1 ring-rose-400" />}
+                                      </button>
+                                    )
                                   })}
                                 </div>
                                 <div className="flex px-1.5 pt-[2px] pb-1.5 gap-[2px]">
                                   {posB.map(pos => {
                                     const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
                                     const isOcc = cell && cell.stock > 0
-                                    const isMultiArt = isOcc && cell.codigos.length > 1
-                                    const isMultiLote = isOcc && !isMultiArt && cell.lotes > 1
-                                    let cls = 'relative flex-1 min-w-[24px] h-11 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border '
-                                    if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25'
-                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25'
-                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15'
-                                    return <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={`B${bloque}-T${torre}-P${piso}-Pos${pos}${isOcc ? ` · Stock: ${cell.stock}${isMultiArt ? ` · ${cell.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell.lotes} lotes` : ''}` : ' · Vacío'}`}>{pos}{isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}</button>
+                                    const isInc = isOcc && cell!.tieneInc
+                                    const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
+                                    const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
+                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+                                    if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
+                                    else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
+                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
+                                    let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
+                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} (INC: ${i.codigoInc}) ×${i.cantidad}`).join(' | '); title += ` · INC: ${ii} · Stock: ${cell!.stock}` }
+                                    else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+                                    else { title += ' · Vacío' }
+                                    const firstInc = isInc ? cell!.incItems[0] : null
+                                    return (
+                                      <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
+                                        {pos}
+                                        {isInc && firstInc && (
+                                          <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
+                                            {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}
+                                            {cell!.incItems.length > 1 && <span className="text-[5px] text-rose-200/60 ml-px">+{cell!.incItems.length - 1}</span>}
+                                          </span>
+                                        )}
+                                        {isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}
+                                        {isInc && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-rose-200 rounded-full ring-1 ring-rose-400" />}
+                                      </button>
+                                    )
                                   })}
                                 </div>
                               </div>

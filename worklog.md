@@ -596,3 +596,22 @@ Stage Summary:
 - Deploy: success en Cloudflare Pages
 - PENDIENTE: Ejecutar en Supabase SQL Editor:
   ALTER TABLE public.movimientos ADD COLUMN IF NOT EXISTS codigo_inc TEXT;
+---
+Task ID: 13
+Agent: Super Z (main)
+Task: Ubicaciones con INC en color rosa mostrando código y cantidad en grid de Ocupación
+
+Work Log:
+- Explored OcupacionTab, StockTab, kardex.ts to understand current grid rendering and INC data flow
+- Identified that OcupacionCelda type lacked INC fields and calcularOcupacion() dropped codigoInc during aggregation
+- Modified OcupacionCelda type in kardex.ts: added tieneInc (boolean) + incItems (IncEnCelda[]) + IncEnCelda type
+- Modified calcularOcupacion() in OcupacionTab.tsx: lot key now includes codigoInc, tracks INC items per cell
+- Modified grid cell rendering (posA + posB): INC cells get rose gradient, show article code (truncated) + quantity, rose dot indicator
+- Added INC legend item to the filter/legend bar
+- Updated fetchOcupacionCeldas() fallback RPC to include default INC fields (tieneInc: false, incItems: [])
+- Build verified: compiled successfully with 0 errors
+
+Stage Summary:
+- Files modified: src/lib/rackly/kardex.ts (type + fallback), src/components/rackly/kardex/OcupacionTab.tsx (logic + grid + legend)
+- INC cells now display: rose/pink gradient, article code + quantity, tooltip with full INC details
+- Priority order: INC (rose) > Multi-art (amber) > Multi-lote (blue+dot) > Ocupado (blue) > Vacío (green)

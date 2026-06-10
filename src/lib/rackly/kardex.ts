@@ -28,6 +28,12 @@ export type Movimiento = {
   codigoInc?: string // maps from codigo_inc column
 }
 
+export type IncEnCelda = {
+  codigo: string
+  codigoInc: string
+  cantidad: number
+}
+
 export type OcupacionCelda = {
   bloque: string
   torre: string
@@ -36,6 +42,8 @@ export type OcupacionCelda = {
   stock: number
   codigos: string[]
   lotes: number
+  tieneInc: boolean
+  incItems: IncEnCelda[]
 }
 
 function fromRow(r: Record<string, unknown>): Movimiento {
@@ -379,6 +387,8 @@ export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
     stock: Number(r.stock ?? 0),
     codigos: Array.isArray(r.codigos) ? (r.codigos as string[]).map(String) : [],
     lotes: Array.isArray(r.codigos) ? (r.codigos as string[]).length : 0,
+    tieneInc: false,
+    incItems: [],
   }))
 }
 

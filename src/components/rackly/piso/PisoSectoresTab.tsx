@@ -391,12 +391,7 @@ export function PisoSectoresTab() {
     } catch { toast.error('Error al cargar detalle') }
   }
 
-  // Helper: obtener nivel ID seleccionado, fallback al primero
-  function getNivelId(): string {
-    if (selectedNivelId) return selectedNivelId
-    if (niveles.length > 0) return niveles[0].id
-    return ''
-  }
+  // selectedNivelId se usa directamente en doIngreso/doSalida/doTraslado/doDevolucion
 
   function openIngreso() {
     setIngRows([{ ...EMPTY_ROW }])
@@ -495,8 +490,8 @@ export function PisoSectoresTab() {
     }
     const qty = parseFloat(incCantidad)
     if (isNaN(qty) || qty <= 0) { toast.error('Cantidad invalida'); return }
-    const nivelId = getNivelId()
-    if (!nivelId) { toast.error('No hay niveles disponibles'); return }
+    if (!selectedNivelId) { toast.error('Selecciona un nivel primero'); return }
+    const nivelId = selectedNivelId
     setBusy(true)
     try {
       // Resolve bloque_id
@@ -672,13 +667,13 @@ export function PisoSectoresTab() {
 
   async function doIngreso() {
     if (!detail || !perfil) return
+    if (!selectedNivelId) { toast.error('No hay nivel seleccionado'); return }
+    const nivelId = selectedNivelId
     const validRows = ingRows.filter((r) => r.bloque_id && r.cantidad)
     if (validRows.length === 0) { toast.error('Agrega al menos un articulo con codigo y cantidad'); return }
     for (const r of validRows) {
       if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad invalida'); return }
     }
-    const nivelId = getNivelId()
-    if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); return }
     setBusy(true)
     try {
       // Resolve manual_ IDs before registering
@@ -714,8 +709,8 @@ export function PisoSectoresTab() {
     const validRows = filteredItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para salir'); return }
     // Determinar nivel_id para la salida
-    const nivelId = salNivelTab === 'all' ? getNivelId() : salNivelTab
-    if (!nivelId) { toast.error('No hay niveles disponibles'); return }
+    const nivelId = salNivelTab === 'all' ? selectedNivelId : salNivelTab
+    if (!nivelId) { toast.error('No hay nivel seleccionado'); return }
     setBusy(true)
     try {
       const detalles = validRows.map((r) => ({ nivel_id: nivelId, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
@@ -743,8 +738,8 @@ export function PisoSectoresTab() {
     if (detail.posicionId === trDestPos.posicionId) { toast.error('Origen y destino no pueden ser iguales'); return }
     const validRows = trItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para trasladar'); return }
-    const origNivelId = getNivelId()
-    if (!origNivelId || !trDestNivelId) { toast.error('Selecciona nivel de origen y destino'); return }
+    if (!selectedNivelId || !trDestNivelId) { toast.error('Selecciona nivel de origen y destino'); return }
+    const origNivelId = selectedNivelId
     const destNivelId = trDestNivelId
     setBusy(true)
     try {
@@ -795,13 +790,13 @@ export function PisoSectoresTab() {
 
   async function doDevolucion() {
     if (!detail || !perfil) return
+    if (!selectedNivelId) { toast.error('No hay nivel seleccionado'); return }
+    const nivelId = selectedNivelId
     const validRows = devRows.filter((r) => r.bloque_id && r.cantidad)
     if (validRows.length === 0) { toast.error('Agrega al menos un articulo con codigo y cantidad'); return }
     for (const r of validRows) {
       if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad invalida'); return }
     }
-    const nivelId = getNivelId()
-    if (!nivelId) { toast.error('No hay niveles disponibles en esta posicion'); return }
     setBusy(true)
     try {
       // Resolve manual_ IDs before registering

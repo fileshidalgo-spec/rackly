@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   fetchOcupacionCeldas,
   fetchMovimientos,
+  fetchIncPorUbicacion,
   stockEnUbicacion,
   type Movimiento,
   type StockEnUbicacion,
@@ -64,24 +65,20 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
   return multiples
 }
 
-// Calcula ocupación desde movimientos — rastrea stock POR LOTE (código + vencimiento + INC).
-// Normaliza códigos (trim + uppercase) para evitar falsos multi-artículo por diferencias de formato.
+// Calcula ocupación desde movimientos — rastrea stock POR LOTE (código + vencimiento).
+// La detección INC se hace por separado con fetchIncPorUbicacion().
 function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
-  // Mapa: ubicacion_key → (lote_key "codigo||fVencimiento||codigoInc" → { stock, codigoInc? })
-  const cellMap = new Map<string, Map<string, { stock: number; codigoInc?: string; codigo: string }>>()
+  // Mapa: ubicacion_key → (lote_key "codigo||fVencimiento" → stock)
+  const cellMap = new Map<string, Map<string, number>>()
   for (const m of movs) {
     const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
     const code = m.codigo.trim().toUpperCase()
-    const lotKey = `${code}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
+    const lotKey = `${code}||${m.fVencimiento || ''}`
     let lotMap = cellMap.get(key)
     if (!lotMap) { lotMap = new Map(); cellMap.set(key, lotMap) }
     const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
-    const existing = lotMap.get(lotKey)
-    if (existing) {
-      existing.stock += delta
-    } else {
-      lotMap.set(lotKey, { stock: delta, codigoInc: m.codigoInc, codigo: code })
-    }
+    const current = lotMap.get(lotKey) ?? 0
+    lotMap.set(lotKey, current + delta)
   }
   // Construir resultado: solo celdas con stock total > 0
   const result: OcupacionCelda[] = []
@@ -89,26 +86,16 @@ function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
     let totalStock = 0
     const codigos = new Set<string>()
     let lotes = 0
-    const incItems: { codigo: string; codigoInc: string; cantidad: number }[] = []
-    for (const [lotKey, lotData] of lotMap) {
-      if (lotData.stock > 0) {
-        totalStock += lotData.stock
+    for (const [lotKey, stock] of lotMap) {
+      if (stock > 0) {
+        totalStock += stock
         lotes++
-        const codigo = lotKey.split('||')[0]
-        codigos.add(codigo)
-        if (lotData.codigoInc) {
-          incItems.push({ codigo, codigoInc: lotData.codigoInc, cantidad: lotData.stock })
-        }
+        codigos.add(lotKey.split('||')[0])
       }
     }
     if (totalStock > 0) {
       const [bloque, torre, piso, posicion] = key.split('-')
-      result.push({
-        bloque, torre, piso, posicion, stock: totalStock,
-        codigos: Array.from(codigos), lotes,
-        tieneInc: incItems.length > 0,
-        incItems,
-      })
+      result.push({ bloque, torre, piso, posicion, stock: totalStock, codigos: Array.from(codigos), lotes, tieneInc: false, incItems: [] })
     }
   }
   return result
@@ -158,13 +145,24 @@ export function OcupacionTab() {
   const [incCodigoInc, setIncCodigoInc] = useState('')
 
   // ── Data refresh ──
-  // Primario: calcularOcupacion directo desde movimientos (incluye ingreso/salida/devolucion/traslado)
+  // Primario: calcularOcupacion + consulta INC dedicada (paralelo)
   // Fallback: RPC 'ocupacion_celdas' (server-side)
   const refreshData = useCallback(async () => {
     try {
-      // Cálculo directo desde movimientos — siempre incluye todos los tipos
-      const movs = await fetchMovimientos()
-      if (mountedRef.current) setOcupacion(calcularOcupacion(movs))
+      // Consulta paralela: movimientos generales + INC dedicado
+      const [movs, incMap] = await Promise.all([fetchMovimientos(), fetchIncPorUbicacion()])
+      if (!mountedRef.current) return
+      const celdas = calcularOcupacion(movs)
+      // Merge INC dedicado: sobrescribe lo que tenga calcularOcupacion con datos reales de la consulta INC
+      const enriquecidas = celdas.map(cell => {
+        const key = `${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`
+        const incItems = incMap.get(key)
+        if (incItems && incItems.length > 0) {
+          return { ...cell, tieneInc: true, incItems }
+        }
+        return cell
+      })
+      setOcupacion(enriquecidas)
     } catch {
       // Fallback al RPC si falla la carga de movimientos
       try {
@@ -555,7 +553,7 @@ export function OcupacionTab() {
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
                                     let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
-                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} (INC: ${i.codigoInc}) ×${i.cantidad}`).join(' | '); title += ` · INC: ${ii} · Stock: ${cell!.stock}` }
+                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}\nStock total: ${cell!.stock}` }
                                     else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
                                     else { title += ' · Vacío' }
                                     const firstInc = isInc ? cell!.incItems[0] : null
@@ -587,7 +585,7 @@ export function OcupacionTab() {
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
                                     let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
-                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} (INC: ${i.codigoInc}) ×${i.cantidad}`).join(' | '); title += ` · INC: ${ii} · Stock: ${cell!.stock}` }
+                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}\nStock total: ${cell!.stock}` }
                                     else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
                                     else { title += ' · Vacío' }
                                     const firstInc = isInc ? cell!.incItems[0] : null

@@ -30,6 +30,7 @@ export type Movimiento = {
 
 export type IncEnCelda = {
   codigo: string
+  descripcion: string
   codigoInc: string
   cantidad: number
 }
@@ -374,6 +375,53 @@ export async function stockEnUbicacion(
       return []
     }
   }
+}
+
+/** Consulta dedicada: ubicaciones que tienen INC con stock > 0 */
+export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]>> {
+  try {
+    const allRows: Record<string, unknown>[] = []
+    let from = 0
+    const BATCH = 1000
+    for (let page = 0; page < 10; page++) {
+      const { data, error } = await dataClient
+        .from('movimientos')
+        .select('bloque, torre, piso, posicion, codigo, descripcion, un, codigo_inc, tipo, cantidad')
+        .not('codigo_inc', 'is', null)
+        .neq('codigo_inc', '')
+        .range(from, from + BATCH - 1)
+      if (error) return new Map()
+      const rows = data ?? []
+      allRows.push(...rows)
+      if (rows.length < BATCH) break
+      from += BATCH
+    }
+    // Calcular stock neto por ubicación + código INC
+    const map = new Map<string, Map<string, { codigo: string; descripcion: string; codigoInc: string; stock: number }>>()
+    for (const r of allRows) {
+      const key = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
+      const code = String(r.codigo ?? '').trim().toUpperCase()
+      const codeInc = String(r.codigo_inc ?? '').trim()
+      const incKey = `${code}||${codeInc}`
+      let locMap = map.get(key)
+      if (!locMap) { locMap = new Map(); map.set(key, locMap) }
+      const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
+      const delta = ['ingreso', 'devolucion', 'traslado'].includes(String(r.tipo)) ? qty : -qty
+      const item = locMap.get(incKey)
+      if (item) { item.stock += delta } else {
+        locMap.set(incKey, { codigo: code, descripcion: String(r.descripcion ?? ''), codigoInc: codeInc, stock: delta })
+      }
+    }
+    const result = new Map<string, IncEnCelda[]>()
+    for (const [key, locMap] of map) {
+      const items: IncEnCelda[] = []
+      for (const [, item] of locMap) {
+        if (item.stock > 0) items.push({ codigo: item.codigo, descripcion: item.descripcion, codigoInc: item.codigoInc, cantidad: item.stock })
+      }
+      if (items.length > 0) result.set(key, items)
+    }
+    return result
+  } catch { return new Map() }
 }
 
 export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {

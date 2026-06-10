@@ -1328,110 +1328,128 @@ export function PisoSectoresTab() {
               <p className="text-sm text-slate-400">No hay posiciones en esta columna</p>
             </div>
           ) : (
-            <div className="rounded-xl border border-slate-700/50 bg-slate-800 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-700/60">
-                      <th className="sticky left-0 z-10 bg-emerald-800/80 px-3 py-2.5 text-left text-[11px] font-bold text-white uppercase tracking-wider border-r border-slate-700/40">
-                        Pos
-                      </th>
-                      {(() => {
-                        // Calcular max niveles
-                        const maxNiv = Math.max(...colDetail.map(p => p.niveles.length), 0)
-                        return Array.from({ length: maxNiv }, (_, i) => (
-                          <th key={i} className="px-3 py-2.5 text-center text-[11px] font-bold text-slate-300 uppercase tracking-wider bg-slate-800 border-r border-slate-700/40 last:border-r-0">
-                            N{i + 1}
-                          </th>
-                        ))
-                      })()}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {colDetail.map((pos) => {
-                      const maxNiv = Math.max(...colDetail.map(p => p.niveles.length), 0)
-                      // Determinar color de la posición (por celda de posición)
-                      const totalArticulos = pos.niveles.reduce((s, n) => s + n.bloques.length, 0)
-                      const hasInc = pos.tieneInc
+            <div className="space-y-4">
+              {/* Agrupar por subcolumna */}
+              {(() => {
+                const subGroups = new Map<string, VistaPosicion[]>()
+                for (const p of colDetail) {
+                  const key = p.subcolumnaCodigo
+                  if (!subGroups.has(key)) subGroups.set(key, [])
+                  subGroups.get(key)!.push(p)
+                }
+                const sortedKeys = [...subGroups.keys()].sort()
 
-                      // Para la celda de posición
-                      let posHeaderClass = 'bg-emerald-700/80 text-emerald-100'
-                      if (hasInc) posHeaderClass = 'bg-rose-700/80 text-rose-100'
-                      else if (totalArticulos > 1) posHeaderClass = 'bg-orange-700/80 text-orange-100'
-                      else if (totalArticulos === 1) posHeaderClass = 'bg-blue-700/80 text-blue-100'
+                return sortedKeys.map((subCode) => {
+                  const subPositions = subGroups.get(subCode)!
+                  const maxNiv = Math.max(...subPositions.map(p => p.niveles.length), 0)
 
-                      // Corresponding PosicionConStock for click handler
-                      const posData = posiciones.find(p => p.posicionId === pos.posicionId)
+                  return (
+                    <div key={subCode} className="rounded-xl border border-slate-700/50 bg-slate-800 overflow-hidden">
+                      {/* Subcolumn header */}
+                      <div className="px-4 py-2 bg-slate-750 border-b border-slate-700/50 flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg bg-blue-600 flex items-center justify-center text-white font-extrabold text-[10px]">
+                          {selectedColumn}
+                        </div>
+                        <span className="text-xs font-bold text-slate-200">{subCode}</span>
+                        <span className="text-[10px] text-slate-500">{subPositions.length} posiciones</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-700/60">
+                              <th className="sticky left-0 z-10 bg-emerald-800/80 px-3 py-2.5 text-left text-[11px] font-bold text-white uppercase tracking-wider border-r border-slate-700/40">
+                                Pos
+                              </th>
+                              {Array.from({ length: maxNiv }, (_, i) => (
+                                <th key={i} className="px-3 py-2.5 text-center text-[11px] font-bold text-slate-300 uppercase tracking-wider bg-slate-800 border-r border-slate-700/40 last:border-r-0">
+                                  N{i + 1}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {subPositions.map((pos) => {
+                              const totalArticulos = pos.niveles.reduce((s, n) => s + n.bloques.length, 0)
+                              const hasInc = pos.tieneInc
 
-                      return (
-                        <tr key={pos.posicionId} className="border-b border-slate-700/30 last:border-b-0 hover:bg-slate-700/20 transition-colors">
-                          {/* Position label */}
-                          <td className={`sticky left-0 z-10 px-3 py-2 font-bold text-xs border-r border-slate-700/40 ${posHeaderClass}`}>
-                            <button
-                              onClick={() => posData ? handleClick(posData) : undefined}
-                              className="hover:underline cursor-pointer"
-                              title="Ver detalle"
-                            >
-                              P{pos.posicionNumero}
-                            </button>
-                          </td>
-                          {/* Level cells */}
-                          {Array.from({ length: maxNiv }, (_, i) => {
-                            const nivel = pos.niveles[i]
-                            if (!nivel) {
+                              let posHeaderClass = 'bg-emerald-700/80 text-emerald-100'
+                              if (hasInc) posHeaderClass = 'bg-rose-700/80 text-rose-100'
+                              else if (totalArticulos > 1) posHeaderClass = 'bg-orange-700/80 text-orange-100'
+                              else if (totalArticulos === 1) posHeaderClass = 'bg-blue-700/80 text-blue-100'
+
+                              const posData = posiciones.find(p => p.posicionId === pos.posicionId)
+
                               return (
-                                <td key={i} className="px-2 py-1.5 border-r border-slate-700/30 last:border-r-0">
-                                  <div className="h-9" />
-                                </td>
+                                <tr key={pos.posicionId} className="border-b border-slate-700/30 last:border-b-0 hover:bg-slate-700/20 transition-colors">
+                                  <td className={`sticky left-0 z-10 px-3 py-2 font-bold text-xs border-r border-slate-700/40 ${posHeaderClass}`}>
+                                    <button
+                                      onClick={() => posData ? handleClick(posData) : undefined}
+                                      className="hover:underline cursor-pointer"
+                                      title="Ver detalle"
+                                    >
+                                      P{pos.posicionNumero}
+                                    </button>
+                                  </td>
+                                  {Array.from({ length: maxNiv }, (_, i) => {
+                                    const nivel = pos.niveles[i]
+                                    if (!nivel) {
+                                      return (
+                                        <td key={i} className="px-2 py-1.5 border-r border-slate-700/30 last:border-r-0">
+                                          <div className="h-9" />
+                                        </td>
+                                      )
+                                    }
+                                    const cellHasInc = nivel.bloques.some(b => b.codigo_inc)
+                                    const cellArtCount = nivel.bloques.length
+                                    const cellEmpty = cellArtCount === 0
+
+                                    let cellClass = 'bg-slate-50'
+                                    if (cellHasInc) cellClass = 'bg-rose-100'
+                                    else if (cellArtCount > 1) cellClass = 'bg-orange-100'
+                                    else if (cellArtCount === 1) cellClass = 'bg-blue-100'
+
+                                    let textClass = 'text-slate-400'
+                                    if (cellHasInc) textClass = 'text-rose-800'
+                                    else if (cellArtCount > 1) textClass = 'text-orange-800'
+                                    else if (cellArtCount === 1) textClass = 'text-blue-800'
+
+                                    return (
+                                      <td
+                                        key={i}
+                                        className={`px-2 py-1.5 border-r border-slate-700/30 last:border-r-0 cursor-pointer transition-colors hover:opacity-80 ${cellClass}`}
+                                        onClick={() => posData ? handleClick(posData) : undefined}
+                                        title={nivel.bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' ⚠ INC' : ''}`).join('\n')}
+                                      >
+                                        <div className="min-h-[36px] flex flex-col items-center justify-center gap-0.5 px-1">
+                                          {cellEmpty ? (
+                                            <span className={`text-[10px] font-medium ${textClass}`}>—</span>
+                                          ) : (
+                                            nivel.bloques.map((b, bi) => (
+                                              <div key={bi} className="text-center leading-tight w-full">
+                                                <div className={`text-[10px] font-bold ${textClass} truncate`}>{b.bloque_codigo}</div>
+                                                <div className={`text-[9px] font-medium ${textClass} opacity-80`}>{b.cantidad} {b.bloque_unidad}</div>
+                                                {b.codigo_inc && (
+                                                  <div className="text-[8px] font-bold text-rose-600">INC</div>
+                                                )}
+                                              </div>
+                                            ))
+                                          )}
+                                        </div>
+                                      </td>
+                                    )
+                                  })}
+                                </tr>
                               )
-                            }
-                            const cellHasInc = nivel.bloques.some(b => b.codigo_inc)
-                            const cellArtCount = nivel.bloques.length
-                            const cellEmpty = cellArtCount === 0
-
-                            let cellClass = 'bg-slate-50' // vacío
-                            if (cellHasInc) cellClass = 'bg-rose-100'
-                            else if (cellArtCount > 1) cellClass = 'bg-orange-100'
-                            else if (cellArtCount === 1) cellClass = 'bg-blue-100'
-
-                            let textClass = 'text-slate-400'
-                            if (cellHasInc) textClass = 'text-rose-800'
-                            else if (cellArtCount > 1) textClass = 'text-orange-800'
-                            else if (cellArtCount === 1) textClass = 'text-blue-800'
-
-                            return (
-                              <td
-                                key={i}
-                                className={`px-2 py-1.5 border-r border-slate-700/30 last:border-r-0 cursor-pointer transition-colors hover:opacity-80 ${cellClass}`}
-                                onClick={() => posData ? handleClick(posData) : undefined}
-                                title={nivel.bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' ⚠ INC' : ''}`).join('\n')}
-                              >
-                                <div className="min-h-[36px] flex flex-col items-center justify-center gap-0.5 px-1">
-                                  {cellEmpty ? (
-                                    <span className={`text-[10px] font-medium ${textClass}`}>—</span>
-                                  ) : (
-                                    nivel.bloques.map((b, bi) => (
-                                      <div key={bi} className="text-center leading-tight w-full">
-                                        <div className={`text-[10px] font-bold ${textClass} truncate`}>{b.bloque_codigo}</div>
-                                        <div className={`text-[9px] font-medium ${textClass} opacity-80`}>{b.cantidad} {b.bloque_unidad}</div>
-                                        {b.codigo_inc && (
-                                          <div className="text-[8px] font-bold text-rose-600">INC</div>
-                                        )}
-                                      </div>
-                                    ))
-                                  )}
-                                </div>
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )
+                })
+              })()}
               {/* Legend */}
-              <div className="flex items-center gap-4 px-4 py-2.5 bg-slate-800 border-t border-slate-700/40 text-[10px]">
+              <div className="flex items-center gap-4 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700/40 text-[10px]">
                 <div className="flex items-center gap-1.5">
                   <div className="w-3 h-3 rounded bg-emerald-100 border border-emerald-300" />
                   <span className="text-slate-400">Vacío</span>

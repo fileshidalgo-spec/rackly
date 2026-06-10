@@ -1706,13 +1706,17 @@ export async function cargarVistaColumna(
 
   if (niveles.length === 0) {
     // Return positions without niveles
+    const cleanSubcol = (code: string) => {
+      const idx = code.indexOf(columnaLetra)
+      return idx >= 0 ? code.substring(idx) : code
+    }
     const result: VistaPosicion[] = []
     for (const sc of treeData as { id: string; codigo: string; piso_posiciones: { id: string; numero: number; piso_niveles: unknown[] | null }[] }[]) {
       for (const pos of (sc.piso_posiciones ?? [])) {
         result.push({
           posicionId: pos.id,
           posicionNumero: pos.numero,
-          subcolumnaCodigo: sc.codigo,
+          subcolumnaCodigo: cleanSubcol(sc.codigo),
           tieneInc: false,
           niveles: [],
         })
@@ -1782,13 +1786,21 @@ export async function cargarVistaColumna(
   }
 
   // 6. Build result: agrupar por posición
+  // Limpiar prefijo de subcolumna: formato DB es "prefijo + letra + sub_idx"
+  // Quitamos todo lo que esté antes de la letra de la columna
+  const cleanSubcol = (code: string) => {
+    const idx = code.indexOf(columnaLetra)
+    return idx >= 0 ? code.substring(idx) : code
+  }
+
   const posMap = new Map<string, VistaPosicion>()
   for (const n of niveles) {
+    const cleanCode = cleanSubcol(n.subcolCodigo)
     if (!posMap.has(n.posicionId)) {
       posMap.set(n.posicionId, {
         posicionId: n.posicionId,
         posicionNumero: n.posicionNumero,
-        subcolumnaCodigo: n.subcolCodigo,
+        subcolumnaCodigo: cleanCode,
         tieneInc: false,
         niveles: [],
       })

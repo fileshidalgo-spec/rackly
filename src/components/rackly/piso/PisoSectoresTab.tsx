@@ -1358,17 +1358,17 @@ export function PisoSectoresTab() {
                       </div>
 
                       {/* Tabla POS × Niveles con botones coloreados */}
-                      <div className="rounded-xl bg-slate-800 border border-slate-700/50 overflow-x-auto">
+                      <div className="rounded-xl bg-slate-800 border border-slate-700/50 overflow-x-auto -mx-1 px-1">
                         <div className="min-w-full">
                         {/* Header row */}
-                        <div className="flex min-w-[500px]">
-                          <div className="w-14 sm:w-16 shrink-0 px-2 py-2 bg-slate-900/80 border-b border-r border-slate-700/50">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">POS</span>
+                        <div className="flex">
+                          <div className="w-[60px] sm:w-16 shrink-0 px-1.5 sm:px-2 py-2.5 bg-slate-900/80 border-b border-r border-slate-700/50">
+                            <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">POS</span>
                           </div>
                           <div className="flex-1 flex border-b border-slate-700/50">
                             {Array.from({ length: maxNiveles }, (_, i) => (
-                              <div key={i} className="flex-1 min-w-[70px] px-1.5 py-2 text-center border-r border-slate-700/30 last:border-r-0">
-                                <span className="text-[10px] font-bold text-slate-400">N{i + 1}</span>
+                              <div key={i} className="flex-1 min-w-[80px] sm:min-w-[70px] px-1 sm:px-1.5 py-2.5 text-center border-r border-slate-700/30 last:border-r-0">
+                                <span className="text-[10px] sm:text-[11px] font-bold text-slate-400">N{i + 1}</span>
                               </div>
                             ))}
                           </div>
@@ -1389,17 +1389,17 @@ export function PisoSectoresTab() {
                             const posData = posiciones.find(p => p.posicionId === pos.posicionId)
 
                             return (
-                              <div key={pos.posicionId} className="flex min-w-[500px]">
+                              <div key={pos.posicionId} className="flex">
                                 {/* POS button */}
-                                <div className="w-14 sm:w-16 shrink-0 p-1 border-r border-slate-700/30">
+                                <div className="w-[60px] sm:w-16 shrink-0 p-1 sm:p-1 border-r border-slate-700/30">
                                   <button
                                     onClick={() => posData ? handleClick(posData) : undefined}
-                                    className={`${posColor} w-full h-10 sm:h-11 rounded-lg flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95`}
+                                    className={`${posColor} w-full h-12 sm:h-11 rounded-lg flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95`}
                                     title={`Pos ${pos.posicionNumero} — ${totalArticulos} artículo(s)`}
                                   >
-                                    <span className="text-xs sm:text-sm font-extrabold leading-none">P{pos.posicionNumero}</span>
+                                    <span className="text-sm sm:text-sm font-extrabold leading-none">P{pos.posicionNumero}</span>
                                     {totalArticulos > 0 && (
-                                      <span className="text-[8px] sm:text-[9px] font-bold mt-0.5 opacity-90 leading-none">{totalArticulos} art</span>
+                                      <span className="text-[9px] sm:text-[9px] font-bold mt-0.5 opacity-90 leading-none">{totalArticulos} art</span>
                                     )}
                                   </button>
                                 </div>
@@ -1418,24 +1418,27 @@ export function PisoSectoresTab() {
                                     else if (count === 1) cellColor = 'bg-blue-600/90 hover:bg-blue-500 text-white'
 
                                     return (
-                                      <div key={i} className="flex-1 min-w-[70px] p-1 border-r border-slate-700/20 last:border-r-0">
+                                      <div key={i} className="flex-1 min-w-[80px] sm:min-w-[70px] p-1 sm:p-1 border-r border-slate-700/20 last:border-r-0">
                                         <button
                                           onClick={() => posData ? handleClick(posData) : undefined}
-                                          className={`${cellColor} w-full h-10 sm:h-11 rounded-lg flex flex-col items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 text-center`}
+                                          className={`${cellColor} w-full h-12 sm:h-11 rounded-lg flex flex-col items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 text-center px-0.5`}
                                           title={count > 0
                                             ? bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' INC' : ''}`).join('\n')
                                             : 'Vacío'}
                                         >
                                           {count > 0 ? (
                                             <>
-                                              <span className="text-[9px] sm:text-[10px] font-bold leading-none truncate max-w-full px-0.5">{bloques[0].bloque_codigo}</span>
-                                              <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90 leading-none">{bloques[0].cantidad} {bloques[0].bloque_unidad}</span>
+                                              {/* Mobile: solo cantidad */}
+                                              <span className="sm:hidden text-[11px] font-bold leading-none">{count} art</span>
+                                              {/* Desktop: código + cantidad */}
+                                              <span className="hidden sm:block text-[10px] font-bold leading-none truncate w-full">{bloques[0].bloque_codigo}</span>
+                                              <span className="hidden sm:block text-[9px] font-semibold mt-0.5 opacity-90 leading-none">{bloques[0].cantidad} {bloques[0].bloque_unidad}</span>
                                               {count > 1 && (
-                                                <span className="text-[7px] sm:text-[8px] font-bold mt-0.5 opacity-75 leading-none">+{count - 1}</span>
+                                                <span className="hidden sm:block text-[8px] font-bold mt-0.5 opacity-75 leading-none">+{count - 1}</span>
                                               )}
                                             </>
                                           ) : (
-                                            <span className="text-[10px] font-bold opacity-40">—</span>
+                                            <span className="text-xs font-bold opacity-40">—</span>
                                           )}
                                         </button>
                                       </div>

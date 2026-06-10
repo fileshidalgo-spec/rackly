@@ -38,7 +38,7 @@ import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
   Layers3, BoxSelect, X, Plus, Trash2, RefreshCw, Package,
   RotateCcw, CalendarOff, Calendar, Warehouse, Sparkles, ChevronRight,
-  Check, AlertTriangle, ToggleLeft, ToggleRight, Layers, ChevronDown,
+  Check, AlertTriangle, ToggleLeft, ToggleRight, Layers, ChevronDown, Lock,
 } from 'lucide-react'
 
 type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }
@@ -202,6 +202,7 @@ export function PisoSectoresTab() {
   // Stock por nivel (para vista desglosada)
   const [stockByNivel, setStockByNivel] = useState<Record<string, DetailStock[]>>({})
   const [viewNivelTab, setViewNivelTab] = useState<string>('all') // 'all' o nivel_id
+  const [singleNivelMode, setSingleNivelMode] = useState(false) // true = clic desde celda nivel (mostrar solo ese nivel)
   // Salida: tab de nivel seleccionado
   const [salNivelTab, setSalNivelTab] = useState<string>('all')
   // Salida: items derivados con cantidades correctas por nivel seleccionado
@@ -378,7 +379,9 @@ export function PisoSectoresTab() {
         setNiveles(nivs)
         setSelectedNivelId(nivelId || (nivs.length > 0 ? nivs[0].id : ''))
         setStockByNivel(stockPerNivel)
-        // Si viene de un clic en nivel específico, mostrar solo ese nivel; sino 'all'
+        // Si viene de un clic en nivel específico, activar singleNivelMode
+        const isSingleNivel = !!nivelId
+        setSingleNivelMode(isSingleNivel)
         setViewNivelTab(nivelId || 'all')
         setMode('view')
         // Inicializar salItems/trItems con el stock filtrado (por nivel o todos)
@@ -408,18 +411,33 @@ export function PisoSectoresTab() {
 
   function openSalida() {
     // No resetear nivel — mantener el que el usuario seleccionó
-    setSalNivelTab('all')
-    if (detail) setSalItems(detail.stock.map((s) => ({
-      bloque_id: s.bloque_id,
-      bloque_codigo: s.bloque_codigo,
-      bloque_descripcion: s.bloque_descripcion,
-      bloque_unidad: s.bloque_unidad,
-      cantidad: String(s.cantidad),
-      stockActual: s.cantidad,
-      fecha_vencimiento: s.fecha_vencimiento || '',
-      selected: false,
-    })))
-    setSalItemsByNivel([])
+    if (singleNivelMode) {
+      setSalNivelTab(selectedNivelId)
+      if (detail) setSalItemsByNivel(detail.stock.map((s) => ({
+        bloque_id: s.bloque_id,
+        bloque_codigo: s.bloque_codigo,
+        bloque_descripcion: s.bloque_descripcion,
+        bloque_unidad: s.bloque_unidad,
+        cantidad: String(s.cantidad),
+        stockActual: s.cantidad,
+        fecha_vencimiento: s.fecha_vencimiento || '',
+        selected: false,
+      })))
+      setSalItems([])
+    } else {
+      setSalNivelTab('all')
+      if (detail) setSalItems(detail.stock.map((s) => ({
+        bloque_id: s.bloque_id,
+        bloque_codigo: s.bloque_codigo,
+        bloque_descripcion: s.bloque_descripcion,
+        bloque_unidad: s.bloque_unidad,
+        cantidad: String(s.cantidad),
+        stockActual: s.cantidad,
+        fecha_vencimiento: s.fecha_vencimiento || '',
+        selected: false,
+      })))
+      setSalItemsByNivel([])
+    }
     setMode('salida')
   }
 
@@ -1600,8 +1618,8 @@ export function PisoSectoresTab() {
                 const selectedNivelLabel = niveles.find((n) => n.id === viewNivelTab)
                 return displayStock.length > 0 ? (
                   <div className="space-y-2.5 mt-4">
-                    {/* Level tabs — only show if position has multiple levels */}
-                    {niveles.length > 1 && (
+                    {/* Level tabs — only show if position has multiple levels AND not in singleNivelMode */}
+                    {!singleNivelMode && niveles.length > 1 && (
                       <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm scrollbar-none">
                         <button
                           onClick={() => setViewNivelTab('all')}
@@ -1703,13 +1721,22 @@ export function PisoSectoresTab() {
               {/* ── INGRESO MODE ── */}
               {mode === 'ingreso' && (
                 <div className="space-y-4 mt-4">
-                  <NivelSelector
-                    label="Nivel destino"
-                    nivelId={selectedNivelId}
-                    onNivelChange={setSelectedNivelId}
-                    nivelesList={niveles}
-                    accentColor="emerald"
-                  />
+                  {singleNivelMode ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-3 py-2.5">
+                      <Layers className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                      <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider shrink-0">Nivel destino:</span>
+                      <span className="text-xs font-bold text-emerald-300">Nivel {niveles.find(n => n.id === selectedNivelId)?.numero ?? '?'}{niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion ? ` (${niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion})` : ''}</span>
+                      <Lock className="h-3 w-3 text-emerald-500/60 ml-auto" />
+                    </div>
+                  ) : (
+                    <NivelSelector
+                      label="Nivel destino"
+                      nivelId={selectedNivelId}
+                      onNivelChange={setSelectedNivelId}
+                      nivelesList={niveles}
+                      accentColor="emerald"
+                    />
+                  )}
                   {detail.stock.length > 0 && (
                     <div className="rounded-xl border border-amber-500/20 bg-amber-950/30 backdrop-blur-sm p-3">
                       <p className="text-[10px] font-bold text-amber-400">Posicion con {detail.stock.length} articulo(s). Se agregara el nuevo.</p>
@@ -1783,8 +1810,8 @@ export function PisoSectoresTab() {
                 const selCount = filteredSalItems.filter((r) => r.selected).length
                 return (
                 <div className="space-y-3 mt-4">
-                  {/* Nivel tabs para salida */}
-                  {niveles.length > 1 && (
+                  {/* Nivel tabs para salida — ocultar si singleNivelMode */}
+                  {!singleNivelMode && niveles.length > 1 && (
                     <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm scrollbar-none">
                       <button
                         onClick={() => { setSalNivelTab('all'); setSalItems((prev) => prev.map((r) => ({ ...r, selected: false }))); setSalItemsByNivel([]) }}
@@ -1918,13 +1945,22 @@ export function PisoSectoresTab() {
                 <div className="space-y-3 mt-4">
                   <div className="flex gap-2">
                     <div className="flex-1">
-                      <NivelSelector
-                        label="Nivel origen"
-                        nivelId={selectedNivelId}
-                        onNivelChange={setSelectedNivelId}
-                        nivelesList={niveles}
-                        accentColor="sky"
-                      />
+                      {singleNivelMode ? (
+                        <div className="flex items-center gap-2 rounded-xl border border-sky-500/30 bg-sky-950/20 px-3 py-2.5">
+                          <Layers className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+                          <span className="text-[10px] font-semibold text-sky-400 uppercase tracking-wider shrink-0">Nivel origen:</span>
+                          <span className="text-xs font-bold text-sky-300">Nivel {niveles.find(n => n.id === selectedNivelId)?.numero ?? '?'}{niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion ? ` (${niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion})` : ''}</span>
+                          <Lock className="h-3 w-3 text-sky-500/60 ml-auto" />
+                        </div>
+                      ) : (
+                        <NivelSelector
+                          label="Nivel origen"
+                          nivelId={selectedNivelId}
+                          onNivelChange={setSelectedNivelId}
+                          nivelesList={niveles}
+                          accentColor="sky"
+                        />
+                      )}
                     </div>
                     {trDestPos && (
                       <div className="flex-1">
@@ -2111,13 +2147,22 @@ export function PisoSectoresTab() {
               {/* ── DEVOLUCION MODE ── */}
               {mode === 'devolucion' && (
                 <div className="space-y-4 mt-4">
-                  <NivelSelector
-                    label="Nivel destino"
-                    nivelId={selectedNivelId}
-                    onNivelChange={setSelectedNivelId}
-                    nivelesList={niveles}
-                    accentColor="amber"
-                  />
+                  {singleNivelMode ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-950/20 px-3 py-2.5">
+                      <Layers className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                      <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider shrink-0">Nivel destino:</span>
+                      <span className="text-xs font-bold text-amber-300">Nivel {niveles.find(n => n.id === selectedNivelId)?.numero ?? '?'}{niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion ? ` (${niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion})` : ''}</span>
+                      <Lock className="h-3 w-3 text-amber-500/60 ml-auto" />
+                    </div>
+                  ) : (
+                    <NivelSelector
+                      label="Nivel destino"
+                      nivelId={selectedNivelId}
+                      onNivelChange={setSelectedNivelId}
+                      nivelesList={niveles}
+                      accentColor="amber"
+                    />
+                  )}
                   <div className="rounded-xl border border-amber-500/20 bg-amber-950/30 backdrop-blur-sm p-3">
                     <p className="text-[10px] font-bold text-amber-400">Registra articulos devueltos a esta posicion.</p>
                   </div>
@@ -2195,13 +2240,22 @@ export function PisoSectoresTab() {
                   </div>
                   <p className="text-xs text-slate-400">Posicion: <span className="text-sky-300 font-mono">{detail?.columnaLetra} / {detail?.subcolumnaCodigo} / Pos {detail?.posicionNumero}</span></p>
 
-                  <NivelSelector
-                    label="Nivel destino"
-                    nivelId={selectedNivelId}
-                    onNivelChange={setSelectedNivelId}
-                    nivelesList={niveles}
-                    accentColor="red"
-                  />
+                  {singleNivelMode ? (
+                    <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-950/20 px-3 py-2.5">
+                      <Layers className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                      <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-wider shrink-0">Nivel destino:</span>
+                      <span className="text-xs font-bold text-rose-300">Nivel {niveles.find(n => n.id === selectedNivelId)?.numero ?? '?'}{niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion ? ` (${niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion})` : ''}</span>
+                      <Lock className="h-3 w-3 text-rose-500/60 ml-auto" />
+                    </div>
+                  ) : (
+                    <NivelSelector
+                      label="Nivel destino"
+                      nivelId={selectedNivelId}
+                      onNivelChange={setSelectedNivelId}
+                      nivelesList={niveles}
+                      accentColor="red"
+                    />
+                  )}
 
                   {/* Codigo */}
                   <div className="rounded-xl border border-rose-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-rose-500/40">

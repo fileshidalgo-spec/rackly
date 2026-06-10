@@ -1328,7 +1328,7 @@ export function PisoSectoresTab() {
               <p className="text-sm text-slate-400">No hay posiciones en esta columna</p>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-5">
               {/* Agrupar por subcolumna */}
               {(() => {
                 const subGroups = new Map<string, VistaPosicion[]>()
@@ -1341,133 +1341,75 @@ export function PisoSectoresTab() {
 
                 return sortedKeys.map((subCode) => {
                   const subPositions = subGroups.get(subCode)!
-                  const maxNiv = Math.max(...subPositions.map(p => p.niveles.length), 0)
 
                   return (
-                    <div key={subCode} className="rounded-xl border border-slate-700/50 bg-slate-800 overflow-hidden">
+                    <div key={subCode} className="space-y-2.5">
                       {/* Subcolumn header */}
-                      <div className="px-4 py-2 bg-slate-750 border-b border-slate-700/50 flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-lg bg-blue-600 flex items-center justify-center text-white font-extrabold text-[10px]">
+                      <div className="flex items-center gap-2 px-1">
+                        <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg bg-blue-600 flex items-center justify-center text-white font-extrabold text-[9px] sm:text-[10px]">
                           {selectedColumn}
                         </div>
                         <span className="text-xs font-bold text-slate-200">{subCode}</span>
-                        <span className="text-[10px] text-slate-500">{subPositions.length} posiciones</span>
+                        <span className="text-[10px] text-slate-500">{subPositions.length} pos</span>
                       </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-slate-700/60">
-                              <th className="sticky left-0 z-10 bg-emerald-800/80 px-3 py-2.5 text-left text-[11px] font-bold text-white uppercase tracking-wider border-r border-slate-700/40">
-                                Pos
-                              </th>
-                              {Array.from({ length: maxNiv }, (_, i) => (
-                                <th key={i} className="px-3 py-2.5 text-center text-[11px] font-bold text-slate-300 uppercase tracking-wider bg-slate-800 border-r border-slate-700/40 last:border-r-0">
-                                  N{i + 1}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {subPositions.map((pos) => {
-                              const totalArticulos = pos.niveles.reduce((s, n) => s + n.bloques.length, 0)
-                              const hasInc = pos.tieneInc
 
-                              let posHeaderClass = 'bg-emerald-700/80 text-emerald-100'
-                              if (hasInc) posHeaderClass = 'bg-rose-700/80 text-rose-100'
-                              else if (totalArticulos > 1) posHeaderClass = 'bg-orange-700/80 text-orange-100'
-                              else if (totalArticulos === 1) posHeaderClass = 'bg-blue-700/80 text-blue-100'
+                      {/* Botones de posición */}
+                      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-11 gap-2 sm:gap-2.5 p-3 sm:p-4 rounded-xl bg-slate-800 border border-slate-700/50">
+                        {subPositions.map((pos) => {
+                          const totalArticulos = pos.niveles.reduce((s, n) => s + n.bloques.length, 0)
+                          const hasInc = pos.tieneInc
 
-                              const posData = posiciones.find(p => p.posicionId === pos.posicionId)
+                          // Color del botón
+                          let btnClass = 'bg-emerald-600 hover:bg-emerald-500' // vacío
+                          if (hasInc) btnClass = 'bg-rose-600 hover:bg-rose-500' // INC
+                          else if (totalArticulos > 1) btnClass = 'bg-orange-500 hover:bg-orange-400' // 2+
+                          else if (totalArticulos === 1) btnClass = 'bg-blue-600 hover:bg-blue-500' // 1 art
 
-                              return (
-                                <tr key={pos.posicionId} className="border-b border-slate-700/30 last:border-b-0 hover:bg-slate-700/20 transition-colors">
-                                  <td className={`sticky left-0 z-10 px-3 py-2 font-bold text-xs border-r border-slate-700/40 ${posHeaderClass}`}>
-                                    <button
-                                      onClick={() => posData ? handleClick(posData) : undefined}
-                                      className="hover:underline cursor-pointer"
-                                      title="Ver detalle"
-                                    >
-                                      P{pos.posicionNumero}
-                                    </button>
-                                  </td>
-                                  {Array.from({ length: maxNiv }, (_, i) => {
-                                    const nivel = pos.niveles[i]
-                                    if (!nivel) {
-                                      return (
-                                        <td key={i} className="px-2 py-1.5 border-r border-slate-700/30 last:border-r-0">
-                                          <div className="h-9" />
-                                        </td>
-                                      )
-                                    }
-                                    const cellHasInc = nivel.bloques.some(b => b.codigo_inc)
-                                    const cellArtCount = nivel.bloques.length
-                                    const cellEmpty = cellArtCount === 0
+                          const posData = posiciones.find(p => p.posicionId === pos.posicionId)
 
-                                    let cellClass = 'bg-slate-50'
-                                    if (cellHasInc) cellClass = 'bg-rose-100'
-                                    else if (cellArtCount > 1) cellClass = 'bg-orange-100'
-                                    else if (cellArtCount === 1) cellClass = 'bg-blue-100'
-
-                                    let textClass = 'text-slate-400'
-                                    if (cellHasInc) textClass = 'text-rose-800'
-                                    else if (cellArtCount > 1) textClass = 'text-orange-800'
-                                    else if (cellArtCount === 1) textClass = 'text-blue-800'
-
-                                    return (
-                                      <td
-                                        key={i}
-                                        className={`px-2 py-1.5 border-r border-slate-700/30 last:border-r-0 cursor-pointer transition-colors hover:opacity-80 ${cellClass}`}
-                                        onClick={() => posData ? handleClick(posData) : undefined}
-                                        title={nivel.bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' ⚠ INC' : ''}`).join('\n')}
-                                      >
-                                        <div className="min-h-[36px] flex flex-col items-center justify-center gap-0.5 px-1">
-                                          {cellEmpty ? (
-                                            <span className={`text-[10px] font-medium ${textClass}`}>—</span>
-                                          ) : (
-                                            nivel.bloques.map((b, bi) => (
-                                              <div key={bi} className="text-center leading-tight w-full">
-                                                <div className={`text-[10px] font-bold ${textClass} truncate`}>{b.bloque_codigo}</div>
-                                                <div className={`text-[9px] font-medium ${textClass} opacity-80`}>{b.cantidad} {b.bloque_unidad}</div>
-                                                {b.codigo_inc && (
-                                                  <div className="text-[8px] font-bold text-rose-600">INC</div>
-                                                )}
-                                              </div>
-                                            ))
-                                          )}
-                                        </div>
-                                      </td>
-                                    )
-                                  })}
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
+                          return (
+                            <button
+                              key={pos.posicionId}
+                              onClick={() => posData ? handleClick(posData) : undefined}
+                              className={`${btnClass} rounded-xl h-14 sm:h-16 flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95`}
+                              title={totalArticulos > 0
+                                ? pos.niveles.flatMap(n => n.bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' INC' : ''}`)).join('\n')
+                                : 'Vacío'}
+                            >
+                              <span className="text-sm sm:text-base font-extrabold leading-none">
+                                {pos.posicionNumero}
+                              </span>
+                              {totalArticulos > 0 && (
+                                <span className="text-[9px] sm:text-[10px] font-bold mt-1 opacity-90 leading-none">
+                                  {totalArticulos} art
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
                       </div>
                     </div>
                   )
                 })
               })()}
               {/* Legend */}
-              <div className="flex items-center gap-4 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700/40 text-[10px]">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4 px-1 text-[10px] sm:text-[11px]">
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded bg-emerald-100 border border-emerald-300" />
+                  <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
                   <span className="text-slate-400">Vacío</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded bg-blue-100 border border-blue-300" />
+                  <div className="w-3.5 h-3.5 rounded bg-blue-600" />
                   <span className="text-slate-400">1 artículo</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded bg-orange-100 border border-orange-300" />
+                  <div className="w-3.5 h-3.5 rounded bg-orange-500" />
                   <span className="text-slate-400">2+ artículos</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded bg-rose-100 border border-rose-300" />
+                  <div className="w-3.5 h-3.5 rounded bg-rose-600" />
                   <span className="text-slate-400">INC</span>
                 </div>
-                <div className="flex-1" />
-                <span className="text-slate-500">Toca una celda para ver detalle</span>
               </div>
             </div>
           )}

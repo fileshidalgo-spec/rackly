@@ -615,3 +615,23 @@ Stage Summary:
 - Files modified: src/lib/rackly/kardex.ts (type + fallback), src/components/rackly/kardex/OcupacionTab.tsx (logic + grid + legend)
 - INC cells now display: rose/pink gradient, article code + quantity, tooltip with full INC details
 - Priority order: INC (rose) > Multi-art (amber) > Multi-lote (blue+dot) > Ocupado (blue) > Vacío (green)
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix INC cells showing orange instead of pink/red and missing code/description
+
+Work Log:
+- Investigated OcupacionTab.tsx grid rendering: color logic and INC display were correct
+- Investigated fetchIncPorUbicacion(): query correctly selects codigo_inc and filters non-null
+- Found root cause: SQL RPC `registrar_movimiento_kardex` does NOT have `p_codigo_inc` parameter
+- TypeScript sends `p_codigo_inc` but Supabase silently ignores unknown RPC params
+- Result: `codigo_inc` column is always NULL in DB, so INC query returns "No rows"
+- Fixed by modifying `addMovimiento()` in kardex.ts to use direct insert (which includes `codigo_inc`) when movement has `codigoInc`
+- Created SQL migration file for optional RPC update (supabase/migrations/20260611_add_codigo_inc_to_rpcs.sql)
+- Build passed, pushed to GitHub for deployment
+
+Stage Summary:
+- Root cause: RPC function missing p_codigo_inc parameter → INC data never stored
+- Fix: INC movements bypass RPC and use direct insert (always ingreso type, no stock validation needed)
+- Files changed: src/lib/rackly/kardex.ts, supabase/migrations/20260611_add_codigo_inc_to_rpcs.sql
+- IMPORTANT: Existing INC records in DB have NULL codigo_inc (lost data). User needs to re-register INCs.

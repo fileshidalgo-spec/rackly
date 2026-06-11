@@ -1452,10 +1452,15 @@ export function PisoSectoresTab() {
                                 {/* POS button */}
                                 <div className="w-11 sm:w-14 shrink-0 p-0.5 border-r border-slate-700/30">
                                   <button
-                                    onClick={() => posData ? handleClick(posData) : undefined}
-                                    className={`${posColor} w-full h-9 sm:h-10 rounded-md flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95`}
+                                    onClick={() => massMode ? toggleMassSelect(pos.posicionId) : (posData ? handleClick(posData) : undefined)}
+                                    className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400 ring-offset-1 ring-offset-slate-900 scale-105' : ''} ${posColor} w-full h-9 sm:h-10 rounded-md flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95 relative`}
                                     title={`Pos ${pos.posicionNumero} — ${totalArticulos} artículo(s)`}
                                   >
+                                    {massMode && (
+                                      <div className={`absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${massSelected.has(pos.posicionId) ? 'bg-red-500 border-red-400' : 'bg-slate-800/80 border-slate-500/60'}`}>
+                                        {massSelected.has(pos.posicionId) && <Check className="h-2 w-2 text-white" />}
+                                      </div>
+                                    )}
                                     <span className="text-[11px] sm:text-xs font-extrabold leading-none">P{pos.posicionNumero}</span>
                                     {totalArticulos > 0 && (
                                       <span className="text-[8px] font-bold mt-px opacity-90 leading-none">{totalArticulos}</span>
@@ -1479,8 +1484,8 @@ export function PisoSectoresTab() {
                                     return (
                                       <div key={i} className="flex-1 p-0.5 border-r border-slate-700/20 last:border-r-0">
                                         <button
-                                          onClick={() => posData ? handleClick(posData, nivel?.nivelId) : undefined}
-                                          className={`${cellColor} w-full h-9 sm:h-10 rounded-md flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95`}
+                                          onClick={() => massMode ? toggleMassSelect(pos.posicionId) : (posData ? handleClick(posData, nivel?.nivelId) : undefined)}
+                                          className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400/70 ring-offset-1 ring-offset-slate-900' : ''} ${cellColor} w-full h-9 sm:h-10 rounded-md flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95`}
                                           title={count > 0
                                             ? bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' INC' : ''}`).join('\n')
                                             : 'Vacío'}

@@ -656,3 +656,29 @@ Stage Summary:
 - API eficiente: cargarVistaColumna() usa solo 4 queries para toda la tabla
 - Funcionalidad completa preservada (todas las operaciones, salida en masa, exportar)
 
+---
+Task ID: 1
+Agent: Main
+Task: Revisar y corregir cálculos de salidas, ingresos, traslados, ocupaciones y separación INC
+
+Work Log:
+- Exploración completa del código: kardex.ts, MovimientoForm.tsx, TrasladoTab.tsx, OcupacionTab.tsx, StockTab.tsx, FefoTab.tsx
+- Identificados 8 bugs/concerns en el sistema de cálculos
+- Corregido: addMovimientoFallback ahora valida stock antes de insertar salidas normales (excluye INC del cálculo)
+- Corregido: calcularStockUbicacion ahora acepta parámetro excluirInc para consultas de stock normal
+- Corregido BUG CRÍTICO: doSalida en OcupacionTab NO preservaba codigoInc — las salidas INC nunca descontaban
+- Corregido: doTransferir en OcupacionTab NO preservaba codigoInc — los traslados INC perdían la marca
+- Corregido: calcularOcupacion ahora EXCLUYE movimientos INC del stock normal
+- Mejorado: refreshData ahora crea celdas "solo INC" para ubicaciones que solo tienen insumos no conformes
+- Mejorado: Grid de ocupación detecta celdas solo INC y las muestra con color rosa
+- Mejorado: Export de ocupación ahora incluye columna INC con detalle
+- Corregido: SalidaForm excluye items INC de la lista de salidas normales
+- Verificado: FefoTab ya excluía INC correctamente
+- Verificado: TrasladoTab ya separaba INC por codigoInc en la clave de agrupamiento
+- Build exitoso, push a GitHub completado (Cloudflare Pages se despliega automáticamente)
+
+Stage Summary:
+- 3 archivos modificados: kardex.ts, OcupacionTab.tsx, MovimientoForm.tsx
+- Commit: d7d9e75 "fix: separar INC del stock normal, validar salidas contra negativo..."
+- Build: ✅ Compiled successfully
+- Deploy: Push a GitHub → Cloudflare Pages auto-deploy

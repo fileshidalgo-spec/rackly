@@ -60,7 +60,7 @@ import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, ArrowRightLef
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 type Props = {
-  tipo: TipoMovimiento | 'inc'
+  tipo: TipoMovimiento | 'inc' | 'salida-inc'
   onCreated: (movs: Movimiento[]) => void
 }
 
@@ -78,6 +78,9 @@ export function MovimientoForm({ tipo, onCreated }: Props) {
   }
   if (tipo === 'salida') {
     return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil} />
+  }
+  if (tipo === 'salida-inc') {
+    return <SalidaIncForm turno={turno} onCreated={onCreated} perfil={perfil} />
   }
   if (tipo === 'inc') {
     return <IncForm turno={turno} onCreated={onCreated} perfil={perfil} />
@@ -1338,6 +1341,752 @@ function SalidaForm({
                   <ArrowUpFromLine className="h-4 w-4" />
                   Confirmar Salida ({selected.size})
                 </>
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
+
+/* ═══════════════════════════════════════════
+   SALIDA INC FORM — Salida de Insumo No Conforme
+   ═══════════════════════════════════════════ */
+type LocIncWithKey = StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string }
+
+function SalidaIncForm({
+  turno,
+  onCreated,
+  perfil,
+}: {
+  turno: Turno
+  onCreated: (movs: Movimiento[]) => void
+  perfil: { id: string; nombre: string; correo: string }
+}) {
+  const [searchCode, setSearchCode] = useState('')
+  const [productoDesc, setProductoDesc] = useState('')
+  const [productoUn, setProductoUn] = useState('')
+  const [locations, setLocations] = useState<LocIncWithKey[]>([])
+  const [qtyMap, setQtyMap] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const searchCodeRef = useRef(searchCode)
+  searchCodeRef.current = searchCode
+
+  // ─── Selección múltiple ───
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [massConfirmOpen, setMassConfirmOpen] = useState(false)
+  const [massBusy, setMassBusy] = useState(false)
+
+  const locationsRef = useRef(locations)
+  locationsRef.current = locations
+  const qtyMapRef = useRef(qtyMap)
+  qtyMapRef.current = qtyMap
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+
+  useEffect(() => {
+    setSelected(new Set())
+  }, [searchCode])
+
+  const allSelected = locations.length > 0 && selected.size === locations.length
+
+  function toggleSelect(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    if (selected.size === locations.length) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(locations.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.codigoInc || ''}||${l.fVencimiento || ''}`)))
+    }
+  }
+
+  function openMassConfirm() {
+    if (selected.size === 0) {
+      toast.error('Selecciona al menos una ubicación')
+      return
+    }
+    setMassConfirmOpen(true)
+  }
+
+  // ─── Refresh: solo movimientos INC ───
+  const refreshLocations = useCallback(async () => {
+    const code = searchCodeRef.current.trim()
+    if (!code) {
+      setLocations([])
+      setProductoDesc('')
+      setProductoUn('')
+      setQtyMap({})
+      return
+    }
+    try {
+      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string; codigoInc?: string }>
+      try {
+        const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
+        movs = await fetchMovimientosByCodigo(code)
+      } catch {
+        const cached = await SyncEngine.getCachedMovimientosForStock()
+        movs = cached.filter((m) => m.codigo === code.toUpperCase())
+      }
+      const upperCode = code.toUpperCase()
+      const locMap = new Map<string, LocIncWithKey>()
+      // SOLO movimientos INC — invertir el filtro de salidas normales
+      const relevant = movs.filter((m) => m.codigo === upperCode && !!m.codigoInc)
+      let desc = ''
+      let un = ''
+      for (const m of relevant) {
+        if (!desc && m.descripcion) desc = m.descripcion
+        if (!un && m.un) un = m.un
+        const impact = impactoStock(m.tipo, m.cantidad)
+        if (isNaN(impact) || !isFinite(impact)) continue
+        // Agrupar por ubicación + codigoInc + vencimiento
+        const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.codigoInc || ''}||${m.fVencimiento || ''}`
+        const current = locMap.get(key)
+        if (current) {
+          current.stock += impact
+        } else {
+          locMap.set(key, {
+            bloque: m.bloque,
+            torre: m.torre,
+            piso: m.piso,
+            posicion: m.posicion,
+            codigo: m.codigo,
+            descripcion: m.descripcion,
+            un: m.un,
+            stock: impact,
+            fVencimiento: m.fVencimiento || undefined,
+            proveedor: m.proveedor,
+            codigoInc: m.codigoInc,
+          })
+        }
+      }
+      const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
+      // Ordenar: por bloque, torre, piso, posición
+      results.sort((a, b) => {
+        const aB = parseInt(a.bloque, 10) || 0
+        const bB = parseInt(b.bloque, 10) || 0
+        if (aB !== bB) return aB - bB
+        const aT = parseInt(a.torre, 10) || 0
+        const bT = parseInt(b.torre, 10) || 0
+        if (aT !== bT) return aT - bT
+        const aP = parseInt(a.piso, 10) || 0
+        const bP = parseInt(b.piso, 10) || 0
+        if (aP !== bP) return aP - bP
+        const aPos = parseInt(a.posicion, 10) || 0
+        const bPos = parseInt(b.posicion, 10) || 0
+        return aPos - bPos
+      })
+      const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.codigoInc || ''}||${l.fVencimiento || ''}`))
+      setSelected((prev) => {
+        const cleaned = new Set<string>()
+        for (const k of prev) {
+          if (newKeys.has(k)) cleaned.add(k)
+        }
+        return cleaned.size === prev.size ? prev : cleaned
+      })
+      setLocations(results)
+      setProductoDesc(desc)
+      setProductoUn(un)
+    } catch (err) {
+      console.error('[SalidaIncForm] refreshLocations error:', err)
+      toast.error('Error al buscar stock INC', { description: extractError(err) })
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!searchCode.trim()) {
+      setLocations([])
+      setProductoDesc('')
+      setProductoUn('')
+      setQtyMap({})
+      return
+    }
+    setLoading(true)
+    const timer = setTimeout(async () => {
+      await refreshLocations()
+      setLoading(false)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchCode, refreshLocations])
+
+  // POLLING cada 8 segundos
+  useEffect(() => {
+    if (!searchCode.trim()) return
+    const interval = setInterval(() => {
+      refreshLocations()
+    }, 8000)
+    return () => clearInterval(interval)
+  }, [searchCode, refreshLocations])
+
+  function makeKey(loc: LocIncWithKey) {
+    return `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.codigoInc || ''}||${loc.fVencimiento || ''}`
+  }
+
+  async function handleSalidaParcial(locKey: string) {
+    const loc = locations.find((l) => makeKey(l) === locKey)
+    if (!loc) return
+    const qtyVal = qtyMap[locKey] || ''
+    const qtyNum = parseFloat(qtyVal)
+    if (isNaN(qtyNum) || qtyNum <= 0) {
+      toast.error('Ingresa una cantidad válida para la salida parcial')
+      return
+    }
+    // INC: permitir exceder stock (sin límite)
+    setConfirmState({ loc, qtyNum, full: false })
+  }
+
+  function handleRetirarTodo(locKey: string) {
+    const loc = locations.find((l) => makeKey(l) === locKey)
+    if (!loc) return
+    setConfirmState({ loc, qtyNum: loc.stock, full: true })
+  }
+
+  const [confirmState, setConfirmState] = useState<{
+    loc: LocIncWithKey
+    qtyNum: number
+    full: boolean
+  } | null>(null)
+
+  async function doSalida() {
+    if (!confirmState) return
+    const { loc, qtyNum } = confirmState
+    setBusy(true)
+    try {
+      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+        tipo: 'salida',
+        bloque: loc.bloque,
+        torre: loc.torre,
+        piso: loc.piso,
+        posicion: loc.posicion,
+        codigo: loc.codigo,
+        descripcion: loc.descripcion,
+        un: loc.un,
+        cantidad: qtyNum,
+        fVencimiento: loc.fVencimiento ?? '',
+        turno,
+        usuarioId: perfil.id,
+        usuarioNombre: perfil.nombre,
+        usuarioCorreo: perfil.correo,
+        proveedor: loc.proveedor,
+        // PRESERVAR codigoInc para descuente correcto del stock INC
+        codigoInc: loc.codigoInc || undefined,
+      })
+      if (wasOffline) {
+        toast.success(`Salida INC de ${qtyNum} ${loc.un} guardada (offline)`, {
+          description: 'Se sincronizará al reconectarse',
+          duration: 5000,
+        })
+      } else {
+        toast.success(`Salida INC de ${qtyNum} ${loc.un} registrada`)
+      }
+      setConfirmState(null)
+      setSearchCode('')
+      setQtyMap({})
+      onCreated(movs)
+    } catch (err: unknown) {
+      const message = extractError(err)
+      toast.error('Error al registrar salida INC', { description: message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function doMassSalida() {
+    setMassBusy(true)
+    const totalToProcess = selectedRef.current.size
+    let totalProcessed = 0
+    let totalErrors = 0
+    const errorDetails: string[] = []
+    try {
+      const selectedKeys = Array.from(selectedRef.current)
+      const locsSnap = [...locationsRef.current]
+      const qtySnap = { ...qtyMapRef.current }
+
+      for (const key of selectedKeys) {
+        const loc = locsSnap.find((l) => makeKey(l) === key)
+        if (!loc) { errorDetails.push(`Ubicación ${key} no encontrada`); totalErrors++; continue }
+        const qtyVal = qtySnap[key] || ''
+        const qtyNum = qtyVal ? parseFloat(qtyVal.trim()) : loc.stock
+        if (isNaN(qtyNum) || qtyNum <= 0) { errorDetails.push(`Cantidad inválida en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}`); totalErrors++; continue }
+        // INC: usar la cantidad tal cual (sin limitar al stock)
+        try {
+          await SyncEngine.offlineAwareAddMovimiento({
+            tipo: 'salida',
+            bloque: loc.bloque, torre: loc.torre, piso: loc.piso, posicion: loc.posicion,
+            codigo: loc.codigo, descripcion: loc.descripcion, un: loc.un,
+            cantidad: qtyNum,
+            fVencimiento: loc.fVencimiento ?? '', turno,
+            usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+            proveedor: loc.proveedor,
+            codigoInc: loc.codigoInc || undefined,
+          })
+          totalProcessed++
+        } catch (err) {
+          const msg = extractError(err)
+          errorDetails.push(`Error en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}: ${msg}`)
+          totalErrors++
+        }
+      }
+      if (totalErrors > 0) {
+        const desc = totalProcessed > 0
+          ? `${totalProcessed} de ${totalToProcess} correctas:\n${errorDetails.slice(0, 5).join('\n')}${errorDetails.length > 5 ? `\n...y ${errorDetails.length - 5} más` : ''}`
+          : `Errores:\n${errorDetails.join('\n')}`
+        toast.warning(`Salida INC completada con ${totalErrors} error${totalErrors > 1 ? 'es' : ''}`, { description: desc, duration: 10000 })
+      } else {
+        toast.success(`Salida INC registrada en ${totalProcessed} ubicacion${totalProcessed > 1 ? 'es' : ''}`)
+      }
+      setMassConfirmOpen(false)
+      setSelected(new Set())
+      setQtyMap({})
+      await refreshLocations()
+      onCreated([])
+    } catch (err: unknown) {
+      toast.error('Error en salida masiva INC', { description: extractError(err) })
+    } finally {
+      setMassBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Banner INC */}
+      <div className="flex items-center gap-2 p-3 rounded-lg border bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800">
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center flex-shrink-0 shadow-sm">
+          <TriangleAlert className="h-4 w-4 text-white" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">
+            Salida INC — Insumo No Conforme
+          </p>
+          <p className="text-xs text-muted-foreground">Busca por código para dar salida a insumos no conformes. La salida puede exceder el stock.</p>
+        </div>
+      </div>
+
+      {/* Búsqueda */}
+      <div className="space-y-1">
+        <Label className="text-sm text-muted-foreground">Buscar INC por código</Label>
+        <CatalogoSearchInput
+          onPick={(item) => setSearchCode(item.codigo)}
+          value={searchCode}
+          onChange={setSearchCode}
+        />
+      </div>
+
+      {/* Producto (solo lectura) */}
+      {productoDesc && (
+        <div className="space-y-1">
+          <Label className="text-sm text-muted-foreground">Producto</Label>
+          <Input
+            value={`${productoUn ? productoUn + ' — ' : ''}${productoDesc}`}
+            readOnly
+            className="h-10 bg-muted/50 cursor-default"
+          />
+        </div>
+      )}
+
+      {/* Badges de metadata */}
+      {searchCode.trim() && (
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800">
+            INC
+          </Badge>
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+            Turno: {turno}
+          </Badge>
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+            Usuario: {perfil.nombre}
+          </Badge>
+          {!loading && (
+            <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800">
+              INC con stock: <span className="font-bold">{locations.length}</span>
+            </Badge>
+          )}
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">Buscando INC...</span>
+        </div>
+      )}
+
+      {/* Barra de selección masiva */}
+      {locations.length > 0 && !loading && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            variant={allSelected ? 'default' : 'outline'}
+            onClick={toggleSelectAll}
+            className="h-9 text-xs gap-1.5"
+          >
+            <Checkbox checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected} className="h-3.5 w-3.5 pointer-events-none" />
+            {allSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+          </Button>
+          {selected.size > 0 && (
+            <>
+              <Badge variant="secondary" className="text-xs font-medium">
+                {selected.size} de {locations.length} seleccionada{selected.size > 1 ? 's' : ''}
+              </Badge>
+              <Button
+                size="sm"
+                onClick={openMassConfirm}
+                disabled={busy || massBusy}
+                className="h-9 text-xs gap-1.5 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-700 hover:to-pink-700 text-white font-semibold ml-auto"
+              >
+                <ArrowUpFromLine className="h-3.5 w-3.5" />
+                Salida masiva ({selected.size})
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Lista de ubicaciones */}
+      {locations.length > 0 && !loading && (
+        <>
+          {/* ───── Vista móvil: tarjetas ───── */}
+          <div className="md:hidden space-y-3">
+            {locations.map((loc) => {
+              const key = makeKey(loc)
+              const isSelected = selected.has(key)
+              return (
+                <div
+                  key={key}
+                  onClick={() => toggleSelect(key)}
+                  className={`rounded-lg border p-3 space-y-2 shadow-sm cursor-pointer transition-all ${
+                    isSelected
+                      ? 'border-rose-400 bg-rose-50 dark:bg-rose-950/20 ring-2 ring-rose-300 dark:ring-rose-700'
+                      : 'border bg-card'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Checkbox checked={isSelected} className="h-4 w-4 pointer-events-none" />
+                    <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                      <MapPin className="h-3.5 w-3.5" />
+                      <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-rose-700 dark:text-rose-300">Stock INC: {loc.stock} {loc.un}</span>
+                    {loc.codigoInc && (
+                      <Badge className="bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/40 dark:text-rose-300 dark:border-rose-800 text-[10px] font-bold">
+                        {loc.codigoInc}
+                      </Badge>
+                    )}
+                  </div>
+                  {loc.fVencimiento && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">Venc.:</span>
+                      <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+                        {formatDate(loc.fVencimiento)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+                    <Input
+                      type="number"
+                      step="any"
+                      min="0.001"
+                      value={qtyMap[key] || ''}
+                      onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
+                      placeholder="Parcial (puede exceder stock)"
+                      className="h-9 text-sm flex-1 border-rose-200 dark:border-rose-800 focus-visible:ring-rose-500/30"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={() => handleSalidaParcial(key)}
+                      disabled={busy || massBusy}
+                      className="h-9 text-xs bg-rose-600 hover:bg-rose-700 text-white"
+                    >
+                      Salida
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleRetirarTodo(key)}
+                      disabled={busy || massBusy}
+                      className="h-9 text-xs border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                    >
+                      Todo
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ───── Vista desktop: tabla ───── */}
+          <div className="hidden md:block overflow-x-auto">
+            <Table className="min-w-[850px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10 text-center">
+                    <Checkbox
+                      checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected}
+                      onCheckedChange={toggleSelectAll}
+                      className="h-4 w-4 mx-auto"
+                    />
+                  </TableHead>
+                  <TableHead className="w-16 text-center">Bloque</TableHead>
+                  <TableHead className="w-16 text-center">Torre</TableHead>
+                  <TableHead className="w-16 text-center">Piso</TableHead>
+                  <TableHead className="w-20 text-center">Posición</TableHead>
+                  <TableHead className="text-right">Stock INC</TableHead>
+                  <TableHead>Código INC</TableHead>
+                  <TableHead>F. Vencimiento</TableHead>
+                  <TableHead className="min-w-[140px]">Cant. salida</TableHead>
+                  <TableHead className="min-w-[180px]">Acción</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {locations.map((loc) => {
+                  const key = makeKey(loc)
+                  const isSelected = selected.has(key)
+                  return (
+                    <TableRow
+                      key={key}
+                      onClick={() => toggleSelect(key)}
+                      className={`cursor-pointer transition-colors ${isSelected ? 'bg-rose-50 dark:bg-rose-950/20' : ''}`}
+                    >
+                      <TableCell className="text-center">
+                        <Checkbox checked={isSelected} className="h-4 w-4 mx-auto pointer-events-none" />
+                      </TableCell>
+                      <TableCell className="text-center font-medium">{loc.bloque}</TableCell>
+                      <TableCell className="text-center font-medium">{loc.torre}</TableCell>
+                      <TableCell className="text-center font-medium">{loc.piso}</TableCell>
+                      <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
+                      <TableCell className="text-right font-bold text-rose-700 dark:text-rose-300">{loc.stock}</TableCell>
+                      <TableCell>
+                        {loc.codigoInc ? (
+                          <Badge className="bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/40 dark:text-rose-300 dark:border-rose-800 text-[10px] font-bold">
+                            {loc.codigoInc}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {loc.fVencimiento ? (
+                          <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{formatDate(loc.fVencimiento)}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Input
+                          type="number"
+                          step="any"
+                          min="0.001"
+                          value={qtyMap[key] || ''}
+                          onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
+                          placeholder="Parcial (puede exceder)"
+                          className="h-9 text-sm border-rose-200 dark:border-rose-800 focus-visible:ring-rose-500/30"
+                        />
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => handleSalidaParcial(key)}
+                            disabled={busy || massBusy}
+                            className="flex-1 h-9 text-xs bg-rose-600 hover:bg-rose-700 text-white"
+                          >
+                            Salida
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRetirarTodo(key)}
+                            disabled={busy || massBusy}
+                            className="flex-1 h-9 text-xs border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                          >
+                            Todo
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </>
+      )}
+
+      {/* Sin stock */}
+      {!loading && locations.length === 0 && searchCode.trim() && (
+        <div className="flex items-center gap-2 text-muted-foreground py-4 justify-center">
+          <PackageSearch className="h-5 w-5" />
+          <span className="text-sm">Sin stock INC para este código</span>
+        </div>
+      )}
+
+      {/* Nota inferior */}
+      {locations.length > 0 && (
+        <p className="text-xs text-rose-500/70 text-center">
+          Las salidas INC pueden exceder el stock disponible. Se usa para correcciones y ajustes de insumos no conformes.
+        </p>
+      )}
+
+      {/* Diálogo de confirmación individual */}
+      <AlertDialog open={!!confirmState} onOpenChange={(open) => { if (!open) setConfirmState(null) }}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+          <AlertDialogHeader className="shrink-0">
+            <AlertDialogTitle className="flex items-center gap-2">
+              <TriangleAlert className="h-5 w-5 text-rose-500" />
+              {confirmState?.full ? 'Retirar todo el stock INC' : 'Confirmar salida INC'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+                <p>¿Estás seguro de registrar esta salida de INC?</p>
+                {confirmState && (
+                  <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/20 p-3 space-y-1.5 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Producto:</span>
+                      <span className="font-medium">{confirmState.loc.codigo} — {confirmState.loc.descripcion}</span>
+                    </div>
+                    {confirmState.loc.codigoInc && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Código INC:</span>
+                        <span className="font-medium text-rose-600 dark:text-rose-400 font-bold">{confirmState.loc.codigoInc}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Ubicación:</span>
+                      <span className="font-medium">
+                        B-{confirmState.loc.bloque} T-{confirmState.loc.torre} P-{confirmState.loc.piso} Pos-{confirmState.loc.posicion}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Stock INC actual:</span>
+                      <span className="font-medium text-rose-600 dark:text-rose-400">{confirmState.loc.stock} {confirmState.loc.un}</span>
+                    </div>
+                    <div className="border-t border-rose-200 dark:border-rose-800 pt-1.5 flex justify-between font-bold">
+                      <span className="text-rose-600">Cantidad a retirar:</span>
+                      <span className="text-rose-600">{confirmState.qtyNum} {confirmState.loc.un}</span>
+                    </div>
+                    {confirmState.qtyNum > confirmState.loc.stock && (
+                      <div className="rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-2 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                        <TriangleAlert className="w-3.5 h-3.5 flex-shrink-0" />
+                        La cantidad excede el stock en {Math.round((confirmState.qtyNum - confirmState.loc.stock) * 1000) / 1000} {confirmState.loc.un}. Se permitirá como ajuste.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="shrink-0">
+            <AlertDialogCancel>No, cancelar</AlertDialogCancel>
+            <Button
+              onClick={(e) => { e.preventDefault(); doSalida() }}
+              disabled={busy}
+              className="bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-700 hover:to-pink-700 text-white"
+            >
+              {busy ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Procesando...</>
+              ) : (
+                'Sí, confirmar salida INC'
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Diálogo de confirmación masiva */}
+      <AlertDialog open={massConfirmOpen} onOpenChange={(open) => { if (!open) setMassConfirmOpen(false) }}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+          <div className="bg-gradient-to-r from-rose-600 to-pink-600 px-4 sm:px-6 py-5 text-white shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+                <ArrowUpFromLine className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+                  Confirmar Salida Masiva INC
+                </AlertDialogTitle>
+                <AlertDialogDescription className="text-rose-100 text-sm mt-0.5">
+                  Se registrará salida INC en {selected.size} ubicacion{selected.size > 1 ? 'es' : ''}
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <div className="px-4 sm:px-6 pt-4 pb-2">
+              <div className="rounded-lg bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800 p-3 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Código:</span>
+                  <span className="font-mono font-bold">{searchCode}</span>
+                </div>
+                {productoDesc && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Descripción:</span>
+                    <span className="font-medium truncate max-w-[200px]">{productoDesc}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Turno:</span>
+                  <span className="font-medium">{turno}</span>
+                </div>
+              </div>
+            </div>
+            <div className="px-4 sm:px-6 py-2">
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-rose-300 dark:via-rose-700 to-transparent" />
+                <span className="text-[10px] font-semibold text-rose-500 uppercase tracking-widest">Ubicaciones INC seleccionadas</span>
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-rose-300 dark:via-rose-700 to-transparent" />
+              </div>
+            </div>
+            <div className="px-4 sm:px-6 pb-4 space-y-2">
+              {locations.filter((l) => selected.has(makeKey(l))).map((loc) => {
+                const key = makeKey(loc)
+                const qtyVal = qtyMap[key] || ''
+                const qtyNum = qtyVal ? parseFloat(qtyVal) : loc.stock
+                return (
+                  <div key={key} className="rounded-xl border border-rose-200 dark:border-rose-800 bg-white dark:bg-slate-950 p-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-rose-100 dark:bg-rose-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <MapPin className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                          B-{loc.bloque} / T-{loc.torre} / P-{loc.piso} / Pos {loc.posicion}
+                        </p>
+                        <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                          <span>Stock INC: <b className="text-rose-600 dark:text-rose-400">{loc.stock} {loc.un}</b></span>
+                          <span className="text-rose-600 font-semibold">→ Retirar: {isNaN(qtyNum) ? loc.stock : qtyNum} {loc.un}</span>
+                          {loc.codigoInc && <span>INC: <b>{loc.codigoInc}</b></span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-rose-100 dark:border-rose-800 gap-2 shrink-0">
+            <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium" disabled={massBusy}>
+              Cancelar
+            </AlertDialogCancel>
+            <Button
+              onClick={(e) => { e.preventDefault(); doMassSalida() }}
+              disabled={massBusy}
+              className="flex-1 h-11 rounded-lg text-sm font-bold bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-700 hover:to-pink-700 text-white shadow-md shadow-rose-600/20 gap-2"
+            >
+              {massBusy ? (
+                <><Loader2 className="h-4 w-4 animate-spin" /> Procesando...</>
+              ) : (
+                <><ArrowUpFromLine className="h-4 w-4" /> Confirmar Salida INC ({selected.size})</>
               )}
             </Button>
           </AlertDialogFooter>

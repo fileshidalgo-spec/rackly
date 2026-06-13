@@ -66,11 +66,14 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
 }
 
 // Calcula ocupación desde movimientos — rastrea stock POR LOTE (código + vencimiento).
+// IMPORTANTE: Los movimientos INC se EXCLUYEN del stock normal.
 // La detección INC se hace por separado con fetchIncPorUbicacion().
 function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
   // Mapa: ubicacion_key → (lote_key "codigo||fVencimiento" → stock)
   const cellMap = new Map<string, Map<string, number>>()
   for (const m of movs) {
+    // EXCLUIR movimientos INC del cálculo de ocupación normal
+    if (m.codigoInc) continue
     const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
     const code = m.codigo.trim().toUpperCase()
     const lotKey = `${code}||${m.fVencimiento || ''}`
@@ -153,16 +156,31 @@ export function OcupacionTab() {
       const [movs, incMap] = await Promise.all([fetchMovimientos(), fetchIncPorUbicacion()])
       if (!mountedRef.current) return
       const celdas = calcularOcupacion(movs)
-      // Merge INC dedicado: sobrescribe lo que tenga calcularOcupacion con datos reales de la consulta INC
-      const enriquecidas = celdas.map(cell => {
-        const key = `${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`
-        const incItems = incMap.get(key)
-        if (incItems && incItems.length > 0) {
-          return { ...cell, tieneInc: true, incItems }
+      // Crear mapa de celdas existentes para merge rápido
+      const celdaMap = new Map<string, OcupacionCelda>()
+      for (const cell of celdas) {
+        celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
+      }
+      // Merge INC dedicado: agregar datos INC a celdas existentes O crear celdas nuevas si solo tienen INC
+      for (const [key, incItems] of incMap) {
+        const existing = celdaMap.get(key)
+        if (existing) {
+          existing.tieneInc = true
+          existing.incItems = incItems
+        } else {
+          // Celda que SOLO tiene INC (sin stock normal)
+          const [bloque, torre, piso, posicion] = key.split('-')
+          celdaMap.set(key, {
+            bloque, torre, piso, posicion,
+            stock: 0, // Stock normal = 0, solo INC
+            codigos: incItems.map(i => i.codigo),
+            lotes: incItems.length,
+            tieneInc: true,
+            incItems,
+          })
         }
-        return cell
-      })
-      setOcupacion(enriquecidas)
+      }
+      setOcupacion(Array.from(celdaMap.values()))
     } catch {
       // Fallback al RPC si falla la carga de movimientos
       try {
@@ -320,13 +338,16 @@ export function OcupacionTab() {
     if (!item) return
     const qty = parseFloat(salidaCantidad)
     if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
-    if (qty > item.stock) { toast.error(`Cantidad excede stock (${item.stock})`); return }
+    // Las salidas normales NO pueden exceder stock. Las salidas INC sí permiten exceder (autoajuste).
+    if (!item.codigoInc && qty > item.stock) { toast.error(`Cantidad excede stock (${item.stock})`); return }
     setActionBusy(true)
     try {
       const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
         tipo: 'salida', bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
         codigo: item.codigo, descripcion: item.descripcion, un: item.un, cantidad: qty,
         fVencimiento: item.fVencimiento ?? '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+        // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
+        codigoInc: item.codigoInc || undefined,
       })
       if (wasOffline) {
         toast.success(`Salida de ${qty} ${item.un} (offline)`, { description: 'Se sincronizará al reconectarse', duration: 5000 })
@@ -365,6 +386,8 @@ export function OcupacionTab() {
         turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         fVencimiento: trItem.fVencimiento ?? '',
         cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
+        // Preservar codigoInc para que el traslado mueva el INC correctamente
+        codigoInc: trItem.codigoInc || undefined,
       }
       const { wasOffline: wasTrOffline } = await SyncEngine.offlineAwareTraslado(input)
       toast.success(wasTrOffline ? 'Traslado guardado (offline)' : 'Traslado registrado', {
@@ -392,6 +415,8 @@ export function OcupacionTab() {
             for (const pos of posicionesDeBloque(b)) {
               const cell = ocupacion.find(o => o.bloque === b && o.torre === t && o.piso === p && o.posicion === pos)
               const isOcc = cell && cell.stock > 0
+              const incCount = cell?.incItems?.length ?? 0
+              const incCodes = cell?.incItems?.map(i => `${i.codigoInc} (${i.cantidad})`).join(', ') ?? ''
               data.push({
                 Bloque: b,
                 Torre: t,
@@ -400,8 +425,9 @@ export function OcupacionTab() {
                 Stock: isOcc ? cell.stock : 0,
                 Códigos: isOcc ? cell.codigos.join(', ') : '',
                 Artículos: isOcc ? cell.codigos.length : 0,
-                Estado: isOcc ? (cell!.codigos.length > 1 ? 'Mixto' : cell!.lotes > 1 ? 'Multi-lote' : 'Ocupado') : 'Vacío',
+                Estado: isOcc ? (cell!.codigos.length > 1 ? 'Mixto' : cell!.lotes > 1 ? 'Multi-lote' : 'Ocupado') : (incCount > 0 ? 'Solo INC' : 'Vacío'),
                 Lotes: isOcc ? cell!.lotes : 0,
+                'INC': incCount > 0 ? `${incCount} item(s): ${incCodes}` : '',
               })
             }
           }
@@ -519,6 +545,7 @@ export function OcupacionTab() {
                   {torres.map(torre => {
                     const tTotal = PISOS.length * posiciones.length
                     const tOcup = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.stock > 0).length
+                    const tInc = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.tieneInc).length
                     const halfLen = Math.ceil(posiciones.length / 2)
                     const posA = posiciones.slice(0, halfLen)
                     const posB = posiciones.slice(halfLen)
@@ -530,7 +557,7 @@ export function OcupacionTab() {
                         </div>
                         <div className="space-y-1">
                           {PISOS.map(piso => {
-                            const pisoOcup = posiciones.filter(pos => { const c = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos); return c && c.stock > 0 }).length
+                            const pisoOcup = posiciones.filter(pos => { const c = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos); return c && (c.stock > 0 || (c.tieneInc && c.incItems.length > 0)) }).length
                             return (
                               <div key={piso} className="rounded-lg border border-slate-600/15 bg-slate-900/40 overflow-hidden">
                                 <div className="flex items-center justify-center gap-2 py-1.5 px-2 bg-slate-800/50 border-b border-slate-700/15">
@@ -544,7 +571,8 @@ export function OcupacionTab() {
                                   {posA.map(pos => {
                                     const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
                                     const isOcc = cell && cell.stock > 0
-                                    const isInc = isOcc && cell!.tieneInc
+                                    const isOnlyInc = !isOcc && cell && cell.tieneInc && cell.incItems.length > 0
+                                    const isInc = cell && cell.tieneInc && cell.incItems.length > 0
                                     const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
                                     const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
                                     let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
@@ -553,7 +581,7 @@ export function OcupacionTab() {
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
                                     let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
-                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}\nStock total: ${cell!.stock}` }
+                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
                                     else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
                                     else { title += ' · Vacío' }
                                     const firstInc = isInc ? cell!.incItems[0] : null
@@ -576,7 +604,8 @@ export function OcupacionTab() {
                                   {posB.map(pos => {
                                     const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
                                     const isOcc = cell && cell.stock > 0
-                                    const isInc = isOcc && cell!.tieneInc
+                                    const isOnlyInc = !isOcc && cell && cell.tieneInc && cell.incItems.length > 0
+                                    const isInc = cell && cell.tieneInc && cell.incItems.length > 0
                                     const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
                                     const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
                                     let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
@@ -585,7 +614,7 @@ export function OcupacionTab() {
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
                                     let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
-                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}\nStock total: ${cell!.stock}` }
+                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
                                     else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
                                     else { title += ' · Vacío' }
                                     const firstInc = isInc ? cell!.incItems[0] : null

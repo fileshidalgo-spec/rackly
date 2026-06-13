@@ -2,51 +2,105 @@
 
 import { createBrowserClient } from '@supabase/ssr'
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-const SERVICE_KEY = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
+const SERVICE_KEY = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? ''
 
-/**
- * Cliente para operaciones de AUTENTICACIÓN (auth).
- * Usa el ANON_KEY porque las operaciones de auth (login, signup, session)
- * requieren el anon key de GoTrue.
- */
-export function createClient() {
-  return createBrowserClient(SUPABASE_URL, ANON_KEY)
+/** Verifica si la configuración de Supabase está completa */
+export function isSupabaseConfigured(): boolean {
+  return Boolean(SUPABASE_URL && ANON_KEY)
 }
 
-/**
- * Cliente para operaciones de DATOS (lectura/escritura en tablas, RPCs).
- * Usa SERVICE_ROLE_KEY para bypassear RLS y garantizar que todos los
- * usuarios autenticados puedan ver y operar todos los datos.
- *
- * Esto es necesario porque las políticas RLS en Supabase bloquean las lecturas
- * con el anon key, causando que Ocupación muestre celdas vacías (verde)
- * cuando en realidad tienen artículos.
- *
- * La service role key ya estaba expuesta en el código para operaciones
- * masivas (addMovimientosBatch, deleteAllMovimientos), así que usarla
- * para todas las operaciones de datos es consistente con el diseño existente.
- */
-export function createDataClient() {
-  return createBrowserClient(SUPABASE_URL, SERVICE_KEY)
+/** Retorna un mensaje de error si falta configuración */
+export function getMissingConfigMessage(): string | null {
+  const missing: string[] = []
+  if (!SUPABASE_URL) missing.push('NEXT_PUBLIC_SUPABASE_URL')
+  if (!ANON_KEY) missing.push('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+  if (!SERVICE_KEY) missing.push('NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY')
+  if (missing.length === 0) return null
+  return `[RACKLY] Variables faltantes en el build: ${missing.join(', ')}. Agrégalas en Cloudflare Pages → Settings → Environment variables.`
 }
 
-let _supabase: ReturnType<typeof createClient> | undefined
-let _dataClient: ReturnType<typeof createDataClient> | undefined
+function safeCreateClient() {
+  try {
+    if (!SUPABASE_URL || !ANON_KEY) {
+      console.error(getMissingConfigMessage())
+      return null
+    }
+    return createBrowserClient(SUPABASE_URL, ANON_KEY)
+  } catch (err) {
+    console.error('[RACKLY] Error creando cliente Supabase:', err)
+    return null
+  }
+}
 
-/** Cliente de autenticación (anon key) — para auth.getUser, auth.signIn, etc. */
-export const supabase = new Proxy({} as ReturnType<typeof createClient>, {
+function safeCreateDataClient() {
+  try {
+    if (!SUPABASE_URL || !SERVICE_KEY) {
+      console.error(getMissingConfigMessage())
+      return null
+    }
+    return createBrowserClient(SUPABASE_URL, SERVICE_KEY)
+  } catch (err) {
+    console.error('[RACKLY] Error creando data client Supabase:', err)
+    return null
+  }
+}
+
+let _supabase: ReturnType<typeof createBrowserClient> | null = null
+let _dataClient: ReturnType<typeof createBrowserClient> | null = null
+
+/** Cliente de autenticación (anon key) — seguro ante config faltante */
+export const supabase = new Proxy({} as ReturnType<typeof createBrowserClient>, {
   get(_, prop, receiver) {
-    if (!_supabase) _supabase = createClient()
-    return Reflect.get(_supabase, prop, receiver)
+    if (!_supabase) _supabase = safeCreateClient()
+    if (!_supabase) {
+      // Retorna funciones no-op para que la app no crashee
+      if (prop === 'auth') {
+        return new Proxy({}, {
+          get(__, authProp) {
+            if (typeof authProp === 'string' && authProp.startsWith('on')) {
+              // onAuthStateChange, etc. → retornar { data: { subscription: { unsubscribe: () => {} } } }
+              return () => ({ data: { subscription: { unsubscribe: () => {} } } })
+            }
+            if (typeof authProp === 'string') {
+              return () => Promise.resolve({ data: null, error: { message: getMissingConfigMessage() ?? 'Supabase no configurado' } })
+            }
+            return undefined
+          }
+        })
+      }
+      return undefined
+    }
+    const value = Reflect.get(_supabase, prop, receiver)
+    if (typeof value === 'function') {
+      return value.bind(_supabase)
+    }
+    return value
   },
 })
 
-/** Cliente de datos (service role) — para consultas a tablas y RPCs */
-export const dataClient = new Proxy({} as ReturnType<typeof createDataClient>, {
+/** Cliente de datos (service role) — seguro ante config faltante */
+export const dataClient = new Proxy({} as ReturnType<typeof createBrowserClient>, {
   get(_, prop, receiver) {
-    if (!_dataClient) _dataClient = createDataClient()
-    return Reflect.get(_dataClient, prop, receiver)
+    if (!_dataClient) _dataClient = safeCreateDataClient()
+    if (!_dataClient) {
+      if (prop === 'from') {
+        return (table: string) => new Proxy({}, {
+          get(__, method) {
+            return (...args: unknown[]) => Promise.resolve({ data: null, error: { message: getMissingConfigMessage() ?? 'Supabase no configurado' } })
+          }
+        })
+      }
+      if (prop === 'rpc') {
+        return (fn: string, ...args: unknown[]) => Promise.resolve({ data: null, error: { message: getMissingConfigMessage() ?? 'Supabase no configurado' } })
+      }
+      return undefined
+    }
+    const value = Reflect.get(_dataClient, prop, receiver)
+    if (typeof value === 'function') {
+      return value.bind(_dataClient)
+    }
+    return value
   },
 })

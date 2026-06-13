@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { isSupabaseConfigured, getMissingConfigMessage } from '@/lib/supabase/client'
 import {
   signIn,
   signUp,
@@ -210,6 +211,34 @@ function PasswordInput({
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { perfil, loading, refresh, passwordRecovery, clearPasswordRecovery } =
     useAuth()
+
+  // Si Supabase no está configurado, mostrar error claro en lugar de pantalla en blanco
+  if (!isSupabaseConfigured()) {
+    const msg = getMissingConfigMessage()
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background p-6">
+        <div className="max-w-md w-full bg-red-50 border border-red-200 rounded-2xl p-8 text-center space-y-4">
+          <div className="w-16 h-16 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+            <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-red-800">Configuración incompleta</h2>
+          <p className="text-sm text-red-600">
+            Las variables de entorno de Supabase no están configuradas en el build.
+          </p>
+          {msg && (
+            <pre className="text-xs text-left bg-red-100 rounded-lg p-3 overflow-auto text-red-800 font-mono whitespace-pre-wrap">
+              {msg}
+            </pre>
+          )}
+          <p className="text-xs text-red-500">
+            Ve a Cloudflare Pages → Settings → Environment variables y agrega las variables faltantes. Luego haz un nuevo deploy.
+          </p>
+        </div>
+      </main>
+    )
+  }
 
   if (loading) {
     return (

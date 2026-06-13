@@ -461,7 +461,7 @@ export async function calcularStockNivel(
 
   const bloquesIds = [
     ...new Set((data ?? []).map((d: Record<string, unknown>) => d.bloque_id as string)),
-  ]
+  ] as string[]
   if (bloquesIds.length === 0) return []
 
   const bloqueMap = new Map<string, string>()
@@ -1289,7 +1289,7 @@ export async function stockPorNivelPosicion(
   }
 
   // Obtener códigos de bloques
-  const bloqueIds = [...new Set((detData ?? []).map((d: unknown) => (d as { bloque_id: string }).bloque_id))]
+  const bloqueIds = [...new Set((detData ?? []).map((d: unknown) => (d as { bloque_id: string }).bloque_id))] as string[]
   const bloqueMap = new Map<string, string>()
   const realIds = bloqueIds.filter((id) => !id.startsWith('cat_') && !id.startsWith('manual_'))
   if (realIds.length > 0) {

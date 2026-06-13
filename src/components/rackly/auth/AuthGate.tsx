@@ -97,7 +97,11 @@ async function correoExisteEnAuth(email: string): Promise<boolean> {
     )
     if (!res.ok) return false
     const adminData = await res.json()
-    return (adminData.users?.length ?? 0) > 0
+    // Verificar que el email retornado coincida exactamente (la API a veces retorna otros usuarios)
+    const exactMatch = (adminData.users ?? []).some(
+      (u: { email: string }) => u.email?.toLowerCase() === lower
+    )
+    return exactMatch
   } catch {
     return false
   }

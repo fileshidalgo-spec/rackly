@@ -409,14 +409,19 @@ function RacklyApp() {
                         {(expandMovs ? movsFiltrados : movsFiltrados.slice(0, 5)).map((m, idx) => (
                           <TableRow key={m.id} className="group hover:bg-indigo-50/30 transition-colors">
                             <TableCell>
-                              <Badge className={
-                                m.tipo === 'ingreso' ? 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white border-0 shadow-sm' :
-                                m.tipo === 'salida' ? 'bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white border-0 shadow-sm' :
-                                m.tipo === 'devolucion' ? 'bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white border-0 shadow-sm' :
-                                'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white border-0 shadow-sm'
-                              }>
-                                {m.tipo}
-                              </Badge>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <Badge className={
+                                  m.tipo === 'ingreso' ? 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white border-0 shadow-sm' :
+                                  m.tipo === 'salida' ? 'bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white border-0 shadow-sm' :
+                                  m.tipo === 'devolucion' ? 'bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white border-0 shadow-sm' :
+                                  'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white border-0 shadow-sm'
+                                }>
+                                  {m.tipo}
+                                </Badge>
+                                {m.codigoInc && (
+                                  <Badge className="bg-gradient-to-r from-rose-500 to-pink-600 text-white border-0 shadow-sm text-[10px] px-1.5 py-0">INC</Badge>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell className="font-medium text-slate-700">{m.bloque}</TableCell>
                             <TableCell className="font-medium text-slate-700">{m.torre}</TableCell>

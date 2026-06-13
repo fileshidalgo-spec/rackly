@@ -109,6 +109,29 @@ async function addMovimientoFallback(
   uuidSync?: string
 ): Promise<Movimiento[]> {
   console.warn('[addMovimiento] RPC no encontrada, usando insert directo como fallback')
+
+  // ── Validación de stock negativo para salidas NORMALES (no INC) ──
+  // Las salidas normales NUNCA deben generar stock negativo.
+  // Los traslados se manejan aparte con autoajuste.
+  if (m.tipo === 'salida' && !m.codigoInc) {
+    try {
+      const currentStock = await calcularStockUbicacion(
+        m.codigo, m.bloque, m.torre, m.piso, m.posicion, true // excluir INC
+      )
+      if (m.cantidad > currentStock) {
+        const err = new Error('INSUFFICIENT_STOCK')
+        ;(err as unknown as Record<string, string>).detail =
+          `Stock actual = ${Math.round(currentStock * 1000) / 1000} ${m.un}, cantidad solicitada = ${m.cantidad} ${m.un}`
+        throw err
+      }
+    } catch (stockErr) {
+      // Si es error de stock insuficiente, propagarlo
+      if (stockErr instanceof Error && stockErr.message === 'INSUFFICIENT_STOCK') throw stockErr
+      // Si falla la consulta de stock, permitir la inserción (fallback del fallback)
+      console.warn('[addMovimientoFallback] No se pudo verificar stock, permitiendo inserción:', stockErr)
+    }
+  }
+
   const { error } = await dataClient.from('movimientos').insert({
     tipo: m.tipo,
     bloque: m.bloque,
@@ -266,10 +289,11 @@ export async function calcularStockUbicacion(
   bloque: string,
   torre: string,
   piso: string,
-  posicion: string
+  posicion: string,
+  excluirInc: boolean = false
 ): Promise<number> {
   const target = codigo.trim().toUpperCase()
-  const { data, error } = await dataClient
+  let query = dataClient
     .from('movimientos')
     .select('tipo, cantidad')
     .eq('codigo', target)
@@ -277,6 +301,11 @@ export async function calcularStockUbicacion(
     .eq('torre', torre)
     .eq('piso', piso)
     .eq('posicion', posicion)
+  // Excluir movimientos INC para validar stock normal
+  if (excluirInc) {
+    query = query.is('codigo_inc', null)
+  }
+  const { data, error } = await query
   if (error) throw error
   return (data ?? []).reduce(
     (s: number, r: { tipo: string; cantidad: unknown }) => {

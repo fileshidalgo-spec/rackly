@@ -1,0 +1,1057 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useState, useEffect } from 'react'
+     4→     4→import {
+     5→     5→  fetchMovimientos,
+     6→     6→  trasladarMovimiento,
+     7→     7→  stockEnUbicacion,
+     8→     8→  addMovimiento,
+     9→     9→  type Movimiento,
+    10→    10→  type StockEnUbicacion,
+    11→    11→} from '@/lib/rackly/kardex'
+    12→    12→import { SyncEngine } from '@/lib/rackly/sync-engine'
+    13→    13→import { calcularTurno } from '@/lib/rackly/turno'
+    14→    14→import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
+    15→    15→import { useAuth } from '@/hooks/useAuth'
+    16→    16→import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+    17→    17→import { CatalogoSearchInput } from './CatalogoSearchInput'
+    18→    18→import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
+    19→    19→
+    20→    20→import { Button } from '@/components/ui/button'
+    21→    21→import { Input } from '@/components/ui/input'
+    22→    22→import { Label } from '@/components/ui/label'
+    23→    23→import {
+    24→    24→  Select,
+    25→    25→  SelectContent,
+    26→    26→  SelectItem,
+    27→    27→  SelectTrigger,
+    28→    28→  SelectValue,
+    29→    29→} from '@/components/ui/select'
+    30→    30→import {
+    31→    31→  AlertDialog,
+    32→    32→  AlertDialogAction,
+    33→    33→  AlertDialogCancel,
+    34→    34→  AlertDialogContent,
+    35→    35→  AlertDialogDescription,
+    36→    36→  AlertDialogFooter,
+    37→    37→  AlertDialogHeader,
+    38→    38→  AlertDialogTitle,
+    39→    39→} from '@/components/ui/alert-dialog'
+    40→    40→import {
+    41→    41→  Table,
+    42→    42→  TableBody,
+    43→    43→  TableCell,
+    44→    44→  TableHead,
+    45→    45→  TableHeader,
+    46→    46→  TableRow,
+    47→    47→} from '@/components/ui/table'
+    48→    48→import { Badge } from '@/components/ui/badge'
+    49→    49→import { toast } from 'sonner'
+    50→    50→import { Loader2, ArrowRightLeft, PackageSearch, AlertTriangle, ArrowUpFromLine, Package, MapPin, TriangleAlert, CheckCircle2 } from 'lucide-react'
+    51→    51→import { formatDate, isExpired, isExpiringSoon, extractError, isInsufficientStockError } from '@/lib/utils'
+    52→    52→import type { CatalogoItem } from '@/lib/rackly/catalogo'
+    53→    53→
+    54→    54→type LocStock = {
+    55→    55→  bloque: string
+    56→    56→  torre: string
+    57→    57→  piso: string
+    58→    58→  posicion: string
+    59→    59→  stock: number
+    60→    60→  descripcion: string
+    61→    61→  un: string
+    62→    62→  fVencimiento: string
+    63→    63→  codigo: string
+    64→    64→  proveedor?: string
+    65→    65→  codigoInc?: string
+    66→    66→}
+    67→    67→
+    68→    68→export function TrasladoTab() {
+    69→    69→  const { perfil } = useAuth()
+    70→    70→
+    71→    71→  const [step, setStep] = useState<1 | 2>(1)
+    72→    72→  const [codigo, setCodigo] = useState('')
+    73→    73→  const [descripcion, setDescripcion] = useState('')
+    74→    74→  const [un, setUn] = useState('')
+    75→    75→  const [locations, setLocations] = useState<LocStock[]>([])
+    76→    76→  const [selectedOrigin, setSelectedOrigin] = useState<string | null>(null)
+    77→    77→  const [trasladoTotal, setTrasladoTotal] = useState(true)
+    78→    78→  const [destBloque, setDestBloque] = useState('')
+    79→    79→  const [destTorre, setDestTorre] = useState('')
+    80→    80→  const [destPiso, setDestPiso] = useState('')
+    81→    81→  const [destPos, setDestPos] = useState('')
+    82→    82→  const [qty, setQty] = useState('')
+    83→    83→  const [busy, setBusy] = useState(false)
+    84→    84→  const [confirm, setConfirm] = useState(false)
+    85→    85→  const [destinoOcupado, setDestinoOcupado] = useState<StockEnUbicacion[]>([])
+    86→    86→  const [salidaBusy, setSalidaBusy] = useState<string | null>(null)
+    87→    87→  const [corregirDiferencia, setCorregirDiferencia] = useState(false)
+    88→    88→
+    89→    89→  const [movs, setMovs] = useState<Movimiento[]>([])
+    90→    90→
+    91→    91→  useMovimientosRealtime(setMovs)
+    92→    92→
+    93→    93→  if (!perfil) return <div className="p-4 text-muted-foreground animate-pulse">Cargando...</div>
+    94→    94→
+    95→    95→  function handleCatalogoPick(item: CatalogoItem) {
+    96→    96→    setCodigo(item.codigo)
+    97→    97→    setDescripcion(item.descripcion)
+    98→    98→    setUn(item.un)
+    99→    99→    // Find locations with stock
+   100→   100→    const code = item.codigo.toUpperCase()
+   101→   101→    const locMap = new Map<string, LocStock>()
+   102→   102→    const relevant = movs.filter((m) => m.codigo === code)
+   103→   103→    for (const m of relevant) {
+   104→   104→      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
+   105→   105→      const current = locMap.get(key)
+   106→   106→      if (current) {
+   107→   107→        current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+   108→   108→      } else {
+   109→   109→        locMap.set(key, {
+   110→   110→          bloque: m.bloque,
+   111→   111→          torre: m.torre,
+   112→   112→          piso: m.piso,
+   113→   113→          posicion: m.posicion,
+   114→   114→          stock: ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad,
+   115→   115→          descripcion: m.descripcion,
+   116→   116→          un: m.un,
+   117→   117→          fVencimiento: m.fVencimiento || '',
+   118→   118→          codigo: m.codigo,
+   119→   119→          proveedor: m.proveedor,
+   120→   120→          codigoInc: m.codigoInc || undefined,
+   121→   121→        })
+   122→   122→      }
+   123→   123→    }
+   124→   124→    // Ordenar: FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
+   125→   125→    setLocations(
+   126→   126→      Array.from(locMap.values())
+   127→   127→        .filter((l) => l.stock > 0)
+   128→   128→        .sort((a, b) => {
+   129→   129→          const aHasDate = !!a.fVencimiento
+   130→   130→          const bHasDate = !!b.fVencimiento
+   131→   131→          if (aHasDate && bHasDate) return a.fVencimiento.localeCompare(b.fVencimiento)
+   132→   132→          if (aHasDate && !bHasDate) return -1
+   133→   133→          if (!aHasDate && bHasDate) return 1
+   134→   134→          // Ambos sin fecha: ordenar por bloque, torre, piso, posición
+   135→   135→          const aB = parseInt(a.bloque, 10) || 0
+   136→   136→          const bB = parseInt(b.bloque, 10) || 0
+   137→   137→          if (aB !== bB) return aB - bB
+   138→   138→          const aT = parseInt(a.torre, 10) || 0
+   139→   139→          const bT = parseInt(b.torre, 10) || 0
+   140→   140→          if (aT !== bT) return aT - bT
+   141→   141→          const aP = parseInt(a.piso, 10) || 0
+   142→   142→          const bP = parseInt(b.piso, 10) || 0
+   143→   143→          if (aP !== bP) return aP - bP
+   144→   144→          const aPos = parseInt(a.posicion, 10) || 0
+   145→   145→          const bPos = parseInt(b.posicion, 10) || 0
+   146→   146→          return aPos - bPos
+   147→   147→        })
+   148→   148→    )
+   149→   149→    setStep(1)
+   150→   150→  }
+   151→   151→
+   152→   152→  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}||${l.codigoInc || ''}` === selectedOrigin)
+   153→   153→
+   154→   154→  const qtyNum = parseFloat(qty) || 0
+   155→   155→  const saldoRestante = origin ? origin.stock - qtyNum : 0
+   156→   156→  const excedeStock = origin ? qtyNum > origin.stock : false
+   157→   157→  const faltaStock = origin ? qtyNum > 0 && qtyNum < origin.stock : false
+   158→   158→  const diferencia = origin ? qtyNum - origin.stock : 0
+   159→   159→  // Ajuste automático: se activa cuando qty > stock (siempre), o cuando qty < stock Y el usuario elige corregir
+   160→   160→  const ajusteActivo = excedeStock || (faltaStock && corregirDiferencia)
+   161→   161→
+   162→   162→  async function handleConfirm() {
+   163→   163→    if (!origin) return
+   164→   164→    const destKey = `${destBloque}-${destTorre}-${destPiso || '1'}-${destPos}`
+   165→   165→    if (selectedOrigin === destKey || selectedOrigin === `${destKey}||`) {
+   166→   166→      toast.error('El destino no puede ser igual al origen')
+   167→   167→      return
+   168→   168→    }
+   169→   169→    if (qtyNum <= 0) {
+   170→   170→      toast.error('Cantidad inválida')
+   171→   171→      return
+   172→   172→    }
+   173→   173→    // Verificar si destino está ocupado
+   174→   174→    try {
+   175→   175→      const destStock = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
+   176→   176→      setDestinoOcupado(destStock)
+   177→   177→    } catch {
+   178→   178→      setDestinoOcupado([])
+   179→   179→    }
+   180→   180→    setConfirm(true)
+   181→   181→  }
+   182→   182→
+   183→   183→  // Dar salida a un producto desde el alerta de destino ocupado
+   184→   184→  async function handleSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
+   185→   185→    if (!perfil) return
+   186→   186→    setSalidaBusy(stockItem.codigo)
+   187→   187→    try {
+   188→   188→      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+   189→   189→        tipo: 'salida',
+   190→   190→        bloque: destBloque,
+   191→   191→        torre: destTorre,
+   192→   192→        piso: destPiso || '1',
+   193→   193→        posicion: destPos,
+   194→   194→        codigo: stockItem.codigo,
+   195→   195→        descripcion: stockItem.descripcion,
+   196→   196→        un: stockItem.un,
+   197→   197→        cantidad: stockItem.stock,
+   198→   198→        fVencimiento: stockItem.fVencimiento ?? '',
+   199→   199→        turno: calcularTurno(),
+   200→   200→        usuarioId: perfil.id,
+   201→   201→        usuarioNombre: perfil.nombre,
+   202→   202→        usuarioCorreo: perfil.correo,
+   203→   203→        proveedor: stockItem.proveedor,
+   204→   204→      })
+   205→   205→      if (wasOffline) {
+   206→   206→        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
+   207→   207→          description: 'Se sincronizará al reconectarse',
+   208→   208→          duration: 5000,
+   209→   209→        })
+   210→   210→      } else {
+   211→   211→        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
+   212→   212→      }
+   213→   213→      if (!wasOffline) {
+   214→   214→        setMovs(await fetchMovimientos())
+   215→   215→        // Refrescar datos del alerta
+   216→   216→        const updated = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
+   217→   217→        setDestinoOcupado(updated)
+   218→   218→      }
+   219→   219→    } catch (err: unknown) {
+   220→   220→      if (isInsufficientStockError(err)) {
+   221→   221→        toast.error('Stock insuficiente', {
+   222→   222→          description: 'Otro usuario pudo haber modificado el stock mientras tú operabas. Los datos se han actualizado.',
+   223→   223→          duration: 6000,
+   224→   224→        })
+   225→   225→      } else {
+   226→   226→        toast.error('Error al dar salida', { description: extractError(err) })
+   227→   227→      }
+   228→   228→    } finally {
+   229→   229→      setSalidaBusy(null)
+   230→   230→    }
+   231→   231→  }
+   232→   232→
+   233→   233→  async function doTraslado() {
+   234→   234→    if (!origin || !perfil) return
+   235→   235→    const cantidadFinal = qtyNum || origin.stock
+   236→   236→    setBusy(true)
+   237→   237→    try {
+   238→   238→      const { movs, wasOffline } = await SyncEngine.offlineAwareTraslado({
+   239→   239→        codigo: origin.codigo,
+   240→   240→        descripcion: origin.descripcion,
+   241→   241→        un: origin.un,
+   242→   242→        cantidad: cantidadFinal,
+   243→   243→        origen: {
+   244→   244→          bloque: origin.bloque,
+   245→   245→          torre: origin.torre,
+   246→   246→          piso: origin.piso,
+   247→   247→          posicion: origin.posicion,
+   248→   248→        },
+   249→   249→        destino: {
+   250→   250→          bloque: destBloque,
+   251→   251→          torre: destTorre,
+   252→   252→          piso: destPiso || '1',
+   253→   253→          posicion: destPos,
+   254→   254→        },
+   255→   255→        turno: calcularTurno(),
+   256→   256→        usuarioId: perfil.id,
+   257→   257→        usuarioNombre: perfil.nombre,
+   258→   258→        usuarioCorreo: perfil.correo,
+   259→   259→        fVencimiento: origin.fVencimiento,
+   260→   260→        proveedor: origin.proveedor,
+   261→   261→        codigoInc: origin.codigoInc,
+   262→   262→        // Se genera ajuste automático solo si aplica: qty > stock o (qty < stock y el usuario elige corregir)
+   263→   263→        cantidadAjuste: ajusteActivo ? diferencia : undefined,
+   264→   264→      })
+   265→   265→      if (wasOffline) {
+   266→   266→        toast.success('Traslado guardado (offline)', {
+   267→   267→          description: 'Se sincronizará al reconectarse',
+   268→   268→          duration: 5000,
+   269→   269→        })
+   270→   270→      } else {
+   271→   271→        toast.success('Traslado registrado')
+   272→   272→        if (ajusteActivo) {
+   273→   273→          if (excedeStock) {
+   274→   274→            toast.info(`Ajuste automático: +${Math.abs(diferencia)} ${origin.un} ingreso en origen (faltaba stock registrado)`, { duration: 6000 })
+   275→   275→          } else if (corregirDiferencia) {
+   276→   276→            toast.info(`Ajuste automático: -${Math.abs(diferencia)} ${origin.un} salida en origen (se deja posición en 0)`, { duration: 6000 })
+   277→   277→          }
+   278→   278→        }
+   279→   279→      }
+   280→   280→      if (faltaStock && !corregirDiferencia) {
+   281→   281→        toast.info(`Queda un saldo de ${saldoRestante} ${origin.un} en la ubicación de origen`, { duration: 6000 })
+   282→   282→      }
+   283→   283→      setMovs(movs)
+   284→   284→      resetForm()
+   285→   285→    } catch (err: unknown) {
+   286→   286→      if (isInsufficientStockError(err)) {
+   287→   287→        toast.error('Stock insuficiente en origen', {
+   288→   288→          description: 'Otro usuario pudo haber modificado el stock mientras tú operabas. Los datos se han actualizado.',
+   289→   289→          duration: 6000,
+   290→   290→        })
+   291→   291→      } else {
+   292→   292→        toast.error('Error al trasladar', { description: extractError(err) })
+   293→   293→      }
+   294→   294→    } finally {
+   295→   295→      setBusy(false)
+   296→   296→      setConfirm(false)
+   297→   297→      setDestinoOcupado([])
+   298→   298→    }
+   299→   299→  }
+   300→   300→
+   301→   301→  function resetForm() {
+   302→   302→    setCodigo('')
+   303→   303→    setDescripcion('')
+   304→   304→    setUn('')
+   305→   305→    setLocations([])
+   306→   306→    setSelectedOrigin(null)
+   307→   307→    setTrasladoTotal(true)
+   308→   308→    setCorregirDiferencia(false)
+   309→   309→    setDestBloque('')
+   310→   310→    setDestTorre('')
+   311→   311→    setDestPiso('')
+   312→   312→    setDestPos('')
+   313→   313→    setQty('')
+   314→   314→    setStep(1)
+   315→   315→  }
+   316→   316→
+   317→   317→  const destTorres = torresDeBloque(destBloque)
+   318→   318→  const destPositions = posicionesDeBloque(destBloque)
+   319→   319→  const destPisoSeleccionado = destPiso || '1'
+   320→   320→
+   321→   321→  return (
+   322→   322→    <div className="space-y-4">
+   323→   323→      <p className="text-sm text-muted-foreground">
+   324→   324→        Busca un código, elige la ubicación de origen y destino. Confirma el traslado.
+   325→   325→      </p>
+   326→   326→
+   327→   327→      <CatalogoSearchInput
+   328→   328→        onPick={handleCatalogoPick}
+   329→   329→        value={codigo}
+   330→   330→        onChange={(v) => {
+   331→   331→          setCodigo(v)
+   332→   332→          const cat = findCatalogoByCodigo(v)
+   333→   333→          if (cat) handleCatalogoPick(cat)
+   334→   334→        }}
+   335→   335→      />
+   336→   336→
+   337→   337→      {/* Info del producto buscado */}
+   338→   338→      {codigo && descripcion && (
+   339→   339→        <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 p-3">
+   340→   340→          <div className="flex items-start gap-3">
+   341→   341→            <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+   342→   342→              <PackageSearch className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+   343→   343→            </div>
+   344→   344→            <div className="flex-1 min-w-0">
+   345→   345→              <div className="flex items-center gap-2 flex-wrap">
+   346→   346→                <span className="font-mono font-bold text-sm text-blue-800 dark:text-blue-300">{codigo}</span>
+   347→   347→                <span className="text-[10px] text-muted-foreground bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{un || '—'}</span>
+   348→   348→                {locations[0]?.proveedor && (
+   349→   349→                  <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold text-[10px]">
+   350→   350→                    {locations[0].proveedor}
+   351→   351→                  </Badge>
+   352→   352→                )}
+   353→   353→              </div>
+   354→   354→              <p className="text-xs text-muted-foreground truncate mt-0.5">{descripcion}</p>
+   355→   355→            </div>
+   356→   356→            <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-700 dark:border-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-semibold">
+   357→   357→              {locations.length} ubicacion{locations.length !== 1 ? 'es' : ''}
+   358→   358→            </Badge>
+   359→   359→          </div>
+   360→   360→        </div>
+   361→   361→      )}
+   362→   362→
+   363→   363→      {locations.length > 0 && (
+   364→   364→        <>
+   365→   365→          <div className="flex items-center gap-2">
+   366→   366→            <p className="text-sm font-semibold">1. Selecciona ubicación de origen:</p>
+   367→   367→            <p className="text-xs text-muted-foreground">y elige el tipo de traslado</p>
+   368→   368→          </div>
+   369→   369→          {/* ── Mobile: Cards con TODA la info visible ── */}
+   370→   370→          <div className="sm:hidden space-y-3">
+   371→   371→            {locations.map((loc) => {
+   372→   372→              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}||${loc.codigoInc || ''}`
+   373→   373→              const isSelected = selectedOrigin === key
+   374→   374→              return (
+   375→   375→                <div
+   376→   376→                  key={key}
+   377→   377→                  onClick={() => {
+   378→   378→                    setSelectedOrigin(key)
+   379→   379→                    setTrasladoTotal(true)
+   380→   380→                    setQty(String(loc.stock))
+   381→   381→                    setStep(2)
+   382→   382→                  }}
+   383→   383→                  className={`rounded-xl border-2 p-3 space-y-2.5 cursor-pointer transition-all duration-200 ${
+   384→   384→                    isSelected
+   385→   385→                      ? 'border-blue-500 bg-blue-50/60 dark:bg-blue-950/30 shadow-md shadow-blue-500/10'
+   386→   386→                      : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 hover:border-blue-300 dark:hover:border-blue-700/50 hover:shadow-sm'
+   387→   387→                  }`}
+   388→   388→                >
+   389→   389→                  {/* Fila 1: Ubicación completa + Stock */}
+   390→   390→                  <div className="flex items-center justify-between">
+   391→   391→                    <div className="flex items-center gap-1.5">
+   392→   392→                      <MapPin className="h-3.5 w-3.5 text-blue-500" />
+   393→   393→                      <span className="font-mono font-bold text-sm text-slate-800 dark:text-slate-200">
+   394→   394→                        B{loc.bloque} · T{loc.torre} · P{loc.piso} · Pos {loc.posicion}
+   395→   395→                      </span>
+   396→   396→                    </div>
+   397→   397→                    <div className="flex items-center gap-1.5">
+   398→   398→                      <span className="text-[10px] text-muted-foreground bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded font-medium">{loc.un}</span>
+   399→   399→                      <span className="font-bold text-base text-slate-800 dark:text-slate-100">{loc.stock}</span>
+   400→   400→                    </div>
+   401→   401→                  </div>
+   402→   402→
+   403→   403→                  {/* Fila 2: Vencimiento + Proveedor */}
+   404→   404→                  <div className="flex items-center gap-2 flex-wrap">
+   405→   405→                    {loc.fVencimiento ? (
+   406→   406→                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+   407→   407→                        isExpired(loc.fVencimiento)
+   408→   408→                          ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800'
+   409→   409→                          : isExpiringSoon(loc.fVencimiento, 15)
+   410→   410→                            ? 'bg-orange-50 text-orange-600 border-orange-200 dark:bg-orange-950/40 dark:text-orange-400 dark:border-orange-800'
+   411→   411→                            : isExpiringSoon(loc.fVencimiento, 30)
+   412→   412→                              ? 'bg-sky-50 text-sky-600 border-sky-200 dark:bg-sky-950/40 dark:text-sky-400 dark:border-sky-800'
+   413→   413→                              : 'bg-slate-50 text-muted-foreground border-slate-200 dark:bg-slate-800 dark:border-slate-600'
+   414→   414→                      }`}>
+   415→   415→                        Venc: {formatDate(loc.fVencimiento)}
+   416→   416→                      </span>
+   417→   417→                    ) : null}
+   418→   418→                    {loc.proveedor ? (
+   419→   419→                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800">
+   420→   420→                        {loc.proveedor}
+   421→   421→                      </span>
+   422→   422→                    ) : null}
+   423→   423→                    {loc.codigoInc && (
+   424→   424→                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 flex items-center gap-0.5">
+   425→   425→                        <AlertTriangle className="w-3 h-3" /> {loc.codigoInc}
+   426→   426→                      </span>
+   427→   427→                    )}
+   428→   428→                    {!loc.fVencimiento && !loc.proveedor && !loc.codigoInc && (
+   429→   429→                      <span className="text-[10px] text-slate-400">Sin vencimiento · Sin proveedor</span>
+   430→   430→                    )}
+   431→   431→                  </div>
+   432→   432→
+   433→   433→                  {/* Botones de acción */}
+   434→   434→                  {isSelected ? (
+   435→   435→                    <div className="flex items-center justify-center gap-1.5 pt-1 text-xs font-bold text-blue-700 dark:text-blue-400">
+   436→   436→                      <CheckCircle2 className="h-3.5 w-3.5" />
+   437→   437→                      <span>{trasladoTotal ? 'Traslado Total' : 'Traslado Parcial'}</span>
+   438→   438→                    </div>
+   439→   439→                  ) : (
+   440→   440→                    <div className="flex gap-2 pt-0.5">
+   441→   441→                      <button
+   442→   442→                        onClick={(e) => {
+   443→   443→                          e.stopPropagation()
+   444→   444→                          setSelectedOrigin(key)
+   445→   445→                          setTrasladoTotal(true)
+   446→   446→                          setQty(String(loc.stock))
+   447→   447→                          setStep(2)
+   448→   448→                        }}
+   449→   449→                        className="flex-1 h-9 flex items-center justify-center gap-1.5 rounded-lg text-xs font-bold border-2 border-emerald-200 text-emerald-700 bg-emerald-50/50 hover:bg-emerald-100 active:bg-emerald-200 dark:border-emerald-700 dark:text-emerald-400 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50 transition-colors"
+   450→   450→                      >
+   451→   451→                        <Package className="h-3 w-3" />
+   452→   452→                        Traslado Total
+   453→   453→                      </button>
+   454→   454→                      <button
+   455→   455→                        onClick={(e) => {
+   456→   456→                          e.stopPropagation()
+   457→   457→                          setSelectedOrigin(key)
+   458→   458→                          setTrasladoTotal(false)
+   459→   459→                          setQty('')
+   460→   460→                          setStep(2)
+   461→   461→                        }}
+   462→   462→                        className="flex-1 h-9 flex items-center justify-center gap-1.5 rounded-lg text-xs font-bold border-2 border-sky-200 text-sky-700 bg-sky-50/50 hover:bg-sky-100 active:bg-sky-200 dark:border-sky-700 dark:text-sky-400 dark:bg-sky-950/30 dark:hover:bg-sky-950/50 transition-colors"
+   463→   463→                      >
+   464→   464→                        <ArrowUpFromLine className="h-3 w-3" />
+   465→   465→                        Traslado Parcial
+   466→   466→                      </button>
+   467→   467→                    </div>
+   468→   468→                  )}
+   469→   469→                </div>
+   470→   470→              )
+   471→   471→            })}
+   472→   472→          </div>
+   473→   473→
+   474→   474→          {/* ── Desktop: Tabla con scroll horizontal ── */}
+   475→   475→          <div className="hidden sm:block overflow-x-auto rounded-xl border border-slate-200/60">
+   476→   476→            <Table className="min-w-[700px]">
+   477→   477→              <TableHeader>
+   478→   478→                <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+   479→   479→                  <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Bloque</TableHead>
+   480→   480→                  <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Torre</TableHead>
+   481→   481→                  <TableHead className="font-semibold text-xs uppercase tracking-wider text-center hidden sm:table-cell">Piso</TableHead>
+   482→   482→                  <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Pos.</TableHead>
+   483→   483→                  <TableHead className="font-semibold text-xs uppercase tracking-wider text-right">Stock</TableHead>
+   484→   484→                  <TableHead className="font-semibold text-xs uppercase tracking-wider hidden sm:table-cell">UN</TableHead>
+   485→   485→                  <TableHead className="font-semibold text-xs uppercase tracking-wider hidden md:table-cell">F. Vencimiento</TableHead>
+   486→   486→                  <TableHead className="font-semibold text-xs uppercase tracking-wider hidden lg:table-cell">Proveedor</TableHead>
+   487→   487→                  <TableHead className="font-semibold text-xs uppercase tracking-wider hidden lg:table-cell">INC</TableHead>
+   488→   488→                  <TableHead className="font-semibold text-xs uppercase tracking-wider text-center">Acción</TableHead>
+   489→   489→                </TableRow>
+   490→   490→              </TableHeader>
+   491→   491→              <TableBody>
+   492→   492→                {locations.map((loc) => {
+   493→   493→                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}||${loc.codigoInc || ''}`
+   494→   494→                  const isSelected = selectedOrigin === key
+   495→   495→                  return (
+   496→   496→                    <TableRow
+   497→   497→                      key={key}
+   498→   498→                      className={`cursor-pointer transition-colors ${
+   499→   499→                        isSelected
+   500→   500→                          ? 'bg-blue-50/60 dark:bg-blue-950/30 border-l-4 border-l-blue-500'
+   501→   501→                          : 'hover:bg-slate-50 dark:hover:bg-slate-900/40'
+   502→   502→                      }`}
+   503→   503→                      onClick={() => {
+   504→   504→                        setSelectedOrigin(key)
+   505→   505→                        setTrasladoTotal(true)
+   506→   506→                        setQty(String(loc.stock))
+   507→   507→                        setStep(2)
+   508→   508→                      }}
+   509→   509→                    >
+   510→   510→                      <TableCell className="text-center font-medium text-slate-700">{loc.bloque}</TableCell>
+   511→   511→                      <TableCell className="text-center font-medium text-slate-700">{loc.torre}</TableCell>
+   512→   512→                      <TableCell className="text-center font-medium text-slate-700 hidden sm:table-cell">{loc.piso}</TableCell>
+   513→   513→                      <TableCell className="text-center font-medium text-slate-700">{loc.posicion}</TableCell>
+   514→   514→                      <TableCell className="text-right font-bold text-slate-800">{loc.stock}</TableCell>
+   515→   515→                      <TableCell className="hidden sm:table-cell">
+   516→   516→                        <Badge variant="secondary" className="font-medium text-xs">{loc.un}</Badge>
+   517→   517→                      </TableCell>
+   518→   518→                      <TableCell className="hidden md:table-cell">
+   519→   519→                        {loc.fVencimiento ? (
+   520→   520→                          <span className={`text-sm font-medium ${
+   521→   521→                            isExpired(loc.fVencimiento)
+   522→   522→                              ? 'text-red-600 dark:text-red-400 font-semibold'
+   523→   523→                              : isExpiringSoon(loc.fVencimiento, 15)
+   524→   524→                                ? 'text-orange-600 dark:text-orange-400'
+   525→   525→                                : isExpiringSoon(loc.fVencimiento, 30)
+   526→   526→                                  ? 'text-sky-600 dark:text-sky-400'
+   527→   527→                                  : 'text-muted-foreground'
+   528→   528→                          }`}>{formatDate(loc.fVencimiento)}</span>
+   529→   529→                        ) : (
+   530→   530→                          <span className="text-xs text-muted-foreground">—</span>
+   531→   531→                        )}
+   532→   532→                      </TableCell>
+   533→   533→                      <TableCell className="hidden lg:table-cell">
+   534→   534→                        {loc.proveedor ? (
+   535→   535→                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold text-xs">
+   536→   536→                            {loc.proveedor}
+   537→   537→                          </Badge>
+   538→   538→                        ) : (
+   539→   539→                          <span className="text-xs text-muted-foreground">—</span>
+   540→   540→                        )}
+   541→   541→                      </TableCell>
+   542→   542→                      <TableCell className="hidden lg:table-cell">
+   543→   543→                        {loc.codigoInc ? (
+   544→   544→                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 font-semibold text-xs">
+   545→   545→                            <AlertTriangle className="w-3 h-3 mr-0.5" /> {loc.codigoInc}
+   546→   546→                          </Badge>
+   547→   547→                        ) : (
+   548→   548→                          <span className="text-xs text-muted-foreground">—</span>
+   549→   549→                        )}
+   550→   550→                      </TableCell>
+   551→   551→                      <TableCell className="text-center">
+   552→   552→                        {isSelected ? (
+   553→   553→                          <div className="flex items-center justify-center gap-1 text-xs font-bold text-blue-700 dark:text-blue-400">
+   554→   554→                            <CheckCircle2 className="h-3.5 w-3.5" />
+   555→   555→                            <span>{trasladoTotal ? 'Total' : 'Parcial'}</span>
+   556→   556→                          </div>
+   557→   557→                        ) : (
+   558→   558→                          <div className="flex items-center justify-center gap-1">
+   559→   559→                            <Button
+   560→   560→                              size="sm"
+   561→   561→                              variant="outline"
+   562→   562→                              className="h-8 px-2.5 text-[11px] font-semibold gap-1 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/50"
+   563→   563→                              onClick={(e) => {
+   564→   564→                                e.stopPropagation()
+   565→   565→                                setSelectedOrigin(key)
+   566→   566→                                setTrasladoTotal(true)
+   567→   567→                                setQty(String(loc.stock))
+   568→   568→                                setStep(2)
+   569→   569→                              }}
+   570→   570→                            >
+   571→   571→                              <Package className="h-3 w-3" />
+   572→   572→                              Todo
+   573→   573→                            </Button>
+   574→   574→                            <Button
+   575→   575→                              size="sm"
+   576→   576→                              variant="outline"
+   577→   577→                              className="h-8 px-2.5 text-[11px] font-semibold gap-1 border-sky-200 text-sky-700 hover:bg-sky-50 hover:text-sky-800 dark:border-sky-800 dark:text-sky-400 dark:hover:bg-sky-950/50"
+   578→   578→                              onClick={(e) => {
+   579→   579→                                e.stopPropagation()
+   580→   580→                                setSelectedOrigin(key)
+   581→   581→                                setTrasladoTotal(false)
+   582→   582→                                setQty('')
+   583→   583→                                setStep(2)
+   584→   584→                              }}
+   585→   585→                            >
+   586→   586→                              <ArrowUpFromLine className="h-3 w-3" />
+   587→   587→                              Parcial
+   588→   588→                            </Button>
+   589→   589→                          </div>
+   590→   590→                        )}
+   591→   591→                      </TableCell>
+   592→   592→                    </TableRow>
+   593→   593→                  )
+   594→   594→                })}
+   595→   595→              </TableBody>
+   596→   596→            </Table>
+   597→   597→          </div>
+   598→   598→          <p className="text-xs text-muted-foreground text-center">
+   599→   599→            Haz clic en una fila o pulsa "Seleccionar" para elegir el origen del traslado.
+   600→   600→          </p>
+   601→   601→        </>
+   602→   602→      )}
+   603→   603→
+   604→   604→      {origin && step === 2 && (
+   605→   605→        <div className="space-y-3 p-4 border rounded-lg">
+   606→   606→          {/* Indicador del tipo de traslado seleccionado */}
+   607→   607→          <div className="flex items-center justify-between">
+   608→   608→            <p className="text-sm font-medium">2. Elige ubicación de destino:</p>
+   609→   609→            <div className="flex items-center gap-1.5">
+   610→   610→              <button
+   611→   611→                onClick={() => { setTrasladoTotal(true); setQty(String(origin.stock)) }}
+   612→   612→                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+   613→   613→                  trasladoTotal
+   614→   614→                    ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400 shadow-sm'
+   615→   615→                    : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700'
+   616→   616→                }`}
+   617→   617→              >
+   618→   618→                <Package className="h-3 w-3 inline-block mr-1 -mt-0.5" />
+   619→   619→                Traslado Total
+   620→   620→              </button>
+   621→   621→              <button
+   622→   622→                onClick={() => { setTrasladoTotal(false); setQty('') }}
+   623→   623→                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+   624→   624→                  !trasladoTotal
+   625→   625→                    ? 'bg-sky-100 text-sky-800 border-2 border-sky-400 shadow-sm dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-600'
+   626→   626→                    : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700'
+   627→   627→                }`}
+   628→   628→              >
+   629→   629→                <ArrowUpFromLine className="h-3 w-3 inline-block mr-1 -mt-0.5" />
+   630→   630→                Traslado Parcial
+   631→   631→              </button>
+   632→   632→            </div>
+   633→   633→          </div>
+   634→   634→
+   635→   635→          {/* Info del tipo de traslado */}
+   636→   636→          <div className={`rounded-lg border p-2.5 flex items-center gap-2.5 ${
+   637→   637→            trasladoTotal
+   638→   638→              ? 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/20'
+   639→   639→              : 'border-sky-200 bg-sky-50/70 dark:border-sky-800 dark:bg-sky-950/20'
+   640→   640→          }`}>
+   641→   641→            {trasladoTotal ? (
+   642→   642→              <>
+   643→   643→                <div className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
+   644→   644→                  <Package className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+   645→   645→                </div>
+   646→   646→                <p className="text-xs text-emerald-700 dark:text-emerald-300">
+   647→   647→                  <strong>Traslado Total:</strong> Se moverán <strong>todas las {origin.stock} {origin.un}</strong> al destino.
+   648→   648→                  La ubicación de origen quedará con <strong>stock 0</strong>.
+   649→   649→                </p>
+   650→   650→              </>
+   651→   651→            ) : (
+   652→   652→              <>
+   653→   653→                <div className="w-7 h-7 rounded-full bg-sky-100 dark:bg-sky-900/40 flex items-center justify-center shrink-0">
+   654→   654→                  <ArrowUpFromLine className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+   655→   655→                </div>
+   656→   656→                <p className="text-xs text-sky-700 dark:text-sky-300">
+   657→   657→                  <strong>Traslado Parcial:</strong> Ingresa la cantidad que deseas mover.
+   658→   658→                  El <strong>saldo restante ({origin.stock} - cantidad)</strong> se quedará en la ubicación de origen.
+   659→   659→                </p>
+   660→   660→              </>
+   661→   661→            )}
+   662→   662→          </div>
+   663→   663→          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   664→   664→            <div className="space-y-1">
+   665→   665→              <Label>Bloque</Label>
+   666→   666→              <Select value={destBloque} onValueChange={(v) => { setDestBloque(v); setDestTorre(''); setDestPos('') }}>
+   667→   667→                <SelectTrigger><SelectValue placeholder="Bloque" /></SelectTrigger>
+   668→   668→                <SelectContent>
+   669→   669→                  {BLOQUES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+   670→   670→                </SelectContent>
+   671→   671→              </Select>
+   672→   672→            </div>
+   673→   673→            <div className="space-y-1">
+   674→   674→              <Label>Torre</Label>
+   675→   675→              <Select value={destTorre} onValueChange={setDestTorre} disabled={!destBloque}>
+   676→   676→                <SelectTrigger><SelectValue placeholder="Torre" /></SelectTrigger>
+   677→   677→                <SelectContent>
+   678→   678→                  {destTorres.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+   679→   679→                </SelectContent>
+   680→   680→              </Select>
+   681→   681→            </div>
+   682→   682→            <div className="space-y-1">
+   683→   683→              <Label>Piso</Label>
+   684→   684→              <Select value={destPiso} onValueChange={setDestPiso} disabled={!destBloque}>
+   685→   685→                <SelectTrigger><SelectValue placeholder="Piso" /></SelectTrigger>
+   686→   686→                <SelectContent>
+   687→   687→                  {PISOS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+   688→   688→                </SelectContent>
+   689→   689→              </Select>
+   690→   690→            </div>
+   691→   691→            <div className="space-y-1">
+   692→   692→              <Label>Posición</Label>
+   693→   693→              <Select value={destPos} onValueChange={setDestPos} disabled={!destBloque}>
+   694→   694→                <SelectTrigger><SelectValue placeholder="Pos" /></SelectTrigger>
+   695→   695→                <SelectContent>
+   696→   696→                  {destPositions.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+   697→   697→                </SelectContent>
+   698→   698→              </Select>
+   699→   699→            </div>
+   700→   700→          </div>
+   701→   701→
+   702→   702→          <div className="space-y-1">
+   703→   703→            <Label>{trasladoTotal ? 'Cantidad a trasladar (stock total)' : 'Cantidad a trasladar'}</Label>
+   704→   704→            <div className="flex items-center gap-2">
+   705→   705→              <Input
+   706→   706→                type="number"
+   707→   707→                step="any"
+   708→   708→                value={qty}
+   709→   709→                onChange={(e) => { setQty(e.target.value); setCorregirDiferencia(false) }}
+   710→   710→                disabled={trasladoTotal}
+   711→   711→                placeholder={`Stock disponible: ${origin.stock} ${origin.un}`}
+   712→   712→                className={trasladoTotal ? 'bg-emerald-50 dark:bg-emerald-950/20 font-bold' : ''}
+   713→   713→              />
+   714→   714→              {!trasladoTotal && (
+   715→   715→                <Button
+   716→   716→                  type="button"
+   717→   717→                  variant="outline"
+   718→   718→                  size="sm"
+   719→   719→                  onClick={() => { setQty(String(origin.stock)); setCorregirDiferencia(false) }}
+   720→   720→                  className="shrink-0 h-9 px-2.5 text-xs font-semibold border-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900"
+   721→   721→                >
+   722→   722→                  Max: {origin.stock}
+   723→   723→                </Button>
+   724→   724→              )}
+   725→   725→            </div>
+   726→   726→
+   727→   727→            {/* Indicadores debajo del input de cantidad */}
+   728→   728→            {trasladoTotal && (
+   729→   729→              <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+   730→   730→                Se trasladará todo el stock. La ubicación quedará vacía (0).
+   731→   731→              </p>
+   732→   732→            )}
+   733→   733→
+   734→   734→            {!trasladoTotal && qtyNum > 0 && (
+   735→   735→              <div className="space-y-1.5 pt-1">
+   736→   736→                {/* Caso 1: Cantidad exacta (igual al stock) */}
+   737→   737→                {qtyNum === origin.stock && (
+   738→   738→                  <div className="flex items-center gap-2 text-xs">
+   739→   739→                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+   740→   740→                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+   741→   741→                      Cantidad exacta — Se trasladará todo el stock. Origen quedará en 0.
+   742→   742→                    </span>
+   743→   743→                  </div>
+   744→   744→                )}
+   745→   745→
+   746→   746→                {/* Caso 2: Cantidad menor al stock — OPCIÓN: dejar saldo o corregir */}
+   747→   747→                {faltaStock && (
+   748→   748→                  <div className="rounded-lg border border-sky-200 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/20 p-2.5 space-y-2">
+   749→   749→                    <p className="text-xs text-sky-700 dark:text-sky-300 font-medium">
+   750→   750→                      Cantidad menor al stock ({qtyNum} de {origin.stock} {origin.un}).
+   751→   751→                      Diferencia: <strong>{saldoRestante} {origin.un}</strong>
+   752→   752→                    </p>
+   753→   753→                    <p className="text-[11px] text-muted-foreground font-medium">¿Qué deseas hacer con la diferencia?</p>
+   754→   754→                    <div className="flex items-center gap-2">
+   755→   755→                      <button
+   756→   756→                        type="button"
+   757→   757→                        onClick={() => setCorregirDiferencia(false)}
+   758→   758→                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border-2 ${
+   759→   759→                          !corregirDiferencia
+   760→   760→                            ? 'bg-sky-100 text-sky-800 border-sky-400 shadow-sm dark:bg-sky-900/50 dark:text-sky-200 dark:border-sky-500'
+   761→   761→                            : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700'
+   762→   762→                        }`}
+   763→   763→                      >
+   764→   764→                        <Package className="h-3 w-3" />
+   765→   765→                        Dejar saldo
+   766→   766→                      </button>
+   767→   767→                      <button
+   768→   768→                        type="button"
+   769→   769→                        onClick={() => setCorregirDiferencia(true)}
+   770→   770→                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border-2 ${
+   771→   771→                          corregirDiferencia
+   772→   772→                            ? 'bg-orange-100 text-orange-800 border-orange-400 shadow-sm dark:bg-orange-900/40 dark:text-orange-200 dark:border-orange-500'
+   773→   773→                            : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700'
+   774→   774→                        }`}
+   775→   775→                      >
+   776→   776→                        <ArrowUpFromLine className="h-3 w-3" />
+   777→   777→                        Corregir (salida)
+   778→   778→                      </button>
+   779→   779→                    </div>
+   780→   780→                    {!corregirDiferencia ? (
+   781→   781→                      <p className="text-[11px] text-sky-600/80 dark:text-sky-400/80 italic">
+   782→   782→                        <Package className="h-3 w-3 inline-block -mt-0.5 mr-0.5" />
+   783→   783→                        La posición de origen quedará con un <strong>saldo de {saldoRestante} {origin.un}</strong>.
+   784→   784→                      </p>
+   785→   785→                    ) : (
+   786→   786→                      <div className="rounded-md border border-orange-200 bg-orange-50/80 dark:border-orange-800 dark:bg-orange-950/30 p-2">
+   787→   787→                        <p className="text-[11px] text-orange-700 dark:text-orange-300">
+   788→   788→                          <AlertTriangle className="h-3 w-3 inline-block -mt-0.5 mr-0.5" />
+   789→   789→                          Se registrará una <strong>salida de ajuste de {saldoRestante} {origin.un}</strong> en el origen.
+   790→   790→                          La posición quedará en <strong>0</strong>. Útil cuando el producto físico ya no está ahí.
+   791→   791→                        </p>
+   792→   792→                      </div>
+   793→   793→                    )}
+   794→   794→                  </div>
+   795→   795→                )}
+   796→   796→
+   797→   797→                {/* Caso 3: Cantidad mayor al stock — SIEMPRE auto-ajusta con ingreso */}
+   798→   798→                {excedeStock && (
+   799→   799→                  <div className="rounded-lg border border-amber-200 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/20 p-2.5 space-y-1.5">
+   800→   800→                    <div className="flex items-start gap-2">
+   801→   801→                      <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+   802→   802→                      <div className="text-xs text-amber-700 dark:text-amber-300 space-y-1">
+   803→   803→                        <p className="font-medium">
+   804→   804→                          Cantidad mayor al stock registrado ({qtyNum} de {origin.stock} {origin.un}).
+   805→   805→                        </p>
+   806→   806→                        <p>
+   807→   807→                          Diferencia: <strong>+{Math.abs(diferencia)} {origin.un}</strong> (faltaba en el sistema)
+   808→   808→                        </p>
+   809→   809→                        <p className="text-[11px] opacity-90">
+   810→   810→                          Se registrará un <strong>ingreso de ajuste de {Math.abs(diferencia)} {origin.un}</strong> en el origen
+   811→   811→                          para cubrir lo que falta. La posición quedará en <strong>0</strong>. Útil cuando un operador dejó
+   812→   812→                          saldo adicional no registrado.
+   813→   813→                        </p>
+   814→   814→                      </div>
+   815→   815→                    </div>
+   816→   816→                    <div className="flex items-center gap-3 text-[11px] font-semibold pt-0.5">
+   817→   817→                      <Badge variant="outline" className="border-amber-300 text-amber-700 dark:text-amber-300">
+   818→   818→                        Origen: {origin.stock} +{Math.abs(diferencia)} = {qtyNum} {origin.un}
+   819→   819→                      </Badge>
+   820→   820→                      <Badge variant="outline" className="border-blue-300 text-blue-700 dark:text-blue-300">
+   821→   821→                        Destino: +{qtyNum} {origin.un}
+   822→   822→                      </Badge>
+   823→   823→                    </div>
+   824→   824→                  </div>
+   825→   825→                )}
+   826→   826→              </div>
+   827→   827→            )}
+   828→   828→          </div>
+   829→   829→
+   830→   830→          <Button onClick={handleConfirm} disabled={!destBloque || !destTorre || !destPiso || !destPos || qtyNum <= 0} className="gap-2">
+   831→   831→            <ArrowRightLeft className="h-4 w-4" />
+   832→   832→            Confirmar traslado
+   833→   833→          </Button>
+   834→   834→        </div>
+   835→   835→      )}
+   836→   836→
+   837→   837→      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+   838→   838→        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+   839→   839→          {/* Header con gradiente */}
+   840→   840→          <div className={`px-4 sm:px-6 py-5 text-white shrink-0 ${
+   841→   841→            destinoOcupado.length > 0
+   842→   842→              ? 'bg-gradient-to-r from-orange-500 via-red-500 to-red-600'
+   843→   843→              : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600'
+   844→   844→          }`}>
+   845→   845→            <div className="flex items-center gap-3">
+   846→   846→              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+   847→   847→                {destinoOcupado.length > 0 ? (
+   848→   848→                  <TriangleAlert className="h-6 w-6 text-white" />
+   849→   849→                ) : (
+   850→   850→                  <ArrowRightLeft className="h-6 w-6 text-white" />
+   851→   851→                )}
+   852→   852→              </div>
+   853→   853→              <div>
+   854→   854→                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+   855→   855→                  {destinoOcupado.length > 0 ? 'Destino Ocupado' : 'Confirmar Traslado'}
+   856→   856→                </AlertDialogTitle>
+   857→   857→                <AlertDialogDescription className={`text-sm mt-0.5 ${
+   858→   858→                  destinoOcupado.length > 0 ? 'text-orange-100' : 'text-blue-100'
+   859→   859→                }`}>
+   860→   860→                  {destinoOcupado.length > 0
+   861→   861→                    ? 'El destino ya tiene stock. Revisa o retira productos antes de trasladar.'
+   862→   862→                    : trasladoTotal
+   863→   863→                      ? `Traslado total de ${qty} ${origin?.un}. La ubicación de origen quedará vacía.`
+   864→   864→                      : excedeStock
+   865→   865→                        ? `Traslado de ${qty} ${origin?.un} (+${Math.abs(diferencia)} ajuste ingreso). Origen quedará en 0.`
+   866→   866→                        : corregirDiferencia
+   867→   867→                          ? `Traslado de ${qty} ${origin?.un} (-${saldoRestante} ajuste salida). Origen quedará en 0.`
+   868→   868→                          : `Traslado parcial de ${qty} ${origin?.un}. Quedará saldo de ${saldoRestante} ${origin?.un} en origen.`}
+   869→   869→                </AlertDialogDescription>
+   870→   870→              </div>
+   871→   871→            </div>
+   872→   872→          </div>
+   873→   873→
+   874→   874→          <AlertDialogDescription className="sr-only">
+   875→   875→            Confirmación de traslado
+   876→   876→          </AlertDialogDescription>
+   877→   877→
+   878→   878→          {/* Contenido scrolleable */}
+   879→   879→          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+   880→   880→            {/* Ruta origen → destino */}
+   881→   881→            <div className="px-4 sm:px-6 pt-4 pb-2">
+   882→   882→              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ruta del traslado</p>
+   883→   883→              <div className="flex items-center gap-2 text-sm bg-slate-50 dark:bg-slate-900 rounded-lg px-3 py-2.5">
+   884→   884→                <MapPin className="h-4 w-4 text-blue-500 flex-shrink-0" />
+   885→   885→                <span className="font-mono font-medium text-slate-700 dark:text-slate-300 truncate min-w-0">
+   886→   886→                  B-{origin?.bloque} T-{origin?.torre} P-{origin?.piso} Pos-{origin?.posicion}
+   887→   887→                  <span className="mx-2 text-indigo-500 font-bold">→</span>
+   888→   888→                  B-{destBloque} T-{destTorre} P-{destPisoSeleccionado} Pos-{destPos}
+   889→   889→                </span>
+   890→   890→              </div>
+   891→   891→            </div>
+   892→   892→
+   893→   893→            {/* Producto a trasladar */}
+   894→   894→            <div className="px-4 sm:px-6 pb-3">
+   895→   895→              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Producto a trasladar</p>
+   896→   896→              <div className="rounded-xl border-2 border-dashed border-blue-300 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/20 p-3 space-y-1.5">
+   897→   897→                <div className="flex items-center justify-between">
+   898→   898→                  <div className="flex items-center gap-2 min-w-0">
+   899→   899→                    <span className="font-mono font-bold text-sm text-blue-800 dark:text-blue-300">{origin?.codigo}</span>
+   900→   900→                    <span className="text-[10px] text-blue-700/60 dark:text-blue-400/60 bg-blue-100 dark:bg-blue-900/40 px-1.5 py-0.5 rounded">{origin?.un || '—'}</span>
+   901→   901→                  </div>
+   902→   902→                  <div className="flex items-center gap-1 flex-shrink-0">
+   903→   903→                    <ArrowRightLeft className="h-3.5 w-3.5 text-blue-600" />
+   904→   904→                    <span className="font-bold text-blue-700 dark:text-blue-300">{qty} {origin?.un}</span>
+   905→   905→                  </div>
+   906→   906→                </div>
+   907→   907→                {origin?.descripcion && (
+   908→   908→                  <p className="text-xs text-blue-700/70 dark:text-blue-400/70 truncate">{origin?.descripcion}</p>
+   909→   909→                )}
+   910→   910→                {origin?.fVencimiento && (
+   911→   911→                  <p className="text-[10px] text-muted-foreground">Venc: {origin?.fVencimiento}</p>
+   912→   912→                )}
+   913→   913→              </div>
+   914→   914→            </div>
+   915→   915→
+   916→   916→            {/* Tipo de traslado y saldo */}
+   917→   917→            <div className="px-4 sm:px-6 pb-3">
+   918→   918→              <div className="flex items-center gap-2 flex-wrap">
+   919→   919→                <Badge className={`text-xs font-bold ${
+   920→   920→                  trasladoTotal
+   921→   921→                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-700'
+   922→   922→                    : excedeStock
+   923→   923→                      ? 'bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700'
+   924→   924→                      : corregirDiferencia
+   925→   925→                        ? 'bg-orange-100 text-orange-800 border border-orange-300 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-700'
+   926→   926→                        : 'bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-700'
+   927→   927→                }`}>
+   928→   928→                  {trasladoTotal
+   929→   929→                    ? <><Package className="h-3 w-3 mr-1" /> Traslado Total</>
+   930→   930→                    : excedeStock
+   931→   931→                      ? <><AlertTriangle className="h-3 w-3 mr-1" /> Traslado con Ajuste (Ingreso +{Math.abs(diferencia)})</>
+   932→   932→                      : corregirDiferencia
+   933→   933→                        ? <><ArrowUpFromLine className="h-3 w-3 mr-1" /> Traslado Parcial + Salida ({saldoRestante})</>
+   934→   934→                        : <><ArrowUpFromLine className="h-3 w-3 mr-1" /> Traslado Parcial</>
+   935→   935→                  }
+   936→   936→                </Badge>
+   937→   937→                {!trasladoTotal && !excedeStock && !corregirDiferencia && qtyNum > 0 && origin && qtyNum < origin.stock && (
+   938→   938→                  <Badge variant="outline" className="border-sky-300 text-sky-700 dark:text-sky-300 text-xs font-semibold">
+   939→   939→                    Saldo en origen: {saldoRestante} {origin?.un}
+   940→   940→                  </Badge>
+   941→   941→                )}
+   942→   942→                {(trasladoTotal || corregirDiferencia || excedeStock) && (
+   943→   943→                  <Badge variant="outline" className="border-emerald-300 text-emerald-700 dark:text-emerald-300 text-xs font-semibold">
+   944→   944→                    Origen quedará en 0
+   945→   945→                  </Badge>
+   946→   946→                )}
+   947→   947→              </div>
+   948→   948→            </div>
+   949→   949→
+   950→   950→            {/* Ajuste automático */}
+   951→   951→            {ajusteActivo && (
+   952→   952→              <div className="px-4 sm:px-6 pb-3">
+   953→   953→                <div className={`rounded-xl border p-3 {
+   954→   954→                  excedeStock
+   955→   955→                    ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 text-amber-700 dark:text-amber-300'
+   956→   956→                    : 'border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 text-sky-700 dark:text-sky-300'
+   957→   957→                }`}>
+   958→   958→                  <p className="font-medium mb-1">
+   959→   959→                    <AlertTriangle className="h-4 w-4 inline-block mr-1" />
+   960→   960→                    Ajuste automático: {diferencia > 0 ? '+' : ''}{diferencia} {origin?.un} en origen
+   961→   961→                  </p>
+   962→   962→                  <p className="text-xs">
+   963→   963→                    {excedeStock
+   964→   964→                      ? `Se registrará un ingreso de ${Math.abs(diferencia)} ${origin?.un} en el origen.`
+   965→   965→                      : `Se registrará una salida de ${Math.abs(diferencia)} ${origin?.un} en el origen.`}
+   966→   966→                  </p>
+   967→   967→                </div>
+   968→   968→              </div>
+   969→   969→            )}
+   970→   970→
+   971→   971→            {/* Separador si hay productos en destino */}
+   972→   972→            {destinoOcupado.length > 0 && (
+   973→   973→              <div className="px-4 sm:px-6 pb-2">
+   974→   974→                <div className="flex items-center gap-2">
+   975→   975→                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+   976→   976→                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Stock actual en el destino</span>
+   977→   977→                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+   978→   978→                </div>
+   979→   979→              </div>
+   980→   980→            )}
+   981→   981→
+   982→   982→            {/* Productos existentes en destino */}
+   983→   983→            {destinoOcupado.length > 0 && (
+   984→   984→              <div className="px-4 sm:px-6 pb-4">
+   985→   985→                <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">
+   986→   986→                  {destinoOcupado.length} producto{destinoOcupado.length !== 1 ? 's' : ''} encontrado{destinoOcupado.length !== 1 ? 's' : ''}
+   987→   987→                </p>
+   988→   988→                <div className="space-y-2">
+   989→   989→                  {destinoOcupado.map((s, i) => (
+   990→   990→                    <div
+   991→   991→                      key={`${s.codigo}-${i}`}
+   992→   992→                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3"
+   993→   993→                    >
+   994→   994→                      <div className="flex items-start gap-3">
+   995→   995→                        <div className="w-9 h-9 rounded-lg bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+   996→   996→                          <Package className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+   997→   997→                        </div>
+   998→   998→                        <div className="flex-1 min-w-0">
+   999→   999→                          <div className="flex items-center gap-2 flex-wrap">
+  1000→  1000→                            <span className="font-mono font-semibold text-sm text-slate-800 dark:text-slate-200">{s.codigo}</span>
+  1001→  1001→                            <span className="text-[10px] text-muted-foreground bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{s.un}</span>
+  1002→  1002→                          </div>
+  1003→  1003→                          <p className="text-xs text-muted-foreground truncate mt-0.5">{s.descripcion}</p>
+  1004→  1004→                          <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
+  1005→  1005→                            <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{s.stock} {s.un}</span>
+  1006→  1006→                            {s.fVencimiento && <span>Venc: {s.fVencimiento}</span>}
+  1007→  1007→                            {s.proveedor && <span>Prov: {s.proveedor}</span>}
+  1008→  1008→                          </div>
+  1009→  1009→                        </div>
+  1010→  1010→                        <Button
+  1011→  1011→                          size="sm"
+  1012→  1012→                          variant="outline"
+  1013→  1013→                          onClick={() => handleSalidaDesdeAlerta(s)}
+  1014→  1014→                          disabled={salidaBusy === s.codigo}
+  1015→  1015→                          className="h-9 px-3 text-xs font-semibold border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 hover:border-red-300 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300 dark:hover:border-red-700 flex-shrink-0 gap-1.5 self-center"
+  1016→  1016→                        >
+  1017→  1017→                          {salidaBusy === s.codigo ? (
+  1018→  1018→                            <><Loader2 className="h-3 w-3 animate-spin" /> Procesando...</>
+  1019→  1019→                          ) : (
+  1020→  1020→                            <><ArrowUpFromLine className="h-3 w-3" /> Dar Salida</>
+  1021→  1021→                          )}
+  1022→  1022→                        </Button>
+  1023→  1023→                      </div>
+  1024→  1024→                    </div>
+  1025→  1025→                  ))}
+  1026→  1026→                </div>
+  1027→  1027→                <p className="text-[10px] text-muted-foreground mt-2 italic">
+  1028→  1028→                  Presiona "Dar Salida" para retirar productos que ya no están físicamente en esta ubicación.
+  1029→  1029→                </p>
+  1030→  1030→              </div>
+  1031→  1031→            )}
+  1032→  1032→          </div>
+  1033→  1033→
+  1034→  1034→          {/* Botones de acción */}
+  1035→  1035→          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2 shrink-0">
+  1036→  1036→            <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium border-slate-300 dark:border-slate-600">
+  1037→  1037→              Cancelar
+  1038→  1038→            </AlertDialogCancel>
+  1039→  1039→            <Button
+  1040→  1040→              onClick={(e) => { e.preventDefault(); doTraslado() }}
+  1041→  1041→              disabled={busy}
+  1042→  1042→              className="flex-1 h-11 rounded-lg text-sm font-bold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-600/20 gap-2"
+  1043→  1043→            >
+  1044→  1044→              {busy ? (
+  1045→  1045→                <Loader2 className="h-4 w-4 animate-spin" />
+  1046→  1046→              ) : (
+  1047→  1047→                <ArrowRightLeft className="h-4 w-4" />
+  1048→  1048→              )}
+  1049→  1049→              Confirmar Traslado
+  1050→  1050→            </Button>
+  1051→  1051→          </AlertDialogFooter>
+  1052→  1052→        </AlertDialogContent>
+  1053→  1053→      </AlertDialog>
+  1054→  1054→    </div>
+  1055→  1055→  )
+  1056→  1056→}
+  1057→  1057→

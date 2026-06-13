@@ -695,7 +695,7 @@ function SalidaForm({
       return
     }
     try {
-      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string }>
+      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string; codigoInc?: string }>
       try {
         // Intentar obtener del servidor - consulta optimizada por código
         const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
@@ -707,8 +707,8 @@ function SalidaForm({
       }
       const upperCode = code.toUpperCase()
       const locMap = new Map<string, LocWithKey>()
-      // Ya vienen filtrados del servidor, pero verificamos por si es fallback
-      const relevant = movs.filter((m) => m.codigo === upperCode)
+      // EXCLUIR movimientos INC de la vista de salidas normales
+      const relevant = movs.filter((m) => m.codigo === upperCode && !m.codigoInc)
       let desc = ''
       let un = ''
       for (const m of relevant) {

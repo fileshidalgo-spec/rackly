@@ -350,7 +350,7 @@ export function PisoSectoresTab() {
     try {
       const [stock, nivs] = await Promise.all([
         stockDetallePosicion(pos.posicionId),
-        obtenerNivelesPosicion(pos.posicionId),
+        obtenerNivelesPosicion(pos.posicionId, pos.columnaLetra),
       ])
       // Cargar stock por nivel (en paralelo)
       const stockPerNivel: Record<string, DetailStock[]> = {}
@@ -911,7 +911,7 @@ export function PisoSectoresTab() {
         try {
           const [stock, nivs] = await Promise.all([
             stockDetallePosicion(pos.posicionId),
-            obtenerNivelesPosicion(pos.posicionId),
+            obtenerNivelesPosicion(pos.posicionId, pos.columnaLetra),
           ])
           const sBN: Record<string, DetailStock[]> = {}
           if (nivs.length > 0) {
@@ -2184,7 +2184,7 @@ export function PisoSectoresTab() {
                           setTrDestPos(p)
                           // Cargar niveles del destino
                           try {
-                            const destNivs = await obtenerNivelesPosicion(p.posicionId)
+                            const destNivs = await obtenerNivelesPosicion(p.posicionId, p.columnaLetra)
                             setTrDestNivelId(destNivs.length > 0 ? destNivs[0].id : '')
                           } catch { /* ok */ }
                         }}

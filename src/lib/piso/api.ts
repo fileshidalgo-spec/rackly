@@ -1250,14 +1250,23 @@ export type NivelInfo = { id: string; numero: number; codigo_ubicacion: string |
 /**
  * Obtiene todos los niveles de una posición, ordenados por número.
  */
-export async function obtenerNivelesPosicion(posicionId: string): Promise<NivelInfo[]> {
+export async function obtenerNivelesPosicion(posicionId: string, columnaLetra?: string): Promise<NivelInfo[]> {
   const { data, error } = await dataClient
     .from('piso_niveles')
     .select('id, numero, codigo_ubicacion')
     .eq('posicion_id', posicionId)
     .order('numero')
   if (error) throw error
-  return (data ?? []) as NivelInfo[]
+  const result = (data ?? []) as NivelInfo[]
+  if (columnaLetra) {
+    for (const n of result) {
+      if (n.codigo_ubicacion) {
+        const idx = n.codigo_ubicacion.indexOf(columnaLetra)
+        if (idx >= 0) n.codigo_ubicacion = n.codigo_ubicacion.substring(idx)
+      }
+    }
+  }
+  return result
 }
 
 /**

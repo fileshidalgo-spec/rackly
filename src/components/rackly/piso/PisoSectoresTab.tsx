@@ -267,7 +267,7 @@ export function PisoSectoresTab() {
         .select('movimiento_id, cantidad, fecha_vencimiento, bloque_id')
         .in('nivel_id', nivelIds)
         .order('movimiento_id', { ascending: false })
-        .range(offset, offset + 9) // traer 10 para poder agrupar a 5 unicos
+        .range(offset, offset + 14) // traer 15 para agrupar a 5 unicos (un movimiento puede tener multiples detalles)
       if (detErr) throw detErr
       if (!detData || detData.length === 0) {
         setHistorialHasMore(false)
@@ -311,14 +311,15 @@ export function PisoSectoresTab() {
         })
       }
       const items = Array.from(grouped.values())
-      setHistorialHasMore(items.length > 5)
+      // hasMore: si obtuvimos mas de 5 movimientos unicos O si la pagina de detalles esta llena (podria haber mas)
+      setHistorialHasMore(items.length > 5 || detData.length === 15)
       const trimmed = items.slice(0, 5)
       if (append) {
         setHistorialData(prev => [...prev, ...trimmed])
       } else {
         setHistorialData(trimmed)
       }
-      setHistorialOffset(offset + 10)
+      setHistorialOffset(offset + 15)
     } catch (err) {
       console.error('[Piso] Error cargando historial:', err)
       toast.error('Error al cargar historial')

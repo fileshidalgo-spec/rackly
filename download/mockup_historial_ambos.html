@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup - Historial por Posicion (Piso + Racks)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #080810;
+    min-height: 100vh;
+    padding: 30px 20px;
+  }
+
+  .page-title {
+    text-align: center;
+    color: #e2e8f0;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .page-sub {
+    text-align: center;
+    color: #64748b;
+    font-size: 12px;
+    margin-bottom: 36px;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.6;
+  }
+
+  .two-panels {
+    display: flex;
+    gap: 30px;
+    max-width: 1300px;
+    margin: 0 auto;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .panel {
+    flex: 1;
+    min-width: 400px;
+    max-width: 620px;
+  }
+  .panel-label {
+    text-align: center;
+    margin-bottom: 14px;
+  }
+  .panel-label h2 {
+    font-size: 14px;
+    font-weight: 700;
+    color: #e2e8f0;
+  }
+  .panel-label p {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 2px;
+  }
+
+  /* ─── DIALOG ─── */
+  .dialog {
+    border-radius: 18px;
+    background: #0f172a;
+    border: 1px solid rgba(100,116,139,0.25);
+    box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    overflow: hidden;
+  }
+  .dialog-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(100,116,139,0.12);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .dialog-pos {
+    font-size: 13px;
+    font-weight: 700;
+    color: #e2e8f0;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .dialog-sector {
+    font-size: 10px;
+    color: #94a3b8;
+    background: rgba(100,116,139,0.12);
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(100,116,139,0.18);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .dialog-body {
+    padding: 16px 18px;
+    max-height: 340px;
+    overflow-y: auto;
+  }
+  .dialog-footer {
+    padding: 14px 18px;
+    border-top: 1px solid rgba(100,116,139,0.12);
+  }
+
+  /* ─── STOCK ITEM (Piso style) ─── */
+  .stock-item {
+    border-radius: 12px;
+    border: 1px solid rgba(100,116,139,0.2);
+    background: rgba(30,41,59,0.4);
+    padding: 12px;
+    margin-bottom: 8px;
+  }
+  .stock-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .stock-left {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+  }
+  .stock-idx {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 8px;
+    background: rgba(100,116,139,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    color: #cbd5e1;
+    border: 1px solid rgba(100,116,139,0.25);
+    margin-top: 1px;
+  }
+  .stock-codigo {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #7dd3fc;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .stock-desc {
+    color: #cbd5e1;
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .stock-qty {
+    text-align: right;
+    flex-shrink: 0;
+    margin-left: 10px;
+  }
+  .stock-qty-val {
+    font-weight: 800;
+    color: #6ee7b7;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .stock-qty-unit {
+    font-size: 10px;
+    color: #cbd5e1;
+    margin-top: 2px;
+  }
+
+  /* ─── RACKS STOCK ITEM ─── */
+  .rack-item {
+    border-radius: 10px;
+    border: 1px solid rgba(100,116,139,0.2);
+    background: rgba(30,41,59,0.3);
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .rack-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .rack-codigo {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #38bdf8;
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .rack-desc {
+    color: #cbd5e1;
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .rack-qty {
+    text-align: right;
+  }
+  .rack-qty-val {
+    font-weight: 700;
+    color: #6ee7b7;
+    font-size: 14px;
+  }
+  .rack-qty-unit {
+    font-size: 9px;
+    color: #94a3b8;
+  }
+  .rack-actions {
+    display: flex;
+    gap: 4px;
+  }
+  .rack-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 5px 4px;
+    border-radius: 6px;
+    border: none;
+    font-size: 9px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: rgba(100,116,139,0.1);
+    color: #94a3b8;
+  }
+  .rack-btn-red { color: #f87171; background: rgba(239,68,68,0.08); }
+  .rack-btn-orange { color: #fb923c; background: rgba(249,115,22,0.08); }
+  .rack-btn-blue { color: #60a5fa; background: rgba(59,130,246,0.08); }
+  .rack-btn-purple { color: #a78bfa; background: rgba(139,92,246,0.1); border: 1px solid rgba(139,92,246,0.2); }
+  .rack-btn svg { width: 10px; height: 10px; }
+
+  /* ─── ACTION BUTTONS ─── */
+  .action-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    padding-top: 10px;
+  }
+  .action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 10px 6px;
+    border-radius: 12px;
+    border: none;
+    color: white;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+  .action-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
+  .btn-ingreso { background: linear-gradient(135deg, #059669, #10b981); box-shadow: 0 3px 10px rgba(16,185,129,0.18); }
+  .btn-salida  { background: linear-gradient(135deg, #dc2626, #ef4444); box-shadow: 0 3px 10px rgba(239,68,68,0.18); }
+  .btn-traslado { background: linear-gradient(135deg, #2563eb, #3b82f6); box-shadow: 0 3px 10px rgba(59,130,246,0.18); }
+  .btn-devolucion { background: linear-gradient(135deg, #d97706, #f59e0b); box-shadow: 0 3px 10px rgba(245,158,11,0.18); }
+  .btn-historial {
+    background: linear-gradient(135deg, #7c3aed, #8b5cf6);
+    box-shadow: 0 3px 10px rgba(139,92,246,0.22);
+    animation: glow 2.5s ease-in-out infinite;
+  }
+  @keyframes glow {
+    0%, 100% { box-shadow: 0 3px 10px rgba(139,92,246,0.22); }
+    50% { box-shadow: 0 3px 20px rgba(139,92,246,0.4); }
+  }
+  .btn-inc { background: linear-gradient(135deg, #f43f5e, #e11d48); box-shadow: 0 3px 10px rgba(244,63,94,0.18); }
+  .btn-full { grid-column: 1 / -1; padding: 12px 6px; font-size: 12px; }
+
+  /* Racks bottom buttons */
+  .rack-bottom-btns {
+    display: flex;
+    gap: 6px;
+    padding-top: 8px;
+  }
+  .rack-bottom-btns .action-btn { flex: 1; }
+
+  .new-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    color: white;
+    font-size: 6px;
+    font-weight: 800;
+    padding: 1px 4px;
+    border-radius: 5px;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    box-shadow: 0 2px 5px rgba(139,92,246,0.4);
+  }
+
+  /* ─── HISTORIAL DIALOG ─── */
+  .historial-dialog {
+    border-radius: 18px;
+    background: #0f172a;
+    border: 1px solid rgba(139,92,246,0.25);
+    box-shadow: 0 20px 50px rgba(0,0,0,0.5), 0 0 30px rgba(139,92,246,0.06);
+    overflow: hidden;
+    margin-top: 14px;
+  }
+  .historial-header {
+    padding: 12px 18px;
+    border-bottom: 1px solid rgba(139,92,246,0.12);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .historial-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .historial-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: rgba(139,92,246,0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #a78bfa;
+    border: 1px solid rgba(139,92,246,0.2);
+  }
+  .historial-icon svg { width: 14px; height: 14px; }
+  .historial-title { font-size: 13px; font-weight: 700; color: #e2e8f0; }
+  .historial-sub { font-size: 9px; color: #64748b; }
+  .historial-close {
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    border: 1px solid rgba(100,116,139,0.25);
+    background: rgba(30,41,59,0.4);
+    color: #94a3b8;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; cursor: pointer;
+  }
+  .historial-body {
+    padding: 12px 18px;
+    max-height: 340px;
+    overflow-y: auto;
+  }
+
+  /* ─── TIMELINE ─── */
+  .timeline { position: relative; padding-left: 20px; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 5px; top: 6px; bottom: 6px;
+    width: 2px;
+    background: linear-gradient(to bottom, rgba(139,92,246,0.3), rgba(100,116,139,0.1));
+    border-radius: 2px;
+  }
+  .tl-item { position: relative; padding-bottom: 10px; }
+  .tl-item:last-child { padding-bottom: 0; }
+  .tl-dot {
+    position: absolute;
+    left: -20px; top: 5px;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    border: 2px solid;
+    display: flex; align-items: center; justify-content: center;
+    background: #0f172a;
+  }
+  .tl-dot svg { width: 6px; height: 6px; }
+  .dot-ingreso { border-color: #10b981; color: #10b981; }
+  .dot-salida  { border-color: #ef4444; color: #ef4444; }
+  .dot-traslado { border-color: #3b82f6; color: #3b82f6; }
+  .dot-devolucion { border-color: #f59e0b; color: #f59e0b; }
+  .dot-inc { border-color: #f43f5e; color: #f43f5e; }
+  .dot-stock { border-color: #64748b; color: #64748b; }
+
+  .tl-card {
+    border-radius: 10px;
+    border: 1px solid rgba(100,116,139,0.15);
+    background: rgba(30,41,59,0.3);
+    padding: 10px 12px;
+  }
+  .tl-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 5px;
+  }
+  .tl-type {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 1px 6px;
+    border-radius: 5px;
+  }
+  .type-ingreso { background: rgba(16,185,129,0.1); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.18); }
+  .type-salida  { background: rgba(239,68,68,0.1); color: #fca5a5; border: 1px solid rgba(239,68,68,0.18); }
+  .type-traslado { background: rgba(59,130,246,0.1); color: #93c5fd; border: 1px solid rgba(59,130,246,0.18); }
+  .type-devolucion { background: rgba(245,158,11,0.1); color: #fcd34d; border: 1px solid rgba(245,158,11,0.18); }
+  .type-inc { background: rgba(244,63,94,0.1); color: #fda4af; border: 1px solid rgba(244,63,94,0.18); }
+  .type-stock { background: rgba(100,116,139,0.1); color: #94a3b8; border: 1px solid rgba(100,116,139,0.18); }
+
+  .tl-date { font-size: 9px; color: #64748b; }
+  .tl-user {
+    display: flex; align-items: center; gap: 5px; margin-bottom: 3px;
+  }
+  .tl-avatar {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 7px; font-weight: 700; flex-shrink: 0;
+  }
+  .tl-username { font-size: 10px; color: #e2e8f0; font-weight: 600; }
+  .tl-detail { font-size: 9px; color: #94a3b8; line-height: 1.5; }
+  .tl-detail strong { color: #cbd5e1; font-weight: 600; }
+  .qty-pos { color: #6ee7b7; font-family: 'SF Mono', monospace; font-weight: 700; }
+  .qty-neg { color: #fca5a5; font-family: 'SF Mono', monospace; font-weight: 700; }
+
+  .tl-rotation {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 8px;
+    font-weight: 600;
+    color: #a78bfa;
+    background: rgba(139,92,246,0.08);
+    border: 1px solid rgba(139,92,246,0.15);
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-top: 3px;
+  }
+
+  .empty-note {
+    text-align: center;
+    padding: 20px;
+    color: #64748b;
+    font-size: 11px;
+  }
+
+  @media (max-width: 900px) {
+    .two-panels { flex-direction: column; align-items: center; }
+    .panel { min-width: 0; width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page-title">Historial de Posicion — Globales</div>
+<p class="page-sub">
+  Muestra los ultimos 5 movimientos de la posicion, sin importar el articulo.
+  Asi puedes ver la rotacion de productos que pasaron por ahi.
+</p>
+
+<div class="two-panels">
+
+<!-- ═══════════════════════════════════════ -->
+<!-- PANEL 1: KARDEX PISO -->
+<!-- ═══════════════════════════════════════ -->
+<div class="panel">
+  <div class="panel-label">
+    <h2>Kardex Piso</h2>
+    <p>Boton en grid de acciones + ventana historial</p>
+  </div>
+
+  <div class="dialog">
+    <div class="dialog-header">
+      <span class="dialog-pos">POS-03 — Nivel 1</span>
+      <span class="dialog-sector">Bolsas Plasticas</span>
+    </div>
+    <div class="dialog-body">
+      <div class="stock-item">
+        <div class="stock-row">
+          <div class="stock-left">
+            <div class="stock-idx">1</div>
+            <div>
+              <span class="stock-codigo">BP-00120</span>
+              <p class="stock-desc">Bolsa polietileno 40x60 micra 50</p>
+            </div>
+          </div>
+          <div class="stock-qty">
+            <p class="stock-qty-val">250.00</p>
+            <p class="stock-qty-unit">UND</p>
+          </div>
+        </div>
+      </div>
+      <div class="stock-item">
+        <div class="stock-row">
+          <div class="stock-left">
+            <div class="stock-idx">2</div>
+            <div>
+              <span class="stock-codigo">BP-00085</span>
+              <p class="stock-desc">Bolsa polietileno 30x50 micra 30</p>
+            </div>
+          </div>
+          <div class="stock-qty">
+            <p class="stock-qty-val">180.00</p>
+            <p class="stock-qty-unit">UND</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <div class="action-grid">
+        <button class="action-btn btn-traslado">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          Traslado
+        </button>
+        <button class="action-btn btn-devolucion">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Devolucion
+        </button>
+        <button class="action-btn btn-historial" style="position:relative;">
+          <span class="new-badge">NUEVO</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Historial
+        </button>
+        <button class="action-btn btn-inc">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          INC
+        </button>
+        <button class="action-btn btn-ingreso btn-full">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          Ingreso
+        </button>
+        <button class="action-btn btn-salida btn-full">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          Salida
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORIAL WINDOW (Piso) -->
+  <div class="historial-dialog">
+    <div class="historial-header">
+      <div class="historial-header-left">
+        <div class="historial-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div>
+          <div class="historial-title">Historial — POS-03</div>
+          <div class="historial-sub">Bolsas Plasticas · Nivel 1 · 5 movimientos</div>
+        </div>
+      </div>
+      <div class="historial-close">&times;</div>
+    </div>
+    <div class="historial-body">
+      <div class="timeline">
+        <!-- 1. Salida de BP-00120 -->
+        <div class="tl-item">
+          <div class="tl-dot dot-salida">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-salida">Salida</span>
+              <span class="tl-date">14 Jun 2025, 10:32 AM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#7c3aed,#8b5cf6);">MH</div>
+              <span class="tl-username">Miguel Hidalgo</span>
+            </div>
+            <div class="tl-detail">
+              <strong>BP-00120</strong> — Bolsa polietileno 40x60<br>
+              Cantidad: <span class="qty-neg">-50.00 UND</span>
+            </div>
+          </div>
+        </div>
+        <!-- 2. Ingreso BP-00085 (rotacion!) -->
+        <div class="tl-item">
+          <div class="tl-dot dot-ingreso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-ingreso">Ingreso</span>
+              <span class="tl-date">10 Jun 2025, 02:15 PM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#059669,#10b981);">CP</div>
+              <span class="tl-username">Carlos Perez</span>
+            </div>
+            <div class="tl-detail">
+              <strong>BP-00085</strong> — Bolsa polietileno 30x50<br>
+              Cantidad: <span class="qty-pos">+200.00 UND</span> · Venc: 2026-03-20
+            </div>
+            <div class="tl-rotation">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Rotacion de producto
+            </div>
+          </div>
+        </div>
+        <!-- 3. Traslado desde otra pos -->
+        <div class="tl-item">
+          <div class="tl-dot dot-traslado">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-traslado">Traslado</span>
+              <span class="tl-date">05 Jun 2025, 09:45 AM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#2563eb,#3b82f6);">AR</div>
+              <span class="tl-username">Ana Rodriguez</span>
+            </div>
+            <div class="tl-detail">
+              <strong>BP-00120</strong> — Bolsa polietileno 40x60<br>
+              Cantidad: <span class="qty-pos">+100.00 UND</span><br>
+              Desde <strong>POS-07 / Nivel 2</strong>
+            </div>
+          </div>
+        </div>
+        <!-- 4. Salida total de otro producto -->
+        <div class="tl-item">
+          <div class="tl-dot dot-salida">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-salida">Salida</span>
+              <span class="tl-date">01 Jun 2025, 11:20 AM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#7c3aed,#8b5cf6);">MH</div>
+              <span class="tl-username">Miguel Hidalgo</span>
+            </div>
+            <div class="tl-detail">
+              <strong>ET-00440</strong> — Etiqueta adhesiva 10x5<br>
+              Cantidad: <span class="qty-neg">-300.00 UND</span>
+            </div>
+            <div class="tl-rotation">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Producto anterior (ya no esta)
+            </div>
+          </div>
+        </div>
+        <!-- 5. Ingreso del producto anterior -->
+        <div class="tl-item">
+          <div class="tl-dot dot-ingreso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-ingreso">Ingreso</span>
+              <span class="tl-date">28 May 2025, 03:40 PM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#059669,#10b981);">CP</div>
+              <span class="tl-username">Carlos Perez</span>
+            </div>
+            <div class="tl-detail">
+              <strong>ET-00440</strong> — Etiqueta adhesiva 10x5<br>
+              Cantidad: <span class="qty-pos">+300.00 UND</span> · Venc: 2025-08-15
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════ -->
+<!-- PANEL 2: KARDEX RACKS (Ocupacion) -->
+<!-- ═══════════════════════════════════════ -->
+<div class="panel">
+  <div class="panel-label">
+    <h2>Kardex Racks</h2>
+    <p>Boton inline por articulo + boton global Historial</p>
+  </div>
+
+  <div class="dialog">
+    <div class="dialog-header">
+      <span class="dialog-pos">B3 · T2 · P1 · Pos 4</span>
+      <span class="dialog-sector">Rack Principal</span>
+    </div>
+    <div class="dialog-body">
+      <!-- Article 1 -->
+      <div class="rack-item">
+        <div class="rack-top">
+          <div>
+            <span class="rack-codigo">FP-00220</span>
+            <p class="rack-desc">Film estirable 500mm x 300m</p>
+            <span style="font-size:8px;color:#94a3b8;">Venc: 2025-09-30 (76d)</span>
+          </div>
+          <div class="rack-qty">
+            <p class="rack-qty-val">12.00</p>
+            <p class="rack-qty-unit">ROLLOS</p>
+          </div>
+        </div>
+        <div class="rack-actions">
+          <button class="rack-btn rack-btn-red">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+            Salida total
+          </button>
+          <button class="rack-btn rack-btn-orange">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+            Parcial
+          </button>
+          <button class="rack-btn rack-btn-blue">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/></svg>
+            Transferir
+          </button>
+          <button class="rack-btn rack-btn-purple">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Historial
+          </button>
+        </div>
+      </div>
+      <!-- Article 2 -->
+      <div class="rack-item">
+        <div class="rack-top">
+          <div>
+            <span class="rack-codigo">FP-00185</span>
+            <p class="rack-desc">Film estirable 450mm x 200m</p>
+            <span style="font-size:8px;color:#94a3b8;">Venc: 2026-01-20 (219d)</span>
+          </div>
+          <div class="rack-qty">
+            <p class="rack-qty-val">8.00</p>
+            <p class="rack-qty-unit">ROLLOS</p>
+          </div>
+        </div>
+        <div class="rack-actions">
+          <button class="rack-btn rack-btn-red">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+            Salida total
+          </button>
+          <button class="rack-btn rack-btn-orange">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+            Parcial
+          </button>
+          <button class="rack-btn rack-btn-blue">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/></svg>
+            Transferir
+          </button>
+          <button class="rack-btn rack-btn-purple">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Historial
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <div class="rack-bottom-btns">
+        <button class="action-btn btn-ingreso">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          Ingreso
+        </button>
+        <button class="action-btn btn-inc">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          INC
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORIAL WINDOW (Racks) -->
+  <div class="historial-dialog">
+    <div class="historial-header">
+      <div class="historial-header-left">
+        <div class="historial-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div>
+          <div class="historial-title">Historial — B3 · T2 · P1 · Pos 4</div>
+          <div class="historial-sub">Rack Principal · 5 movimientos</div>
+        </div>
+      </div>
+      <div class="historial-close">&times;</div>
+    </div>
+    <div class="historial-body">
+      <div class="timeline">
+        <!-- 1 -->
+        <div class="tl-item">
+          <div class="tl-dot dot-salida">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-salida">Salida Parcial</span>
+              <span class="tl-date">13 Jun 2025, 08:50 AM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#7c3aed,#8b5cf6);">MH</div>
+              <span class="tl-username">Miguel Hidalgo</span>
+            </div>
+            <div class="tl-detail">
+              <strong>FP-00220</strong> — Film estirable 500mm<br>
+              Cantidad: <span class="qty-neg">-3.00 ROLLOS</span>
+            </div>
+          </div>
+        </div>
+        <!-- 2 rotacion -->
+        <div class="tl-item">
+          <div class="tl-dot dot-ingreso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-ingreso">Ingreso</span>
+              <span class="tl-date">08 Jun 2025, 01:30 PM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#059669,#10b981);">AR</div>
+              <span class="tl-username">Ana Rodriguez</span>
+            </div>
+            <div class="tl-detail">
+              <strong>FP-00185</strong> — Film estirable 450mm<br>
+              Cantidad: <span class="qty-pos">+8.00 ROLLOS</span> · Venc: 2026-01-20
+            </div>
+            <div class="tl-rotation">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Rotacion de producto
+            </div>
+          </div>
+        </div>
+        <!-- 3 -->
+        <div class="tl-item">
+          <div class="tl-dot dot-salida">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-salida">Salida Total</span>
+              <span class="tl-date">02 Jun 2025, 04:15 PM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#059669,#10b981);">CP</div>
+              <span class="tl-username">Carlos Perez</span>
+            </div>
+            <div class="tl-detail">
+              <strong>CP-00100</strong> — Cinta packing 50mm x 100m<br>
+              Cantidad: <span class="qty-neg">-20.00 UND</span>
+            </div>
+            <div class="tl-rotation">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Producto anterior (ya no esta)
+            </div>
+          </div>
+        </div>
+        <!-- 4 -->
+        <div class="tl-item">
+          <div class="tl-dot dot-ingreso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-ingreso">Ingreso</span>
+              <span class="tl-date">25 May 2025, 10:00 AM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#7c3aed,#8b5cf6);">MH</div>
+              <span class="tl-username">Miguel Hidalgo</span>
+            </div>
+            <div class="tl-detail">
+              <strong>FP-00220</strong> — Film estirable 500mm<br>
+              Cantidad: <span class="qty-pos">+15.00 ROLLOS</span> · Venc: 2025-09-30
+            </div>
+          </div>
+        </div>
+        <!-- 5 -->
+        <div class="tl-item">
+          <div class="tl-dot dot-ingreso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </div>
+          <div class="tl-card">
+            <div class="tl-top">
+              <span class="tl-type type-ingreso">Ingreso</span>
+              <span class="tl-date">20 May 2025, 09:10 AM</span>
+            </div>
+            <div class="tl-user">
+              <div class="tl-avatar" style="background:linear-gradient(135deg,#059669,#10b981);">CP</div>
+              <span class="tl-username">Carlos Perez</span>
+            </div>
+            <div class="tl-detail">
+              <strong>CP-00100</strong> — Cinta packing 50mm x 100m<br>
+              Cantidad: <span class="qty-pos">+20.00 UND</span> · Venc: 2025-11-30
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+</body>
+</html>

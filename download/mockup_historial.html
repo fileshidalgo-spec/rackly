@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup - Historial de Posición</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 16px; }
+
+  .dialog {
+    width: 100%; max-width: 420px; background: #0f172a; border: 1px solid #334155; border-radius: 16px; overflow: hidden;
+  }
+
+  /* Header */
+  .dialog-header {
+    display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #1e293b;
+  }
+  .dialog-header .title { font-size: 14px; font-weight: 700; color: #e2e8f0; }
+  .dialog-header .close { color: #64748b; cursor: pointer; font-size: 18px; }
+
+  /* Status */
+  .status-bar {
+    display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid #1e293b;
+  }
+  .status-badge { display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+  .status-disponible { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.25); }
+
+  /* Stock item */
+  .stock-card {
+    margin: 10px 12px; padding: 12px; border-radius: 12px; border: 1px solid rgba(51,65,85,0.5); background: rgba(30,41,59,0.5);
+  }
+  .stock-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .stock-info { flex: 1; min-width: 0; }
+  .stock-code { font-family: monospace; font-size: 14px; font-weight: 700; color: #7dd3fc; }
+  .stock-desc { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
+  .stock-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .stock-meta span { font-size: 10px; }
+  .venc-badge { padding: 1px 6px; border-radius: 4px; background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.2); }
+  .ing-user { color: #64748b; }
+  .stock-qty { text-align: right; flex-shrink: 0; }
+  .stock-qty .num { font-size: 18px; font-weight: 800; color: #34d399; line-height: 1; }
+  .stock-qty .unit { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+
+  /* Action buttons */
+  .action-row {
+    display: flex; gap: 6px; padding: 0 12px; margin-top: 8px;
+  }
+  .action-btn {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 7px 0; border-radius: 6px; font-size: 10px; font-weight: 600; cursor: pointer;
+    border: none; transition: all 0.2s;
+  }
+  .btn-salida-total { background: rgba(239,68,68,0.1); color: #f87171; }
+  .btn-salida-total:hover { background: rgba(239,68,68,0.2); }
+  .btn-parcial { background: rgba(249,115,22,0.1); color: #fb923c; }
+  .btn-parcial:hover { background: rgba(249,115,22,0.2); }
+  .btn-transferir { background: rgba(59,130,246,0.1); color: #60a5fa; }
+  .btn-transferir:hover { background: rgba(59,130,246,0.2); }
+
+  /* ── SEPARATOR ── */
+  .separator { height: 1px; background: #1e293b; margin: 10px 12px 0; }
+
+  /* ── HISTORIAL SECTION ── */
+  .historial-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px; cursor: pointer; user-select: none;
+  }
+  .historial-toggle:hover { background: rgba(30,41,59,0.4); }
+  .historial-toggle .left { display: flex; align-items: center; gap: 7px; }
+  .historial-toggle .icon { width: 16px; height: 16px; color: #38bdf8; }
+  .historial-toggle .label { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; }
+  .historial-toggle .count { font-size: 10px; font-weight: 600; color: #475569; background: #1e293b; padding: 1px 7px; border-radius: 10px; }
+  .historial-toggle .chevron { color: #475569; font-size: 14px; transition: transform 0.3s; }
+  .historial-toggle.open .chevron { transform: rotate(180deg); }
+
+  /* Timeline */
+  .timeline {
+    padding: 0 16px 14px; display: flex; flex-direction: column; gap: 0;
+    max-height: 260px; overflow-y: auto;
+  }
+  .timeline::-webkit-scrollbar { width: 4px; }
+  .timeline::-webkit-scrollbar-track { background: transparent; }
+  .timeline::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+
+  .timeline-item {
+    display: flex; gap: 10px; position: relative;
+    padding-bottom: 12px;
+  }
+  .timeline-item:last-child { padding-bottom: 0; }
+  .timeline-item:last-child .tl-line { display: none; }
+
+  .tl-dot-col { display: flex; flex-direction: column; align-items: center; width: 20px; flex-shrink: 0; }
+  .tl-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; margin-top: 4px;
+    border: 2px solid; background: #0f172a;
+  }
+  .dot-ingreso { border-color: #34d399; }
+  .dot-salida { border-color: #f87171; }
+  .dot-traslado { border-color: #60a5fa; }
+  .dot-devolucion { border-color: #fbbf24; }
+  .dot-inc { border-color: #fb7185; }
+  .tl-line { width: 2px; flex: 1; background: #1e293b; margin-top: 2px; }
+
+  .tl-content { flex: 1; min-width: 0; }
+  .tl-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .tl-type { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px; }
+  .type-ingreso { background: rgba(16,185,129,0.12); color: #34d399; }
+  .type-salida { background: rgba(239,68,68,0.12); color: #f87171; }
+  .type-traslado { background: rgba(59,130,246,0.12); color: #60a5fa; }
+  .type-devolucion { background: rgba(245,158,11,0.12); color: #fbbf24; }
+  .type-inc { background: rgba(251,113,133,0.12); color: #fb7185; }
+  .tl-date { font-size: 9px; color: #475569; white-space: nowrap; }
+  .tl-detail { font-size: 11px; color: #cbd5e1; margin-top: 3px; }
+  .tl-detail strong { color: #e2e8f0; font-weight: 600; }
+  .tl-user { font-size: 10px; color: #64748b; margin-top: 2px; display: flex; align-items: center; gap: 4px; }
+  .tl-user svg { width: 10px; height: 10px; }
+  .tl-origin { font-size: 10px; color: #60a5fa; margin-top: 1px; font-style: italic; }
+
+  /* Ingreso/INC buttons row */
+  .action-row-2 {
+    display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid #1e293b;
+  }
+  .btn-ingreso {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 9px 0; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer;
+    background: #059669; color: white; border: none; transition: all 0.2s;
+  }
+  .btn-ingreso:hover { background: #047857; }
+  .btn-inc {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 9px 0; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer;
+    background: rgba(239,68,68,0.9); color: white; border: none; transition: all 0.2s;
+  }
+  .btn-inc:hover { background: #dc2626; }
+
+  /* Labels */
+  .mockup-label {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    background: #7c3aed; color: white; font-size: 11px; font-weight: 700;
+    padding: 4px 14px; border-radius: 20px; letter-spacing: 0.03em; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<div class="mockup-label">MOCKUP — Historial de Posición</div>
+
+<div class="dialog">
+  <!-- Header -->
+  <div class="dialog-header">
+    <span class="title">B8 · T1 · P1 · Pos 6</span>
+    <span class="close">✕</span>
+  </div>
+
+  <!-- Status -->
+  <div class="status-bar">
+    <span class="status-badge status-disponible">● DISPONIBLE (1)</span>
+  </div>
+
+  <!-- Stock Item -->
+  <div class="stock-card">
+    <div class="stock-top">
+      <div class="stock-info">
+        <div class="stock-code">57880</div>
+        <div class="stock-desc">QUEMACEL TANGO TWIST 782</div>
+        <div class="stock-meta">
+          <span class="venc-badge">Venc: 2027-02-12 (243d)</span>
+          <span class="ing-user">Ing: Juan</span>
+        </div>
+      </div>
+      <div class="stock-qty">
+        <div class="num">26</div>
+        <div class="unit">KG</div>
+      </div>
+    </div>
+    <div class="action-row">
+      <button class="action-btn btn-salida-total">↑ Salida total</button>
+      <button class="action-btn btn-parcial">↑ Parcial</button>
+      <button class="action-btn btn-transferir">⇄ Transferir</button>
+    </div>
+  </div>
+
+  <!-- ── SEPARATOR ── -->
+  <div class="separator"></div>
+
+  <!-- ── HISTORIAL TOGGLE ── -->
+  <div class="historial-toggle open">
+    <div class="left">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <span class="label">Historial</span>
+    </div>
+    <span class="count">5 mov.</span>
+    <span class="chevron">▼</span>
+  </div>
+
+  <!-- ── TIMELINE ── -->
+  <div class="timeline">
+    <!-- Mov 1: Ingreso más reciente -->
+    <div class="timeline-item">
+      <div class="tl-dot-col">
+        <div class="tl-dot dot-ingreso"></div>
+        <div class="tl-line"></div>
+      </div>
+      <div class="tl-content">
+        <div class="tl-top">
+          <span class="tl-type type-ingreso">Ingreso</span>
+          <span class="tl-date">15/06/2026 10:32</span>
+        </div>
+        <div class="tl-detail">+<strong>30 KG</strong> · Venc: 2027-02-12</div>
+        <div class="tl-user">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Juan Pérez
+        </div>
+      </div>
+    </div>
+
+    <!-- Mov 2: Salida parcial -->
+    <div class="timeline-item">
+      <div class="tl-dot-col">
+        <div class="tl-dot dot-salida"></div>
+        <div class="tl-line"></div>
+      </div>
+      <div class="tl-content">
+        <div class="tl-top">
+          <span class="tl-type type-salida">Salida</span>
+          <span class="tl-date">14/06/2026 14:15</span>
+        </div>
+        <div class="tl-detail">-<strong>4 KG</strong></div>
+        <div class="tl-user">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          María López
+        </div>
+      </div>
+    </div>
+
+    <!-- Mov 3: Traslado desde otra ubicación -->
+    <div class="timeline-item">
+      <div class="tl-dot-col">
+        <div class="tl-dot dot-traslado"></div>
+        <div class="tl-line"></div>
+      </div>
+      <div class="tl-content">
+        <div class="tl-top">
+          <span class="tl-type type-traslado">Traslado</span>
+          <span class="tl-date">13/06/2026 09:00</span>
+        </div>
+        <div class="tl-detail">+<strong>10 KG</strong> · Venc: 2027-02-12</div>
+        <div class="tl-origin">Desde: A1-Pos 3</div>
+        <div class="tl-user">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Juan Pérez
+        </div>
+      </div>
+    </div>
+
+    <!-- Mov 4: Ingreso inicial -->
+    <div class="timeline-item">
+      <div class="tl-dot-col">
+        <div class="tl-dot dot-ingreso"></div>
+        <div class="tl-line"></div>
+      </div>
+      <div class="tl-content">
+        <div class="tl-top">
+          <span class="tl-type type-ingreso">Stock inicial</span>
+          <span class="tl-date">01/06/2026 08:00</span>
+        </div>
+        <div class="tl-detail">+<strong>50 KG</strong></div>
+        <div class="tl-user">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Admin
+        </div>
+      </div>
+    </div>
+
+    <!-- Mov 5: Salida -->
+    <div class="timeline-item">
+      <div class="tl-dot-col">
+        <div class="tl-dot dot-salida"></div>
+      </div>
+      <div class="tl-content">
+        <div class="tl-top">
+          <span class="tl-type type-salida">Salida</span>
+          <span class="tl-date">28/05/2026 16:45</span>
+        </div>
+        <div class="tl-detail">-<strong>30 KG</strong></div>
+        <div class="tl-user">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Carlos Díaz
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom buttons -->
+  <div class="action-row-2">
+    <button class="btn-ingreso">↓ Ingreso</button>
+    <button class="btn-inc">⚠ INC.</button>
+  </div>
+</div>
+
+</body>
+</html>

@@ -188,15 +188,22 @@
     50% { box-shadow: 0 4px 24px rgba(139,92,246,0.45); }
   }
 
-  .btn-devolucion {
+  .btn-devolucion { background: linear-gradient(135deg, #d97706, #f59e0b); box-shadow: 0 4px 14px rgba(245,158,11,0.2); }
+  .btn-inc { background: linear-gradient(135deg, #f43f5e, #e11d48); box-shadow: 0 4px 14px rgba(244,63,94,0.2); }
+
+  .btn-ingreso-full {
     grid-column: 1 / -1;
-    background: linear-gradient(90deg, #d97706, #f59e0b);
-    box-shadow: 0 4px 14px rgba(245,158,11,0.2);
+    background: linear-gradient(90deg, #059669, #10b981);
+    box-shadow: 0 4px 14px rgba(16,185,129,0.25);
+    padding: 14px 8px;
+    font-size: 13px;
   }
-  .btn-inc {
+  .btn-salida-full {
     grid-column: 1 / -1;
-    background: linear-gradient(90deg, #f43f5e, #e11d48);
-    box-shadow: 0 4px 14px rgba(244,63,94,0.2);
+    background: linear-gradient(90deg, #dc2626, #ef4444);
+    box-shadow: 0 4px 14px rgba(239,68,68,0.25);
+    padding: 14px 8px;
+    font-size: 13px;
   }
 
   /* ─── LABELS ─── */
@@ -519,30 +526,30 @@
 
       <!-- Action Buttons -->
       <div class="action-grid">
-        <button class="action-btn btn-ingreso">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-          Ingreso
-        </button>
-        <button class="action-btn btn-salida">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
-          Salida
-        </button>
         <button class="action-btn btn-traslado">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
           Traslado
+        </button>
+        <button class="action-btn btn-devolucion">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Devolucion
         </button>
         <button class="action-btn btn-historial" style="position:relative;">
           <span class="new-badge">NUEVO</span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           Historial
         </button>
-        <button class="action-btn btn-devolucion">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-          Devolucion
-        </button>
         <button class="action-btn btn-inc">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          INC — Insumo No Conforme
+          INC
+        </button>
+        <button class="action-btn btn-ingreso-full">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          Ingreso
+        </button>
+        <button class="action-btn btn-salida-full">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          Salida
         </button>
       </div>
     </div>

@@ -1,0 +1,2002 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useCallback, useRef } from 'react'
+     4→import {
+     5→  listarSectores,
+     6→  cargarPosicionesSector,
+     7→  stockDetallePosicion,
+     8→  stockDetalleNivel,
+     9→  obtenerPrimerNivel,
+    10→  obtenerNivelesPosicion,
+    11→  type NivelInfo,
+    12→  listarBloquesParaSelect,
+    13→  buscarBloquePorCodigo,
+    14→  crearBloque,
+    15→  registrarIngresoPosicion,
+    16→  registrarSalidaPosicion,
+    17→  registrarTrasladoPosicion,
+    18→  registrarDevolucionPosicion,
+    19→  type Sector,
+    20→  type PosicionConStock,
+    21→  cargarVistaColumna,
+    22→  type VistaPosicion,
+    23→} from '@/lib/piso/api'
+    24→import { calcularTurno } from '@/lib/rackly/turno'
+    25→import { dataClient } from '@/lib/supabase/client'
+    26→import { useAuth } from '@/hooks/useAuth'
+    27→import { usePisoRealtime } from '@/hooks/usePisoRealtime'
+    28→import { Button } from '@/components/ui/button'
+    29→import { Input } from '@/components/ui/input'
+    30→import { Label } from '@/components/ui/label'
+    31→import {
+    32→  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+    33→} from '@/components/ui/dialog'
+    34→import { Checkbox } from '@/components/ui/checkbox'
+    35→import { toast } from 'sonner'
+    36→import { extractError } from '@/lib/utils'
+    37→import {
+    38→  Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
+    39→  Layers3, BoxSelect, X, Plus, Trash2, RefreshCw, Package,
+    40→  RotateCcw, CalendarOff, Calendar, Warehouse, Sparkles, ChevronRight,
+    41→  Check, AlertTriangle, ToggleLeft, ToggleRight, Layers, ChevronDown, Lock,
+    42→} from 'lucide-react'
+    43→
+    44→type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }
+    45→type SalItem = {
+    46→  bloque_id: string
+    47→  bloque_codigo: string
+    48→  bloque_descripcion: string
+    49→  bloque_unidad: string
+    50→  cantidad: string
+    51→  stockActual: number
+    52→  fecha_vencimiento: string
+    53→  selected: boolean
+    54→}
+    55→type BloqueOption = { id: string; codigo: string; descripcion: string; unidad: string }
+    56→type ActionMode = 'view' | 'ingreso' | 'salida' | 'traslado' | 'devolucion' | 'inc'
+    57→
+    58→type RowEntry = {
+    59→  bloque_id: string
+    60→  codigo: string
+    61→  descripcion: string
+    62→  unidad: string
+    63→  cantidad: string
+    64→  fecha_vencimiento: string
+    65→  sin_vencimiento: boolean
+    66→}
+    67→
+    68→const EMPTY_ROW: RowEntry = { bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '', fecha_vencimiento: '', sin_vencimiento: false }
+    69→
+    70→// ═══════════════════════════════════════════════
+    71→//  ANIMATED COUNTER HOOK
+    72→// ═══════════════════════════════════════════════
+    73→function useAnimatedCounter(target: number, duration = 800) {
+    74→  const [count, setCount] = useState(0)
+    75→  const prevTarget = useRef(0)
+    76→
+    77→  useEffect(() => {
+    78→    if (target === prevTarget.current) return
+    79→    const start = prevTarget.current
+    80→    const diff = target - start
+    81→    if (diff === 0) return
+    82→    const startTime = performance.now()
+    83→    let raf: number
+    84→
+    85→    function tick(now: number) {
+    86→      const elapsed = now - startTime
+    87→      const progress = Math.min(elapsed / duration, 1)
+    88→      const eased = 1 - Math.pow(1 - progress, 3) // ease-out cubic
+    89→      setCount(Math.round(start + diff * eased))
+    90→      if (progress < 1) {
+    91→        raf = requestAnimationFrame(tick)
+    92→      }
+    93→    }
+    94→
+    95→    raf = requestAnimationFrame(tick)
+    96→    prevTarget.current = target
+    97→    return () => cancelAnimationFrame(raf)
+    98→  }, [target, duration])
+    99→
+   100→  return count
+   101→}
+   102→
+   103→// ═══════════════════════════════════════════════
+   104→//  SKELETON LOADING COMPONENT
+   105→// ═══════════════════════════════════════════════
+   106→function SkeletonShimmer() {
+   107→  return (
+   108→    <div className="space-y-6">
+   109→      {/* Stats skeleton */}
+   110→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   111→        {[1, 2, 3, 4].map((i) => (
+   112→          <div key={i} className="relative rounded-2xl border border-slate-700/30 bg-gradient-to-br from-slate-800/60 to-slate-800/20 p-4 overflow-hidden">
+   113→            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-[shimmer_2s_infinite]" />
+   114→            <div className="h-3 w-16 bg-slate-700/60 rounded-full mb-3" />
+   115→            <div className="h-7 w-12 bg-slate-700/40 rounded-lg" />
+   116→          </div>
+   117→        ))}
+   118→      </div>
+   119→      {/* Grid skeleton */}
+   120→      <div className="space-y-6">
+   121→        {[1, 2].map((i) => (
+   122→          <div key={i} className="rounded-2xl border border-slate-700/30 bg-gradient-to-b from-slate-800/50 to-slate-800/20 overflow-hidden">
+   123→            <div className="px-5 py-3 border-b border-slate-700/30 flex items-center gap-3">
+   124→              <div className="w-9 h-9 rounded-xl bg-slate-700/40 animate-pulse" />
+   125→              <div className="h-4 w-32 bg-slate-700/40 rounded-lg animate-pulse" />
+   126→            </div>
+   127→            <div className="p-4">
+   128→              <div className="flex flex-wrap gap-2">
+   129→                {Array.from({ length: 12 }).map((_, j) => (
+   130→                  <div key={j} className="w-[42px] h-10 rounded-xl bg-slate-700/30 animate-pulse" />
+   131→                ))}
+   132→              </div>
+   133→            </div>
+   134→          </div>
+   135→        ))}
+   136→      </div>
+   137→    </div>
+   138→  )
+   139→}
+   140→
+   141→export function PisoSectoresTab() {
+   142→  const { perfil } = useAuth()
+   143→  const [sectores, setSectores] = useState<Sector[]>([])
+   144→  const [sectorFilter, setSectorFilter] = useState<string>('all')
+   145→  const [posiciones, setPosiciones] = useState<PosicionConStock[]>([])
+   146→  const [loading, setLoading] = useState(true)
+   147→  const [busy, setBusy] = useState(false)
+   148→  const [busyExport, setBusyExport] = useState(false)
+   149→  const [selectedColumn, setSelectedColumn] = useState<string | null>(null) // null = dashboard, 'A' = columna A
+   150→  const [colDetail, setColDetail] = useState<VistaPosicion[]>([]) // datos de la tabla
+   151→  const [colDetailLoading, setColDetailLoading] = useState(false)
+   152→
+   153→  const mountedRef = useRef(true)
+   154→  const justSelectedRef = useRef(false)
+   155→
+   156→  // Detalle de posicion
+   157→  const [detail, setDetail] = useState<{
+   158→    posicionId: string; posicionNumero: number; subcolumnaCodigo: string; columnaLetra: string
+   159→    stock: DetailStock[]
+   160→  } | null>(null)
+   161→  const [mode, setMode] = useState<ActionMode>('view')
+   162→
+   163→  // Ingreso state
+   164→  const [ingRows, setIngRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
+   165→
+   166→  // Salida state
+   167→  const [salItems, setSalItems] = useState<SalItem[]>([])
+   168→
+   169→  // Traslado state
+   170→  type TrItem = {
+   171→    bloque_id: string
+   172→    bloque_codigo: string
+   173→    bloque_descripcion: string
+   174→    bloque_unidad: string
+   175→    cantidad: string
+   176→    stockActual: number
+   177→    selected: boolean
+   178→    saldoMode: 'saldo' | 'ajustar'
+   179→    fecha_vencimiento: string
+   180→  }
+   181→  const [trDestPos, setTrDestPos] = useState<PosicionConStock | null>(null)
+   182→  const [trItems, setTrItems] = useState<TrItem[]>([])
+   183→  const [trConfirmOpen, setTrConfirmOpen] = useState(false)
+   184→
+   185→  // Devolucion state
+   186→  const [devRows, setDevRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
+   187→
+   188→  // INC state
+   189→  const [incCodigo, setIncCodigo] = useState('')
+   190→  const [incDescripcion, setIncDescripcion] = useState('')
+   191→  const [incUn, setIncUn] = useState('')
+   192→  const [incCantidad, setIncCantidad] = useState('')
+   193→  const [incCodigoInc, setIncCodigoInc] = useState('')
+   194→  const [incFechaVencimiento, setIncFechaVencimiento] = useState('')
+   195→  const [incSinVencimiento, setIncSinVencimiento] = useState(false)
+   196→
+   197→  // Niveles de la posición seleccionada
+   198→  const [niveles, setNiveles] = useState<NivelInfo[]>([])
+   199→  const [selectedNivelId, setSelectedNivelId] = useState<string>('')
+   200→  // Traslado: nivel destino
+   201→  const [trDestNivelId, setTrDestNivelId] = useState<string>('')
+   202→  // Stock por nivel (para vista desglosada)
+   203→  const [stockByNivel, setStockByNivel] = useState<Record<string, DetailStock[]>>({})
+   204→  const [viewNivelTab, setViewNivelTab] = useState<string>('all') // 'all' o nivel_id
+   205→  const [singleNivelMode, setSingleNivelMode] = useState(false) // true = clic desde celda nivel (mostrar solo ese nivel)
+   206→  // Salida: tab de nivel seleccionado
+   207→  const [salNivelTab, setSalNivelTab] = useState<string>('all')
+   208→  // Salida: items derivados con cantidades correctas por nivel seleccionado
+   209→  const [salItemsByNivel, setSalItemsByNivel] = useState<SalItem[]>([])
+   210→
+   211→  // Salida en masa: selección múltiple
+   212→  const [massMode, setMassMode] = useState(false)
+   213→  const [massSelected, setMassSelected] = useState<Set<string>>(new Set())
+   214→  const [massDialogOpen, setMassDialogOpen] = useState(false)
+   215→  const [massBusy, setMassBusy] = useState(false)
+   216→  const [massConfirmOpen, setMassConfirmOpen] = useState(false)
+   217→  // Datos cargados para el dialog de salida en masa
+   218→  type MassPosData = {
+   219→    pos: PosicionConStock
+   220→    niveles: NivelInfo[]
+   221→    stockByNivel: Record<string, DetailStock[]>
+   222→    stock: DetailStock[]
+   223→    selectedNivelIds: Set<string> // empty = all levels
+   224→  }
+   225→  const [massData, setMassData] = useState<Map<string, MassPosData>>(new Map())
+   226→
+   227→  // Catalogo
+   228→  const [bloquesCatalogo, setBloquesCatalogo] = useState<BloqueOption[]>([])
+   229→
+   230→  const [catalogoLoading, setCatalogoLoading] = useState(false)
+   231→
+   232→  // Animated counters
+   233→  const animatedTotal = useAnimatedCounter(posiciones.length)
+   234→  const animatedOccupied = useAnimatedCounter(posiciones.filter((p) => p.stock > 0).length)
+   235→  const animatedEmpty = useAnimatedCounter(posiciones.length - posiciones.filter((p) => p.stock > 0).length)
+   236→
+   237→  // Cargar sectores
+   238→  const loadSectores = useCallback(async () => {
+   239→    try { setSectores(await listarSectores()) } catch { /* ok */ }
+   240→  }, [])
+   241→
+   242→  // Cargar posiciones del sector seleccionado
+   243→  const loadPosiciones = useCallback(async (silent = false) => {
+   244→    if (!silent) setLoading(true)
+   245→    try {
+   246→      if (sectorFilter === 'all') {
+   247→        const secs = await listarSectores()
+   248→        if (!mountedRef.current) return
+   249→        setSectores(secs)
+   250→        if (secs.length > 0) {
+   251→          const data = await cargarPosicionesSector(secs[0].id)
+   252→          if (mountedRef.current) { setPosiciones(data); setSectorFilter(secs[0].id) }
+   253→        } else {
+   254→          if (mountedRef.current) setPosiciones([])
+   255→        }
+   256→      } else {
+   257→        const data = await cargarPosicionesSector(sectorFilter)
+   258→        if (mountedRef.current) setPosiciones(data)
+   259→      }
+   260→    } catch (err: unknown) {
+   261→      const msg = err instanceof Error ? err.message : 'Error'
+   262→      if (mountedRef.current && !silent) toast.error('Error al cargar posiciones', { description: msg })
+   263→    } finally {
+   264→      if (mountedRef.current) setLoading(false)
+   265→    }
+   266→  }, [sectorFilter])
+   267→
+   268→  const loadBloques = useCallback(async () => {
+   269→    setCatalogoLoading(true)
+   270→    try {
+   271→      const data = await listarBloquesParaSelect()
+   272→      if (mountedRef.current) {
+   273→        setBloquesCatalogo(data)
+   274→      }
+   275→    } catch (err) {
+   276→      console.error('[Piso] Error cargando catalogo:', err)
+   277→      if (mountedRef.current) toast.error('Error al cargar catalogo', { description: 'No se pudieron cargar los articulos.' })
+   278→    } finally {
+   279→      if (mountedRef.current) setCatalogoLoading(false)
+   280→    }
+   281→  }, [])
+   282→
+   283→  useEffect(() => { mountedRef.current = true; loadSectores(); loadPosiciones(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadPosiciones, loadBloques])
+   284→  useEffect(() => { if (sectorFilter !== 'all') { loadPosiciones(); setSelectedColumn(null); setColDetail([]) } }, [sectorFilter, loadPosiciones])
+   285→
+   286→  // Cargar vista de columna cuando se selecciona una
+   287→  const loadColumnDetail = useCallback(async (letra: string) => {
+   288→    if (sectorFilter === 'all') return
+   289→    setColDetailLoading(true)
+   290→    try {
+   291→      const data = await cargarVistaColumna(sectorFilter, letra)
+   292→      if (mountedRef.current) setColDetail(data)
+   293→    } catch (err) {
+   294→      console.error('[Piso] Error cargando vista columna:', err)
+   295→      if (mountedRef.current) toast.error('Error al cargar columna')
+   296→    } finally {
+   297→      if (mountedRef.current) setColDetailLoading(false)
+   298→    }
+   299→  }, [sectorFilter])
+   300→
+   301→  function handleSelectColumn(letra: string) {
+   302→    setSelectedColumn(letra)
+   303→    loadColumnDetail(letra)
+   304→  }
+   305→
+   306→  // Realtime: auto-refresh positions when piso_movimientos changes (polling solo como respaldo si WebSocket cae)
+   307→  const silentRefreshPos = useCallback(() => {
+   308→    loadPosiciones(true)
+   309→    if (selectedColumn && sectorFilter !== 'all') {
+   310→      cargarVistaColumna(sectorFilter, selectedColumn).then(d => {
+   311→        if (mountedRef.current) setColDetail(d)
+   312→      }).catch(() => {})
+   313→    }
+   314→  }, [loadPosiciones, selectedColumn, sectorFilter])
+   315→  usePisoRealtime(silentRefreshPos)
+   316→
+   317→  // Filtrar catalogo para autocomplete
+   318→  function getFilteredCatalogo(prefix: 'ing' | 'dev', idx: number) {
+   319→    const rows = prefix === 'ing' ? ingRows : devRows
+   320→    const q = rows[idx]?.codigo.trim().toLowerCase() || ''
+   321→    if (!q) return bloquesCatalogo.slice(0, 50)
+   322→    return bloquesCatalogo.filter((b) =>
+   323→      b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q)
+   324→    )
+   325→  }
+   326→
+   327→  // Agrupar posiciones por columna -> subcolumna
+   328→  const subPorCol = new Map<string, { letra: string; subcols: { codigo: string; pos: PosicionConStock[] }[] }>()
+   329→  for (const p of posiciones) {
+   330→    if (!subPorCol.has(p.columnaLetra)) subPorCol.set(p.columnaLetra, { letra: p.columnaLetra, subcols: [] })
+   331→    const col = subPorCol.get(p.columnaLetra)!
+   332→    let found = col.subcols.find((s) => s.codigo === p.subcolumnaCodigo)
+   333→    if (!found) { found = { codigo: p.subcolumnaCodigo, pos: [] }; col.subcols.push(found) }
+   334→    found.pos.push(p)
+   335→  }
+   336→  const columnas = [...subPorCol.values()].sort((a, b) => a.letra.localeCompare(b.letra))
+   337→
+   338→  // Stats
+   339→  const occupied = posiciones.filter((p) => p.stock > 0).length
+   340→  const multiArt = posiciones.filter((p) => p.stock > 0 && p.bloques.length > 1).length
+   341→  const total = posiciones.length
+   342→  const empty = total - occupied
+   343→  const pct = total > 0 ? Math.round((occupied / total) * 100) : 0
+   344→
+   345→
+   346→
+   347→  // Click posicion (nivelId opcional para seleccionar nivel especifico desde la tabla)
+   348→  async function handleClick(pos: PosicionConStock | null, nivelId?: string) {
+   349→    if (!pos) return
+   350→    try {
+   351→      const [stock, nivs] = await Promise.all([
+   352→        stockDetallePosicion(pos.posicionId),
+   353→        obtenerNivelesPosicion(pos.posicionId, pos.columnaLetra),
+   354→      ])
+   355→      // Cargar stock por nivel (en paralelo)
+   356→      const stockPerNivel: Record<string, DetailStock[]> = {}
+   357→      if (nivs.length > 0) {
+   358→        const nivelStocks = await Promise.all(
+   359→          nivs.map((n) => stockDetalleNivel(n.id))
+   360→        )
+   361→        nivs.forEach((n, i) => { stockPerNivel[n.id] = nivelStocks[i] })
+   362→      }
+   363→      if (mountedRef.current) {
+   364→        // Si se clickeó un nivel específico, filtrar stock solo a ese nivel
+   365→        const filteredStock = nivelId ? stock.filter(s => {
+   366→          // Buscar en qué nivel está este bloque
+   367→          for (const niv of nivs) {
+   368→            if (niv.id === nivelId) {
+   369→              const nivelStock = stockPerNivel[niv.id] ?? []
+   370→              if (nivelStock.some(ns => ns.bloque_id === s.bloque_id && ns.fecha_vencimiento === s.fecha_vencimiento)) {
+   371→                return true
+   372→              }
+   373→            }
+   374→          }
+   375→          return false
+   376→        }) : stock
+   377→
+   378→        setDetail({ posicionId: pos.posicionId, posicionNumero: pos.posicionNumero, subcolumnaCodigo: pos.subcolumnaCodigo, columnaLetra: pos.columnaLetra, stock: filteredStock })
+   379→        setNiveles(nivs)
+   380→        setSelectedNivelId(nivelId || (nivs.length > 0 ? nivs[0].id : ''))
+   381→        setStockByNivel(stockPerNivel)
+   382→        // Si viene de un clic en nivel específico, activar singleNivelMode
+   383→        const isSingleNivel = !!nivelId
+   384→        setSingleNivelMode(isSingleNivel)
+   385→        setViewNivelTab(nivelId || 'all')
+   386→        setMode('view')
+   387→        // Inicializar salItems/trItems con el stock filtrado (por nivel o todos)
+   388→        const itemsForActions = filteredStock.map((s) => ({
+   389→          bloque_id: s.bloque_id,
+   390→          bloque_codigo: s.bloque_codigo,
+   391→          bloque_descripcion: s.bloque_descripcion,
+   392→          bloque_unidad: s.bloque_unidad,
+   393→          cantidad: String(s.cantidad),
+   394→          stockActual: s.cantidad,
+   395→          fecha_vencimiento: s.fecha_vencimiento || '',
+   396→          selected: false,
+   397→        }))
+   398→        setSalItems(itemsForActions)
+   399→        setTrItems(itemsForActions.map((s) => ({ ...s, saldoMode: 'saldo' as const })))
+   400→      }
+   401→    } catch { toast.error('Error al cargar detalle') }
+   402→  }
+   403→
+   404→  // selectedNivelId se usa directamente en doIngreso/doSalida/doTraslado/doDevolucion
+   405→
+   406→  function openIngreso() {
+   407→    setIngRows([{ ...EMPTY_ROW }])
+   408→    // No resetear nivel — mantener el que el usuario seleccionó
+   409→    setMode('ingreso')
+   410→  }
+   411→
+   412→  function openSalida() {
+   413→    // No resetear nivel — mantener el que el usuario seleccionó
+   414→    if (singleNivelMode) {
+   415→      setSalNivelTab(selectedNivelId)
+   416→      if (detail) setSalItemsByNivel(detail.stock.map((s) => ({
+   417→        bloque_id: s.bloque_id,
+   418→        bloque_codigo: s.bloque_codigo,
+   419→        bloque_descripcion: s.bloque_descripcion,
+   420→        bloque_unidad: s.bloque_unidad,
+   421→        cantidad: String(s.cantidad),
+   422→        stockActual: s.cantidad,
+   423→        fecha_vencimiento: s.fecha_vencimiento || '',
+   424→        selected: false,
+   425→      })))
+   426→      setSalItems([])
+   427→    } else {
+   428→      setSalNivelTab('all')
+   429→      if (detail) setSalItems(detail.stock.map((s) => ({
+   430→        bloque_id: s.bloque_id,
+   431→        bloque_codigo: s.bloque_codigo,
+   432→        bloque_descripcion: s.bloque_descripcion,
+   433→        bloque_unidad: s.bloque_unidad,
+   434→        cantidad: String(s.cantidad),
+   435→        stockActual: s.cantidad,
+   436→        fecha_vencimiento: s.fecha_vencimiento || '',
+   437→        selected: false,
+   438→      })))
+   439→      setSalItemsByNivel([])
+   440→    }
+   441→    setMode('salida')
+   442→  }
+   443→
+   444→  function buildSalItemsForNivel(nivelId: string): SalItem[] {
+   445→    const nivelStock = stockByNivel[nivelId] ?? []
+   446→    return nivelStock.map((s) => ({
+   447→      bloque_id: s.bloque_id,
+   448→      bloque_codigo: s.bloque_codigo,
+   449→      bloque_descripcion: s.bloque_descripcion,
+   450→      bloque_unidad: s.bloque_unidad,
+   451→      cantidad: String(s.cantidad),
+   452→      stockActual: s.cantidad,
+   453→      fecha_vencimiento: s.fecha_vencimiento || '',
+   454→      selected: false,
+   455→    }))
+   456→  }
+   457→
+   458→  function openTraslado() {
+   459→    setTrDestPos(null)
+   460→    setTrDestNivelId('')
+   461→    setTrConfirmOpen(false)
+   462→    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
+   463→    if (detail) setTrItems(detail.stock.map((s) => ({
+   464→      bloque_id: s.bloque_id,
+   465→      bloque_codigo: s.bloque_codigo,
+   466→      bloque_descripcion: s.bloque_descripcion,
+   467→      bloque_unidad: s.bloque_unidad,
+   468→      cantidad: String(s.cantidad),
+   469→      stockActual: s.cantidad,
+   470→      selected: false,
+   471→      saldoMode: 'saldo',
+   472→      fecha_vencimiento: s.fecha_vencimiento || '',
+   473→    })))
+   474→    setMode('traslado')
+   475→  }
+   476→
+   477→  function openDevolucion() {
+   478→    setDevRows([{ ...EMPTY_ROW }])
+   479→    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
+   480→    setMode('devolucion')
+   481→  }
+   482→
+   483→  function openInc() {
+   484→    setIncCodigo('')
+   485→    setIncDescripcion('')
+   486→    setIncUn('')
+   487→    setIncCantidad('')
+   488→    setIncCodigoInc('')
+   489→    setIncFechaVencimiento('')
+   490→    setIncSinVencimiento(false)
+   491→    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
+   492→    setMode('inc')
+   493→  }
+   494→
+   495→  function handleIncCatalogoPick(bloque: BloqueOption) {
+   496→    justSelectedRef.current = true
+   497→    setIncCodigo(bloque.codigo)
+   498→    setIncDescripcion(bloque.descripcion)
+   499→    setIncUn(bloque.unidad)
+   500→  }
+   501→
+   502→  function getFilteredIncCatalogo() {
+   503→    const q = incCodigo.trim().toLowerCase()
+   504→    if (!q) return bloquesCatalogo.slice(0, 50)
+   505→    return bloquesCatalogo.filter((b) =>
+   506→      b.codigo.toLowerCase().includes(q) || b.descripcion.toLowerCase().includes(q)
+   507→    )
+   508→  }
+   509→
+   510→  async function doIngresoINC() {
+   511→    if (!detail || !perfil) return
+   512→    if (!incCodigo.trim() || !incCantidad || !incCodigoInc.trim()) {
+   513→      toast.error('Completa codigo, cantidad y codigo INC')
+   514→      return
+   515→    }
+   516→    const qty = parseFloat(incCantidad)
+   517→    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad invalida'); return }
+   518→    if (!selectedNivelId) { toast.error('Selecciona un nivel primero'); return }
+   519→    const nivelId = selectedNivelId
+   520→    setBusy(true)
+   521→    try {
+   522→      // Resolve bloque_id
+   523→      const upper = incCodigo.trim().toUpperCase()
+   524→      let bloqueId = ''
+   525→      const existing = await buscarBloquePorCodigo(upper)
+   526→      if (existing) {
+   527→        bloqueId = existing.id
+   528→      } else {
+   529→        const created = await crearBloque(upper, incDescripcion || '', incUn || 'KG')
+   530→        if (created.length > 0) {
+   531→          const found = created.find((b) => b.codigo === upper)
+   532→          if (found) bloqueId = found.id
+   533→        }
+   534→      }
+   535→      if (!bloqueId) { toast.error('No se pudo crear/encontrar el articulo'); setBusy(false); return }
+   536→
+   537→      // Registrar ingreso INC con detalles de stock (usando registrarIngresoPosicion)
+   538→      const detalles = [{
+   539→        nivel_id: nivelId,
+   540→        bloque_id: bloqueId,
+   541→        cantidad: qty,
+   542→        fecha_vencimiento: incSinVencimiento ? '' : incFechaVencimiento,
+   543→      }]
+   544→      await registrarIngresoPosicion(
+   545→        calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '',
+   546→        detalles,
+   547→        { posicion_id: detail.posicionId, codigo_inc: incCodigoInc.trim() }
+   548→      )
+   549→
+   550→      toast.success('INC registrado')
+   551→      setMode('view')
+   552→      setIncCodigo('')
+   553→      setIncDescripcion('')
+   554→      setIncUn('')
+   555→      setIncCantidad('')
+   556→      setIncCodigoInc('')
+   557→      setIncFechaVencimiento('')
+   558→      setIncSinVencimiento(false)
+   559→      loadBloques()
+   560→      const [stock, nivelStocks] = await Promise.all([
+   561→        stockDetallePosicion(detail.posicionId),
+   562→        niveles.length > 0 ? Promise.all(niveles.map((n) => stockDetalleNivel(n.id))) : Promise.resolve([]),
+   563→      ])
+   564→      const newSBN: Record<string, DetailStock[]> = {}
+   565→      niveles.forEach((n, i) => { newSBN[n.id] = (nivelStocks as DetailStock[][])[i] ?? [] })
+   566→      if (mountedRef.current && detail) {
+   567→        const currentTab = viewNivelTab
+   568→        const filteredStock = currentTab !== 'all' ? stock.filter(s => {
+   569→          const ns = newSBN[currentTab] ?? []
+   570→          return ns.some(n => n.bloque_id === s.bloque_id && n.fecha_vencimiento === s.fecha_vencimiento)
+   571→        }) : stock
+   572→        setStockByNivel(newSBN)
+   573→        setDetail({ ...detail, stock: filteredStock })
+   574→      }
+   575→      await loadPosiciones()
+   576→      if (selectedColumn) loadColumnDetail(selectedColumn)
+   577→    } catch (err: unknown) {
+   578→      toast.error('Error al registrar INC', { description: extractError(err) })
+   579→    } finally {
+   580→      setBusy(false)
+   581→    }
+   582→  }
+   583→
+   584→  // Actualizar campo de busqueda — solo actualiza texto, no auto-selecciona
+   585→  function handleCodeInput(prefix: 'ing' | 'dev', idx: number, value: string) {
+   586→    const trimmed = value.trim()
+   587→    const updateRows = prefix === 'ing' ? setIngRows : setDevRows
+   588→    updateRows((prev) => {
+   589→      const u = [...prev]
+   590→      u[idx] = { ...u[idx], codigo: trimmed, bloque_id: '', descripcion: '', unidad: '' }
+   591→      return u
+   592→    })
+   593→  }
+   594→
+   595→  // Crear articulo manual cuando el usuario sale del campo sin seleccionar nada
+   596→  async function handleCodeBlur(prefix: 'ing' | 'dev', idx: number) {
+   597→    // Skip if user just selected from dropdown (onBlur fires before onClick)
+   598→    if (justSelectedRef.current) { justSelectedRef.current = false; return }
+   599→    const rows = prefix === 'ing' ? ingRows : devRows
+   600→    const row = rows[idx]
+   601→    if (!row || row.bloque_id || row.codigo.trim().length < 1) return
+   602→    const upper = row.codigo.trim().toUpperCase()
+   603→    const updateRows = prefix === 'ing' ? setIngRows : setDevRows
+   604→    // Check if exact code exists
+   605→    const bloque = await buscarBloquePorCodigo(upper)
+   606→    if (bloque) {
+   607→      updateRows((prev) => {
+   608→        const u = [...prev]
+   609→        u[idx] = { ...u[idx], bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad }
+   610→        return u
+   611→      })
+   612→    } else {
+   613→      const virtualId = `manual_${upper}`
+   614→      updateRows((prev) => {
+   615→        const u = [...prev]
+   616→        u[idx] = { ...u[idx], bloque_id: virtualId, codigo: upper, descripcion: 'Articulo nuevo (manual)', unidad: 'KG' }
+   617→        return u
+   618→      })
+   619→    }
+   620→  }
+   621→
+   622→  function onSelectFromCatalog(prefix: 'ing' | 'dev', idx: number, bloque: BloqueOption) {
+   623→    justSelectedRef.current = true
+   624→    if (prefix === 'ing') {
+   625→      setIngRows((prev) => {
+   626→        const u = [...prev]
+   627→        u[idx] = { ...u[idx], bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad }
+   628→        return u
+   629→      })
+   630→    } else {
+   631→      setDevRows((prev) => {
+   632→        const u = [...prev]
+   633→        u[idx] = { ...u[idx], bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad }
+   634→        return u
+   635→      })
+   636→    }
+   637→  }
+   638→
+   639→  // Auto-create manual_ bloques in piso_bloques before registering movement
+   640→  async function ensureManualBloqueCreated(rows: RowEntry[]): Promise<RowEntry[]> {
+   641→    const resolved: RowEntry[] = []
+   642→    for (const r of rows) {
+   643→      if (r.bloque_id.startsWith('manual_')) {
+   644→        const code = r.bloque_id.replace('manual_', '')
+   645→        try {
+   646→          const created = await crearBloque(code, r.descripcion || '', r.unidad || 'KG')
+   647→          if (created.length > 0) {
+   648→            // Find the newly created one
+   649→            const found = created.find((b) => b.codigo === code)
+   650→            if (found) {
+   651→              resolved.push({ ...r, bloque_id: found.id })
+   652→              continue
+   653→            }
+   654→          }
+   655→        } catch {
+   656→          // If creation fails, try searching for it (maybe it was already created)
+   657→        }
+   658→        // Last resort: try buscarBloquePorCodigo
+   659→        const existing = await buscarBloquePorCodigo(code)
+   660→        if (existing) {
+   661→          resolved.push({ ...r, bloque_id: existing.id })
+   662→        } else {
+   663→          resolved.push(r)
+   664→        }
+   665→      } else {
+   666→        resolved.push(r)
+   667→      }
+   668→    }
+   669→    return resolved
+   670→  }
+   671→
+   672→  function addIngresoRow() { setIngRows([...ingRows, { ...EMPTY_ROW }]) }
+   673→  function removeIngresoRow(i: number) { setIngRows(ingRows.filter((_, idx) => idx !== i)) }
+   674→  function updateIngresoCantidad(i: number, value: string) {
+   675→    const updated = [...ingRows]; updated[i] = { ...updated[i], cantidad: value }; setIngRows(updated)
+   676→  }
+   677→  function updateIngresoFecha(i: number, value: string) {
+   678→    const updated = [...ingRows]
+   679→    updated[i] = { ...updated[i], fecha_vencimiento: value, sin_vencimiento: !value }
+   680→    setIngRows(updated)
+   681→  }
+   682→  function toggleIngresoSinVencimiento(i: number) {
+   683→    const updated = [...ingRows]
+   684→    updated[i] = { ...updated[i], sin_vencimiento: !updated[i].sin_vencimiento, fecha_vencimiento: '' }
+   685→    setIngRows(updated)
+   686→  }
+   687→
+   688→  function addDevRow() { setDevRows([...devRows, { ...EMPTY_ROW }]) }
+   689→  function removeDevRow(i: number) { setDevRows(devRows.filter((_, idx) => idx !== i)) }
+   690→  function updateDevCantidad(i: number, value: string) {
+   691→    const updated = [...devRows]; updated[i] = { ...updated[i], cantidad: value }; setDevRows(updated)
+   692→  }
+   693→  function updateDevFecha(i: number, value: string) {
+   694→    const updated = [...devRows]
+   695→    updated[i] = { ...updated[i], fecha_vencimiento: value, sin_vencimiento: !value }
+   696→    setDevRows(updated)
+   697→  }
+   698→  function toggleDevSinVencimiento(i: number) {
+   699→    const updated = [...devRows]
+   700→    updated[i] = { ...updated[i], sin_vencimiento: !updated[i].sin_vencimiento, fecha_vencimiento: '' }
+   701→    setDevRows(updated)
+   702→  }
+   703→
+   704→  async function doIngreso() {
+   705→    if (!detail || !perfil) return
+   706→    if (!selectedNivelId) { toast.error('No hay nivel seleccionado'); return }
+   707→    const nivelId = selectedNivelId
+   708→    const validRows = ingRows.filter((r) => r.bloque_id && r.cantidad)
+   709→    if (validRows.length === 0) { toast.error('Agrega al menos un articulo con codigo y cantidad'); return }
+   710→    for (const r of validRows) {
+   711→      if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad invalida'); return }
+   712→    }
+   713→    setBusy(true)
+   714→    try {
+   715→      // Resolve manual_ IDs before registering
+   716→      const resolved = await ensureManualBloqueCreated(validRows)
+   717→      const detalles = resolved.map((r) => ({
+   718→        nivel_id: nivelId,
+   719→        bloque_id: r.bloque_id,
+   720→        cantidad: parseFloat(r.cantidad),
+   721→        fecha_vencimiento: r.sin_vencimiento ? '' : r.fecha_vencimiento,
+   722→      }))
+   723→      await registrarIngresoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
+   724→      toast.success('Ingreso registrado')
+   725→      // Reload everything in parallel for real-time update
+   726→      loadBloques()
+   727→      const [stock, reloadedPerNivel] = await Promise.all([
+   728→        stockDetallePosicion(detail.posicionId),
+   729→        (async () => {
+   730→          const perNivel: Record<string, DetailStock[]> = {}
+   731→          for (const n of niveles) {
+   732→            perNivel[n.id] = await stockDetalleNivel(n.id)
+   733→          }
+   734→          return perNivel
+   735→        })(),
+   736→      ])
+   737→      if (mountedRef.current && detail) {
+   738→        // Mantener filtro de nivel si estaba activo
+   739→        const currentTab = viewNivelTab
+   740→        const filteredStock = currentTab !== 'all' ? stock.filter(s => {
+   741→          const nivelStock = reloadedPerNivel[currentTab] ?? []
+   742→          return nivelStock.some(ns => ns.bloque_id === s.bloque_id && ns.fecha_vencimiento === s.fecha_vencimiento)
+   743→        }) : stock
+   744→        setDetail({ ...detail, stock: filteredStock })
+   745→        setStockByNivel(reloadedPerNivel)
+   746→        setMode('view')
+   747→        setIngRows([{ ...EMPTY_ROW }])
+   748→      }
+   749→      // Reload positions grid
+   750→      await loadPosiciones()
+   751→      if (selectedColumn) loadColumnDetail(selectedColumn)
+   752→    } catch (err: unknown) { toast.error('Error al registrar ingreso', { description: extractError(err) }) } finally { setBusy(false) }
+   753→  }
+   754→
+   755→  async function doSalida() {
+   756→    if (!detail || !perfil) return
+   757→    // Filtrar items por nivel seleccionado
+   758→    const filteredItems = salNivelTab === 'all' ? salItems : salItemsByNivel
+   759→    const validRows = filteredItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
+   760→    if (validRows.length === 0) { toast.error('No hay articulos para salir'); return }
+   761→    // Determinar nivel_id para la salida
+   762→    const nivelId = salNivelTab === 'all' ? selectedNivelId : salNivelTab
+   763→    if (!nivelId) { toast.error('No hay nivel seleccionado'); return }
+   764→    setBusy(true)
+   765→    try {
+   766→      const detalles = validRows.map((r) => ({ nivel_id: nivelId, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
+   767→      await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
+   768→      toast.success('Salida registrada')
+   769→      // Recargar stock y stock por nivel
+   770→      const [stock, nivelStocks] = await Promise.all([
+   771→        stockDetallePosicion(detail.posicionId),
+   772→        niveles.length > 0 ? Promise.all(niveles.map((n) => stockDetalleNivel(n.id))) : Promise.resolve([]),
+   773→      ])
+   774→      const newStockByNivel: Record<string, DetailStock[]> = {}
+   775→      niveles.forEach((n, i) => { newStockByNivel[n.id] = (nivelStocks as DetailStock[][])[i] ?? [] })
+   776→      if (mountedRef.current && detail) {
+   777→        const currentTab = viewNivelTab
+   778→        const filteredStock = currentTab !== 'all' ? stock.filter(s => {
+   779→          const ns = newStockByNivel[currentTab] ?? []
+   780→          return ns.some(n => n.bloque_id === s.bloque_id && n.fecha_vencimiento === s.fecha_vencimiento)
+   781→        }) : stock
+   782→        setStockByNivel(newStockByNivel)
+   783→        setDetail({ ...detail, stock: filteredStock }); setMode('view')
+   784→      }
+   785→      await loadPosiciones()
+   786→      if (selectedColumn) loadColumnDetail(selectedColumn)
+   787→    } catch (err: unknown) { toast.error('Error al registrar salida', { description: extractError(err) }) } finally { setBusy(false) }
+   788→  }
+   789→
+   790→  async function doTraslado() {
+   791→    if (!detail || !perfil || !trDestPos) return
+   792→    if (detail.posicionId === trDestPos.posicionId) { toast.error('Origen y destino no pueden ser iguales'); return }
+   793→    const validRows = trItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
+   794→    if (validRows.length === 0) { toast.error('No hay articulos para trasladar'); return }
+   795→    if (!selectedNivelId || !trDestNivelId) { toast.error('Selecciona nivel de origen y destino'); return }
+   796→    const origNivelId = selectedNivelId
+   797→    const destNivelId = trDestNivelId
+   798→    setBusy(true)
+   799→    try {
+   800→
+   801→      // Separate items by discrepancy type
+   802→      const exactItems = validRows.filter((r) => parseFloat(r.cantidad) === r.stockActual)
+   803→      const deficitItems = validRows.filter((r) => parseFloat(r.cantidad) < r.stockActual)
+   804→      const surplusItems = validRows.filter((r) => parseFloat(r.cantidad) > r.stockActual)
+   805→
+   806→      // 1) Base transfer for ALL selected items (move the entered amount)
+   807→      const allDetSal = validRows.map((r) => ({ nivel_id: origNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
+   808→      const allDetIng = validRows.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
+   809→      await registrarTrasladoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', allDetSal, allDetIng)
+   810→
+   811→      // 2) For surplus items (qty > stock): create ingreso at destination for the excess
+   812→      for (const item of surplusItems) {
+   813→        const excess = parseFloat(item.cantidad) - item.stockActual
+   814→        if (excess > 0) {
+   815→          await registrarIngresoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
+   816→            { nivel_id: destNivelId!, bloque_id: item.bloque_id, cantidad: excess, fecha_vencimiento: item.fecha_vencimiento || '' },
+   817→          ])
+   818→        }
+   819→      }
+   820→
+   821→      // 3) For deficit items with saldoMode 'ajustar': create salida at origin for remaining balance
+   822→      for (const item of deficitItems) {
+   823→        if (item.saldoMode === 'ajustar') {
+   824→          const remaining = item.stockActual - parseFloat(item.cantidad)
+   825→          if (remaining > 0) {
+   826→            await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
+   827→              { nivel_id: origNivelId!, bloque_id: item.bloque_id, cantidad: remaining, fecha_vencimiento: item.fecha_vencimiento || null },
+   828→            ])
+   829→          }
+   830→        }
+   831→        // saldoMode === 'saldo': leave the balance as-is, no extra action needed
+   832→      }
+   833→
+   834→      // Build result message
+   835→      const parts: string[] = ['Traslado registrado']
+   836→      if (surplusItems.length > 0) parts.push(`${surplusItems.length} ingreso(s) por excedente`)
+   837→      const adjustedCount = deficitItems.filter((r) => r.saldoMode === 'ajustar').length
+   838→      if (adjustedCount > 0) parts.push(`${adjustedCount} salida(s) por ajuste`)
+   839→      toast.success(parts.join(' · '))
+   840→      setTrConfirmOpen(false)
+   841→      if (mountedRef.current) { setDetail(null); setTrDestPos(null); loadPosiciones(); if (selectedColumn) loadColumnDetail(selectedColumn) }
+   842→    } catch (err: unknown) { toast.error('Error al trasladar', { description: extractError(err) }) } finally { setBusy(false) }
+   843→  }
+   844→
+   845→  async function doDevolucion() {
+   846→    if (!detail || !perfil) return
+   847→    if (!selectedNivelId) { toast.error('No hay nivel seleccionado'); return }
+   848→    const nivelId = selectedNivelId
+   849→    const validRows = devRows.filter((r) => r.bloque_id && r.cantidad)
+   850→    if (validRows.length === 0) { toast.error('Agrega al menos un articulo con codigo y cantidad'); return }
+   851→    for (const r of validRows) {
+   852→      if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad invalida'); return }
+   853→    }
+   854→    setBusy(true)
+   855→    try {
+   856→      // Resolve manual_ IDs before registering
+   857→      const resolved = await ensureManualBloqueCreated(validRows)
+   858→      const detalles = resolved.map((r) => ({
+   859→        nivel_id: nivelId,
+   860→        bloque_id: r.bloque_id,
+   861→        cantidad: parseFloat(r.cantidad),
+   862→        fecha_vencimiento: r.sin_vencimiento ? '' : r.fecha_vencimiento,
+   863→      }))
+   864→      await registrarDevolucionPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
+   865→      toast.success('Devolucion registrada')
+   866→      loadBloques()
+   867→      const [stock, nivelStocks] = await Promise.all([
+   868→        stockDetallePosicion(detail.posicionId),
+   869→        niveles.length > 0 ? Promise.all(niveles.map((n) => stockDetalleNivel(n.id))) : Promise.resolve([]),
+   870→      ])
+   871→      const newSBN: Record<string, DetailStock[]> = {}
+   872→      niveles.forEach((n, i) => { newSBN[n.id] = (nivelStocks as DetailStock[][])[i] ?? [] })
+   873→      if (mountedRef.current && detail) {
+   874→        const currentTab = viewNivelTab
+   875→        const filteredStock = currentTab !== 'all' ? stock.filter(s => {
+   876→          const ns = newSBN[currentTab] ?? []
+   877→          return ns.some(n => n.bloque_id === s.bloque_id && n.fecha_vencimiento === s.fecha_vencimiento)
+   878→        }) : stock
+   879→        setStockByNivel(newSBN)
+   880→        setDetail({ ...detail, stock: filteredStock }); setMode('view')
+   881→        setDevRows([{ ...EMPTY_ROW }])
+   882→      }
+   883→      await loadPosiciones()
+   884→      if (selectedColumn) loadColumnDetail(selectedColumn)
+   885→    } catch (err: unknown) { toast.error('Error al registrar devolución', { description: extractError(err) }) } finally { setBusy(false) }
+   886→  }
+   887→
+   888→  // ═══ SALIDA EN MASA ═══
+   889→  function toggleMassSelect(posicionId: string) {
+   890→    setMassSelected((prev) => {
+   891→      const next = new Set(prev)
+   892→      if (next.has(posicionId)) next.delete(posicionId)
+   893→      else next.add(posicionId)
+   894→      return next
+   895→    })
+   896→  }
+   897→
+   898→  function toggleMassMode() {
+   899→    setMassMode((prev) => !prev)
+   900→    if (massMode) { setMassSelected(new Set()) } // Al desactivar, limpiar selección
+   901→  }
+   902→
+   903→  async function openMassDialog() {
+   904→    if (massSelected.size === 0 || !perfil) return
+   905→    setMassBusy(true)
+   906→    setMassDialogOpen(true)
+   907→    try {
+   908→      const selectedPositions = posiciones.filter((p) => massSelected.has(p.posicionId))
+   909→      const dataMap = new Map<string, MassPosData>()
+   910→      await Promise.all(selectedPositions.map(async (pos) => {
+   911→        try {
+   912→          const [stock, nivs] = await Promise.all([
+   913→            stockDetallePosicion(pos.posicionId),
+   914→            obtenerNivelesPosicion(pos.posicionId, pos.columnaLetra),
+   915→          ])
+   916→          const sBN: Record<string, DetailStock[]> = {}
+   917→          if (nivs.length > 0) {
+   918→            const nivelStocks = await Promise.all(nivs.map((n) => stockDetalleNivel(n.id)))
+   919→            nivs.forEach((n, i) => { sBN[n.id] = nivelStocks[i] })
+   920→          }
+   921→          dataMap.set(pos.posicionId, {
+   922→            pos,
+   923→            niveles: nivs,
+   924→            stockByNivel: sBN,
+   925→            stock,
+   926→            selectedNivelIds: new Set<string>(),
+   927→          })
+   928→        } catch { /* skip failed positions */ }
+   929→      }))
+   930→      if (mountedRef.current) setMassData(dataMap)
+   931→    } catch (err: unknown) {
+   932→      toast.error('Error al cargar datos', { description: err instanceof Error ? err.message : '' })
+   933→    } finally {
+   934→      if (mountedRef.current) setMassBusy(false)
+   935→    }
+   936→  }
+   937→
+   938→  async function doMassSalida() {
+   939→    if (!perfil || massData.size === 0) return
+   940→    setMassBusy(true)
+   941→    let successCount = 0
+   942→    let errorCount = 0
+   943→    try {
+   944→      const entries = [...massData.entries()]
+   945→      await Promise.all(entries.map(async ([posicionId, pd]) => {
+   946→        try {
+   947→          // Si no hay niveles seleccionados, salir de todos los niveles
+   948→          const isAllLevels = pd.selectedNivelIds.size === 0
+   949→          const detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento: string | null }[] = []
+   950→          if (isAllLevels) {
+   951→            // Salir de todos los niveles: agrupar por nivel_id real
+   952→            for (const niv of pd.niveles) {
+   953→              const items = pd.stockByNivel[niv.id] ?? []
+   954→              for (const s of items) {
+   955→                detalles.push({ nivel_id: niv.id, bloque_id: s.bloque_id, cantidad: s.cantidad, fecha_vencimiento: s.fecha_vencimiento || null })
+   956→              }
+   957→            }
+   958→          } else {
+   959→            // Salir solo de los niveles seleccionados
+   960→            for (const nivelId of pd.selectedNivelIds) {
+   961→              const items = pd.stockByNivel[nivelId] ?? []
+   962→              for (const s of items) {
+   963→                detalles.push({ nivel_id: nivelId, bloque_id: s.bloque_id, cantidad: s.cantidad, fecha_vencimiento: s.fecha_vencimiento || null })
+   964→              }
+   965→            }
+   966→          }
+   967→          if (detalles.length === 0) { return }
+   968→          await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
+   969→          successCount++
+   970→        } catch { errorCount++ }
+   971→      }))
+   972→      if (successCount > 0) toast.success(`Salida registrada en ${successCount} posicion(es)`)
+   973→      if (errorCount > 0) toast.error(`${errorCount} posicion(es) con error`)
+   974→      setMassDialogOpen(false)
+   975→      setMassSelected(new Set())
+   976→      setMassMode(false)
+   977→      await loadPosiciones()
+   978→      if (selectedColumn) loadColumnDetail(selectedColumn)
+   979→    } catch (err: unknown) { toast.error('Error en salida masiva', { description: extractError(err) }) } finally { setMassBusy(false) }
+   980→  }
+   981→
+   982→  // Toggle nivel seleccionado en salida en masa (empty = todos)
+   983→  function toggleMassNivel(posicionId: string, nivelId: string) {
+   984→    setMassData((prev) => {
+   985→      const next = new Map(prev)
+   986→      const d = next.get(posicionId)
+   987→      if (d) {
+   988→        const s = new Set(d.selectedNivelIds)
+   989→        if (s.has(nivelId)) s.delete(nivelId); else s.add(nivelId)
+   990→        next.set(posicionId, { ...d, selectedNivelIds: s })
+   991→      }
+   992→      return next
+   993→    })
+   994→  }
+   995→
+   996→  // Obtener items a mostrar según niveles seleccionados (vacío = todos)
+   997→  function getMassDisplayItems(pd: MassPosData): DetailStock[] {
+   998→    if (pd.selectedNivelIds.size === 0) return pd.stock
+   999→    return pd.niveles
+  1000→      .filter((n) => pd.selectedNivelIds.has(n.id))
+  1001→      .flatMap((n) => pd.stockByNivel[n.id] ?? [])
+  1002→  }
+  1003→
+  1004→  // Export Excel
+  1005→  async function handleExport() {
+  1006→    setBusyExport(true)
+  1007→    try {
+  1008→      const XLSX = await import('xlsx')
+  1009→      const data = posiciones.map((p) => ({
+  1010→        Columna: p.columnaLetra,
+  1011→        Subcolumna: p.subcolumnaCodigo,
+  1012→        Posicion: p.posicionNumero,
+  1013→        Stock: p.stock,
+  1014→        Codigos: p.bloques.map((b) => `${b.bloque_codigo} (${b.cantidad})`).join(', '),
+  1015→        Articulos: p.bloques.length,
+  1016→        Estado: p.stock <= 0 ? 'Vacio' : p.bloques.length > 1 ? 'Multiple' : 'Ocupado',
+  1017→      }))
+  1018→      const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
+  1019→      XLSX.utils.book_append_sheet(wb, ws, 'Sectores Piso'); XLSX.writeFile(wb, `RACKLY_SectoresPiso_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
+  1020→    } catch (err: unknown) { toast.error('Error al exportar', { description: extractError(err) }) } finally { setBusyExport(false) }
+  1021→  }
+  1022→
+  1023→  // ─── Fecha de vencimiento sub-component ───
+  1024→  function FechaVencimientoField({
+  1025→    prefix, idx, row, onFechaChange, onToggleSin,
+  1026→  }: {
+  1027→    prefix: 'ing' | 'dev'; idx: number; row: RowEntry
+  1028→    onFechaChange: (idx: number, val: string) => void
+  1029→    onToggleSin: (idx: number) => void
+  1030→  }) {
+  1031→    const isIng = prefix === 'ing'
+  1032→    return (
+  1033→      <div className="col-span-12 sm:col-span-6 flex items-end gap-2">
+  1034→        <div className="flex-1">
+  1035→          <Label className="text-[10px] text-slate-400 font-medium">Fecha de Vencimiento</Label>
+  1036→          <div className="relative">
+  1037→            <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
+  1038→            <input
+  1039→              type="date"
+  1040→              value={row.fecha_vencimiento}
+  1041→              onChange={(e) => onFechaChange(idx, e.target.value)}
+  1042→              disabled={row.sin_vencimiento}
+  1043→              className={`w-full h-9 rounded-xl border text-xs pl-8 pr-2 font-mono focus:outline-none focus:ring-2 transition-all duration-300 [color-scheme:dark] ${row.sin_vencimiento ? 'border-slate-700 bg-slate-800/50 text-slate-600 cursor-not-allowed' : isIng ? 'border-emerald-500/50 bg-slate-900 text-white focus:ring-emerald-500/50' : 'border-amber-500/50 bg-slate-900 text-white focus:ring-amber-500/50'}`}
+  1044→            />
+  1045→          </div>
+  1046→        </div>
+  1047→        <button
+  1048→          type="button"
+  1049→          onClick={() => onToggleSin(idx)}
+  1050→          className={`flex items-center gap-1 px-2.5 h-9 rounded-xl text-[10px] font-semibold border transition-all duration-300 whitespace-nowrap ${row.sin_vencimiento
+  1051→            ? isIng ? 'bg-emerald-600/20 border-emerald-500/40 text-emerald-400 shadow-inner' : 'bg-amber-600/20 border-amber-500/40 text-amber-400 shadow-inner'
+  1052→            : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
+  1053→            }`}
+  1054→        >
+  1055→          <CalendarOff className="h-3 w-3" />
+  1056→          Sin vencimiento
+  1057→        </button>
+  1058→      </div>
+  1059→    )
+  1060→  }
+  1061→
+  1062→  // ─── Autocomplete dropdown sub-component ───
+  1063→  function AutocompleteDropdown({
+  1064→    prefix, idx, row,
+  1065→  }: {
+  1066→    prefix: 'ing' | 'dev'; idx: number; row: RowEntry; accentColor?: string
+  1067→  }) {
+  1068→    const rows = prefix === 'ing' ? ingRows : devRows
+  1069→    const isIng = prefix === 'ing'
+  1070→    // Show dropdown whenever there's text and no selection yet
+  1071→    if (row.bloque_id || row.codigo.trim().length < 1) return null
+  1072→    const suggestions = !catalogoLoading
+  1073→      ? getFilteredCatalogo(prefix, idx)
+  1074→          .filter((b) => !rows.some((r, ri) => ri !== idx && r.bloque_id === b.id))
+  1075→          .slice(0, 10)
+  1076→      : []
+  1077→    return (
+  1078→      <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-700/80 bg-slate-900/95 backdrop-blur-sm shadow-2xl shadow-black/40">
+  1079→        {catalogoLoading && <div className="px-3 py-2 text-xs text-slate-500">Cargando catalogo...</div>}
+  1080→        {!catalogoLoading && suggestions.length === 0 && (
+  1081→          <div className="px-3 py-2 text-xs text-slate-400 flex items-center gap-1.5">
+  1082→            <Sparkles className={`h-3 w-3 ${isIng ? 'text-emerald-400' : 'text-amber-400'}`} />
+  1083→            Articulo nuevo — se creara al registrar
+  1084→          </div>
+  1085→        )}
+  1086→        {!catalogoLoading && suggestions.map((b) => (
+  1087→          <button key={b.id} onClick={() => onSelectFromCatalog(prefix, idx, b)}
+  1088→            className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/80 text-slate-300 border-b border-slate-800/50 last:border-0 transition-all duration-200">
+  1089→            <span className={isIng ? 'font-mono text-emerald-400' : 'font-mono text-amber-400'}>{b.codigo}</span>
+  1090→            <span className="text-slate-500 ml-1.5">— {b.descripcion || b.unidad}</span>
+  1091→          </button>
+  1092→        ))}
+  1093→      </div>
+  1094→    )
+  1095→  }
+  1096→
+  1097→  // ─── Nivel Selector sub-component ───
+  1098→  function NivelSelector({
+  1099→    label,
+  1100→    nivelId,
+  1101→    onNivelChange,
+  1102→    nivelesList,
+  1103→    accentColor,
+  1104→  }: {
+  1105→    label: string
+  1106→    nivelId: string
+  1107→    onNivelChange: (id: string) => void
+  1108→    nivelesList: NivelInfo[]
+  1109→    accentColor: 'emerald' | 'red' | 'sky' | 'amber'
+  1110→  }) {
+  1111→    if (nivelesList.length <= 1) return null // No mostrar si solo hay 1 nivel
+  1112→    const colors = {
+  1113→      emerald: 'border-emerald-500/40 text-emerald-400 focus:ring-emerald-500/30',
+  1114→      red: 'border-red-500/40 text-red-400 focus:ring-red-500/30',
+  1115→      sky: 'border-sky-500/40 text-sky-400 focus:ring-sky-500/30',
+  1116→      amber: 'border-amber-500/40 text-amber-400 focus:ring-amber-500/30',
+  1117→    }
+  1118→    return (
+  1119→      <div className="flex items-center gap-2 rounded-xl border border-slate-700/40 bg-slate-800/50 px-3 py-2 backdrop-blur-sm">
+  1120→        <Layers className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+  1121→        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider shrink-0">{label}:</span>
+  1122→        <select
+  1123→          value={nivelId}
+  1124→          onChange={(e) => onNivelChange(e.target.value)}
+  1125→          className={`flex-1 bg-slate-900/80 border rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 transition-all duration-200 appearance-none cursor-pointer ${colors[accentColor]}`}
+  1126→        >
+  1127→          {nivelesList.map((n) => (
+  1128→            <option key={n.id} value={n.id}>
+  1129→              Nivel {n.numero}{n.codigo_ubicacion ? ` (${n.codigo_ubicacion})` : ''}
+  1130→            </option>
+  1131→          ))}
+  1132→        </select>
+  1133→        <ChevronDown className="h-3 w-3 text-slate-500 -ml-1 shrink-0 pointer-events-none" />
+  1134→      </div>
+  1135→    )
+  1136→  }
+  1137→
+  1138→  // ═══════════════════════════════════════════════
+  1139→  //  CELL STYLING — Clean 2D buttons
+  1140→  // ═══════════════════════════════════════════════
+  1141→  function getCellClasses(pos: PosicionConStock): string {
+  1142→    const base = 'w-full h-11 px-1 rounded-lg transition-colors duration-150 cursor-pointer border text-center'
+  1143→    if (pos.stock <= 0) {
+  1144→      return `${base} bg-emerald-950/40 border-emerald-700/30 text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-500/40`
+  1145→    }
+  1146→    if (pos.bloques.length > 1) {
+  1147→      return `${base} bg-amber-950/50 border-amber-700/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-500/40 ring-1 ring-amber-500/20`
+  1148→    }
+  1149→    return `${base} bg-sky-950/50 border-sky-700/30 text-sky-200 hover:bg-sky-900/50 hover:border-sky-500/40`
+  1150→  }
+  1151→
+  1152→  // ═══════════════════════════════════════════════
+  1153→  //  LOADING / EMPTY STATES — Skeleton shimmer
+  1154→  // ═══════════════════════════════════════════════
+  1155→  if (loading) {
+  1156→    return (
+  1157→      <div className="flex items-center justify-center py-20">
+  1158→        <div className="flex flex-col items-center gap-4">
+  1159→          <div className="relative">
+  1160→            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-sky-400 to-cyan-500 animate-pulse flex items-center justify-center">
+  1161→              <Warehouse className="h-7 w-7 text-white" />
+  1162→            </div>
+  1163→            <div className="absolute inset-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-sky-400 to-cyan-500 animate-ping opacity-20" />
+  1164→          </div>
+  1165→          <div className="text-center">
+  1166→            <p className="text-sm text-slate-400 animate-pulse font-medium">Cargando sectores...</p>
+  1167→            <p className="text-xs text-slate-600 mt-1">Preparando vista del almacén</p>
+  1168→          </div>
+  1169→        </div>
+  1170→      </div>
+  1171→    )
+  1172→  }
+  1173→
+  1174→  if (sectores.length === 0) {
+  1175→    return (
+  1176→      <div className="rounded-2xl border border-slate-700/50 bg-slate-800/40 backdrop-blur-sm p-10 text-center">
+  1177→        <Layers3 className="h-14 w-14 text-slate-600 mx-auto mb-4 animate-bounce" />
+  1178→        <p className="text-slate-400 font-semibold text-lg">No hay sectores creados</p>
+  1179→        <p className="text-xs text-slate-500 mt-1">Ve a Configuracion para crear tu primer sector</p>
+  1180→      </div>
+  1181→    )
+  1182→  }
+  1183→
+  1184→  const displayPos = posiciones
+  1185→
+  1186→  // Pill tab indicator position
+  1187→  const activeSectorIdx = sectores.findIndex((s) => s.id === sectorFilter)
+  1188→
+  1189→  // ═══════════════════════════════════════════════
+  1190→  //  MAIN RENDER
+  1191→  // ═══════════════════════════════════════════════
+  1192→  return (
+  1193→    <div className="space-y-6 relative">
+  1194→      {/* Subtle grid background pattern */}
+  1195→      <div className="absolute inset-0 -z-10 opacity-[0.03] pointer-events-none"
+  1196→        style={{
+  1197→          backgroundImage: `radial-gradient(circle, #94a3b8 1px, transparent 1px)`,
+  1198→          backgroundSize: '24px 24px',
+  1199→        }} />
+  1200→
+  1201→      {/* ═══ DASHBOARD STATS — Gradient border cards with animated counters ═══ */}
+  1202→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+  1203→        {/* Total */}
+  1204→        <div className="group relative rounded-2xl p-[1px] bg-gradient-to-br from-slate-600/40 to-slate-700/20 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300">
+  1205→          <div className="rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 p-4 overflow-hidden relative">
+  1206→            <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-slate-600/15 to-transparent rounded-bl-full" />
+  1207→            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em]">Total</p>
+  1208→            <p className="text-2xl font-extrabold text-white mt-1 tracking-tight tabular-nums">{animatedTotal.toLocaleString()}</p>
+  1209→            <p className="text-[10px] text-slate-500 mt-1">posiciones</p>
+  1210→          </div>
+  1211→        </div>
+  1212→
+  1213→        {/* Ocupadas */}
+  1214→        <div className="group relative rounded-2xl p-[1px] bg-gradient-to-br from-sky-500/30 to-cyan-500/10 shadow-lg hover:shadow-sky-500/10 hover:-translate-y-0.5 transition-all duration-300">
+  1215→          <div className="rounded-2xl bg-gradient-to-br from-sky-950/60 to-slate-900 p-4 overflow-hidden relative">
+  1216→            <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-sky-500/10 to-transparent rounded-bl-full" />
+  1217→            <p className="text-[10px] font-bold text-sky-400 uppercase tracking-[0.15em]">Ocupadas</p>
+  1218→            <p className="text-2xl font-extrabold text-sky-200 mt-1 tracking-tight tabular-nums">{animatedOccupied}</p>
+  1219→            <p className="text-[10px] text-sky-400/60 mt-1">{multiArt} multiples</p>
+  1220→          </div>
+  1221→        </div>
+  1222→
+  1223→        {/* Vacias */}
+  1224→        <div className="group relative rounded-2xl p-[1px] bg-gradient-to-br from-emerald-500/30 to-emerald-500/10 shadow-lg hover:shadow-emerald-500/10 hover:-translate-y-0.5 transition-all duration-300">
+  1225→          <div className="rounded-2xl bg-gradient-to-br from-emerald-950/50 to-slate-900 p-4 overflow-hidden relative">
+  1226→            <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-emerald-500/10 to-transparent rounded-bl-full" />
+  1227→            <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-[0.15em]">Vacias</p>
+  1228→            <p className="text-2xl font-extrabold text-emerald-200 mt-1 tracking-tight tabular-nums">{animatedEmpty.toLocaleString()}</p>
+  1229→            <p className="text-[10px] text-emerald-400/60 mt-1">disponibles</p>
+  1230→          </div>
+  1231→        </div>
+  1232→
+  1233→        {/* Ocupacion */}
+  1234→        <div className="group relative rounded-2xl p-[1px] bg-gradient-to-br from-violet-500/30 to-fuchsia-500/10 shadow-lg hover:shadow-violet-500/10 hover:-translate-y-0.5 transition-all duration-300">
+  1235→          <div className="rounded-2xl bg-gradient-to-br from-violet-950/50 to-slate-900 p-4 overflow-hidden relative">
+  1236→            <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-violet-500/10 to-transparent rounded-bl-full" />
+  1237→            <p className="text-[10px] font-bold text-violet-400 uppercase tracking-[0.15em]">Ocupacion</p>
+  1238→            <p className="text-2xl font-extrabold text-violet-200 mt-1 tracking-tight tabular-nums">{pct}<span className="text-sm text-violet-400/60">%</span></p>
+  1239→            <div className="mt-2 h-2 rounded-full bg-slate-700/80 overflow-hidden">
+  1240→              <div
+  1241→                className="h-full rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all duration-1000 ease-out"
+  1242→                style={{ width: `${Math.min(pct, 100)}%` }}
+  1243→              />
+  1244→            </div>
+  1245→          </div>
+  1246→        </div>
+  1247→      </div>
+  1248→
+  1249→      {/* ═══ SELECTOR SECTOR — Pill-style with sliding indicator ═══ */}
+  1250→      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+  1251→        <div className="flex items-center gap-2.5 min-w-0">
+  1252→          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0">Sector:</span>
+  1253→          {sectores.length <= 4 ? (
+  1254→          <div className="relative flex gap-1 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm overflow-hidden">
+  1255→            {/* Sliding indicator */}
+  1256→            <div
+  1257→              className="absolute top-1 bottom-1 rounded-lg bg-gradient-to-r from-sky-400 to-cyan-500 shadow-lg shadow-sky-500/25 transition-all duration-300 ease-out"
+  1258→              style={{
+  1259→                left: activeSectorIdx >= 0 ? `calc(${activeSectorIdx} * (100% / ${sectores.length}) + 4px)` : '4px',
+  1260→                width: `calc(100% / ${sectores.length} - 8px)`,
+  1261→              }}
+  1262→            />
+  1263→            {sectores.map((s) => (
+  1264→              <button key={s.id} onClick={() => setSectorFilter(s.id)}
+  1265→                className={`relative z-10 flex-1 min-w-0 px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition-all duration-300 truncate ${sectorFilter === s.id
+  1266→                  ? 'text-white'
+  1267→                  : 'text-slate-400 hover:text-slate-300'
+  1268→                  }`}>
+  1269→                {s.nombre}
+  1270→              </button>
+  1271→            ))}
+  1272→          </div>
+  1273→          ) : (
+  1274→          <div className="flex gap-1 overflow-x-auto max-w-[60vw] sm:max-w-none">
+  1275→            {sectores.map((s) => (
+  1276→              <button key={s.id} onClick={() => setSectorFilter(s.id)}
+  1277→                className={`px-3 py-2 rounded-lg text-xs font-bold border transition-all duration-300 whitespace-nowrap shrink-0 ${sectorFilter === s.id
+  1278→                  ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white border-sky-400/50 shadow-lg shadow-sky-500/25'
+  1279→                  : 'bg-slate-800/60 text-slate-400 border-slate-700/30 hover:text-slate-300 hover:border-slate-600'
+  1280→                  }`}>
+  1281→                {s.nombre}
+  1282→              </button>
+  1283→            ))}
+  1284→          </div>
+  1285→          )}
+  1286→        </div>
+  1287→        <div className="flex items-center gap-3">
+  1288→          <button onClick={() => loadPosiciones()} className="p-2 rounded-xl border border-slate-700/50 hover:bg-slate-700/80 transition-all duration-500 hover:-rotate-180 bg-slate-800/60 backdrop-blur-sm hover:shadow-lg"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /></button>
+  1289→          {/* Salida en masa toggle */}
+  1290→          <button
+  1291→            onClick={toggleMassMode}
+  1292→            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all duration-300 ${massMode
+  1293→              ? 'bg-red-600/20 text-red-400 border-red-500/40 shadow-lg shadow-red-500/10'
+  1294→              : 'bg-slate-800/60 text-slate-400 border-slate-700/30 hover:text-red-400 hover:border-red-500/30'
+  1295→            }`}
+  1296→          >
+  1297→            <ArrowUpFromLine className="h-3.5 w-3.5" />
+  1298→            Salida en masa
+  1299→            {massMode && <span className="ml-1 text-[9px] bg-red-500/30 text-red-300 px-1.5 py-0.5 rounded-md font-mono">{massSelected.size}</span>}
+  1300→          </button>
+  1301→          <div className="hidden sm:flex items-center gap-3 text-[10px] text-slate-400 bg-slate-800/40 rounded-xl px-3 py-1.5 border border-slate-700/30 backdrop-blur-sm">
+  1302→            <div className="flex items-center gap-1.5">
+  1303→              <div className="w-3 h-3 rounded-md bg-sky-500/50 shadow-sm shadow-sky-500/20" />
+  1304→              <span>Ocupado</span>
+  1305→            </div>
+  1306→            <div className="flex items-center gap-1.5">
+  1307→              <div className="w-3 h-3 rounded-md bg-amber-500/50 shadow-sm shadow-amber-500/20" />
+  1308→              <span>Multiple</span>
+  1309→            </div>
+  1310→            <div className="flex items-center gap-1.5">
+  1311→              <div className="w-3 h-3 rounded-md bg-emerald-500/30 shadow-sm shadow-emerald-500/10" />
+  1312→              <span>Vacio</span>
+  1313→            </div>
+  1314→          </div>
+  1315→        </div>
+  1316→      </div>
+  1317→
+  1318→      {/* ═══ COLUMN SELECTOR DASHBOARD ═══ */}
+  1319→      {selectedColumn === null ? (() => {
+  1320→        const currentSector = sectores.find(s => s.id === sectorFilter)
+  1321→        const isSingleLevel = (currentSector?.n_niveles ?? 0) <= 1
+  1322→
+  1323→        // ═══ VISTA PLANA: sector con 1 nivel → grid de posiciones con colores ═══
+  1324→        if (isSingleLevel) {
+  1325→          return (
+  1326→            <div className="space-y-4">
+  1327→              <div className="flex items-center gap-2.5 px-1">
+  1328→                <Layers3 className="h-4 w-4 text-sky-400" />
+  1329→                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+  1330→                  {currentSector?.nombre || 'Selecciona un sector'}
+  1331→                </span>
+  1332→                <span className="text-[10px] text-slate-500">— {posiciones.length} posiciones</span>
+  1333→              </div>
+  1334→              <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+  1335→                <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-10 gap-2.5">
+  1336→                  {posiciones.map((pos) => {
+  1337→                    const count = pos.stock > 0 ? pos.bloques.length : 0
+  1338→                    const totalQty = pos.bloques.reduce((s, b) => s + b.cantidad, 0)
+  1339→
+  1340→                    let cellBg = 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30'
+  1341→                    if (count > 1) cellBg = 'bg-orange-500 hover:bg-orange-400 shadow-orange-900/30'
+  1342→                    else if (count === 1) cellBg = 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/30'
+  1343→
+  1344→                    return (
+  1345→                      <button
+  1346→                        key={pos.posicionId}
+  1347→                        onClick={() => massMode ? toggleMassSelect(pos.posicionId) : handleClick(pos)}
+  1348→                        className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400 ring-offset-1 ring-offset-slate-900 scale-105' : ''} ${cellBg} relative rounded-xl aspect-square flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95 shadow-lg`}
+  1349→                        title={`Pos ${pos.posicionNumero} — ${count} artículo(s)${totalQty > 0 ? ` · ${totalQty.toFixed(1)}` : ''}`}
+  1350→                      >
+  1351→                        {massMode && (
+  1352→                          <div className={`absolute top-1 right-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${massSelected.has(pos.posicionId) ? 'bg-red-500 border-red-400' : 'bg-slate-800/80 border-slate-500/60'}`}>
+  1353→                            {massSelected.has(pos.posicionId) && <Check className="h-2 w-2 text-white" />}
+  1354→                          </div>
+  1355→                        )}
+  1356→                        <span className="text-sm sm:text-base font-extrabold leading-none">{pos.posicionNumero}</span>
+  1357→                        {count === 1 && (
+  1358→                          <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{totalQty % 1 === 0 ? totalQty : totalQty.toFixed(1)}</span>
+  1359→                        )}
+  1360→                        {count > 1 && (
+  1361→                          <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{count} arts</span>
+  1362→                        )}
+  1363→                      </button>
+  1364→                    )
+  1365→                  })}
+  1366→                </div>
+  1367→                {/* Legend */}
+  1368→                <div className="flex flex-wrap items-center gap-3 sm:gap-4 mt-4 px-1 text-[10px] sm:text-[11px]">
+  1369→                  <div className="flex items-center gap-1.5">
+  1370→                    <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
+  1371→                    <span className="text-slate-400">Vacío</span>
+  1372→                  </div>
+  1373→                  <div className="flex items-center gap-1.5">
+  1374→                    <div className="w-3.5 h-3.5 rounded bg-blue-600" />
+  1375→                    <span className="text-slate-400">1 artículo</span>
+  1376→                  </div>
+  1377→                  <div className="flex items-center gap-1.5">
+  1378→                    <div className="w-3.5 h-3.5 rounded bg-orange-500" />
+  1379→                    <span className="text-slate-400">2+ artículos</span>
+  1380→                  </div>
+  1381→                </div>
+  1382→              </div>
+  1383→            </div>
+  1384→          )
+  1385→        }
+  1386→
+  1387→        // ═══ VISTA NORMAL: sector con múltiples niveles → selector de columnas ═══
+  1388→        return (
+  1389→          <div className="space-y-4">
+  1390→            {/* Sector title */}
+  1391→            <div className="flex items-center gap-2.5 px-1">
+  1392→              <Layers3 className="h-4 w-4 text-sky-400" />
+  1393→              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+  1394→                {currentSector?.nombre || 'Selecciona un sector'}
+  1395→              </span>
+  1396→              <span className="text-[10px] text-slate-500">— {columnas.length} columnas</span>
+  1397→            </div>
+  1398→            {/* Column selector — dark container with solid colored buttons */}
+  1399→            <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+  1400→              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2.5">
+  1401→                {columnas.map((col) => {
+  1402→                  const colOcc = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0).length, 0)
+  1403→                  const colTotal = col.subcols.reduce((s, sc) => s + sc.pos.length, 0)
+  1404→                  const isEmpty = colOcc === 0
+  1405→                  return (
+  1406→                    <button
+  1407→                      key={col.letra}
+  1408→                      onClick={() => handleSelectColumn(col.letra)}
+  1409→                      className={`relative rounded-xl h-12 flex items-center justify-center text-base font-extrabold text-white transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 ${
+  1410→                        isEmpty
+  1411→                          ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/40'
+  1412→                          : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'
+  1413→                      }`}
+  1414→                    >
+  1415→                      {col.letra}
+  1416→                      <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-slate-900 border border-slate-600 text-[9px] font-bold text-slate-300 flex items-center justify-center px-1">
+  1417→                        {colOcc}/{colTotal}
+  1418→                      </span>
+  1419→                    </button>
+  1420→                  )
+  1421→                })}
+  1422→              </div>
+  1423→            </div>
+  1424→          </div>
+  1425→        )
+  1426→      })() : (
+  1427→        /* ═══ SINGLE COLUMN TABLE VIEW ═══ */
+  1428→        <div className="space-y-4">
+  1429→          {/* Back button + column title */}
+  1430→          <div className="flex items-center gap-3">
+  1431→            <button
+  1432→              onClick={() => { setSelectedColumn(null); setColDetail([]) }}
+  1433→              className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 hover:bg-slate-700 transition-all duration-300 text-slate-400 hover:text-white"
+  1434→            >
+  1435→              <ChevronDown className="h-4 w-4 rotate-90" />
+  1436→            </button>
+  1437→            <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-white font-extrabold text-sm shadow-lg ${
+  1438→              colDetail.some(p => p.tieneInc) ? 'bg-rose-600 shadow-rose-900/40' : 'bg-blue-600 shadow-blue-900/40'
+  1439→            }`}>
+  1440→              {selectedColumn}
+  1441→            </div>
+  1442→            <div className="flex-1 min-w-0">
+  1443→              <span className="text-sm font-bold text-slate-200">Columna {selectedColumn}</span>
+  1444→              <span className="text-[10px] text-slate-500 ml-2">{colDetail.length} posiciones</span>
+  1445→            </div>
+  1446→          </div>
+  1447→
+  1448→          {/* Table */}
+  1449→          {colDetailLoading ? (
+  1450→            <div className="flex items-center justify-center py-16">
+  1451→              <div className="flex flex-col items-center gap-3">
+  1452→                <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
+  1453→                <span className="text-xs text-slate-400">Cargando columna...</span>
+  1454→              </div>
+  1455→            </div>
+  1456→          ) : colDetail.length === 0 ? (
+  1457→            <div className="rounded-xl border border-slate-700/50 bg-slate-800/60 p-10 text-center">
+  1458→              <p className="text-sm text-slate-400">No hay posiciones en esta columna</p>
+  1459→            </div>
+  1460→          ) : (
+  1461→            <div className="space-y-5">
+  1462→              {/* Agrupar por subcolumna */}
+  1463→              {(() => {
+  1464→                const subGroups = new Map<string, VistaPosicion[]>()
+  1465→                for (const p of colDetail) {
+  1466→                  const key = p.subcolumnaCodigo
+  1467→                  if (!subGroups.has(key)) subGroups.set(key, [])
+  1468→                  subGroups.get(key)!.push(p)
+  1469→                }
+  1470→                const sortedKeys = [...subGroups.keys()].sort()
+  1471→
+  1472→                return sortedKeys.map((subCode) => {
+  1473→                  const subPositions = subGroups.get(subCode)!
+  1474→                  // Sort by position number
+  1475→                  const sorted = [...subPositions].sort((a, b) => a.posicionNumero - b.posicionNumero)
+  1476→                  // Find max number of levels across all positions
+  1477→                  const maxNiveles = Math.max(...sorted.map(p => p.niveles.length), 1)
+  1478→
+  1479→                  return (
+  1480→                    <div key={subCode} className="space-y-2.5">
+  1481→                      {/* Subcolumn header */}
+  1482→                      <div className="flex items-center gap-2 px-1">
+  1483→                        <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg bg-blue-600 flex items-center justify-center text-white font-extrabold text-[9px] sm:text-[10px]">
+  1484→                          {selectedColumn}
+  1485→                        </div>
+  1486→                        <span className="text-xs font-bold text-slate-200">{subCode}</span>
+  1487→                        <span className="text-[10px] text-slate-500">{subPositions.length} pos</span>
+  1488→                      </div>
+  1489→
+  1490→                      {/* Tabla POS × Niveles con botones coloreados */}
+  1491→                      <div className="rounded-xl bg-slate-800 border border-slate-700/50 overflow-hidden">
+  1492→                        {/* Header row */}
+  1493→                        <div className="flex">
+  1494→                          <div className="w-11 sm:w-14 shrink-0 px-1 py-1.5 bg-slate-900/80 border-b border-r border-slate-700/50 flex items-center justify-center">
+  1495→                            <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">POS</span>
+  1496→                          </div>
+  1497→                          <div className="flex-1 flex border-b border-slate-700/50">
+  1498→                            {Array.from({ length: maxNiveles }, (_, i) => (
+  1499→                              <div key={i} className="flex-1 px-0.5 sm:px-1 py-1.5 text-center border-r border-slate-700/30 last:border-r-0">
+  1500→                                <span className="text-[9px] sm:text-[10px] font-bold text-slate-400">N{i + 1}</span>
+  1501→                              </div>
+  1502→                            ))}
+  1503→                          </div>
+  1504→                        </div>
+  1505→
+  1506→                        {/* Position rows */}
+  1507→                        <div className="divide-y divide-slate-700/30">
+  1508→                          {sorted.map((pos) => {
+  1509→                            const totalArticulos = pos.niveles.reduce((s, n) => s + n.bloques.length, 0)
+  1510→                            const hasInc = pos.tieneInc
+  1511→
+  1512→                            // Color for POS cell
+  1513→                            let posColor = 'bg-emerald-600 hover:bg-emerald-500'
+  1514→                            if (hasInc) posColor = 'bg-rose-600 hover:bg-rose-500'
+  1515→                            else if (totalArticulos > 1) posColor = 'bg-orange-500 hover:bg-orange-400'
+  1516→                            else if (totalArticulos === 1) posColor = 'bg-blue-600 hover:bg-blue-500'
+  1517→
+  1518→                            const posData = posiciones.find(p => p.posicionId === pos.posicionId)
+  1519→
+  1520→                            return (
+  1521→                              <div key={pos.posicionId} className="flex">
+  1522→                                {/* POS button */}
+  1523→                                <div className="w-11 sm:w-14 shrink-0 p-0.5 border-r border-slate-700/30">
+  1524→                                  <button
+  1525→                                    onClick={() => massMode ? toggleMassSelect(pos.posicionId) : (posData ? handleClick(posData) : undefined)}
+  1526→                                    className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400 ring-offset-1 ring-offset-slate-900 scale-105' : ''} ${posColor} w-full h-9 sm:h-10 rounded-md flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95 relative`}
+  1527→                                    title={`Pos ${pos.posicionNumero} — ${totalArticulos} artículo(s)`}
+  1528→                                  >
+  1529→                                    {massMode && (
+  1530→                                      <div className={`absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${massSelected.has(pos.posicionId) ? 'bg-red-500 border-red-400' : 'bg-slate-800/80 border-slate-500/60'}`}>
+  1531→                                        {massSelected.has(pos.posicionId) && <Check className="h-2 w-2 text-white" />}
+  1532→                                      </div>
+  1533→                                    )}
+  1534→                                    <span className="text-[11px] sm:text-xs font-extrabold leading-none">P{pos.posicionNumero}</span>
+  1535→                                    {totalArticulos > 0 && (
+  1536→                                      <span className="text-[8px] font-bold mt-px opacity-90 leading-none">{totalArticulos}</span>
+  1537→                                    )}
+  1538→                                  </button>
+  1539→                                </div>
+  1540→
+  1541→                                {/* Level cells */}
+  1542→                                <div className="flex-1 flex">
+  1543→                                  {Array.from({ length: maxNiveles }, (_, i) => {
+  1544→                                    const nivel = pos.niveles.find(n => n.nivelNumero === i + 1)
+  1545→                                    const bloques = nivel?.bloques ?? []
+  1546→                                    const count = bloques.length
+  1547→                                    const nivelHasInc = bloques.some(b => b.codigo_inc)
+  1548→
+  1549→                                    let cellColor = 'bg-slate-700/40 hover:bg-slate-700/60 text-slate-500' // empty
+  1550→                                    if (nivelHasInc) cellColor = 'bg-rose-600/90 hover:bg-rose-500 text-white'
+  1551→                                    else if (count > 1) cellColor = 'bg-orange-500/90 hover:bg-orange-400 text-white'
+  1552→                                    else if (count === 1) cellColor = 'bg-blue-600/90 hover:bg-blue-500 text-white'
+  1553→
+  1554→                                    return (
+  1555→                                      <div key={i} className="flex-1 p-0.5 border-r border-slate-700/20 last:border-r-0">
+  1556→                                        <button
+  1557→                                          onClick={() => massMode ? toggleMassSelect(pos.posicionId) : (posData ? handleClick(posData, nivel?.nivelId) : undefined)}
+  1558→                                          className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400/70 ring-offset-1 ring-offset-slate-900' : ''} ${cellColor} w-full h-9 sm:h-10 rounded-md flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95`}
+  1559→                                          title={count > 0
+  1560→                                            ? bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' INC' : ''}`).join('\n')
+  1561→                                            : 'Vacío'}
+  1562→                                        >
+  1563→                                          {count > 0 ? (
+  1564→                                            <span className="text-[10px] sm:text-[11px] font-bold leading-none">{count}</span>
+  1565→                                          ) : (
+  1566→                                            <span className="text-[10px] font-bold opacity-30">—</span>
+  1567→                                          )}
+  1568→                                        </button>
+  1569→                                      </div>
+  1570→                                    )
+  1571→                                  })}
+  1572→                                </div>
+  1573→                              </div>
+  1574→                            )
+  1575→                          })}
+  1576→                        </div>
+  1577→                      </div>
+  1578→                    </div>
+  1579→                  )
+  1580→                })
+  1581→              })()}
+  1582→              {/* Legend */}
+  1583→              <div className="flex flex-wrap items-center gap-3 sm:gap-4 px-1 text-[10px] sm:text-[11px]">
+  1584→                <div className="flex items-center gap-1.5">
+  1585→                  <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
+  1586→                  <span className="text-slate-400">Vacío</span>
+  1587→                </div>
+  1588→                <div className="flex items-center gap-1.5">
+  1589→                  <div className="w-3.5 h-3.5 rounded bg-blue-600" />
+  1590→                  <span className="text-slate-400">1 artículo</span>
+  1591→                </div>
+  1592→                <div className="flex items-center gap-1.5">
+  1593→                  <div className="w-3.5 h-3.5 rounded bg-orange-500" />
+  1594→                  <span className="text-slate-400">2+ artículos</span>
+  1595→                </div>
+  1596→                <div className="flex items-center gap-1.5">
+  1597→                  <div className="w-3.5 h-3.5 rounded bg-rose-600" />
+  1598→                  <span className="text-slate-400">INC</span>
+  1599→                </div>
+  1600→              </div>
+  1601→            </div>
+  1602→          )}
+  1603→        </div>
+  1604→      )}
+  1605→
+  1606→      {/* ═══ MASS SALIDA FLOATING BAR ═══ */}
+  1607→      {massMode && massSelected.size > 0 && (
+  1608→        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-2.5 sm:py-3 rounded-2xl bg-slate-900/95 border border-red-500/40 shadow-2xl shadow-red-500/20 backdrop-blur-xl animate-[scale-in_0.2s_ease-out] max-w-[calc(100vw-1.5rem)]" style={{ paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom, 0.625rem))' }}>
+  1609→          <div className="flex items-center gap-1.5 sm:gap-2">
+  1610→            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-red-500/20 flex items-center justify-center">
+  1611→              <span className="font-extrabold text-red-400 text-xs sm:text-sm">{massSelected.size}</span>
+  1612→            </div>
+  1613→            <span className="text-[10px] sm:text-xs font-bold text-slate-300 hidden sm:inline">posicion(es) seleccionada(s)</span>
+  1614→          </div>
+  1615→          <Button
+  1616→            onClick={openMassDialog}
+  1617→            disabled={massSelected.size === 0}
+  1618→            size="sm"
+  1619→            className="gap-1 sm:gap-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] sm:text-xs rounded-xl shadow-lg shadow-red-500/30 transition-all duration-300 hover:scale-[1.03] shrink-0"
+  1620→          >
+  1621→            <ArrowUpFromLine className="h-3 w-3 sm:h-3.5 sm:w-3.5" /> <span className="hidden xs:inline">Procesar</span> salida
+  1622→          </Button>
+  1623→        </div>
+  1624→      )}
+  1625→
+  1626→      {/* Banner modo masa activo */}
+  1627→      {massMode && massSelected.size === 0 && (
+  1628→        <div className="flex items-center justify-center gap-2 py-3 rounded-xl bg-red-950/20 border border-red-500/20">
+  1629→          <span className="text-xs text-red-400 font-semibold">Modo salida en masa activado — toca las posiciones que quieres seleccionar</span>
+  1630→          <button onClick={toggleMassMode} className="text-[10px] text-slate-400 hover:text-slate-300 underline">Cancelar</button>
+  1631→        </div>
+  1632→      )}
+  1633→
+  1634→      {/* Exportar */}
+  1635→      <div className="flex justify-end">
+  1636→        <Button onClick={handleExport} disabled={busyExport} variant="outline" size="sm"
+  1637→          className="gap-2 border-slate-700/50 text-slate-400 hover:text-sky-400 hover:border-sky-500/50 hover:bg-sky-500/5 text-xs bg-slate-800/60 backdrop-blur-sm rounded-xl transition-all duration-300 hover:shadow-lg hover:shadow-sky-500/10 hover:scale-[1.02]">
+  1638→          {busyExport ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Exportar Excel
+  1639→        </Button>
+  1640→      </div>
+  1641→
+  1642→      {/* ═══ DETAIL DIALOG — Frosted glass + breadcrumb + animated badge ═══ */}
+  1643→      <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setMode('view') } }}>
+  1644→        <DialogContent
+  1645→          className="max-w-[calc(100vw-1rem)] sm:max-w-xl rounded-2xl max-h-[85vh] flex flex-col overflow-hidden overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+  1646→          style={{
+  1647→            background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.88))',
+  1648→            backdropFilter: 'blur(24px) saturate(1.2)',
+  1649→            border: '1px solid rgba(71, 85, 105, 0.25)',
+  1650→          }}
+  1651→        >
+  1652→          {/* Animated gradient border accent at top */}
+  1653→          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-sky-400 to-transparent opacity-60" />
+  1654→          {/* Subtle inner glow */}
+  1655→          <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-white/[0.03] to-transparent pointer-events-none rounded-t-2xl" />
+  1656→
+  1657→          <div className="p-4 sm:p-6 relative flex-1 min-h-0 overflow-y-auto overscroll-contain">
+  1658→            <DialogHeader>
+  1659→              <DialogTitle className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
+  1660→                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-400 to-cyan-500 flex items-center justify-center text-white font-extrabold text-xs shadow-lg shadow-sky-500/25">
+  1661→                  {detail?.columnaLetra}
+  1662→                </div>
+  1663→                {/* Position breadcrumb */}
+  1664→                <nav className="flex items-center gap-1 text-xs">
+  1665→                  <span className="text-slate-300 font-medium">{detail?.columnaLetra}</span>
+  1666→                  <ChevronRight className="h-3 w-3 text-slate-400" />
+  1667→                  <span className="text-slate-300 font-medium">{detail?.subcolumnaCodigo}</span>
+  1668→                  <ChevronRight className="h-3 w-3 text-slate-400" />
+  1669→                  <span className="text-sky-300 font-bold">Pos {detail?.posicionNumero}</span>
+  1670→                  <span className="text-slate-500 text-[10px]">({niveles.length} nivel{niveles.length !== 1 ? 'es' : ''})</span>
+  1671→                </nav>
+  1672→                {/* Animated type badge */}
+  1673→                {(!mode || mode === 'view') ? null : (
+  1674→                  <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full border animate-[scale-in_0.2s_ease-out] ${
+  1675→                    mode === 'ingreso' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 shadow-sm shadow-emerald-500/10' :
+  1676→                    mode === 'salida' ? 'bg-red-500/15 text-red-400 border-red-500/30 shadow-sm shadow-red-500/10' :
+  1677→                    mode === 'traslado' ? 'bg-sky-500/15 text-sky-400 border-sky-500/30 shadow-sm shadow-sky-500/10' :
+  1678→                    mode === 'inc' ? 'bg-rose-500/15 text-rose-400 border-rose-500/30 shadow-sm shadow-rose-500/10' :
+  1679→                    'bg-amber-500/15 text-amber-400 border-amber-500/30 shadow-sm shadow-amber-500/10'
+  1680→                  }`}>
+  1681→                    {mode === 'ingreso' ? '↓ Ingreso' : mode === 'salida' ? '↑ Salida' : mode === 'traslado' ? '⇄ Traslado' : mode === 'inc' ? '⚠ INC' : '↺ Devolucion'}
+  1682→                  </span>
+  1683→                )}
+  1684→              </DialogTitle>
+  1685→            </DialogHeader>
+  1686→
+  1687→            {detail && (<>
+  1688→              {/* ── VIEW MODE ── */}
+  1689→              {mode === 'view' && (() => {
+  1690→                const isAllView = viewNivelTab === 'all'
+  1691→                const displayStock = isAllView
+  1692→                  ? detail.stock
+  1693→                  : (stockByNivel[viewNivelTab] ?? [])
+  1694→                const selectedNivelLabel = niveles.find((n) => n.id === viewNivelTab)
+  1695→                const hasAnyStock = isAllView
+  1696→                  ? niveles.some(n => (stockByNivel[n.id] ?? []).length > 0)
+  1697→                  : displayStock.length > 0
+  1698→                return hasAnyStock ? (
+  1699→                  <div className="space-y-2.5 mt-4">
+  1700→                    {/* Level tabs — only show if position has multiple levels AND not in singleNivelMode */}
+  1701→                    {!singleNivelMode && niveles.length > 1 && (
+  1702→                      <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm scrollbar-none">
+  1703→                        <button
+  1704→                          onClick={() => setViewNivelTab('all')}
+  1705→                          className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
+  1706→                            isAllView
+  1707→                              ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white shadow-lg shadow-sky-500/25'
+  1708→                              : 'text-slate-400 hover:text-slate-300'
+  1709→                          }`}
+  1710→                        >
+  1711→                          Todos
+  1712→                        </button>
+  1713→                        {niveles.map((n) => {
+  1714→                          const count = (stockByNivel[n.id] ?? []).length
+  1715→                          return (
+  1716→                            <button
+  1717→                              key={n.id}
+  1718→                              onClick={() => setViewNivelTab(n.id)}
+  1719→                              className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
+  1720→                                viewNivelTab === n.id
+  1721→                                  ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white shadow-lg shadow-sky-500/25'
+  1722→                                  : 'text-slate-400 hover:text-slate-300'
+  1723→                              }`}
+  1724→                            >
+  1725→                              Nivel {n.numero} ({count})
+  1726→                            </button>
+  1727→                          )
+  1728→                        })}
+  1729→                      </div>
+  1730→                    )}
+  1731→                    {/* Level label when viewing a specific level */}
+  1732→                    {viewNivelTab !== 'all' && selectedNivelLabel && (
+  1733→                      <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-sky-950/30 border border-sky-500/20">
+  1734→                        <Layers className="h-3.5 w-3.5 text-sky-400" />
+  1735→                        <span className="text-[10px] font-bold text-sky-300">
+  1736→                          Nivel {selectedNivelLabel.numero}{selectedNivelLabel.codigo_ubicacion ? ` — ${selectedNivelLabel.codigo_ubicacion}` : ''}
+  1737→                        </span>
+  1738→                        <span className="text-[9px] text-slate-500">· {(stockByNivel[viewNivelTab] ?? []).reduce((s, it) => s + it.cantidad, 0).toFixed(2)} total</span>
+  1739→                      </div>
+  1740→                    )}
+  1741→                    {/* "Todos" view: grouped by nivel */}
+  1742→                    {isAllView && (
+  1743→                      <>
+  1744→                        {niveles.map((niv) => {
+  1745→                          const nivStock = stockByNivel[niv.id] ?? []
+  1746→                          if (nivStock.length === 0) return null
+  1747→                          const nivTotal = nivStock.reduce((s, it) => s + it.cantidad, 0)
+  1748→                          return (
+  1749→                            <div key={niv.id} className="space-y-1.5">
+  1750→                              <div className="flex items-center gap-2 px-2 py-1.5">
+  1751→                                <div className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+  1752→                                <span className="text-[10px] font-bold text-sky-300 uppercase tracking-wider">
+  1753→                                  Nivel {niv.numero}{niv.codigo_ubicacion ? ` — ${niv.codigo_ubicacion}` : ''}
+  1754→                                </span>
+  1755→                                <span className="text-[9px] text-slate-500">· {nivStock.length} articulo(s) · {nivTotal.toFixed(2)} total</span>
+  1756→                              </div>
+  1757→                              {nivStock.map((s, idx) => (
+  1758→                                <div key={`${s.bloque_id}-${s.fecha_vencimiento}-${idx}`}
+  1759→                                  className="rounded-xl border border-slate-700/40 bg-slate-800/50 backdrop-blur-sm p-3.5 hover:border-slate-600/50 transition-all duration-300 hover:shadow-lg group/item">
+  1760→                                  <div className="flex items-start justify-between">
+  1761→                                    <div className="flex items-start gap-3 flex-1 min-w-0">
+  1762→                                      <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-slate-700/60 flex items-center justify-center text-[9px] font-bold text-slate-300 border border-slate-600/40">
+  1763→                                        {idx + 1}
+  1764→                                      </div>
+  1765→                                      <div className="min-w-0 flex-1">
+  1766→                                        <div className="flex items-center gap-2">
+  1767→                                          <span className="font-mono text-sky-300 font-bold text-sm">{s.bloque_codigo}</span>
+  1768→                                          {s.fecha_vencimiento && (
+  1769→                                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/20 flex items-center gap-0.5">
+  1770→                                              <Calendar className="h-2.5 w-2.5" /> {s.fecha_vencimiento}
+  1771→                                            </span>
+  1772→                                          )}
+  1773→                                          {!s.fecha_vencimiento && (
+  1774→                                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-700/40 text-slate-400 border border-slate-600/30 flex items-center gap-0.5">
+  1775→                                              <CalendarOff className="h-2.5 w-2.5" /> Sin fecha
+  1776→                                            </span>
+  1777→                                          )}
+  1778→                                        </div>
+  1779→                                        <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
+  1780→                                      </div>
+  1781→                                    </div>
+  1782→                                    <div className="text-right flex-shrink-0 ml-3">
+  1783→                                      <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
+  1784→                                      <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
+  1785→                                    </div>
+  1786→                                  </div>
+  1787→                                </div>
+  1788→                              ))}
+  1789→                            </div>
+  1790→                          )
+  1791→                        })}
+  1792→                      </>
+  1793→                    )}
+  1794→                    {/* Single level view (not "all") */}
+  1795→                    {!isAllView && displayStock.map((s, idx) => (
+  1796→                      <div key={`${s.bloque_id}-${s.fecha_vencimiento}-${idx}`}
+  1797→                        className="rounded-xl border border-slate-700/40 bg-slate-800/50 backdrop-blur-sm p-3.5 hover:border-slate-600/50 transition-all duration-300 hover:shadow-lg group/item">
+  1798→                        <div className="flex items-start justify-between">
+  1799→                          <div className="flex items-start gap-3 flex-1 min-w-0">
+  1800→                            <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-slate-700/60 flex items-center justify-center text-[9px] font-bold text-slate-300 border border-slate-600/40">
+  1801→                              {idx + 1}
+  1802→                            </div>
+  1803→                            <div className="min-w-0 flex-1">
+  1804→                              <div className="flex items-center gap-2">
+  1805→                                <span className="font-mono text-sky-300 font-bold text-sm">{s.bloque_codigo}</span>
+  1806→                                {s.fecha_vencimiento && (
+  1807→                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/20 flex items-center gap-0.5">
+  1808→                                    <Calendar className="h-2.5 w-2.5" /> {s.fecha_vencimiento}
+  1809→                                  </span>
+  1810→                                )}
+  1811→                                {!s.fecha_vencimiento && (
+  1812→                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-700/40 text-slate-400 border border-slate-600/30 flex items-center gap-0.5">
+  1813→                                    <CalendarOff className="h-2.5 w-2.5" /> Sin fecha
+  1814→                                  </span>
+  1815→                                )}
+  1816→                              </div>
+  1817→                              <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
+  1818→                            </div>
+  1819→                          </div>
+  1820→                          <div className="text-right flex-shrink-0 ml-3">
+  1821→                            <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
+  1822→                            <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
+  1823→                          </div>
+  1824→                        </div>
+  1825→                      </div>
+  1826→                    ))}
+  1827→                    <div className="grid grid-cols-2 gap-2 pt-3">
+  1828→                      <Button onClick={openIngreso} size="sm" className="gap-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/15 transition-all duration-300 hover:shadow-emerald-500/25 hover:scale-[1.02]"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+  1829→                      <Button onClick={openSalida} size="sm" className="gap-1.5 bg-red-600/90 hover:bg-red-600 text-white text-xs rounded-xl shadow-lg shadow-red-500/15 transition-all duration-300 hover:shadow-red-500/25 hover:scale-[1.02]"><ArrowUpFromLine className="h-3.5 w-3.5" /> Salida</Button>
+  1830→                      <Button onClick={openTraslado} size="sm" className="gap-1.5 bg-sky-600/90 hover:bg-sky-600 text-white text-xs rounded-xl shadow-lg shadow-sky-500/15 transition-all duration-300 hover:shadow-sky-500/25 hover:scale-[1.02]"><ArrowRightLeft className="h-3.5 w-3.5" /> Traslado</Button>
+  1831→                      <Button onClick={openDevolucion} size="sm" className="gap-1.5 bg-amber-600/90 hover:bg-amber-600 text-white text-xs rounded-xl shadow-lg shadow-amber-500/15 transition-all duration-300 hover:shadow-amber-500/25 hover:scale-[1.02]"><RotateCcw className="h-3.5 w-3.5" /> Devolucion</Button>
+  1832→                      <Button onClick={openInc} size="sm" className="gap-1.5 col-span-2 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300 hover:shadow-rose-500/25 hover:scale-[1.02]"><AlertTriangle className="h-3.5 w-3.5" /> INC — Insumo No Conforme</Button>
+  1833→                    </div>
+  1834→                  </div>
+  1835→                ) : (
+  1836→                  <div className="space-y-4 py-6 text-center">
+  1837→                    <div className="w-16 h-16 rounded-2xl bg-slate-800/60 border border-slate-700/30 flex items-center justify-center mx-auto animate-pulse">
+  1838→                      <BoxSelect className="h-8 w-8 text-slate-600" />
+  1839→                    </div>
+  1840→                    <div>
+  1841→                      <p className="text-slate-400 font-semibold">{viewNivelTab !== 'all' ? 'Nivel sin articulos' : 'Posicion vacia'}</p>
+  1842→                      <p className="text-xs text-slate-500 mt-1">{viewNivelTab !== 'all' ? 'Este nivel no tiene articulos registrados' : 'Esta posicion no tiene articulos registrados'}</p>
+  1843→                    </div>
+  1844→                    <div className="grid grid-cols-2 gap-2 max-w-xs mx-auto">
+  1845→                      <Button onClick={openIngreso} size="sm" className="gap-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/15 transition-all duration-300 hover:scale-[1.02]"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+  1846→                      <Button onClick={openDevolucion} size="sm" className="gap-1.5 bg-amber-600/90 hover:bg-amber-600 text-white text-xs rounded-xl shadow-lg shadow-amber-500/15 transition-all duration-300 hover:scale-[1.02]"><RotateCcw className="h-3.5 w-3.5" /> Devolucion</Button>
+  1847→                      <Button onClick={openInc} size="sm" className="gap-1.5 col-span-2 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300 hover:shadow-rose-500/25 hover:scale-[1.02]"><AlertTriangle className="h-3.5 w-3.5" /> INC — Insumo No Conforme</Button>
+  1848→                    </div>
+  1849→                  </div>
+  1850→                )
+  1851→              })()}
+  1852→
+  1853→              {/* ── INGRESO MODE ── */}
+  1854→              {mode === 'ingreso' && (
+  1855→                <div className="space-y-4 mt-4">
+  1856→                  {singleNivelMode ? (
+  1857→                    <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-3 py-2.5">
+  1858→                      <Layers className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+  1859→                      <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider shrink-0">Nivel destino:</span>
+  1860→                      <span className="text-xs font-bold text-emerald-300">Nivel {niveles.find(n => n.id === selectedNivelId)?.numero ?? '?'}{niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion ? ` (${niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion})` : ''}</span>
+  1861→                      <Lock className="h-3 w-3 text-emerald-500/60 ml-auto" />
+  1862→                    </div>
+  1863→                  ) : (
+  1864→                    <NivelSelector
+  1865→                      label="Nivel destino"
+  1866→                      nivelId={selectedNivelId}
+  1867→                      onNivelChange={setSelectedNivelId}
+  1868→                      nivelesList={niveles}
+  1869→                      accentColor="emerald"
+  1870→                    />
+  1871→                  )}
+  1872→                  {detail.stock.length > 0 && (
+  1873→                    <div className="rounded-xl border border-amber-500/20 bg-amber-950/30 backdrop-blur-sm p-3">
+  1874→                      <p className="text-[10px] font-bold text-amber-400">Posicion con {detail.stock.length} articulo(s). Se agregara el nuevo.</p>
+  1875→                    </div>
+  1876→                  )}
+  1877→                  <p className="text-xs font-bold text-slate-300">Escribe el codigo y se autocompletara:</p>
+  1878→                  {ingRows.map((row, i) => (
+  1879→                    <div key={i} className="rounded-xl border border-emerald-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-emerald-500/40">
+  1880→                      <div className="grid grid-cols-12 gap-2 items-end">
+  1881→                        {/* Card number badge */}
+  1882→                        <div className="col-span-1 flex items-center justify-center">
+  1883→                          <div className="w-6 h-6 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-[9px] font-bold text-emerald-400">
+  1884→                            {i + 1}
+  1885→                          </div>
+  1886→                        </div>
+  1887→                        {/* Codigo */}
+  1888→                        <div className="col-span-11 sm:col-span-4">
+  1889→                          <Label className="text-[10px] text-emerald-400 font-semibold">Codigo</Label>
+  1890→                          <div className="relative">
+  1891→                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('ing', i), 150)} placeholder="Buscar codigo o descripcion..."
+  1892→                              className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-emerald-500/40 ring-emerald-500/20 shadow-sm shadow-emerald-500/10' : 'border-slate-700/50 focus:ring-emerald-500/40'}`} autoFocus />
+  1893→                            <AutocompleteDropdown prefix="ing" idx={i} row={row} accentColor="emerald" />
+  1894→                          </div>
+  1895→                        </div>
+  1896→
+  1897→                        {/* Descripcion */}
+  1898→                        <div className="col-span-12 sm:col-span-4">
+  1899→                          <Label className="text-[10px] text-slate-500">Descripcion</Label>
+  1900→                          <input type="text" value={row.descripcion} readOnly placeholder="Se autocompleta..."
+  1901→                            className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-3 cursor-default backdrop-blur-sm transition-all duration-300" />
+  1902→                        </div>
+  1903→
+  1904→                        {/* UN */}
+  1905→                        <div className="col-span-4 sm:col-span-3">
+  1906→                          <Label className="text-[10px] text-slate-500">UN</Label>
+  1907→                          <input type="text" value={row.unidad} readOnly placeholder="-"
+  1908→                            className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-2 text-center cursor-default backdrop-blur-sm transition-all duration-300" />
+  1909→                        </div>
+  1910→
+  1911→                        {/* Cantidad */}
+  1912→                        <div className="col-span-8 sm:col-span-4">
+  1913→                          <Label className="text-[10px] text-sky-400 font-semibold">Cantidad</Label>
+  1914→                          <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateIngresoCantidad(i, e.target.value)}
+  1915→                            className="h-10 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" />
+  1916→                        </div>
+  1917→                      </div>
+  1918→
+  1919→                      {/* Fecha de vencimiento */}
+  1920→                      <FechaVencimientoField prefix="ing" idx={i} row={row} onFechaChange={updateIngresoFecha} onToggleSin={toggleIngresoSinVencimiento} />
+  1921→
+  1922→                      {ingRows.length > 1 && (
+  1923→                        <div className="flex justify-end">
+  1924→                          <button onClick={() => removeIngresoRow(i)} className="p-1.5 rounded-lg hover:bg-red-900/30 text-slate-600 hover:text-red-400 transition-all duration-300"><Trash2 className="h-3.5 w-3.5" /></button>
+  1925→                        </div>
+  1926→                      )}
+  1927→                    </div>
+  1928→                  ))}
+  1929→                  <button onClick={addIngresoRow} className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-medium transition-all duration-300 hover:pl-1"><Plus className="h-3.5 w-3.5" /> Agregar otro articulo</button>
+  1930→                  <div className="flex gap-2 pt-2">
+  1931→                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
+  1932→                    <Button onClick={doIngreso} disabled={busy} size="sm" className="h-11 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/20 transition-all duration-300 hover:shadow-emerald-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowDownToLine className="h-3.5 w-3.5" />} Registrar ingreso</Button>
+  1933→                  </div>
+  1934→                </div>
+  1935→              )}
+  1936→
+  1937→              {/* ── SALIDA MODE ── */}
+  1938→              {mode === 'salida' && (() => {
+  1939→                // Items para salida: originales (Todos) o derivados por nivel
+  1940→                const filteredSalItems = salNivelTab === 'all' ? salItems : salItemsByNivel
+  1941→                const isSalLevelView = salNivelTab !== 'all'
+  1942→                const selCount = filteredSalItems.filter((r) => r.selected).length
+  1943→                return (
+  1944→                <div className="space-y-3 mt-4">
+  1945→                  {/* Nivel tabs para salida — ocultar si singleNivelMode */}
+  1946→                  {!singleNivelMode && niveles.length > 1 && (
+  1947→                    <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm scrollbar-none">
+  1948→                      <button
+  1949→                        onClick={() => { setSalNivelTab('all'); setSalItems((prev) => prev.map((r) => ({ ...r, selected: false }))); setSalItemsByNivel([]) }}
+  1950→                        className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
+  1951→                          salNivelTab === 'all'
+  1952→                            ? 'bg-gradient-to-r from-red-400 to-rose-500 text-white shadow-lg shadow-red-500/25'
+  1953→                            : 'text-slate-400 hover:text-slate-300'
+  1954→                        }`}
+  1955→                      >
+  1956→                        Todos ({salItems.length})
+  1957→                      </button>
+  1958→                      {niveles.map((n) => {
+  1959→                        const nCount = (stockByNivel[n.id] ?? []).length
+  1960→                        return (
+  1961→                          <button
+  1962→                            key={n.id}
+  1963→                            onClick={() => { setSalNivelTab(n.id); setSalItemsByNivel(buildSalItemsForNivel(n.id)) }}
+  1964→                            className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
+  1965→                              salNivelTab === n.id
+  1966→                                ? 'bg-gradient-to-r from-red-400 to-rose-500 text-white shadow-lg shadow-red-500/25'
+  1967→                                : 'text-slate-400 hover:text-slate-300'
+  1968→                            }`}
+  1969→                          >
+  1970→                            Nivel {n.numero} ({nCount})
+  1971→                          </button>
+  1972→                        )
+  1973→                      })}
+  1974→                    </div>
+  1975→                  )}
+  1976→                  {salNivelTab !== 'all' && (
+  1977→                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-950/30 border border-red-500/20">
+  1978→                      <Layers className="h-3.5 w-3.5 text-red-400" />
+  1979→                      <span className="text-[10px] font-bold text-red-300">
+  1980→                        Salida de Nivel {niveles.find((n) => n.id === salNivelTab)?.numero ?? '?'}
+  1981→                        {niveles.find((n) => n.id === salNivelTab)?.codigo_ubicacion ? ` — ${niveles.find((n) => n.id === salNivelTab)?.codigo_ubicacion}` : ''}
+  1982→                      </span>
+  1983→                    </div>
+  1984→                  )}
+  1985→                  <div className="flex items-center justify-between">
+  1986→                    <p className="text-xs font-bold text-slate-300">Toca los articulos que quieres salir:</p>
+  1987→                    {filteredSalItems.length > 1 && (
+  1988→                      <button
+  1989→                        onClick={() => {
+  1990→                          const allSel = filteredSalItems.every((r) => r.selected)
+  1991→                          const updated = filteredSalItems.map((r) => ({ ...r, selected: !allSel, cantidad: !allSel ? String(r.stockActual) : r.cantidad }))
+  1992→                          if (isSalLevelView) setSalItemsByNivel(updated); else setSalItems(updated)
+  1993→                        }}
+  1994→                        className="flex items-center gap-1 text-[10px] font-semibold text-red-400 hover:text-red-300 transition-all duration-300"
+  1995→                      >
+  1996→                        {selCount === filteredSalItems.length && filteredSalItems.length > 0 ? (
+  1997→                          <><X className="h-3 w-3" /> Deseleccionar todos</>
+  1998→                        ) : (
+  1999→                          <><Check className="h-3 w-3" /> Seleccionar todos</>
+  2000→                        )}
+
+[showing lines 1-2000 of 2791; use offset=2001 with limit to continue reading]

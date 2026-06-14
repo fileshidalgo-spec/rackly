@@ -397,9 +397,9 @@ export async function listarMovimientos(
         const sIds = [...new Set([...colMap.values()].map((c) => c.sector_id))]
         if (sIds.length > 0) {
           const secData = await dataClient.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', sIds)
-          const secInfoMap = new Map<string, { nombre: string; simple: boolean }>()
+          const secInfoMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
           ;((secData.data ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[]).forEach(
-            (s) => secInfoMap.set(s.id, { nombre: s.nombre, simple: s.n_columnas === 1 && s.n_subcolumnas === 1 })
+            (s) => secInfoMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
           )
           // Build final map: nivel_id -> { sector_nombre, posicion_label }
           for (const [nivId, posId] of nivelToPos) {
@@ -411,9 +411,13 @@ export async function listarMovimientos(
             if (!col) continue
             const secInfo = secInfoMap.get(col.sector_id)
             const secName = secInfo?.nombre ?? ''
-            const label = secInfo?.simple
-              ? `Pos ${pos.numero}`
-              : `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+            const label = !secInfo
+              ? `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+              : secInfo.nCol === 1 && secInfo.nSub === 1
+                ? `Pos ${pos.numero}`
+                : secInfo.nSub === 1
+                  ? `${col.letra}-Pos ${pos.numero}`
+                  : `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
             sectorPosMap.set(nivId, {
               sector_nombre: secName,
               posicion_label: label,
@@ -1616,8 +1620,8 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
           const secIds = [...new Set([...colMap.values()].map(c => c.sector_id))]
           if (secIds.length > 0) {
             const { data: secData } = await dataClient.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', secIds)
-            const secMap = new Map<string, { nombre: string; simple: boolean }>()
-            for (const s of (secData ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[]) secMap.set(s.id, { nombre: s.nombre, simple: s.n_columnas === 1 && s.n_subcolumnas === 1 })
+            const secMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
+            for (const s of (secData ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[]) secMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
             for (const [nivId, posId] of nivToPos) {
               const pos = posMap.get(posId)
               if (!pos) continue
@@ -1626,9 +1630,13 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
               const col = colMap.get(sub.columna_id)
               if (!col) continue
               const secInfo = secMap.get(col.sector_id)
-              const ubicacion = secInfo?.simple
-                ? `Pos ${pos.numero}`
-                : `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+              const ubicacion = !secInfo
+                ? `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+                : secInfo.nCol === 1 && secInfo.nSub === 1
+                  ? `Pos ${pos.numero}`
+                  : secInfo.nSub === 1
+                    ? `${col.letra}-Pos ${pos.numero}`
+                    : `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
               locMap.set(nivId, {
                 ubicacion,
                 sector_nombre: secInfo?.nombre ?? '',

@@ -2,6 +2,13 @@
 
 import { dataClient } from '@/lib/supabase/client'
 
+/** Limpia el prefijo del sector del código de subcolumna.
+ *  BD guarda "BA1" (prefijo "B" + letra "A" + idx "1"), queremos solo "A1" */
+function cleanSubcolCode(codigo: string, columnaLetra: string): string {
+  const idx = codigo.indexOf(columnaLetra)
+  return idx >= 0 ? codigo.substring(idx) : codigo
+}
+
 export type Sector = {
   id: string
   nombre: string
@@ -405,7 +412,7 @@ export async function listarMovimientos(
             const secName = secNameMap.get(col.sector_id) || ''
             sectorPosMap.set(nivId, {
               sector_nombre: secName,
-              posicion_label: `${col.letra}-${sub.codigo}-Pos ${pos.numero}`,
+              posicion_label: `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`,
             })
           }
         }
@@ -596,11 +603,12 @@ export async function cargarPosicionesSector(
       const result: PosicionConStock[] = posiciones.map((pos) => {
         const sub = subMap.get(pos.subcolumna_id)
         const rpcInfo = rpcStockMap.get(pos.id)
+        const cLetra = sub ? (colMap.get(sub.columna_id) ?? '') : ''
         return {
           posicionId: pos.id,
           posicionNumero: pos.numero,
-          subcolumnaCodigo: sub?.codigo ?? '',
-          columnaLetra: sub ? (colMap.get(sub.columna_id) ?? '') : '',
+          subcolumnaCodigo: sub ? cleanSubcolCode(sub.codigo, cLetra) : '',
+          columnaLetra: cLetra,
           stock: rpcInfo?.stock ?? 0,
           bloques: (rpcInfo?.bloques ?? []).filter((b) => b.cantidad > 0),
         }
@@ -763,11 +771,12 @@ export async function cargarPosicionesSector(
     const sub = subMap.get(pos.subcolumna_id)
     const bloques = (stockPorPosicion.get(pos.id) ?? []).filter((b) => b.cantidad > 0)
     const totalStock = bloques.reduce((sum, b) => sum + b.cantidad, 0)
+    const cLetra = sub ? (colMap.get(sub.columna_id) ?? '') : ''
     return {
       posicionId: pos.id,
       posicionNumero: pos.numero,
-      subcolumnaCodigo: sub?.codigo ?? '',
-      columnaLetra: sub ? (colMap.get(sub.columna_id) ?? '') : '',
+      subcolumnaCodigo: sub ? cleanSubcolCode(sub.codigo, cLetra) : '',
+      columnaLetra: cLetra,
       stock: totalStock,
       bloques,
     }
@@ -1604,7 +1613,7 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
               const col = colMap.get(sub.columna_id)
               if (!col) continue
               locMap.set(nivId, {
-                ubicacion: `${col.letra}-${sub.codigo}-Pos ${pos.numero}`,
+                ubicacion: `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`,
                 sector_nombre: secMap.get(col.sector_id) ?? '',
               })
             }
@@ -1786,16 +1795,9 @@ export async function cargarVistaColumna(
   }
 
   // 6. Build result: agrupar por posición
-  // Limpiar prefijo de subcolumna: formato DB es "prefijo + letra + sub_idx"
-  // Quitamos todo lo que esté antes de la letra de la columna
-  const cleanSubcol = (code: string) => {
-    const idx = code.indexOf(columnaLetra)
-    return idx >= 0 ? code.substring(idx) : code
-  }
-
   const posMap = new Map<string, VistaPosicion>()
   for (const n of niveles) {
-    const cleanCode = cleanSubcol(n.subcolCodigo)
+    const cleanCode = cleanSubcolCode(n.subcolCodigo, columnaLetra)
     if (!posMap.has(n.posicionId)) {
       posMap.set(n.posicionId, {
         posicionId: n.posicionId,

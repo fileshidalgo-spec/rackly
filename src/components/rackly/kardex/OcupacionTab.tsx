@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   fetchOcupacionCeldas,
   fetchMovimientos,
@@ -143,7 +143,7 @@ export function OcupacionTab() {
     descripcion: string
     un: string
     cantidad: number
-    f_vencimiento: string
+    f_vencimiento: string | null
     codigo_inc: string
   }
   const [historialOpen, setHistorialOpen] = useState(false)
@@ -151,6 +151,11 @@ export function OcupacionTab() {
   const [historialOffset, setHistorialOffset] = useState(0)
   const [historialLoading, setHistorialLoading] = useState(false)
   const [historialHasMore, setHistorialHasMore] = useState(false)
+
+  // Codigos actuales en stock (para deteccion de rotacion en historial) — calculado una vez
+  const historialCurrentCodigos = useMemo(() =>
+    new Set(detail?.stock.map(s => s.codigo) ?? []),
+  [detail])
 
   // ── Transferir state ──
   const [trIdx, setTrIdx] = useState(0)
@@ -1268,8 +1273,7 @@ export function OcupacionTab() {
                   const fechaStr = item.fecha ? new Date(item.fecha).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
                   const iniciales = item.usuario_nombre ? item.usuario_nombre.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) : '??'
                   const esPositivo = esIngreso || esDevolucion || esInc
-                  const currentCodigos = new Set(detail?.stock.map(s => s.codigo) ?? [])
-                  const esRotacion = !currentCodigos.has(item.codigo)
+                  const esRotacion = !historialCurrentCodigos.has(item.codigo)
 
                   return (
                     <div key={item.id} className="relative pb-4 last:pb-0">

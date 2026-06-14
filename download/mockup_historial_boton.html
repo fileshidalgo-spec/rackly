@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup - Boton Ver Historial</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0a0a0f;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    gap: 40px;
+    flex-wrap: wrap;
+  }
+
+  /* ─── SHARED DIALOG STYLES ─── */
+  .dialog-overlay {
+    position: relative;
+    border-radius: 20px;
+    background: #0f172a;
+    border: 1px solid rgba(100,116,139,0.3);
+    box-shadow: 0 25px 60px rgba(0,0,0,0.6);
+    overflow: hidden;
+    width: 480px;
+    max-width: 95vw;
+  }
+  .dialog-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(100,116,139,0.15);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .dialog-pos {
+    font-size: 14px;
+    font-weight: 700;
+    color: #e2e8f0;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .dialog-sector {
+    font-size: 10px;
+    color: #94a3b8;
+    background: rgba(100,116,139,0.15);
+    padding: 3px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(100,116,139,0.2);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .dialog-body {
+    padding: 20px;
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .dialog-footer {
+    padding: 16px 20px;
+    border-top: 1px solid rgba(100,116,139,0.15);
+  }
+
+  /* ─── STOCK ITEM ─── */
+  .stock-item {
+    border-radius: 14px;
+    border: 1px solid rgba(100,116,139,0.25);
+    background: rgba(30,41,59,0.5);
+    padding: 14px;
+    margin-bottom: 10px;
+    backdrop-filter: blur(8px);
+    transition: all 0.2s;
+  }
+  .stock-item:hover {
+    border-color: rgba(100,116,139,0.4);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  .stock-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .stock-left {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
+  .stock-idx {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 10px;
+    background: rgba(100,116,139,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    color: #cbd5e1;
+    border: 1px solid rgba(100,116,139,0.3);
+    margin-top: 2px;
+  }
+  .stock-codigo {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #7dd3fc;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .stock-desc {
+    color: #cbd5e1;
+    font-size: 12px;
+    margin-top: 3px;
+  }
+  .stock-qty {
+    text-align: right;
+    flex-shrink: 0;
+    margin-left: 12px;
+  }
+  .stock-qty-val {
+    font-weight: 800;
+    color: #6ee7b7;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .stock-qty-unit {
+    font-size: 10px;
+    color: #cbd5e1;
+    margin-top: 3px;
+  }
+  .stock-fecha {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: rgba(245,158,11,0.12);
+    color: #fcd34d;
+    border: 1px solid rgba(245,158,11,0.2);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 8px;
+  }
+
+  /* ─── ACTION BUTTONS GRID ─── */
+  .action-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding-top: 12px;
+  }
+  .action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 12px 8px;
+    border-radius: 14px;
+    border: none;
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.25s;
+    position: relative;
+    overflow: hidden;
+  }
+  .action-btn:hover { transform: scale(1.02); }
+  .action-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+  .btn-ingreso { background: linear-gradient(135deg, #059669, #10b981); box-shadow: 0 4px 14px rgba(16,185,129,0.2); }
+  .btn-salida  { background: linear-gradient(135deg, #dc2626, #ef4444); box-shadow: 0 4px 14px rgba(239,68,68,0.2); }
+  .btn-traslado { background: linear-gradient(135deg, #2563eb, #3b82f6); box-shadow: 0 4px 14px rgba(59,130,246,0.2); }
+  .btn-devolucion { background: linear-gradient(135deg, #d97706, #f59e0b); box-shadow: 0 4px 14px rgba(245,158,11,0.2); }
+
+  /* ─── NEW HISTORIAL BUTTON ─── */
+  .btn-historial {
+    background: linear-gradient(135deg, #7c3aed, #8b5cf6);
+    box-shadow: 0 4px 14px rgba(139,92,246,0.25);
+    animation: pulse-glow 2.5s ease-in-out infinite;
+  }
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 4px 14px rgba(139,92,246,0.25); }
+    50% { box-shadow: 0 4px 24px rgba(139,92,246,0.45); }
+  }
+
+  .btn-inc {
+    grid-column: 1 / -1;
+    background: linear-gradient(90deg, #f43f5e, #e11d48);
+    box-shadow: 0 4px 14px rgba(244,63,94,0.2);
+  }
+
+  /* ─── LABELS ─── */
+  .label-box {
+    text-align: center;
+    margin-bottom: 12px;
+  }
+  .label-box h2 {
+    color: #e2e8f0;
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .label-box p {
+    color: #64748b;
+    font-size: 12px;
+    margin-top: 4px;
+  }
+
+  /* ─── ANNOTATION ARROW ─── */
+  .annotation {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #a78bfa;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .annotation-left {
+    right: calc(100% + 12px);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .annotation svg { width: 16px; height: 16px; }
+
+  /* ─── HISTORIAL DIALOG (second panel) ─── */
+  .historial-overlay {
+    position: relative;
+    border-radius: 20px;
+    background: #0f172a;
+    border: 1px solid rgba(139,92,246,0.3);
+    box-shadow: 0 25px 60px rgba(0,0,0,0.6), 0 0 40px rgba(139,92,246,0.08);
+    overflow: hidden;
+    width: 480px;
+    max-width: 95vw;
+  }
+  .historial-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(139,92,246,0.15);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .historial-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .historial-header-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    background: rgba(139,92,246,0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #a78bfa;
+    border: 1px solid rgba(139,92,246,0.25);
+  }
+  .historial-header-icon svg { width: 16px; height: 16px; }
+  .historial-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #e2e8f0;
+  }
+  .historial-subtitle {
+    font-size: 10px;
+    color: #94a3b8;
+  }
+  .historial-close {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    border: 1px solid rgba(100,116,139,0.3);
+    background: rgba(30,41,59,0.5);
+    color: #94a3b8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  .historial-body {
+    padding: 16px 20px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  /* ─── TIMELINE ─── */
+  .timeline { position: relative; padding-left: 24px; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 7px;
+    top: 8px;
+    bottom: 8px;
+    width: 2px;
+    background: linear-gradient(to bottom, rgba(139,92,246,0.4), rgba(100,116,139,0.15));
+    border-radius: 2px;
+  }
+  .timeline-item {
+    position: relative;
+    padding-bottom: 16px;
+  }
+  .timeline-item:last-child { padding-bottom: 0; }
+  .timeline-dot {
+    position: absolute;
+    left: -24px;
+    top: 6px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0f172a;
+  }
+  .timeline-dot svg { width: 8px; height: 8px; }
+  .dot-ingreso { border-color: #10b981; color: #10b981; }
+  .dot-salida  { border-color: #ef4444; color: #ef4444; }
+  .dot-traslado { border-color: #3b82f6; color: #3b82f6; }
+  .dot-devolucion { border-color: #f59e0b; color: #f59e0b; }
+  .dot-inc { border-color: #f43f5e; color: #f43f5e; }
+  .dot-stock { border-color: #94a3b8; color: #94a3b8; }
+
+  .timeline-card {
+    border-radius: 12px;
+    border: 1px solid rgba(100,116,139,0.2);
+    background: rgba(30,41,59,0.35);
+    padding: 12px 14px;
+    backdrop-filter: blur(8px);
+  }
+  .timeline-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .timeline-type {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+  .type-ingreso { background: rgba(16,185,129,0.12); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.2); }
+  .type-salida  { background: rgba(239,68,68,0.12); color: #fca5a5; border: 1px solid rgba(239,68,68,0.2); }
+  .type-traslado { background: rgba(59,130,246,0.12); color: #93c5fd; border: 1px solid rgba(59,130,246,0.2); }
+  .type-devolucion { background: rgba(245,158,11,0.12); color: #fcd34d; border: 1px solid rgba(245,158,11,0.2); }
+  .type-inc { background: rgba(244,63,94,0.12); color: #fda4af; border: 1px solid rgba(244,63,94,0.2); }
+  .type-stock { background: rgba(100,116,139,0.12); color: #94a3b8; border: 1px solid rgba(100,116,139,0.2); }
+
+  .timeline-date {
+    font-size: 10px;
+    color: #64748b;
+  }
+  .timeline-user {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .timeline-avatar {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #7c3aed, #8b5cf6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 8px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .timeline-username {
+    font-size: 11px;
+    color: #e2e8f0;
+    font-weight: 600;
+  }
+  .timeline-detail {
+    font-size: 10px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+  .timeline-detail strong {
+    color: #cbd5e1;
+    font-weight: 600;
+  }
+  .timeline-qty-change {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  .qty-positive { color: #6ee7b7; }
+  .qty-negative { color: #fca5a5; }
+
+  .historial-empty {
+    text-align: center;
+    padding: 30px 20px;
+    color: #64748b;
+  }
+  .historial-empty svg { width: 32px; height: 32px; margin: 0 auto 10px; opacity: 0.4; }
+  .historial-empty p { font-size: 12px; }
+
+  /* ─── NEW BADGE ─── */
+  .new-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    color: white;
+    font-size: 7px;
+    font-weight: 800;
+    padding: 1px 5px;
+    border-radius: 6px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    box-shadow: 0 2px 6px rgba(139,92,246,0.4);
+  }
+
+  /* ─── CONNECTOR ARROW between dialogs ─── */
+  .connector {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #a78bfa;
+    font-size: 28px;
+    animation: arrow-bounce 1.5s ease-in-out infinite;
+  }
+  @keyframes arrow-bounce {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(6px); }
+  }
+
+  /* ─── RESPONSIVE ─── */
+  @media (max-width: 1060px) {
+    body { flex-direction: column; gap: 24px; }
+    .connector { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- DIALOG 1: Posicion Detail con boton Historia -->
+<!-- ═══════════════════════════════════════════ -->
+<div>
+  <div class="label-box">
+    <h2>Ventana de Posicion (actual)</h2>
+    <p>Se agrega el boton "Historial" como cuarto boton</p>
+  </div>
+  <div class="dialog-overlay">
+    <!-- Header -->
+    <div class="dialog-header">
+      <span class="dialog-pos">POS-03 — Nivel 1</span>
+      <span class="dialog-sector">Bolsas Plsticas</span>
+    </div>
+
+    <!-- Body: stock items -->
+    <div class="dialog-body">
+      <div class="stock-item">
+        <div class="stock-row">
+          <div class="stock-left">
+            <div class="stock-idx">1</div>
+            <div>
+              <div style="display:flex;align-items:center;">
+                <span class="stock-codigo">BP-00120</span>
+                <span class="stock-fecha">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                  2025-12-15
+                </span>
+              </div>
+              <p class="stock-desc">Bolsa polietileno 40x60 micra 50</p>
+            </div>
+          </div>
+          <div class="stock-qty">
+            <p class="stock-qty-val">250.00</p>
+            <p class="stock-qty-unit">UND</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="stock-item">
+        <div class="stock-row">
+          <div class="stock-left">
+            <div class="stock-idx">2</div>
+            <div>
+              <div style="display:flex;align-items:center;">
+                <span class="stock-codigo">BP-00085</span>
+                <span class="stock-fecha">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                  2026-03-20
+                </span>
+              </div>
+              <p class="stock-desc">Bolsa polietileno 30x50 micra 30</p>
+            </div>
+          </div>
+          <div class="stock-qty">
+            <p class="stock-qty-val">180.00</p>
+            <p class="stock-qty-unit">UND</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="action-grid">
+        <button class="action-btn btn-ingreso">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          Ingreso
+        </button>
+        <button class="action-btn btn-salida">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          Salida
+        </button>
+        <button class="action-btn btn-traslado">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+          Traslado
+        </button>
+        <button class="action-btn btn-historial" style="position:relative;">
+          <span class="new-badge">NUEVO</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Historial
+        </button>
+        <button class="action-btn btn-devolucion">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Devolucion
+        </button>
+        <button class="action-btn btn-inc">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          INC — Insumo No Conforme
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── CONNECTOR ARROW ─── -->
+<div class="connector">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="36" height="36"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- DIALOG 2: Ventana de Historial (al hacer clic) -->
+<!-- ═══════════════════════════════════════════ -->
+<div>
+  <div class="label-box">
+    <h2>Ventana de Historial (al hacer clic)</h2>
+    <p>Muestra todos los movimientos de la posicion con usuario y fecha</p>
+  </div>
+  <div class="historial-overlay">
+    <!-- Header -->
+    <div class="historial-header">
+      <div class="historial-header-left">
+        <div class="historial-header-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div>
+          <div class="historial-title">Historial — POS-03</div>
+          <div class="historial-subtitle">Bolsas Plsticas / Nivel 1 · 6 movimientos</div>
+        </div>
+      </div>
+      <div class="historial-close">&times;</div>
+    </div>
+
+    <!-- Body: Timeline -->
+    <div class="historial-body">
+      <div class="timeline">
+
+        <!-- Item 1 -->
+        <div class="timeline-item">
+          <div class="timeline-dot dot-salida">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          </div>
+          <div class="timeline-card">
+            <div class="timeline-top">
+              <span class="timeline-type type-salida">Salida</span>
+              <span class="timeline-date">14 Jun 2025, 10:32 AM</span>
+            </div>
+            <div class="timeline-user">
+              <div class="timeline-avatar">MH</div>
+              <span class="timeline-username">Miguel Hidalgo</span>
+            </div>
+            <div class="timeline-detail">
+              <strong>BP-00120</strong> — Bolsa polietileno 40x60<br>
+              Cantidad: <span class="timeline-qty-change qty-negative">-50.00 UND</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Item 2 -->
+        <div class="timeline-item">
+          <div class="timeline-dot dot-ingreso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </div>
+          <div class="timeline-card">
+            <div class="timeline-top">
+              <span class="timeline-type type-ingreso">Ingreso</span>
+              <span class="timeline-date">10 Jun 2025, 02:15 PM</span>
+            </div>
+            <div class="timeline-user">
+              <div class="timeline-avatar" style="background:linear-gradient(135deg,#059669,#10b981);">CP</div>
+              <span class="timeline-username">Carlos Perez</span>
+            </div>
+            <div class="timeline-detail">
+              <strong>BP-00120</strong> — Bolsa polietileno 40x60<br>
+              Cantidad: <span class="timeline-qty-change qty-positive">+200.00 UND</span> · Venc: 2025-12-15
+            </div>
+          </div>
+        </div>
+
+        <!-- Item 3 -->
+        <div class="timeline-item">
+          <div class="timeline-dot dot-traslado">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/></svg>
+          </div>
+          <div class="timeline-card">
+            <div class="timeline-top">
+              <span class="timeline-type type-traslado">Traslado</span>
+              <span class="timeline-date">05 Jun 2025, 09:45 AM</span>
+            </div>
+            <div class="timeline-user">
+              <div class="timeline-avatar" style="background:linear-gradient(135deg,#2563eb,#3b82f6);">AR</div>
+              <span class="timeline-username">Ana Rodriguez</span>
+            </div>
+            <div class="timeline-detail">
+              <strong>BP-00085</strong> — Bolsa polietileno 30x50<br>
+              Cantidad: <span class="timeline-qty-change qty-negative">-30.00 UND</span><br>
+              Desde <strong>POS-07 / Nivel 2</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Item 4 -->
+        <div class="timeline-item">
+          <div class="timeline-dot dot-ingreso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </div>
+          <div class="timeline-card">
+            <div class="timeline-top">
+              <span class="timeline-type type-ingreso">Ingreso</span>
+              <span class="timeline-date">01 Jun 2025, 11:20 AM</span>
+            </div>
+            <div class="timeline-user">
+              <div class="timeline-avatar" style="background:linear-gradient(135deg,#059669,#10b981);">MH</div>
+              <span class="timeline-username">Miguel Hidalgo</span>
+            </div>
+            <div class="timeline-detail">
+              <strong>BP-00085</strong> — Bolsa polietileno 30x50<br>
+              Cantidad: <span class="timeline-qty-change qty-positive">+210.00 UND</span> · Venc: 2026-03-20
+            </div>
+          </div>
+        </div>
+
+        <!-- Item 5 -->
+        <div class="timeline-item">
+          <div class="timeline-dot dot-salida">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          </div>
+          <div class="timeline-card">
+            <div class="timeline-top">
+              <span class="timeline-type type-salida">Salida</span>
+              <span class="timeline-date">28 May 2025, 04:10 PM</span>
+            </div>
+            <div class="timeline-user">
+              <div class="timeline-avatar">CP</div>
+              <span class="timeline-username">Carlos Perez</span>
+            </div>
+            <div class="timeline-detail">
+              <strong>BP-00120</strong> — Bolsa polietileno 40x60<br>
+              Cantidad: <span class="timeline-qty-change qty-negative">-100.00 UND</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Item 6 -->
+        <div class="timeline-item">
+          <div class="timeline-dot dot-stock">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+          </div>
+          <div class="timeline-card">
+            <div class="timeline-top">
+              <span class="timeline-type type-stock">Stock Inicial</span>
+              <span class="timeline-date">20 May 2025, 08:00 AM</span>
+            </div>
+            <div class="timeline-user">
+              <div class="timeline-avatar" style="background:linear-gradient(135deg,#475569,#64748b);">MH</div>
+              <span class="timeline-username">Miguel Hidalgo</span>
+            </div>
+            <div class="timeline-detail">
+              <strong>BP-00120</strong> — Bolsa polietileno 40x60<br>
+              Cantidad: <span class="timeline-qty-change qty-positive">+200.00 UND</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

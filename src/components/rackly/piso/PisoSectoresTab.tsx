@@ -1316,44 +1316,114 @@ export function PisoSectoresTab() {
       </div>
 
       {/* ═══ COLUMN SELECTOR DASHBOARD ═══ */}
-      {selectedColumn === null ? (
-        <div className="space-y-4">
-          {/* Sector title */}
-          <div className="flex items-center gap-2.5 px-1">
-            <Layers3 className="h-4 w-4 text-sky-400" />
-            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-              {sectores.find(s => s.id === sectorFilter)?.nombre || 'Selecciona un sector'}
-            </span>
-            <span className="text-[10px] text-slate-500">— {columnas.length} columnas</span>
-          </div>
-          {/* Column selector — dark container with solid colored buttons */}
-          <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
-            <div className="grid grid-cols-4 sm:grid-cols-8 gap-2.5">
-              {columnas.map((col) => {
-                const colOcc = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0).length, 0)
-                const colTotal = col.subcols.reduce((s, sc) => s + sc.pos.length, 0)
-                const isEmpty = colOcc === 0
-                return (
-                  <button
-                    key={col.letra}
-                    onClick={() => handleSelectColumn(col.letra)}
-                    className={`relative rounded-xl h-12 flex items-center justify-center text-base font-extrabold text-white transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 ${
-                      isEmpty
-                        ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/40'
-                        : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'
-                    }`}
-                  >
-                    {col.letra}
-                    <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-slate-900 border border-slate-600 text-[9px] font-bold text-slate-300 flex items-center justify-center px-1">
-                      {colOcc}/{colTotal}
-                    </span>
-                  </button>
-                )
-              })}
+      {selectedColumn === null ? (() => {
+        const currentSector = sectores.find(s => s.id === sectorFilter)
+        const isSingleLevel = (currentSector?.n_niveles ?? 0) <= 1
+
+        // ═══ VISTA PLANA: sector con 1 nivel → grid de posiciones con colores ═══
+        if (isSingleLevel) {
+          return (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2.5 px-1">
+                <Layers3 className="h-4 w-4 text-sky-400" />
+                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  {currentSector?.nombre || 'Selecciona un sector'}
+                </span>
+                <span className="text-[10px] text-slate-500">— {posiciones.length} posiciones</span>
+              </div>
+              <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+                <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-10 gap-2.5">
+                  {posiciones.map((pos) => {
+                    const count = pos.stock > 0 ? pos.bloques.length : 0
+                    const totalQty = pos.bloques.reduce((s, b) => s + b.cantidad, 0)
+
+                    let cellBg = 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30'
+                    if (count > 1) cellBg = 'bg-orange-500 hover:bg-orange-400 shadow-orange-900/30'
+                    else if (count === 1) cellBg = 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/30'
+
+                    return (
+                      <button
+                        key={pos.posicionId}
+                        onClick={() => massMode ? toggleMassSelect(pos.posicionId) : handleClick(pos)}
+                        className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400 ring-offset-1 ring-offset-slate-900 scale-105' : ''} ${cellBg} relative rounded-xl aspect-square flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95 shadow-lg`}
+                        title={`Pos ${pos.posicionNumero} — ${count} artículo(s)${totalQty > 0 ? ` · ${totalQty.toFixed(1)}` : ''}`}
+                      >
+                        {massMode && (
+                          <div className={`absolute top-1 right-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${massSelected.has(pos.posicionId) ? 'bg-red-500 border-red-400' : 'bg-slate-800/80 border-slate-500/60'}`}>
+                            {massSelected.has(pos.posicionId) && <Check className="h-2 w-2 text-white" />}
+                          </div>
+                        )}
+                        <span className="text-sm sm:text-base font-extrabold leading-none">{pos.posicionNumero}</span>
+                        {count === 1 && (
+                          <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{totalQty % 1 === 0 ? totalQty : totalQty.toFixed(1)}</span>
+                        )}
+                        {count > 1 && (
+                          <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{count} arts</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+                {/* Legend */}
+                <div className="flex flex-wrap items-center gap-3 sm:gap-4 mt-4 px-1 text-[10px] sm:text-[11px]">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
+                    <span className="text-slate-400">Vacío</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3.5 h-3.5 rounded bg-blue-600" />
+                    <span className="text-slate-400">1 artículo</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-3.5 h-3.5 rounded bg-orange-500" />
+                    <span className="text-slate-400">2+ artículos</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        }
+
+        // ═══ VISTA NORMAL: sector con múltiples niveles → selector de columnas ═══
+        return (
+          <div className="space-y-4">
+            {/* Sector title */}
+            <div className="flex items-center gap-2.5 px-1">
+              <Layers3 className="h-4 w-4 text-sky-400" />
+              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                {currentSector?.nombre || 'Selecciona un sector'}
+              </span>
+              <span className="text-[10px] text-slate-500">— {columnas.length} columnas</span>
+            </div>
+            {/* Column selector — dark container with solid colored buttons */}
+            <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2.5">
+                {columnas.map((col) => {
+                  const colOcc = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0).length, 0)
+                  const colTotal = col.subcols.reduce((s, sc) => s + sc.pos.length, 0)
+                  const isEmpty = colOcc === 0
+                  return (
+                    <button
+                      key={col.letra}
+                      onClick={() => handleSelectColumn(col.letra)}
+                      className={`relative rounded-xl h-12 flex items-center justify-center text-base font-extrabold text-white transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 ${
+                        isEmpty
+                          ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/40'
+                          : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'
+                      }`}
+                    >
+                      {col.letra}
+                      <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-slate-900 border border-slate-600 text-[9px] font-bold text-slate-300 flex items-center justify-center px-1">
+                        {colOcc}/{colTotal}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           </div>
-        </div>
-      ) : (
+        )
+      })() : (
         /* ═══ SINGLE COLUMN TABLE VIEW ═══ */
         <div className="space-y-4">
           {/* Back button + column title */}

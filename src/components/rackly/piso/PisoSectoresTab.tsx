@@ -269,7 +269,7 @@ export function PisoSectoresTab() {
       // 1) Obtener detalles en estos niveles, con paginacion (1 item por detalle = 1 articulo)
       const { data: detData, error: detErr } = await dataClient
         .from('piso_movimiento_detalles')
-        .select('movimiento_id, cantidad, fecha_vencimiento, bloque_id')
+        .select('movimiento_id, cantidad, fecha_vencimiento, bloque_id, nivel_id')
         .in('nivel_id', nivelIds)
         .order('movimiento_id', { ascending: false })
         .range(offset, offset + 5) // traer 6 para saber si hay mas
@@ -301,7 +301,7 @@ export function PisoSectoresTab() {
         const mov = movMap.get(d.movimiento_id)
         const bloq = bloqMap.get(d.bloque_id)
         return {
-          id: `${d.movimiento_id}-${d.bloque_id}`,
+          id: `${d.movimiento_id}-${d.bloque_id}-${d.nivel_id}`,
           tipo: mov?.tipo ?? '',
           fecha: mov?.fecha ?? '',
           turno: mov?.turno ?? '',
@@ -313,8 +313,9 @@ export function PisoSectoresTab() {
           fecha_vencimiento: d.fecha_vencimiento,
           codigo_inc: mov?.codigo_inc || '',
         }
-      })
-      setHistorialHasMore(items.length > 5)
+      }).filter(i => i.tipo && i.bloque_codigo)
+      // hasMore: si hay mas de 5 items validos O si la pagina raw esta llena (podria haber mas en la siguiente pagina)
+      setHistorialHasMore(items.length > 5 || detData.length === 6)
       const trimmed = items.slice(0, 5)
       if (append) {
         setHistorialData(prev => [...prev, ...trimmed])

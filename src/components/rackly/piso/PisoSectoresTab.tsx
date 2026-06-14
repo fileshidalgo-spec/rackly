@@ -198,6 +198,7 @@ export function PisoSectoresTab() {
     bloque_unidad: string
     cantidad: number
     fecha_vencimiento: string | null
+    codigo_inc: string
   }
   const [historialOpen, setHistorialOpen] = useState(false)
   const [historialData, setHistorialData] = useState<HistorialItem[]>([])
@@ -279,7 +280,7 @@ export function PisoSectoresTab() {
       const uniqueMovIds = [...new Set(detData.map(d => d.movimiento_id))]
       const { data: movData, error: movErr } = await dataClient
         .from('piso_movimientos')
-        .select('id, tipo, turno, created_at, usuario_nombre')
+        .select('id, tipo, turno, fecha, usuario_nombre, codigo_inc')
         .in('id', uniqueMovIds)
       if (movErr) throw movErr
       // 3) Obtener info de bloques
@@ -290,7 +291,7 @@ export function PisoSectoresTab() {
         .in('id', uniqueBloqueIds)
       if (bloqErr) throw bloqErr
       const bloqMap = new Map<string, { id: string; codigo: string; descripcion: string; unidad: string }>((bloqData ?? []).map((b: any) => [b.id, b]))
-      const movMap = new Map<string, { id: string; tipo: string; turno: string | null; created_at: string; usuario_nombre: string | null }>((movData ?? []).map((m: any) => [m.id, m]))
+      const movMap = new Map<string, { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }>((movData ?? []).map((m: any) => [m.id, m]))
       // 4) Agrupar detalles por movimiento_id, tomar el primero como representante
       const grouped = new Map<string, HistorialItem>()
       for (const d of detData) {
@@ -300,7 +301,7 @@ export function PisoSectoresTab() {
         grouped.set(d.movimiento_id, {
           id: d.movimiento_id,
           tipo: mov.tipo,
-          fecha: mov.created_at,
+          fecha: mov.fecha,
           turno: mov.turno ?? '',
           usuario_nombre: mov.usuario_nombre,
           bloque_codigo: bloq.codigo,
@@ -308,6 +309,7 @@ export function PisoSectoresTab() {
           bloque_unidad: bloq.unidad,
           cantidad: d.cantidad,
           fecha_vencimiento: d.fecha_vencimiento,
+          codigo_inc: mov.codigo_inc || '',
         })
       }
       const items = Array.from(grouped.values())
@@ -3080,11 +3082,11 @@ export function PisoSectoresTab() {
                 {/* Timeline line */}
                 <div className="absolute left-[7px] top-2 bottom-2 w-[2px] bg-gradient-to-b from-violet-500/30 to-slate-700/20 rounded-full" />
                 {historialData.map((item) => {
-                  const esIngreso = item.tipo === 'ingreso' || item.tipo === 'stock_inicial'
+                  const esInc = !!item.codigo_inc
+                  const esIngreso = !esInc && (item.tipo === 'ingreso' || item.tipo === 'stock_inicial')
                   const esSalida = item.tipo === 'salida'
                   const esTraslado = item.tipo === 'traslado'
                   const esDevolucion = item.tipo === 'devolucion'
-                  const esInc = item.tipo === 'inc'
                   const dotColor = esIngreso ? 'border-emerald-500 bg-emerald-500/20' : esSalida ? 'border-red-500 bg-red-500/20' : esTraslado ? 'border-blue-500 bg-blue-500/20' : esDevolucion ? 'border-amber-500 bg-amber-500/20' : esInc ? 'border-rose-500 bg-rose-500/20' : 'border-slate-500 bg-slate-500/20'
                   const badgeClass = esIngreso ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : esSalida ? 'bg-red-500/10 text-red-400 border-red-500/20' : esTraslado ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : esDevolucion ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : esInc ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
                   const tipoLabel = esIngreso ? (item.tipo === 'stock_inicial' ? 'Stock Inicial' : 'Ingreso') : esSalida ? 'Salida' : esTraslado ? 'Traslado' : esDevolucion ? 'Devolucion' : esInc ? 'INC' : item.tipo

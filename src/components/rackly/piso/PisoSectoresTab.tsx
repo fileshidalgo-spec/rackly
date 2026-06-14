@@ -39,6 +39,7 @@ import {
   Layers3, BoxSelect, X, Plus, Trash2, RefreshCw, Package,
   RotateCcw, CalendarOff, Calendar, Warehouse, Sparkles, ChevronRight,
   Check, AlertTriangle, ToggleLeft, ToggleRight, Layers, ChevronDown, Lock,
+  Clock, RotateCwIcon,
 } from 'lucide-react'
 
 type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }
@@ -185,6 +186,25 @@ export function PisoSectoresTab() {
   // Devolucion state
   const [devRows, setDevRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
 
+  // Historial state
+  type HistorialItem = {
+    id: string
+    tipo: string
+    fecha: string
+    turno: string
+    usuario_nombre: string | null
+    bloque_codigo: string
+    bloque_descripcion: string
+    bloque_unidad: string
+    cantidad: number
+    fecha_vencimiento: string | null
+  }
+  const [historialOpen, setHistorialOpen] = useState(false)
+  const [historialData, setHistorialData] = useState<HistorialItem[]>([])
+  const [historialOffset, setHistorialOffset] = useState(0)
+  const [historialLoading, setHistorialLoading] = useState(false)
+  const [historialHasMore, setHistorialHasMore] = useState(false)
+
   // INC state
   const [incCodigo, setIncCodigo] = useState('')
   const [incDescripcion, setIncDescripcion] = useState('')
@@ -233,6 +253,86 @@ export function PisoSectoresTab() {
   const animatedTotal = useAnimatedCounter(posiciones.length)
   const animatedOccupied = useAnimatedCounter(posiciones.filter((p) => p.stock > 0).length)
   const animatedEmpty = useAnimatedCounter(posiciones.length - posiciones.filter((p) => p.stock > 0).length)
+
+  // ── Historial: cargar movimientos de la posicion ──
+  const loadHistorial = useCallback(async (offset = 0, append = false) => {
+    if (!detail) return
+    setHistorialLoading(true)
+    try {
+      const nivelIds = niveles.map(n => n.id)
+      if (nivelIds.length === 0) { setHistorialLoading(false); return }
+      // 1) Obtener movimiento_ids de detalles en estos niveles, con paginacion
+      const { data: detData, error: detErr } = await dataClient
+        .from('piso_movimiento_detalles')
+        .select('movimiento_id, cantidad, fecha_vencimiento, bloque_id')
+        .in('nivel_id', nivelIds)
+        .order('movimiento_id', { ascending: false })
+        .range(offset, offset + 9) // traer 10 para poder agrupar a 5 unicos
+      if (detErr) throw detErr
+      if (!detData || detData.length === 0) {
+        setHistorialHasMore(false)
+        if (!append) setHistorialData([])
+        setHistorialLoading(false)
+        return
+      }
+      // 2) Obtener los movimientos unicos
+      const uniqueMovIds = [...new Set(detData.map(d => d.movimiento_id))]
+      const { data: movData, error: movErr } = await dataClient
+        .from('piso_movimientos')
+        .select('id, tipo, turno, created_at, usuario_nombre')
+        .in('id', uniqueMovIds)
+      if (movErr) throw movErr
+      // 3) Obtener info de bloques
+      const uniqueBloqueIds = [...new Set(detData.map(d => d.bloque_id))]
+      const { data: bloqData, error: bloqErr } = await dataClient
+        .from('piso_bloques')
+        .select('id, codigo, descripcion, unidad')
+        .in('id', uniqueBloqueIds)
+      if (bloqErr) throw bloqErr
+      const bloqMap = new Map<string, { id: string; codigo: string; descripcion: string; unidad: string }>((bloqData ?? []).map((b: any) => [b.id, b]))
+      const movMap = new Map<string, { id: string; tipo: string; turno: string | null; created_at: string; usuario_nombre: string | null }>((movData ?? []).map((m: any) => [m.id, m]))
+      // 4) Agrupar detalles por movimiento_id, tomar el primero como representante
+      const grouped = new Map<string, HistorialItem>()
+      for (const d of detData) {
+        const mov = movMap.get(d.movimiento_id)
+        const bloq = bloqMap.get(d.bloque_id)
+        if (!mov || !bloq || grouped.has(d.movimiento_id)) continue
+        grouped.set(d.movimiento_id, {
+          id: d.movimiento_id,
+          tipo: mov.tipo,
+          fecha: mov.created_at,
+          turno: mov.turno ?? '',
+          usuario_nombre: mov.usuario_nombre,
+          bloque_codigo: bloq.codigo,
+          bloque_descripcion: bloq.descripcion || '',
+          bloque_unidad: bloq.unidad,
+          cantidad: d.cantidad,
+          fecha_vencimiento: d.fecha_vencimiento,
+        })
+      }
+      const items = Array.from(grouped.values())
+      setHistorialHasMore(items.length > 5)
+      const trimmed = items.slice(0, 5)
+      if (append) {
+        setHistorialData(prev => [...prev, ...trimmed])
+      } else {
+        setHistorialData(trimmed)
+      }
+      setHistorialOffset(offset + 10)
+    } catch (err) {
+      console.error('[Piso] Error cargando historial:', err)
+      toast.error('Error al cargar historial')
+    } finally {
+      setHistorialLoading(false)
+    }
+  }, [detail, niveles])
+
+  const openHistorial = useCallback(() => {
+    setHistorialOffset(0)
+    setHistorialData([])
+    setHistorialOpen(true)
+    loadHistorial(0, false)
+  }, [loadHistorial])
 
   // Cargar sectores
   const loadSectores = useCallback(async () => {
@@ -1972,11 +2072,12 @@ export function PisoSectoresTab() {
                       </div>
                     ))}
                     <div className="grid grid-cols-2 gap-2 pt-3">
-                      <Button onClick={openIngreso} size="sm" className="gap-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/15 transition-all duration-300 hover:shadow-emerald-500/25 hover:scale-[1.02]"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
-                      <Button onClick={openSalida} size="sm" className="gap-1.5 bg-red-600/90 hover:bg-red-600 text-white text-xs rounded-xl shadow-lg shadow-red-500/15 transition-all duration-300 hover:shadow-red-500/25 hover:scale-[1.02]"><ArrowUpFromLine className="h-3.5 w-3.5" /> Salida</Button>
                       <Button onClick={openTraslado} size="sm" className="gap-1.5 bg-sky-600/90 hover:bg-sky-600 text-white text-xs rounded-xl shadow-lg shadow-sky-500/15 transition-all duration-300 hover:shadow-sky-500/25 hover:scale-[1.02]"><ArrowRightLeft className="h-3.5 w-3.5" /> Traslado</Button>
                       <Button onClick={openDevolucion} size="sm" className="gap-1.5 bg-amber-600/90 hover:bg-amber-600 text-white text-xs rounded-xl shadow-lg shadow-amber-500/15 transition-all duration-300 hover:shadow-amber-500/25 hover:scale-[1.02]"><RotateCcw className="h-3.5 w-3.5" /> Devolucion</Button>
-                      <Button onClick={openInc} size="sm" className="gap-1.5 col-span-2 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300 hover:shadow-rose-500/25 hover:scale-[1.02]"><AlertTriangle className="h-3.5 w-3.5" /> INC — Insumo No Conforme</Button>
+                      <Button onClick={openHistorial} size="sm" className="gap-1.5 bg-violet-600/90 hover:bg-violet-600 text-white text-xs rounded-xl shadow-lg shadow-violet-500/15 transition-all duration-300 hover:shadow-violet-500/25 hover:scale-[1.02]"><Clock className="h-3.5 w-3.5" /> Historial</Button>
+                      <Button onClick={openInc} size="sm" className="gap-1.5 bg-rose-600/90 hover:bg-rose-600 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300 hover:shadow-rose-500/25 hover:scale-[1.02]"><AlertTriangle className="h-3.5 w-3.5" /> INC</Button>
+                      <Button onClick={openIngreso} size="sm" className="gap-1.5 col-span-2 bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/15 transition-all duration-300 hover:shadow-emerald-500/25 hover:scale-[1.02] py-3"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+                      <Button onClick={openSalida} size="sm" className="gap-1.5 col-span-2 bg-red-600/90 hover:bg-red-600 text-white text-xs rounded-xl shadow-lg shadow-red-500/15 transition-all duration-300 hover:shadow-red-500/25 hover:scale-[1.02] py-3"><ArrowUpFromLine className="h-3.5 w-3.5" /> Salida</Button>
                     </div>
                   </div>
                 ) : (
@@ -2929,6 +3030,117 @@ export function PisoSectoresTab() {
                 Si, registrar salida
               </Button>
             </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ HISTORIAL DIALOG ═══ */}
+      <Dialog open={historialOpen} onOpenChange={(open) => { if (!open) setHistorialOpen(false) }}>
+        <DialogContent
+          className="sm:max-w-lg max-w-[calc(100vw-1rem)] rounded-2xl max-h-[80vh] flex flex-col overflow-hidden overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+          style={{
+            background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.92))',
+            backdropFilter: 'blur(24px) saturate(1.2)',
+            border: '1px solid rgba(139, 92, 246, 0.2)',
+          }}
+        >
+          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-violet-400 to-transparent opacity-60" />
+          <DialogHeader className="px-5 pt-5 pb-3 shrink-0">
+            <DialogTitle className="flex items-center gap-2.5 text-sm text-white">
+              <div className="w-7 h-7 rounded-lg bg-violet-500/15 flex items-center justify-center border border-violet-500/20">
+                <Clock className="h-3.5 w-3.5 text-violet-400" />
+              </div>
+              <div>
+                <span className="font-bold">Historial</span>
+                {detail && (
+                  <span className="text-slate-400 font-normal text-xs ml-2">
+                    — {detail.columnaLetra}{detail.subcolumnaCodigo} · Pos {detail.posicionNumero}
+                  </span>
+                )}
+              </div>
+            </DialogTitle>
+            <DialogDescription className="text-[10px] text-slate-500">
+              Ultimos movimientos de esta posicion
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
+            {historialLoading && historialData.length === 0 ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-violet-400" />
+              </div>
+            ) : historialData.length === 0 ? (
+              <div className="text-center py-10">
+                <Clock className="h-8 w-8 text-slate-700 mx-auto mb-2" />
+                <p className="text-slate-500 text-xs">Sin movimientos registrados</p>
+              </div>
+            ) : (
+              <div className="relative pl-5">
+                {/* Timeline line */}
+                <div className="absolute left-[7px] top-2 bottom-2 w-[2px] bg-gradient-to-b from-violet-500/30 to-slate-700/20 rounded-full" />
+                {historialData.map((item) => {
+                  const esIngreso = item.tipo === 'ingreso' || item.tipo === 'stock_inicial'
+                  const esSalida = item.tipo === 'salida'
+                  const esTraslado = item.tipo === 'traslado'
+                  const esDevolucion = item.tipo === 'devolucion'
+                  const esInc = item.tipo === 'inc'
+                  const dotColor = esIngreso ? 'border-emerald-500 bg-emerald-500/20' : esSalida ? 'border-red-500 bg-red-500/20' : esTraslado ? 'border-blue-500 bg-blue-500/20' : esDevolucion ? 'border-amber-500 bg-amber-500/20' : esInc ? 'border-rose-500 bg-rose-500/20' : 'border-slate-500 bg-slate-500/20'
+                  const badgeClass = esIngreso ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : esSalida ? 'bg-red-500/10 text-red-400 border-red-500/20' : esTraslado ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : esDevolucion ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : esInc ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                  const tipoLabel = esIngreso ? (item.tipo === 'stock_inicial' ? 'Stock Inicial' : 'Ingreso') : esSalida ? 'Salida' : esTraslado ? 'Traslado' : esDevolucion ? 'Devolucion' : esInc ? 'INC' : item.tipo
+                  const fechaStr = item.fecha ? new Date(item.fecha).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+                  const iniciales = item.usuario_nombre ? item.usuario_nombre.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '??'
+                  const esPositivo = esIngreso || esDevolucion
+                  // Detectar si el codigo NO esta en el stock actual → rotacion
+                  const currentCodigos = new Set(
+                    Object.values(stockByNivel).flat().map(s => s.bloque_codigo)
+                  )
+                  const esRotacion = !currentCodigos.has(item.bloque_codigo)
+
+                  return (
+                    <div key={item.id} className="relative pb-4 last:pb-0">
+                      <div className={`absolute left-[-17px] top-1.5 w-3 h-3 rounded-full border-2 ${dotColor} flex items-center justify-center`} />
+                      <div className="rounded-xl border border-slate-700/30 bg-slate-800/40 backdrop-blur-sm p-3 hover:border-slate-600/40 transition-all duration-300">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md border ${badgeClass}`}>{tipoLabel}</span>
+                          <span className="text-[9px] text-slate-500">{fechaStr}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className="w-5 h-5 rounded-full bg-violet-500/20 flex items-center justify-center text-[7px] font-bold text-violet-300 border border-violet-500/20 flex-shrink-0">
+                            {iniciales}
+                          </div>
+                          <span className="text-[10px] font-semibold text-slate-200">{item.usuario_nombre || 'Usuario desconocido'}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 leading-relaxed">
+                          <span className="font-mono text-sky-300 font-semibold">{item.bloque_codigo}</span>
+                          {item.bloque_descripcion && <span className="ml-1.5 text-slate-300">{item.bloque_descripcion}</span>}
+                          <div className="mt-0.5">
+                            Cantidad: <span className={`font-bold font-mono ${esPositivo ? 'text-emerald-400' : 'text-red-400'}`}>{esPositivo ? '+' : '-'}{Math.abs(item.cantidad).toFixed(2)} {item.bloque_unidad}</span>
+                            {item.fecha_vencimiento && <span className="text-slate-500 ml-1.5">· Venc: {item.fecha_vencimiento}</span>}
+                          </div>
+                          {esRotacion && (
+                            <span className="inline-flex items-center gap-1 mt-1 text-[8px] font-semibold text-violet-400 bg-violet-500/8 border border-violet-500/15 px-1.5 py-0.5 rounded-md">
+                              <RotateCwIcon className="w-2.5 h-2.5" /> Rotacion de producto
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Load More */}
+                {historialHasMore && (
+                  <button
+                    onClick={() => loadHistorial(historialOffset, true)}
+                    disabled={historialLoading}
+                    className="w-full flex items-center justify-center gap-1.5 mt-3 py-2 rounded-xl border border-dashed border-violet-500/25 bg-violet-500/[0.03] text-violet-400 text-[10px] font-semibold hover:bg-violet-500/[0.07] hover:border-violet-500/40 transition-all duration-300 disabled:opacity-50"
+                  >
+                    {historialLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    Cargar mas movimientos
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

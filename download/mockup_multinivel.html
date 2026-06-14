@@ -2,39 +2,70 @@
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0f172a;font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#fff}
+body{background:#0f172a;font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#fff;min-height:100vh}
 h2{font-size:15px;font-weight:700;letter-spacing:.5px}
-.sub{font-size:11px;color:#94a3b8;margin-bottom:14px}
-.col-label{font-size:12px;color:#94a3b8;margin:12px 0 6px;font-weight:600}
-table{border-collapse:separate;border-spacing:4px;max-width:900px}
-th{font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;padding:6px 10px;text-align:center;background:#1e293b;border-radius:6px;font-weight:600}
+.sub{font-size:11px;color:#94a3b8;margin-bottom:6px}
+.sector-tabs{display:flex;gap:6px;margin-bottom:16px}
+.tab{padding:6px 14px;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid #334155;color:#94a3b8;background:transparent}
+.tab.active{background:#1e40af;color:#fff;border-color:#3b82f6}
+.col-label{font-size:12px;color:#e2e8f0;margin:16px 0 8px;font-weight:700;display:flex;align-items:center;gap:8px}
+.col-label::after{content:'';flex:1;height:1px;background:#334155}
+table{border-collapse:separate;border-spacing:3px;margin-bottom:8px}
+th{font-size:9px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;padding:5px 8px;text-align:center;background:#1e293b;border-radius:5px;font-weight:600}
 th.pos-h{background:linear-gradient(135deg,#166534,#22c55e);color:#fff}
-td{padding:6px 8px;text-align:center;border-radius:6px;font-size:11px;min-width:80px;background:#1e293b}
-td.pos-cell{background:linear-gradient(135deg,#166534,#22c55e);color:#fff;font-weight:700;min-width:50px}
-td.has-stock{color:#e2e8f0}
-td.empty-cell{color:#475569;font-style:italic}
-td.inc-cell{background:linear-gradient(135deg,#be123c,#ec4899);color:#fff}
-.art-code{font-weight:600;font-size:11px}
-.art-desc{font-size:9px;color:#94a3b8;margin-top:1px}
-.art-qty{font-size:10px;color:#22c55e;font-weight:600;margin-top:1px}
-.inc-badge{display:inline-block;font-size:7px;background:#fff;color:#be123c;padding:1px 4px;border-radius:3px;font-weight:800;margin-left:4px}
+td{padding:5px 8px;text-align:center;border-radius:5px;font-size:10px;min-width:75px;background:#1e293b;vertical-align:top}
+td.pos-cell{background:linear-gradient(135deg,#166534,#22c55e);color:#fff;font-weight:700;min-width:40px;font-size:11px}
+td.empty-cell{color:#475569;font-size:9px}
+td.inc-cell{background:linear-gradient(135deg,#4a1d47,#9d174d);color:#fff}
+.art-code{font-weight:600;font-size:10px}
+.art-desc{font-size:8px;color:#94a3b8;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px}
+.art-qty{font-size:9px;color:#22c55e;font-weight:600;margin-top:1px}
+.art-qty-inc{font-size:9px;color:#f472b6;font-weight:600;margin-top:1px}
+.inc-badge{display:inline-block;font-size:6px;background:#fff;color:#be123c;padding:1px 3px;border-radius:3px;font-weight:800;margin-left:3px;vertical-align:middle}
+.note{margin-top:12px;padding:10px 14px;background:#1e293b;border-radius:8px;font-size:10px;color:#94a3b8;max-width:900px;line-height:1.5}
 </style></head>
 <body>
 <h2>PREFORMA 1</h2>
-<div class="sub">Columna A · Sub A1 · 3 niveles · 22 posiciones</div>
-<div class="col-label">Subcolumna A1</div>
+<div class="sub">1 columna · 2 subcolumnas · 11 posiciones · 3 niveles</div>
+<div class="sector-tabs">
+  <div class="tab">CAMARA DE FRIO</div>
+  <div class="tab active">PREFORMA 1</div>
+  <div class="tab">QUIMICOS</div>
+</div>
+
+<!-- Subcolumna A1 -->
+<div class="col-label">A1 — 11 posiciones</div>
 <table>
-<tr><th class="pos-h">POS</th><th>Nivel 1</th><th>Nivel 2</th><th>Nivel 3</th></tr>
-<tr><td class="pos-cell">P1</td><td class="has-stock"><span class="art-code">122</span><div class="art-desc">CITRATO DE SODIO</div><div class="art-qty">500 KG</div></td><td class="has-stock"><span class="art-code">122</span><div class="art-desc">CITRATO DE SODIO</div><div class="art-qty">133 KG</div></td><td class="has-stock"><span class="art-code">122</span><div class="art-desc">CITRATO DE SODIO</div><div class="art-qty">154 KG</div></td></tr>
-<tr><td class="pos-cell">P2</td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td></tr>
-<tr><td class="pos-cell">P3</td><td class="has-stock"><span class="art-code">13520</span><div class="art-desc">EXTRACTO TE VERDE</div><div class="art-qty">200 KG</div></td><td class="inc-cell"><span class="art-code">99999</span><span class="inc-badge">INC</span><div class="art-desc">PRODUCTO DEFECTUOSO</div><div class="art-qty">50 KG</div></td><td class="empty-cell">— vacío —</td></tr>
-<tr><td class="pos-cell">P4</td><td class="has-stock"><span class="art-code">14849</span><div class="art-desc">SABOR MANZANA</div><div class="art-qty">138.55 KG</div></td><td class="has-stock"><span class="art-code">20446</span><div class="art-desc">EMULSION MANDARINA</div><div class="art-qty">947.1 KG</div></td><td class="has-stock"><span class="art-code">36924</span><div class="art-desc">SABOR DURAZNO</div><div class="art-qty">270 KG</div></td></tr>
-<tr><td class="pos-cell">P5</td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td></tr>
-<tr><td class="pos-cell">P6</td><td class="has-stock"><span class="art-code">36925</span><div class="art-desc">SABOR LIMON</div><div class="art-qty">9.5 KG</div></td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td></tr>
-<tr><td class="pos-cell">P7</td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td></tr>
-<tr><td class="pos-cell">P8</td><td class="has-stock"><span class="art-code">122</span><div class="art-desc">CITRATO DE SODIO</div><div class="art-qty">369 KG</div></td><td class="empty-cell">— vacío —</td><td class="inc-cell"><span class="art-code">88888</span><span class="inc-badge">INC</span><div class="art-desc">LOTE RECHAZADO</div><div class="art-qty">30 KG</div></td></tr>
-<tr><td class="pos-cell">P9</td><td class="empty-cell">— vacío —</td><td class="has-stock"><span class="art-code">14849</span><div class="art-desc">SABOR MANZANA</div><div class="art-qty">85 KG</div></td><td class="empty-cell">— vacío —</td></tr>
-<tr><td class="pos-cell">P10</td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td></tr>
-<tr><td class="pos-cell">P11</td><td class="has-stock"><span class="art-code">20446</span><div class="art-desc">EMULSION MANDARINA</div><div class="art-qty">410 KG</div></td><td class="empty-cell">— vacío —</td><td class="empty-cell">— vacío —</td></tr>
+<tr><th class="pos-h">POS</th><th>N1</th><th>N2</th><th>N3</th></tr>
+<tr><td class="pos-cell">P1</td><td><span class="art-code">122</span><div class="art-desc">CITRATO DE SODIO</div><div class="art-qty">500 KG</div></td><td><span class="art-code">122</span><div class="art-desc">CITRATO DE SODIO</div><div class="art-qty">133 KG</div></td><td><span class="art-code">122</span><div class="art-desc">CITRATO DE SODIO</div><div class="art-qty">154 KG</div></td></tr>
+<tr><td class="pos-cell">P2</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P3</td><td><span class="art-code">13520</span><div class="art-desc">EXTRACTO TE VERDE</div><div class="art-qty">200 KG</div></td><td class="inc-cell"><span class="art-code">99999</span><span class="inc-badge">INC</span><div class="art-desc">PRODUCTO DEFECTUOSO</div><div class="art-qty-inc">50 KG</div></td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P4</td><td><span class="art-code">14849</span><div class="art-desc">SABOR MANZANA</div><div class="art-qty">138.5 KG</div></td><td><span class="art-code">20446</span><div class="art-desc">EMULSION MANDARINA</div><div class="art-qty">947.1 KG</div></td><td><span class="art-code">36924</span><div class="art-desc">SABOR DURAZNO</div><div class="art-qty">270 KG</div></td></tr>
+<tr><td class="pos-cell">P5</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P6</td><td><span class="art-code">36925</span><div class="art-desc">SABOR LIMON</div><div class="art-qty">9.5 KG</div></td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P7</td><td class="empty-cell">—</td><td><span class="art-code">14849</span><div class="art-desc">SABOR MANZANA</div><div class="art-qty">85 KG</div></td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P8</td><td><span class="art-code">122</span><div class="art-desc">CITRATO DE SODIO</div><div class="art-qty">369 KG</div></td><td class="empty-cell">—</td><td class="inc-cell"><span class="art-code">88888</span><span class="inc-badge">INC</span><div class="art-desc">LOTE RECHAZADO</div><div class="art-qty-inc">30 KG</div></td></tr>
+<tr><td class="pos-cell">P9</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P10</td><td><span class="art-code">20446</span><div class="art-desc">EMULSION MANDARINA</div><div class="art-qty">410 KG</div></td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P11</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
 </table>
+
+<!-- Subcolumna A2 -->
+<div class="col-label">A2 — 11 posiciones</div>
+<table>
+<tr><th class="pos-h">POS</th><th>N1</th><th>N2</th><th>N3</th></tr>
+<tr><td class="pos-cell">P1</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P2</td><td><span class="art-code">122</span><div class="art-desc">CITRATO DE SODIO</div><div class="art-qty">250 KG</div></td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P3</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P4</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P5</td><td><span class="art-code">36925</span><div class="art-desc">SABOR LIMON</div><div class="art-qty">120 KG</div></td><td><span class="art-code">13520</span><div class="art-desc">EXTRACTO TE VERDE</div><div class="art-qty">80 KG</div></td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P6</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P7</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P8</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P9</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P10</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+<tr><td class="pos-cell">P11</td><td class="empty-cell">—</td><td class="empty-cell">—</td><td class="empty-cell">—</td></tr>
+</table>
+
+<div class="note">Vista matriz: como hay múltiples niveles, cada posición se expande en columnas N1, N2, N3. Las subcolumnas (A1, A2) se muestran una debajo de la otra. Celdas rosa = INC.</div>
 </body></html>

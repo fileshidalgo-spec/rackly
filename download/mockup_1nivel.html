@@ -2,7 +2,7 @@
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0f172a;font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#fff}
+body{background:#0f172a;font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#fff;min-height:100vh}
 h2{font-size:15px;font-weight:700;letter-spacing:.5px}
 .sub{font-size:11px;color:#94a3b8;margin-bottom:14px}
 .legend{display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap}
@@ -18,6 +18,7 @@ h2{font-size:15px;font-weight:700;letter-spacing:.5px}
 .c-orange{background:linear-gradient(135deg,#c2410c,#f97316);color:#fff}
 .c-pink{background:linear-gradient(135deg,#be123c,#ec4899);color:#fff}
 .badge-inc{position:absolute;top:3px;right:3px;font-size:7px;background:#fff;color:#be123c;padding:1px 4px;border-radius:4px;font-weight:800}
+.note{margin-top:18px;padding:10px 14px;background:#1e293b;border-radius:8px;font-size:10px;color:#94a3b8;max-width:720px;line-height:1.5}
 </style></head>
 <body>
 <h2>CAMARA DE FRIO</h2>
@@ -33,21 +34,22 @@ h2{font-size:15px;font-weight:700;letter-spacing:.5px}
   <div class="cell c-green"><span class="num">2</span></div>
   <div class="cell c-green"><span class="num">3</span></div>
   <div class="cell c-blue"><span class="num">4</span><span class="info">500 KG</span></div>
-  <div class="cell c-orange"><span class="num">5</span><span class="info">3 arts · 1,230 KG</span></div>
+  <div class="cell c-orange"><span class="num">5</span><span class="info">3 arts · 1,230</span></div>
   <div class="cell c-green"><span class="num">6</span></div>
   <div class="cell c-blue"><span class="num">7</span><span class="info">200 KG</span></div>
   <div class="cell c-pink"><span class="num">8</span><span class="info">154 KG</span><span class="badge-inc">INC</span></div>
   <div class="cell c-green"><span class="num">9</span></div>
   <div class="cell c-blue"><span class="num">10</span><span class="info">133 KG</span></div>
   <div class="cell c-green"><span class="num">11</span></div>
-  <div class="cell c-orange"><span class="num">12</span><span class="info">2 arts · 845 KG</span></div>
+  <div class="cell c-orange"><span class="num">12</span><span class="info">2 arts · 845</span></div>
   <div class="cell c-green"><span class="num">13</span></div>
   <div class="cell c-green"><span class="num">14</span></div>
   <div class="cell c-pink"><span class="num">15</span><span class="info">50 KG</span><span class="badge-inc">INC</span></div>
   <div class="cell c-green"><span class="num">16</span></div>
   <div class="cell c-blue"><span class="num">17</span><span class="info">369 KG</span></div>
   <div class="cell c-green"><span class="num">18</span></div>
-  <div class="cell c-orange"><span class="num">19</span><span class="info">4 arts · 2,100 KG</span></div>
+  <div class="cell c-orange"><span class="num">19</span><span class="info">4 arts · 2,100</span></div>
   <div class="cell c-green"><span class="num">20</span></div>
 </div>
+<div class="note">Vista plana: al no tener niveles, cada posición es 1 sola celda con color según su estado.</div>
 </body></html>

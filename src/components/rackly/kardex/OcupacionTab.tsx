@@ -144,6 +144,7 @@ export function OcupacionTab() {
     un: string
     cantidad: number
     f_vencimiento: string
+    codigo_inc: string
   }
   const [historialOpen, setHistorialOpen] = useState(false)
   const [historialData, setHistorialData] = useState<HistorialItem[]>([])
@@ -289,7 +290,7 @@ export function OcupacionTab() {
     try {
       const { data, error } = await dataClient
         .from('movimientos')
-        .select('id, tipo, turno, f_modificacion, usuario_nombre, codigo, descripcion, un, cantidad, f_vencimiento')
+        .select('id, tipo, turno, f_modificacion, usuario_nombre, codigo, descripcion, un, cantidad, f_vencimiento, codigo_inc')
         .eq('bloque', detail.bloque)
         .eq('torre', detail.torre)
         .eq('piso', detail.piso)
@@ -308,6 +309,7 @@ export function OcupacionTab() {
         un: r.un,
         cantidad: r.cantidad,
         f_vencimiento: r.f_vencimiento || '',
+        codigo_inc: r.codigo_inc || '',
       }))
       setHistorialHasMore(items.length > 5)
       const trimmed = items.slice(0, 5)
@@ -1255,11 +1257,11 @@ export function OcupacionTab() {
               <div className="relative pl-5">
                 <div className="absolute left-[7px] top-2 bottom-2 w-[2px] bg-gradient-to-b from-violet-500/30 to-slate-700/20 rounded-full" />
                 {historialData.map((item) => {
-                  const esIngreso = item.tipo === 'ingreso' || item.tipo === 'stock_inicial'
+                  const esInc = !!item.codigo_inc
+                  const esIngreso = !esInc && (item.tipo === 'ingreso' || item.tipo === 'stock_inicial')
                   const esSalida = item.tipo === 'salida'
                   const esTraslado = item.tipo === 'traslado'
                   const esDevolucion = item.tipo === 'devolucion'
-                  const esInc = item.tipo === 'inc'
                   const dotColor = esIngreso ? 'border-emerald-500 bg-emerald-500/20' : esSalida ? 'border-red-500 bg-red-500/20' : esTraslado ? 'border-blue-500 bg-blue-500/20' : esDevolucion ? 'border-amber-500 bg-amber-500/20' : esInc ? 'border-rose-500 bg-rose-500/20' : 'border-slate-500 bg-slate-500/20'
                   const badgeClass = esIngreso ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : esSalida ? 'bg-red-500/10 text-red-400 border-red-500/20' : esTraslado ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : esDevolucion ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : esInc ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
                   const tipoLabel = esIngreso ? (item.tipo === 'stock_inicial' ? 'Stock Inicial' : 'Ingreso') : esSalida ? 'Salida' : esTraslado ? 'Traslado' : esDevolucion ? 'Devolucion' : esInc ? 'INC' : item.tipo

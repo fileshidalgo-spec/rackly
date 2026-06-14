@@ -384,6 +384,9 @@ export async function stockEnUbicacion(
           codigoInc: m.codigoInc || '',
         }
         groups.set(key, group)
+      } else {
+        // Si el grupo no tiene descripción pero este movimiento sí, usarla
+        if (!group.descripcion && m.descripcion) group.descripcion = m.descripcion
       }
 
       // Calcular stock neto (ingreso/devolucion/traslado = +, salida = -)

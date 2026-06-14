@@ -713,7 +713,7 @@ export function OcupacionTab() {
                                         </span>
                                       )}
                                     </div>
-                                    {s.descripcion && <p className="text-slate-300 text-xs mt-0.5 truncate">{s.descripcion}</p>}
+                                    <p className={`text-xs mt-0.5 truncate ${s.descripcion ? 'text-slate-300' : 'text-slate-500 italic'}`}>{s.descripcion || 'Sin descripción'}</p>
                                     {/* Fecha de vencimiento con badge de urgencia */}
                                     <div className="flex items-center gap-2 mt-1 text-[10px] flex-wrap">
                                       {s.fVencimiento && (
@@ -766,7 +766,7 @@ export function OcupacionTab() {
                                           <span className="font-mono text-rose-400 font-bold text-xs">{s.codigo}</span>
                                           {s.codigoInc && <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 border border-rose-400/20 px-1.5 py-px rounded">{s.codigoInc}</span>}
                                         </div>
-                                        {s.descripcion && <p className="text-slate-300 text-xs mt-0.5 truncate">{s.descripcion}</p>}
+                                        <p className={`text-xs mt-0.5 truncate ${s.descripcion ? 'text-slate-300' : 'text-slate-500 italic'}`}>{s.descripcion || 'Sin descripción'}</p>
                                       </div>
                                       <div className="text-right flex-shrink-0">
                                         <p className="font-bold text-rose-300 text-sm">{s.stock}</p>

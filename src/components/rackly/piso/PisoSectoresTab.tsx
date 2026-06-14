@@ -266,13 +266,13 @@ export function PisoSectoresTab() {
     try {
       const nivelIds = niveles.map(n => n.id)
       if (nivelIds.length === 0) { setHistorialLoading(false); return }
-      // 1) Obtener movimiento_ids de detalles en estos niveles, con paginacion
+      // 1) Obtener detalles en estos niveles, con paginacion (1 item por detalle = 1 articulo)
       const { data: detData, error: detErr } = await dataClient
         .from('piso_movimiento_detalles')
         .select('movimiento_id, cantidad, fecha_vencimiento, bloque_id')
         .in('nivel_id', nivelIds)
         .order('movimiento_id', { ascending: false })
-        .range(offset, offset + 14) // traer 15 para agrupar a 5 unicos (un movimiento puede tener multiples detalles)
+        .range(offset, offset + 5) // traer 6 para saber si hay mas
       if (detErr) throw detErr
       if (!detData || detData.length === 0) {
         setHistorialHasMore(false)
@@ -280,7 +280,7 @@ export function PisoSectoresTab() {
         setHistorialLoading(false)
         return
       }
-      // 2) Obtener los movimientos unicos
+      // 2) Obtener los movimientos
       const uniqueMovIds = [...new Set(detData.map(d => d.movimiento_id))]
       const { data: movData, error: movErr } = await dataClient
         .from('piso_movimientos')
@@ -296,41 +296,32 @@ export function PisoSectoresTab() {
       if (bloqErr) throw bloqErr
       const bloqMap = new Map<string, { id: string; codigo: string; descripcion: string; unidad: string }>((bloqData ?? []).map((b: any) => [b.id, b]))
       const movMap = new Map<string, { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }>((movData ?? []).map((m: any) => [m.id, m]))
-      // 4) Agrupar detalles por movimiento_id, sumar cantidades de todos los detalles
-      const grouped = new Map<string, HistorialItem>()
-      for (const d of detData) {
+      // 4) Crear un item por cada detalle (cada articulo ingresado/salido individualmente)
+      const items: HistorialItem[] = detData.map(d => {
         const mov = movMap.get(d.movimiento_id)
         const bloq = bloqMap.get(d.bloque_id)
-        if (!mov || !bloq) continue
-        const existing = grouped.get(d.movimiento_id)
-        if (existing) {
-          existing.cantidad += d.cantidad
-        } else {
-          grouped.set(d.movimiento_id, {
-            id: d.movimiento_id,
-            tipo: mov.tipo,
-            fecha: mov.fecha,
-            turno: mov.turno ?? '',
-            usuario_nombre: mov.usuario_nombre,
-            bloque_codigo: bloq.codigo,
-            bloque_descripcion: bloq.descripcion || '',
-            bloque_unidad: bloq.unidad,
-            cantidad: d.cantidad,
-            fecha_vencimiento: d.fecha_vencimiento,
-            codigo_inc: mov.codigo_inc || '',
-          })
+        return {
+          id: `${d.movimiento_id}-${d.bloque_id}`,
+          tipo: mov?.tipo ?? '',
+          fecha: mov?.fecha ?? '',
+          turno: mov?.turno ?? '',
+          usuario_nombre: mov?.usuario_nombre,
+          bloque_codigo: bloq?.codigo ?? '',
+          bloque_descripcion: bloq?.descripcion || '',
+          bloque_unidad: bloq?.unidad ?? '',
+          cantidad: d.cantidad,
+          fecha_vencimiento: d.fecha_vencimiento,
+          codigo_inc: mov?.codigo_inc || '',
         }
-      }
-      const items = Array.from(grouped.values())
-      // hasMore: si obtuvimos mas de 5 movimientos unicos O si la pagina de detalles esta llena (podria haber mas)
-      setHistorialHasMore(items.length > 5 || detData.length === 15)
+      })
+      setHistorialHasMore(items.length > 5)
       const trimmed = items.slice(0, 5)
       if (append) {
         setHistorialData(prev => [...prev, ...trimmed])
       } else {
         setHistorialData(trimmed)
       }
-      setHistorialOffset(offset + 15)
+      setHistorialOffset(offset + 6)
     } catch (err) {
       console.error('[Piso] Error cargando historial:', err)
       toast.error('Error al cargar historial')

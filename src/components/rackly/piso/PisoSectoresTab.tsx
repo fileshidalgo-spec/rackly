@@ -300,18 +300,20 @@ export function PisoSectoresTab() {
 
   function handleSelectColumn(letra: string) {
     setSelectedColumn(letra)
-    loadColumnDetail(letra)
+    const sec = sectores.find(s => s.id === sectorFilter)
+    if ((sec?.n_niveles ?? 0) > 1) loadColumnDetail(letra)
   }
 
   // Realtime: auto-refresh positions when piso_movimientos changes (polling solo como respaldo si WebSocket cae)
   const silentRefreshPos = useCallback(() => {
     loadPosiciones(true)
-    if (selectedColumn && sectorFilter !== 'all') {
+    const sec = sectores.find(s => s.id === sectorFilter)
+    if (selectedColumn && sectorFilter !== 'all' && (sec?.n_niveles ?? 0) > 1) {
       cargarVistaColumna(sectorFilter, selectedColumn).then(d => {
         if (mountedRef.current) setColDetail(d)
       }).catch(() => {})
     }
-  }, [loadPosiciones, selectedColumn, sectorFilter])
+  }, [loadPosiciones, selectedColumn, sectorFilter, sectores])
   usePisoRealtime(silentRefreshPos)
 
   // Filtrar catalogo para autocomplete
@@ -1320,8 +1322,61 @@ export function PisoSectoresTab() {
         const currentSector = sectores.find(s => s.id === sectorFilter)
         const isSingleLevel = (currentSector?.n_niveles ?? 0) <= 1
 
-        // ═══ VISTA PLANA: sector con 1 nivel → grid de posiciones con colores ═══
+        // ═══ VISTA PLANA: sector con 1 nivel ═══
         if (isSingleLevel) {
+          const nCol = currentSector?.n_columnas ?? 0
+          // Si tiene varias columnas → selector de columnas (como el mockup)
+          // Si tiene 1 columna → grid plano de posiciones (ej. Cámara de Frío)
+          if (nCol > 1) {
+            return (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2.5 px-1">
+                  <Layers3 className="h-4 w-4 text-sky-400" />
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    {currentSector?.nombre || 'Selecciona un sector'}
+                  </span>
+                  <span className="text-[10px] text-slate-500">— {columnas.length} columnas</span>
+                </div>
+                <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+                  <div className="grid grid-cols-4 sm:grid-cols-8 gap-2.5">
+                    {columnas.map((col) => {
+                      const colOcc = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0).length, 0)
+                      const colTotal = col.subcols.reduce((s, sc) => s + sc.pos.length, 0)
+                      const isEmpty = colOcc === 0
+                      return (
+                        <button
+                          key={col.letra}
+                          onClick={() => handleSelectColumn(col.letra)}
+                          className={`relative rounded-xl h-12 flex items-center justify-center text-base font-extrabold text-white transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 ${
+                            isEmpty
+                              ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/40'
+                              : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'
+                          }`}
+                        >
+                          {col.letra}
+                          <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-slate-900 border border-slate-600 text-[9px] font-bold text-slate-300 flex items-center justify-center px-1">
+                            {colOcc}/{colTotal}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {/* Legend */}
+                  <div className="flex flex-wrap items-center gap-3 sm:gap-4 mt-4 px-1 text-[10px] sm:text-[11px]">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
+                      <span className="text-slate-400">Vacía</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3.5 h-3.5 rounded bg-blue-600" />
+                      <span className="text-slate-400">Con stock</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          }
+          // 1 columna 1 nivel → grid plano original
           return (
             <div className="space-y-4">
               <div className="flex items-center gap-2.5 px-1">
@@ -1424,8 +1479,98 @@ export function PisoSectoresTab() {
           </div>
         )
       })() : (
-        /* ═══ SINGLE COLUMN TABLE VIEW ═══ */
-        <div className="space-y-4">
+        /* ═══ COLUMN DETAIL VIEW ═══ */
+        (() => {
+          const sec = sectores.find(s => s.id === sectorFilter)
+          const isSingleLevel = (sec?.n_niveles ?? 0) <= 1
+
+          // ── 1 nivel: grid plano de posiciones filtradas por columna ──
+          if (isSingleLevel) {
+            const colPos = posiciones.filter(p => p.columnaLetra === selectedColumn)
+            return (
+              <div className="space-y-4">
+                {/* Back button + column title */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setSelectedColumn(null)}
+                    className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 hover:bg-slate-700 transition-all duration-300 text-slate-400 hover:text-white"
+                  >
+                    <ChevronDown className="h-4 w-4 rotate-90" />
+                  </button>
+                  <div className="h-10 w-10 rounded-xl bg-blue-600 shadow-blue-900/40 flex items-center justify-center text-white font-extrabold text-sm shadow-lg">
+                    {selectedColumn}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-bold text-slate-200">Columna {selectedColumn}</span>
+                    <span className="text-[10px] text-slate-500 ml-2">{colPos.length} posiciones</span>
+                  </div>
+                </div>
+
+                {/* Position grid */}
+                <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+                  {colPos.length === 0 ? (
+                    <div className="text-center py-10">
+                      <p className="text-sm text-slate-400">No hay posiciones en esta columna</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-10 gap-2.5">
+                        {colPos.map((pos) => {
+                          const count = pos.stock > 0 ? pos.bloques.length : 0
+                          const totalQty = pos.bloques.reduce((s, b) => s + b.cantidad, 0)
+
+                          let cellBg = 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30'
+                          if (count > 1) cellBg = 'bg-orange-500 hover:bg-orange-400 shadow-orange-900/30'
+                          else if (count === 1) cellBg = 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/30'
+
+                          return (
+                            <button
+                              key={pos.posicionId}
+                              onClick={() => massMode ? toggleMassSelect(pos.posicionId) : handleClick(pos)}
+                              className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400 ring-offset-1 ring-offset-slate-900 scale-105' : ''} ${cellBg} relative rounded-xl aspect-square flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95 shadow-lg`}
+                              title={`Pos ${pos.posicionNumero} — ${count} artículo(s)${totalQty > 0 ? ` · ${totalQty.toFixed(1)}` : ''}`}
+                            >
+                              {massMode && (
+                                <div className={`absolute top-1 right-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${massSelected.has(pos.posicionId) ? 'bg-red-500 border-red-400' : 'bg-slate-800/80 border-slate-500/60'}`}>
+                                  {massSelected.has(pos.posicionId) && <Check className="h-2 w-2 text-white" />}
+                                </div>
+                              )}
+                              <span className="text-sm sm:text-base font-extrabold leading-none">{pos.posicionNumero}</span>
+                              {count === 1 && (
+                                <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{totalQty % 1 === 0 ? totalQty : totalQty.toFixed(1)}</span>
+                              )}
+                              {count > 1 && (
+                                <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{count} arts</span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {/* Legend */}
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-4 mt-4 px-1 text-[10px] sm:text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
+                          <span className="text-slate-400">Vacío</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-3.5 h-3.5 rounded bg-blue-600" />
+                          <span className="text-slate-400">1 artículo</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-3.5 h-3.5 rounded bg-orange-500" />
+                          <span className="text-slate-400">2+ artículos</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )
+          }
+
+          // ── Multi-nivel: tabla POS × Niveles (sin cambios) ──
+          return (
+          <div className="space-y-4">
           {/* Back button + column title */}
           <div className="flex items-center gap-3">
             <button
@@ -1601,6 +1746,8 @@ export function PisoSectoresTab() {
             </div>
           )}
         </div>
+          )
+        })()
       )}
 
       {/* ═══ MASS SALIDA FLOATING BAR ═══ */}

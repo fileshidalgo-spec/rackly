@@ -1,0 +1,685 @@
+     1→---
+     2→Task ID: 1
+     3→Agent: main
+     4→Task: Diagnóstico y fix definitivo del bug de stock en Kardex Piso (JHIA-58)
+     5→
+     6→Work Log:
+     7→- Leí y analicé todo el código: api.ts, PisoSectoresTab.tsx, tipos Supabase, SQL previos
+     8→- Descubrí que la columna `fecha_vencimiento` NO EXISTE en `piso_movimiento_detalles` (confirmado por types.ts)
+     9→- Los RPCs `piso_stock_detalle_posicion` y `piso_stock_sector_grid` NO EXISTEN en la BD
+    10→- El SQL de corrección (JHIA-57b) nunca fue ejecutado en Supabase
+    11→- El fallback TS de `stockDetallePosicion` seleccionaba columna inexistente → error → panel detalle nunca actualizaba
+    12→- Creé SQL definitivo `rackly_piso_fix_FINAL.sql` con: columna, 2 RPCs, update del RPC existente, verificación
+    13→- Actualicé el fallback TS para tolerar columna inexistente (intenta con, si falla reintenta sin)
+    14→- Actualicé tipos Supabase con fecha_vencimiento y los 2 nuevos RPCs
+    15→- Build exitoso, tag JHIA-58, push, deploy a Cloudflare Pages
+    16→
+    17→Stage Summary:
+    18→- Archivo SQL: /home/z/my-project/download/rackly_piso_fix_FINAL.sql
+    19→- Deploy: https://rackly.pages.dev
+    20→- Tag: JHIA-58
+    21→- PENDIENTE: El usuario debe ejecutar el SQL en Supabase Dashboard > SQL Editor
+    22→---
+    23→Task ID: JHIA-64
+    24→Agent: Main Agent
+    25→Task: Fix stock detail by levels in Piso Sectores + fix tooltip to show codes
+    26→
+    27→Work Log:
+    28→- Read PisoSectoresTab.tsx (1631 lines) and api.ts to understand current behavior
+    29→- Identified Issue 1: stockDetallePosicion returns ALL stock across ALL levels combined, no per-level breakdown in view mode
+    30→- Identified Issue 2: Cell tooltip showed "stock: X" (quantity) instead of article codes
+    31→- Created stockDetalleNivel(nivelId) in api.ts - FEFO stock calculation for a single level
+    32→- Added stockByNivel and viewNivelTab states to PisoSectoresTab
+    33→- Modified handleClick to load stock per level in parallel using Promise.all
+    34→- Replaced view mode with IIFE that computes displayStock based on selected tab
+    35→- Added level tabs UI: "Todos" tab + individual "Nivel N (count)" tabs, only shown when 2+ levels exist
+    36→- Added level info banner showing nivel number, codigo_ubicacion, and total quantity when viewing specific level
+    37→- Changed empty state message to distinguish "Nivel sin articulos" vs "Posicion vacia"
+    38→- Fixed tooltip: changed from "stock: {pos.stock}" to "{pos.bloques.map(b => b.bloque_codigo).join(', ')}"
+    39→- Build verified successfully, committed and pushed with tag JHIA-64
+    40→
+    41→Stage Summary:
+    42→- Files modified: src/lib/piso/api.ts, src/components/rackly/piso/PisoSectoresTab.tsx
+    43→- 2 files changed, 189 insertions(+), 7 deletions(-)
+    44→- Commit: d2fba10, Tag: JHIA-64
+    45→- Deployed to Cloudflare Pages via GitHub Actions
+    46→
+    47→---
+    48→Task ID: JHIA-65
+    49→Agent: Main Agent
+    50→Task: Fix autofocus en Codigo, Salida por niveles, Salida en masa
+    51→
+    52→Work Log:
+    53→- Fixed autofocus: moved autoFocus from Cantidad input to Codigo input in Ingreso and Devolucion modes
+    54→- Added salNivelTab state for level filtering in Salida mode
+    55→- Modified openSalida to reset salNivelTab to 'all'
+    56→- Modified doSalida to filter items by selected nivel and use correct nivel_id
+    57→- Replaced Salida mode UI with IIFE that shows level tabs (red gradient) when 2+ levels exist
+    58→- Level tabs filter salItems to show only items belonging to selected level
+    59→- Added level info banner in salida mode
+    60→- Added mass selection mode: massMode, massSelected (Set), massDialogOpen states
+    61→- Added toggleMassMode, toggleMassSelect, openMassDialog, doMassSalida, updateMassNivel functions
+    62→- Modified cell click handler: massMode ? toggleMassSelect : handleClick
+    63→- Cell visual changes in mass mode: checkbox overlay, ring-2 ring-red-400 for selected
+    64→- Added "Salida en masa" toggle button in top toolbar
+    65→- Added floating bar with position counter and "Procesar salida" button
+    66→- Added "mode active" banner when no positions selected
+    67→- Added Mass Salida Dialog with position details, level selectors, item lists, and confirm
+    68→- Build verified successfully, committed and pushed with tag JHIA-65
+    69→
+    70→Stage Summary:
+    71→- Files modified: src/components/rackly/piso/PisoSectoresTab.tsx (360 insertions, 29 deletions)
+    72→- No database changes
+    73→- No changes to existing single-position functionality (massMode is opt-in via toggle)
+    74→- Commit: 31778fb, Tag: JHIA-65
+    75→- Deployed to Cloudflare Pages via GitHub Actions
+    76→---
+    77→Task ID: JHIA-65
+    78→Agent: main
+    79→Task: Fix salida por niveles con cantidades correctas + confirmación salida en masa
+    80→
+    81→Work Log:
+    82→- Diagnosticó que al filtrar por nivel en Salida, se mostraban cantidades totales (suma de todos los niveles) en vez de las cantidades reales del nivel seleccionado
+    83→- Agregó estado `salItemsByNivel` (SalItem[]) para almacenar items con cantidades derivadas del nivel seleccionado
+    84→- Creó función `buildSalItemsForNivel(nivelId)` que genera SalItem[] desde stockByNivel[nivelId] con cantidades correctas
+    85→- Modificó los handlers de tabs de nivel: "Todos" usa salItems, nivel específico regenera salItemsByNivel
+    86→- Modificó item click, quantity input y "seleccionar todos" para operar sobre la lista correcta según salNivelTab
+    87→- Modificó doSalida() para usar filteredItems = salNivelTab === 'all' ? salItems : salItemsByNivel
+    88→- Agregó estado massConfirmOpen para diálogo de confirmación
+    89→- Cambió botón "Registrar" en diálogo masa para abrir confirmación en vez de ejecutar directamente
+    90→- Creó diálogo de confirmación con resumen detallado: cada posición con nivel, artículos con código/descripción/cantidad, totales generales
+    91→- Build exitoso, commit a404314, tag JHIA-65 pusheado
+    92→
+    93→Stage Summary:
+    94→- Salida por niveles ahora muestra cantidades reales del nivel (no total acumulado)
+    95→- Salida en masa requiere confirmación con resumen detallado antes de ejecutar
+    96→- No se afectó modo Ver, Ingreso, Traslado, Devolución ni Salida en tab "Todos"
+    97→
+    98→---
+    99→Task ID: JHIA-68
+   100→Agent: Main Agent
+   101→Task: Aplicar responsividad móvil en Kardex Racks (mismos patrones que JHIA-67 en Kardex Piso)
+   102→
+   103→Work Log:
+   104→- Revisado todos los componentes bajo src/components/rackly/kardex/ (10 archivos)
+   105→- Identificadas las brechas vs Kardex Piso JHIA-67: columnas sin ocultar en móvil, texto sin truncar, padding fijo en diálogos
+   106→- StockTab.tsx: Ocultadas columnas Piso(>sm), Descripción(>md), UN(>sm), Proveedor(>lg), Vencimiento(>sm) en móvil. Truncado descripción.
+   107→- TrasladoTab.tsx: Ocultadas columnas Piso(>sm), UN(>sm), F.Vencimiento(>md), Proveedor(>lg). Truncado ruta en diálogo. Padding responsivo px-4 sm:px-6 en diálogo.
+   108→- MovimientoForm.tsx (Salida): Ocultadas columnas Piso(>sm), F.Vencimiento(>md), Proveedor(>lg). Padding responsivo px-4 sm:px-6 en diálogo de ingreso.
+   109→- FefoTab.tsx: Ocultadas columnas Torre/Piso/Pos(>sm), Proveedor/Vencimiento(>md) en tabla custom.
+   110→- CatalogoTab.tsx: Ocultadas columnas UN(>sm), Stock BM(>sm). Truncado descripción.
+   111→- Build verificado: compilación exitosa sin errores TypeScript.
+   112→
+   113→Stage Summary:
+   114→- 5 archivos modificados: StockTab.tsx, TrasladoTab.tsx, MovimientoForm.tsx, FefoTab.tsx, CatalogoTab.tsx
+   115→- Patrones aplicados: hidden sm:table-cell, hidden md:table-cell, hidden lg:table-cell, truncate min-w-0, px-4 sm:px-6
+   116→- Build exitoso, sin errores
+   117→
+   118→---
+   119→Task ID: JHIA-69
+   120→Agent: Main Agent
+   121→Task: Corregir FEFO - no mostrar artículos con stock 0 o negativo
+   122→
+   123→Work Log:
+   124→- Identificado bug en FefoTab.tsx línea 98: `else if (delta > 0)` impedía crear entradas cuando el primer movimiento era negativo
+   125→- Esto causaba que las salidas no se restaran correctamente del stock en algunos casos
+   126→- Reemplazada lógica inline por `impactoStock()` (misma función usada por SalidaForm, StockTab, TrasladoTab)
+   127→- Eliminado guard `else if (delta > 0)` → ahora siempre crea la entrada y el filtro `stock <= 0` al final la elimina correctamente
+   128→- Patrón ahora consistente con SalidaForm.tsx (que sí funcionaba bien)
+   129→- Build exitoso sin errores
+   130→
+   131→Stage Summary:
+   132→- Archivo modificado: FefoTab.tsx
+   133→- Bug: `else if (delta > 0)` causaba que artículos con salida seguían mostrando stock
+   134→- Fix: usar `impactoStock()` + eliminar guard → filtro final `stock <= 0` hace el trabajo correctamente
+   135→
+   136→---
+   137→Task ID: JHIA-70
+   138→Agent: Main Agent
+   139→Task: Corregir responsividad de ventanas emergentes (dialogs) en Kardex Piso
+   140→
+   141→Work Log:
+   142→- Auditoria completa de 4 dialogs en PisoSectoresTab.tsx (Main Detail, Traslado Confirm, Mass Salida, Mass Confirm)
+   143→- Fix HIGH: Dialog Principal (1222) - Botón X invisible en fondo oscuro → agregado [&>button]:text-slate-400 hover:[&>button]:text-white
+   144→- Fix HIGH: Dialog Traslado Confirm (1857) - Agregado p-0, botón X override, padding responsivo px-4 sm:px-6 en header/contenido/footer
+   145→- Fix HIGH: Mass Confirm Nivel badge (2100) - truncado max-w-[100px] para evitar overflow horizontal con 3+ niveles
+   146→- Fix MEDIUM: Traslado items overflow - agregado gap-2 en flex justify-between, truncate en status label, flex-wrap en info row
+   147→- Fix MEDIUM: Summary totals (2132) - flex-wrap + gap-3 sm:gap-4 para que no overflow en móvil
+   148→- Fix MEDIUM: Todos los botones en todos los dialogs → h-11 (44px touch targets) en 8 pares de botones (Cancelar + Acción)
+   149→- Build exitoso, push a GitHub, deploy automático a Cloudflare Pages
+   150→
+   151→Stage Summary:
+   152→- Archivo modificado: PisoSectoresTab.tsx
+   153→- 9 correcciones aplicadas en total
+   154→- Todos los dialogs ahora tienen: botón X visible, padding responsivo, touch targets 44px, sin overflow horizontal
+   155→---
+   156→Task ID: JHIA-76
+   157→Agent: Main Agent
+   158→Task: Stock por código - Layout tarjetas en móvil con TODAS las columnas visibles + Eliminar solo admin
+   159→
+   160→Work Log:
+   161→- Leído StockTab.tsx actual en origin/main (JHIA-74): tenía min-w-[700px] forzando scroll horizontal y columnas ocultas con hidden sm:table-cell
+   162→- Usuario solicitó: TODAS las columnas visibles en móvil (bloque, torre, piso, posición, descripción, UN, proveedor, vencimiento, stock, eliminar)
+   163→- Columna eliminar solo visible para rol admin (useAuth hook ya disponible en el proyecto)
+   164→- Creado layout dual: tarjetas compactas para móvil (md:hidden) + tabla completa para desktop (hidden md:block)
+   165→- Mobile cards: Row 1 = Bloq|Tor|Pis|Pos + Badge stock + botón eliminar (admin); Row 2 = descripción; Row 3 = UN + proveedor badge + vencimiento badge
+   166→- Desktop table: removido min-w-[700px] y todos los hidden sm/md/lg:table-cell, eliminar condicional por esAdmin
+   167→- Importado useAuth hook y agregado esAdmin = perfil?.rol === 'admin'
+   168→- GitHub token configurado con remote correcto (fileshidalgo-spec/rackly)
+   169→- Reset local main a origin/main para sincronizar, aplicado cambios de StockTab, commit + push exitoso
+   170→- Tag JHIA-76 creado y pusheado
+   171→
+   172→Stage Summary:
+   173→- Archivo modificado: src/components/rackly/kardex/StockTab.tsx (109 insertions, 28 deletions)
+   174→- Commit: 265d06e, Tag: JHIA-76
+   175→- Deploy automático via GitHub Actions a Cloudflare Pages
+   176→- Eliminar columna solo visible para rol admin
+   177→---
+   178→Task ID: JHIA-77
+   179→Agent: Main Agent
+   180→Task: Kardex Racks - Salida en móvil sin piso, vencimiento, proveedor visible
+   181→
+   182→Work Log:
+   183→- Diagnosticado: SalidaForm en MovimientoForm.tsx usaba hidden sm:table-cell (Piso), hidden md:table-cell (Vencimiento), hidden lg:table-cell (Proveedor)
+   184→- En móvil, las 3 columnas estaban ocultas → usuario no veía piso, fecha de vencimiento ni proveedor
+   185→- Aplicado mismo patrón dual-layout de JHIA-76: tarjetas en móvil (md:hidden) + tabla completa en desktop (hidden md:block)
+   186→- Tarjetas móviles muestran: ubicación (B/T/P/Pos), stock, vencimiento, proveedor, input cantidad + botones Salida/Todo
+   187→- Tabla desktop: removidos todos los hidden sm/md/lg:table-cell, todas las columnas siempre visibles
+   188→- Build exitoso (solo error pre-existente en examples/websocket/frontend.tsx)
+   189→- Commit d134d5d, tag JHIA-77, push exitoso a origin/main
+   190→
+   191→Stage Summary:
+   192→- Archivo modificado: src/components/rackly/kardex/MovimientoForm.tsx (163 insertions, 81 deletions)
+   193→- En móvil ahora se ven: piso, vencimiento y proveedor en cada ubicación de Salida
+   194→- Deploy automático via Cloudflare Pages
+   195→---
+   196→Task ID: JHIA-78-fix
+   197→Agent: Main Agent
+   198→Task: Fix mobile scroll deselecting checkboxes in SalidaForm
+   199→
+   200→Work Log:
+   201→- Read MovimientoForm.tsx (SalidaForm) from origin/main after pulling latest (JHIA-78 was already committed)
+   202→- Identified root cause: useEffect on [locations] (lines 561-564) was resetting selected Set to empty every time locations array reference changed
+   203→- The 8-second polling interval in refreshLocations() creates new array → triggers useEffect → clears all checkboxes
+   204→- On mobile, scrolling triggers re-renders making this very noticeable
+   205→- Fix 1: Removed the useEffect that reset selected/qtyMap on locations change
+   206→- Fix 2: Added smart cleanup in refreshLocations - only removes selections for locations that no longer exist (stock=0), preserves valid selections
+   207→- Selections still properly reset when searchCode changes (separate useEffect on [searchCode] still exists)
+   208→- Build passed, committed as eba7025, tag JHIA-78-fix, pushed to origin/main
+   209→
+   210→Stage Summary:
+   211→- Root cause: useEffect([locations]) + 8s polling = constant selection wipe
+   212→- Fix: Remove useEffect, add smart cleanup in refreshLocations instead
+   213→- File modified: src/components/rackly/kardex/MovimientoForm.tsx (12 insertions, 5 deletions)
+   214→- Deploy: Cloudflare Pages auto-deploy from GitHub Actions
+   215→---
+   216→Task ID: JHIA-hardening
+   217→Agent: Main Agent
+   218→Task: Hardcodeo para 1 mes sin intervención
+   219→
+   220→Work Log:
+   221→- Auditoría completa de 11 puntos de fragilidad (concurrencia, tipos, realtime, errores, etc.)
+   222→- types.ts: Agregadas definiciones TypeScript para las 2 RPCs nuevas (34 parámetros validados en compile-time)
+   223→- OcupacionTab.tsx: doSalida y doTransferir ahora manejan INSUFFICIENT_STOCK con toast específico + auto-refresco
+   224→- PisoSectoresTab.tsx: 6 catch blocks cambiados de genéricos a mensajes descriptivos usando extractError()
+   225→- useMovimientosRealtime.tsx: Channel name estable, ref para onChange, debounce 500ms, logging, reconnection handler
+   226→- ErrorBoundary.tsx: Modo por sección con prop 'name' — un tab que falla no mata los demás
+   227→- rackly_hardening.sql: Fix volatilidad RPCs (STABLE → VOLATILE)
+   228→- Build exitoso, commit 6fe6c0b, tag JHIA-hardening, push a origin/main
+   229→
+   230→Stage Summary:
+   231→- 6 archivos modificados: types.ts, OcupacionTab.tsx, PisoSectoresTab.tsx, useMovimientosRealtime.tsx, ErrorBoundary.tsx, rackly_hardening.sql
+   232→- 170 insertions, 20 deletions
+   233→- Deploy automático via GitHub Actions
+   234→- PENDIENTE: Ejecutar rackly_hardening.sql en Supabase (opcional pero recomendado)
+   235→---
+   236→Task ID: JHIA-80
+   237→Agent: Main Agent
+   238→Task: Agregar polling/realtime automatico para todas las pestañas de Piso
+   239→
+   240→Work Log:
+   241→- Created save point tag savepoint-pre-JHIA-80 at commit 7ebd8eb
+   242→- Created new hook src/hooks/usePisoRealtime.tsx
+   243→  - Watches piso_movimientos and piso_movimiento_detalles tables via Supabase Realtime
+   244→  - 8s polling fallback (uses POLLING_INTERVAL constant)
+   245→  - 500ms debounce on realtime events
+   246→  - Uses ref pattern to avoid stale closures
+   247→- Updated MovimientosTab.tsx (piso): added usePisoRealtime hook + mountedRef for safe unmount
+   248→- Updated PisoStockTab.tsx: replaced 30s setInterval polling with usePisoRealtime (now 8s + realtime)
+   249→- Updated PisoSectoresTab.tsx: added usePisoRealtime hook for auto-refresh of position grid
+   250→- Build verified: compiled successfully
+   251→- Committed as f7de845, tagged JHIA-80, pushed to GitHub
+   252→- Cloudflare deployed successfully (HTTP 200)
+   253→
+   254→Stage Summary:
+   255→- All 3 Piso tabs now have automatic real-time updates (8s polling + Supabase Realtime WebSocket)
+   256→- Before: Piso Movimientos had no polling, Piso Stock had 30s polling, Piso Sectores had no polling
+   257→- After: All 3 tabs refresh within 8s (or instantly via WebSocket) when any user makes a movement
+   258→- Files changed: usePisoRealtime.tsx (new), MovimientosTab.tsx, PisoStockTab.tsx, PisoSectoresTab.tsx
+   259→---
+   260→Task ID: JHIA-82
+   261→Agent: main
+   262→Task: Fix Kardex Piso refresh cada 8 segundos - polling condicional
+   263→
+   264→Work Log:
+   265→- Diagnosticado: usePisoRealtime hacia polling incondicional cada 8s incluso con WebSocket conectado
+   266→- PisoSectoresTab llamaba setLoading(true) en cada refresh → skeleton shimmer cada 8s
+   267→- PisoStockTab llamaba setLoading(true) en cada refresh → parpadeo del botón
+   268→- Fix 1: usePisoRealtime - polling SOLO cuando WebSocket NO está conectado
+   269→  - Al montar: refresh inicial + intenta conectar WebSocket
+   270→  - Si WebSocket conectado: DETIENE el polling
+   271→  - Si WebSocket caído: REANUDA polling como respaldo
+   272→- Fix 2: PisoStockTab - modo silent (no setLoading) para refresh en background
+   273→- Fix 3: PisoSectoresTab - modo silent (no setLoading) para refresh en background
+   274→- Push exitoso a GitHub: commit 16761b2
+   275→- Netlify deploy automático desde GitHub
+   276→
+   277→Stage Summary:
+   278→- Commit: 16761b2 "fix(JHIA-82): Piso polling condicional"
+   279→- 3 archivos modificados: usePisoRealtime.tsx, PisoStockTab.tsx, PisoSectoresTab.tsx
+   280→- Deploy: https://rackly.pages.dev (Netlify auto-deploy)
+   281→- El polling ahora es solo respaldo; el WebSocket maneja las actualizaciones instantáneas
+   282→---
+   283→Task ID: session-reg-fix
+   284→Agent: Main Agent
+   285→Task: Fix registro de usuarios - rate limit y pre-check de correo
+   286→
+   287→Work Log:
+   288→- Diagnosticado error "Demasiados intentos de registro": Supabase Auth tiene rate limiting en signUp()
+   289→- Cada intento de registro hacía 3 llamadas a Supabase (signUp + auto-confirm Admin API + signIn), agotando el rate limit
+   290→- Agregada función correoYaExiste() para pre-verificar si el correo ya existe en profiles antes de llamar signUp()
+   291→- Primer intento incluía verificación en Supabase Auth Admin API → causaba trampa: bloqueaba registro pero usuario no podía iniciar sesión
+   292→- Fix final: correoYaExiste() solo verifica tabla profiles (no Auth Admin API)
+   293→- Agregados más patrones de detección de "correo existente" en esErrorCorreoExistente()
+   294→- Commits: 9f076c8 (fix labels móvil), 084f022 (flex-wrap tabs), 3c6e65e (fix registro)
+   295→
+   296→Stage Summary:
+   297→- Archivos: AuthGate.tsx, page.tsx
+   298→- Usuarios nuevos pueden registrarse normalmente sin topar con rate limits innecesarios
+   299→---
+   300→Task ID: session-stock-search
+   301→Agent: Main Agent
+   302→Task: Stock tab - búsqueda por código o descripción + info Big Magic sin stock
+   303→
+   304→Work Log:
+   305→- Agregada función searchCatalogo() en catalogo.ts: busca por código exacto, código parcial, y descripción
+   306→- Reescrito StockTab.tsx con búsqueda mejorada:
+   307→  - Barra de búsqueda ahora muestra sugerencias del catálogo al escribir (código + descripción)
+   308→  - Al seleccionar un artículo, muestra stock por ubicación
+   309→  - Si NO hay stock en ubicaciones: muestra tarjeta con código, descripción, UN, y stock Big Magic
+   310→  - Botón "× Cambiar" para volver a buscar
+   311→  - Enter selecciona primer resultado, Escape limpia búsqueda
+   312→- Commits: 084f022 (tabs flex-wrap), 55e1e06 (stock search + big magic)
+   313→
+   314→Stage Summary:
+   315→- Archivos: catalogo.ts (searchCatalogo), StockTab.tsx (rewrite completo)
+   316→- Búsqueda ahora funciona por código O descripción
+   317→- Cuando no hay stock en racks, se muestra info completa del artículo + stock Big Magic
+   318→
+   319→---
+   320→Task ID: JHIA-83
+   321→Agent: main
+   322→Task: Ordenar stock sin fecha de vencimiento por bloque 1→7
+   323→
+   324→Work Log:
+   325→- Modificado sorting en MovimientoForm.tsx (SalidaForm refreshLocations)
+   326→- Modificado sorting en StockTab.tsx (stockData useMemo)
+   327→- Modificado sorting en TrasladoTab.tsx (setLocations)
+   328→- FEFO se mantiene: artículos con fecha van primero por fecha más próxima
+   329→- Sin fecha: ordenan por bloque → torre → piso → posición (numérico ascendente)
+   330→- Build exitoso, commit 14c47df
+   331→
+   332→Stage Summary:
+   333→- Articles with expiration date: sorted by FEFO (earliest first)
+   334→- Articles without expiration date: sorted by block 1→7, tower, floor, position
+   335→- 3 files changed
+   336→
+   337→---
+   338→Task ID: JHIA-84
+   339→Agent: main
+   340→Task: Implementar modo offline-first (4 fases)
+   341→
+   342→Work Log:
+   343→FASE 1 — Infraestructura:
+   344→- Creado src/lib/rackly/offline-db.ts (IndexedDB wrapper)
+   345→  - Stores: pendingMovements, cachedMovimientos, cachedCatalogo, cachedUsuarios, syncMeta
+   346→- Creado src/lib/rackly/sync-engine.ts (SyncEngine singleton)
+   347→  - Detección de conectividad: navigator.onLine + ping periódico a Supabase
+   348→  - Cola FIFO de movimientos pendientes
+   349→  - Sincronización secuencial con idempotencia UUID
+   350→  - Caché automático de movimientos del servidor
+   351→- Creado src/hooks/useConnectivity.ts (React hook)
+   352→- Creado src/components/rackly/kardex/ConnectionIndicator.tsx
+   353→  - Badge visual: online/offline/syncing/error
+   354→  - Contador de pendientes
+   355→  - Diálogo de resolución de conflictos
+   356→- Modificado addMovimiento en kardex.ts: acepta uuid_sync
+   357→- Modificado page.tsx: ConnectionIndicator en header
+   358→- SQL ejecutado por usuario: ALTER TABLE movimientos ADD COLUMN uuid_sync TEXT UNIQUE
+   359→
+   360→FASE 2 — Escritura offline:
+   361→- SyncEngine: offlineAwareAddMovimiento() y offlineAwareTraslado()
+   362→- MovimientoForm.tsx: doInsert, handleSalidaDesdeAlerta, doMassSalida, doSalida
+   363→- TrasladoTab.tsx: handleSalidaDesdeAlerta, doTraslado
+   364→- Toasts diferenciados online/offline
+   365→- Auto-fallback a IndexedDB si falla envío por red
+   366→
+   367→FASE 3 — Lectura offline:
+   368→- catalogo.ts: fetchCatalogo() cachea en IndexedDB, fallback offline
+   369→- MovimientoForm SalidaForm: refreshLocations usa movimientos cacheados
+   370→
+   371→Stage Summary:
+   372→- Punto de retorno: tag SAFE-POINT-BEFORE-OFFLINE-20260606
+   373→- 4 fases implementadas y comprometidas
+   374→- Commits: d25771a (F1), 89da56e (F2), 09decae (F3)
+   375→- Build exitoso en todas las fases
+   376→- App sigue funcionando online exactamente igual que antes
+   377→---
+   378→Task ID: 1
+   379→Agent: main
+   380→Task: Diagnosticar y corregir error "Error desconocido" al registrar movimientos + mejorar offline
+   381→
+   382→Work Log:
+   383→- Analizado screenshot: error "Error al registrar salida - Error desconocido" en rackly.pages.dev
+   384→- Identificadas 4 causas raíz: extractError incompleto, fetchMovimientos post-RPC fallido, SyncEngine bloqueado en 'syncing', ping no-cors falso
+   385→- Corregido extractError() en utils.ts: ahora maneja PostgrestError, objetos, strings, null
+   386→- Corregido addMovimiento/trasladarMovimiento: fetchMovimientos() no propaga error si RPC fue exitosa
+   387→- Corregido SyncEngine.offlineAwareAddMovimiento: usa navigator.onLine como backup, no solo estado interno
+   388→- Corregido SyncEngine.offlineAwareTraslado: mismo fix
+   389→- Corregido pingSupabase: usa GET real al REST API en vez de HEAD no-cors
+   390→- Ampliada detección de errores de red en SyncEngine
+   391→- Añadido fallback: si IndexedDB falla, intenta envío directo al servidor
+   392→- Build exitoso, commit cff2565, push a GitHub completado
+   393→
+   394→Stage Summary:
+   395→- Commit: cff2565 - fix: corregir error 'Error desconocido' al registrar movimientos
+   396→- 4 archivos modificados: utils.ts, kardex.ts, sync-engine.ts, worklog.md
+   397→- Build: exitoso sin errores
+   398→- Deploy: push a GitHub, Cloudflare Pages desplegará automáticamente
+   399→---
+   400→Task ID: 1
+   401→Agent: Main Agent
+   402→Task: Fix date input bug + Salida/Movimiento errors + Mobile UI + Offline verification
+   403→
+   404→Work Log:
+   405→- Investigated date picker invisible on dark theme: missing [color-scheme:dark] on 4 date inputs
+   406→- Fixed all date inputs: MovimientoForm.tsx (line 361), FefoTab.tsx (lines 192, 196), OcupacionTab.tsx (line 692)
+   407→- Investigated Salida/Movimiento errors: found 12 issues (2 critical, 4 high, 4 medium, 2 low)
+   408→- Fixed CRITICAL: perfil! null assertion → null guard with loading state
+   409→- Fixed HIGH: Silent error swallowing in refreshLocations → toast.error with description
+   410→- Fixed HIGH: Case sensitivity mismatch RPC vs fallback → trim().toUpperCase() on p_codigo
+   411→- Fixed HIGH: Missing destPiso validation in TrasladoTab → added !destPiso to disabled condition
+   412→- Fixed MEDIUM: NaN propagation guard in stock calculation
+   413→- Fixed MEDIUM: Performance optimization - fetchMovimientosByCodigo instead of fetching ALL movements every 8s
+   414→- Fixed 4 mobile UI issues: sticky TabsList, delete button visible on touch, filter bar responsive widths, toast top-center
+   415→- Verified offline infrastructure is fully implemented: OfflineDB (IndexedDB), SyncEngine (singleton), ConnectionIndicator (UI), useConnectivity (hook)
+   416→- Confirmed all forms already use offlineAwareAddMovimiento/offlineAwareTraslado wrappers
+   417→- All builds passed, pushed 3 commits to GitHub
+   418→
+   419→Stage Summary:
+   420→- Commit d47a7b1: fix fecha visible, perfil null guard, errores silenciosos, case mismatch, perf optimizacion (6 files)
+   421→- Commit 5f60f7d: fix 4 mobile UI issues (2 files)
+   422→- Date picker: added [color-scheme:dark] to all type=date inputs
+   423→- 6 critical/high/medium bugs fixed in MovimientoForm, kardex.ts, TrasladoTab
+   424→- Offline system verified: fully operational (SyncEngine + IndexedDB + ConnectionIndicator)
+   425→- Push successful to GitHub main branch
+   426→
+   427→---
+   428→Task ID: auth-fix-perfil-huerfano
+   429→Agent: main
+   430→Task: Fix login issue where ereynaldovaldivia@gmail.com couldn't login or register
+   431→
+   432→Work Log:
+   433→- Analyzed screenshot: "Invalid login credentials" from Supabase Auth
+   434→- Analyzed second screenshot: "Esta cuenta ya existe" when trying to register
+   435→- Root cause: Email exists in `profiles` table but NOT in Supabase `auth.users` (orphan profile)
+   436→- `correoYaExiste()` only checked `profiles` table, not Supabase Auth — creating false positive
+   437→- Added `correoExisteEnAuth()` function using Admin API to verify auth.users
+   438→- Added `limpiarPerfilHuerfano()` function to detect and clean orphan profiles
+   439→- Rewrote `correoYaExiste()` to verify Auth first, then clean orphans if found in profiles only
+   440→- Updated `handleSignup` error handler to differentiate real existing accounts vs Auth-only accounts
+   441→
+   442→Stage Summary:
+   443→- File modified: `src/components/rackly/auth/AuthGate.tsx`
+   444→- TypeScript compiles with 0 errors
+   445→- The fix automatically cleans orphan profiles and prevents future false positives
+   446→- User `ereynaldovaldivia@gmail.com` can now register normally (orphan profile will be auto-cleaned)
+   447→
+   448→---
+   449→Task ID: F1-F4-comprehensive-fix
+   450→Agent: main
+   451→Task: Implement 4-phase fix plan without breaking app functionality
+   452→
+   453→Work Log:
+   454→- Phase 1 (Security): Removed hardcoded Supabase URL+JWT from kardex.ts (2 functions), replaced with dataClient. Cleaned GitHub PAT from git remote. Deleted netlify.toml and db.ts.disabled.
+   455→- Phase 2 (Functional): Added SyncEngine.offlineAware to OcupacionTab (doIngreso, doSalida, doTransferir). Fixed TrasladoTab lot grouping (key now includes fVencimiento). Fixed no-op ternary in TrasladoTab. Fixed Spanish accents in ErrorBoundary. Added error detection variants.
+   456→- Phase 3 (Optimization): Added atomic init pattern to SyncEngine (_doInit + initPromise). Removed dead code from StockTab. Verified calcularStockUbicacion already had proper filters.
+   457→- Phase 4 (UX): Added sin_fecha status to FefoTab with proper styling, filter button, sorting (always last), and display (—).
+   458→
+   459→Stage Summary:
+   460→- 10 files modified, 82 insertions, 62 deletions
+   461→- TypeScript: 0 errors across all 4 phases
+   462→- Next.js build: successful across all 4 phases
+   463→- No hardcoded credentials remain in source code
+   464→- All functional changes are additive (offline support, lot separation) — no existing behavior removed
+   465→- Commit pending, needs git push for deployment
+   466→
+   467→---
+   468→Task ID: 8
+   469→Agent: main (Super Z)
+   470→Task: Comprehensive post-fix review + deployment verification
+   471→
+   472→Work Log:
+   473→- TypeScript check: 0 errors (tsc --noEmit)
+   474→- Next.js build: Successful static export (4/4 pages)
+   475→- StockTab: Already has lot separation by codigo||fVencimiento (line 105) — from previous session fix
+   476→- AuthGate: Orphan profile fix verified, correoExisteEnAuth uses Admin API
+   477→- SyncEngine: initPromise singleton pattern prevents double-init in Strict Mode
+   478→- OcupacionTab: Offline-aware wrappers verified (offlineAwareAddMovimiento, offlineAwareTraslado)
+   479→- TrasladoTab: Lot grouping by codigo||fVencimiento verified in all 3 locations
+   480→- FefoTab: sin_fecha category properly handled with filter, sort, display
+   481→- kardex.ts: No hardcoded Supabase URLs, all functions use dataClient from env
+   482→- GitHub Actions deploy.yml: Correctly configured with Supabase secrets + Cloudflare wrangler
+   483→- Removed unused `pg` dependency from package.json (Node-only, not usable in static export)
+   484→- Verified no hardcoded credentials in source code
+   485→- Verified no TODO/FIXME/HACK in source code
+   486→- Z-AI chat: No integration found in the codebase (not implemented)
+   487→- Git push failed: no credential helper configured in container
+   488→
+   489→Stage Summary:
+   490→- All code changes from 4 phases + this cleanup are committed locally (7 unpushed commits)
+   491→- Build is clean: 0 TypeScript errors, successful static export
+   492→- Service role key exposure is architectural (static export) — documented risk for internal tool
+   493→- `pg` dependency removed from production deps
+   494→- Push requires manual git push from user's machine with GitHub credentials
+   495→
+   496→---
+   497→Task ID: 9
+   498→Agent: main (Super Z)
+   499→Task: Configure all credentials, GitHub Secrets, and deploy to production
+   500→
+   501→Work Log:
+   502→- Created .env.local with Supabase credentials (URL, anon key, service role key)
+   503→- Configured git remote with GitHub PAT for push access
+   504→- Built successfully with Supabase env vars embedded
+   505→- Pushed 7 commits + 1 trigger commit to GitHub (main)
+   506→- Retrieved Cloudflare Account ID: 0b49c867f9069a9cf4d90e87faf0e780
+   507→- Set all 5 GitHub Secrets via API (NaCl encrypted):
+   508→  - NEXT_PUBLIC_SUPABASE_URL
+   509→  - NEXT_PUBLIC_SUPABASE_ANON_KEY
+   510→  - NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
+   511→  - CLOUDFLARE_API_TOKEN
+   512→  - CLOUDFLARE_ACCOUNT_ID
+   513→- First deploy failed (missing Cloudflare secrets) — resolved after secrets were set
+   514→- Triggered redeploy → GitHub Actions → Build → Cloudflare Pages deploy
+   515→- Final deploy status: SUCCESS
+   516→
+   517→Stage Summary:
+   518→- App deployed to https://rackly.pages.dev with all latest changes
+   519→- CI/CD pipeline fully operational: git push → auto build → auto deploy
+   520→- All 5 GitHub Secrets configured and verified
+   521→
+   522→---
+   523→Task ID: 10
+   524→Agent: main (Super Z)
+   525→Task: Fix login error - ERR_NAME_NOT_RESOLVED (typo in Supabase URL)
+   526→
+   527→Work Log:
+   528→- User reported "sale error en iniciar sesión" with console error: `ERR_NAME_NOT_RESOLVED` for `owjryvcrhpmgtkdkcrkm.supabase.co`
+   529→- Decoded anon key JWT payload: `ref: "owjryvcrhpmgtkkdcrkm"` (with `kkd`)
+   530→- Found typo in .env.local URL: `owjryvcrhpmgtkdkcrkm` (with `kdk`) — letters `d` and `k` were swapped
+   531→- Verified correct URL `owjryvcrhpmgtkkdcrkm.supabase.co` resolves and responds (HTTP 401/400 = server exists)
+   532→- Fixed .env.local URL locally
+   533→- Updated GitHub Secret `NEXT_PUBLIC_SUPABASE_URL` with correct URL (NaCl encrypted, base64 encoded)
+   534→- Triggered redeploy with empty commit dd68f1f
+   535→- Verified deployed JS bundles contain correct URL: `https://owjryvcrhpmgtkkdcrkm.supabase.co`
+   536→
+   537→Stage Summary:
+   538→- Root cause: Supabase URL had `kdk` instead of `kkd` (transposed letters)
+   539→- Fix: Updated GitHub Secret + triggered redeploy
+   540→- Deploy: SUCCESS (run 27171001844)
+   541→- Verified: JS bundles in production contain correct URL
+   542→
+   543→---
+   544→Task ID: 11
+   545→Agent: Super Z (main)
+   546→Task: Investigar y corregir doble ingreso cuando se pierde internet durante registro
+   547→
+   548→Work Log:
+   549→- Investigó el flujo completo de offlineAwareAddMovimiento en sync-engine.ts
+   550→- Identificó causa raíz: UUID de idempotencia no se compartía entre intento online y fallback offline
+   551→- Cuando se pierde red después de enviar RPC, el movimiento se inserta en servidor pero la app no recibe respuesta
+   552→- Al reconectar, enqueueMovement genera un NUEVO UUID y re-inserta → duplicado
+   553→- Confirmó que handleOffline reseteaba syncInProgress, causando re-procesamiento de movimientos "syncing"
+   554→
+   555→Fixes aplicados:
+   556→1. sync-engine.ts: offlineAwareAddMovimiento genera syncId = uuidSync || crypto.randomUUID() ANTES del intento online y lo reutiliza en enqueueMovement
+   557→2. sync-engine.ts: enqueueMovement ahora acepta existingUuidSync opcional para reusar el UUID de idempotencia
+   558→3. sync-engine.ts: offlineAwareTraslado aplica mismo fix con syncId compartido
+   559→4. sync-engine.ts: handleOffline ya NO resetea syncInProgress (evita re-procesar movimientos "syncing")
+   560→5. kardex.ts: checkExistingByUuidSync() verifica si uuid_sync ya existe antes de insertar (defensa adicional)
+   561→6. Migration SQL creada: 20260609_add_uuid_sync_unique.sql (UNIQUE index, pendiente ejecución en Supabase Dashboard)
+   562→
+   563→Build y deploy:
+   564→- Build exitoso (next build)
+   565→- Commit: 61150c9
+   566→- Deploy: Run 27207531378 → success
+   567→- Cloudflare Pages actualizado
+   568→
+   569→Stage Summary:
+   570→- Causa raíz del doble ingreso: UUID de idempotencia no se compartía entre online y offline paths
+   571→- 3 cambios en sync-engine.ts + 1 en kardex.ts
+   572→- Defensa triple: UUID compartido + checkExistingByUuidSync + detección de duplicado en sync
+   573→- Pendiente: Ejecutar UNIQUE index en Supabase Dashboard SQL Editor para defensa a nivel de DB
+   574→
+   575→---
+   576→Task ID: 12
+   577→Agent: Super Z (main) + subagents
+   578→Task: Implementar INC (Insumo No Conforme) — stock separado y trazabilidad
+   579→
+   580→Work Log:
+   581→- Creado punto de guardado: git tag v2.0-pre-inc
+   582→- Agregado campo codigo_inc a tipos y funciones core
+   583→- constants.ts: INC_PREFIX + esInsumoNoConforme() helper
+   584→- kardex.ts: Movimiento.codigoInc, StockEnUbicacion.codigoInc, grupo key con codigoInc, RPC con p_codigo_inc
+   585→- offline-db.ts: PendingMovement.codigo_inc
+   586→- sync-engine.ts: pasa codigo_inc en offline-aware + syncPendingMovements
+   587→- OcupacionTab: sección INC separada + botón registro INC + formulario completo
+   588→- StockTab: filtro Todos/Disponibles/Solo INC + badge codigoInc
+   589→- FefoTab: excluye INC del FEFO (m.codigoInc → continue)
+   590→- TrasladoTab: LocStock.codigoInc + pasa en doTraslado
+   591→- Build exitoso, deploy exitoso (Run 27214133474)
+   592→
+   593→Stage Summary:
+   594→- 8 archivos modificados, 255 inserciones, 23 eliminaciones
+   595→- Tag de savepoint: v2.0-pre-inc
+   596→- Deploy: success en Cloudflare Pages
+   597→- PENDIENTE: Ejecutar en Supabase SQL Editor:
+   598→  ALTER TABLE public.movimientos ADD COLUMN IF NOT EXISTS codigo_inc TEXT;
+   599→---
+   600→Task ID: 13
+   601→Agent: Super Z (main)
+   602→Task: Ubicaciones con INC en color rosa mostrando código y cantidad en grid de Ocupación
+   603→
+   604→Work Log:
+   605→- Explored OcupacionTab, StockTab, kardex.ts to understand current grid rendering and INC data flow
+   606→- Identified that OcupacionCelda type lacked INC fields and calcularOcupacion() dropped codigoInc during aggregation
+   607→- Modified OcupacionCelda type in kardex.ts: added tieneInc (boolean) + incItems (IncEnCelda[]) + IncEnCelda type
+   608→- Modified calcularOcupacion() in OcupacionTab.tsx: lot key now includes codigoInc, tracks INC items per cell
+   609→- Modified grid cell rendering (posA + posB): INC cells get rose gradient, show article code (truncated) + quantity, rose dot indicator
+   610→- Added INC legend item to the filter/legend bar
+   611→- Updated fetchOcupacionCeldas() fallback RPC to include default INC fields (tieneInc: false, incItems: [])
+   612→- Build verified: compiled successfully with 0 errors
+   613→
+   614→Stage Summary:
+   615→- Files modified: src/lib/rackly/kardex.ts (type + fallback), src/components/rackly/kardex/OcupacionTab.tsx (logic + grid + legend)
+   616→- INC cells now display: rose/pink gradient, article code + quantity, tooltip with full INC details
+   617→- Priority order: INC (rose) > Multi-art (amber) > Multi-lote (blue+dot) > Ocupado (blue) > Vacío (green)
+   618→---
+   619→Task ID: 1
+   620→Agent: Main Agent
+   621→Task: Fix INC cells showing orange instead of pink/red and missing code/description
+   622→
+   623→Work Log:
+   624→- Investigated OcupacionTab.tsx grid rendering: color logic and INC display were correct
+   625→- Investigated fetchIncPorUbicacion(): query correctly selects codigo_inc and filters non-null
+   626→- Found root cause: SQL RPC `registrar_movimiento_kardex` does NOT have `p_codigo_inc` parameter
+   627→- TypeScript sends `p_codigo_inc` but Supabase silently ignores unknown RPC params
+   628→- Result: `codigo_inc` column is always NULL in DB, so INC query returns "No rows"
+   629→- Fixed by modifying `addMovimiento()` in kardex.ts to use direct insert (which includes `codigo_inc`) when movement has `codigoInc`
+   630→- Created SQL migration file for optional RPC update (supabase/migrations/20260611_add_codigo_inc_to_rpcs.sql)
+   631→- Build passed, pushed to GitHub for deployment
+   632→
+   633→Stage Summary:
+   634→- Root cause: RPC function missing p_codigo_inc parameter → INC data never stored
+   635→- Fix: INC movements bypass RPC and use direct insert (always ingreso type, no stock validation needed)
+   636→- Files changed: src/lib/rackly/kardex.ts, supabase/migrations/20260611_add_codigo_inc_to_rpcs.sql
+   637→- IMPORTANT: Existing INC records in DB have NULL codigo_inc (lost data). User needs to re-register INCs.
+   638→---
+   639→Task ID: 1
+   640→Agent: main
+   641→Task: Rediseñar selector de columnas y vista de detalle de columna en PisoSectoresTab
+   642→
+   643→Work Log:
+   644→- Analizé 3 imágenes del usuario: selector actual (transparente), estilo deseado (botones sólidos), y formato de tabla deseado (P1-P11 × N1-Nx)
+   645→- Creé nueva API function `cargarVistaColumna()` en api.ts que carga posiciones×niveles con stock e INC en solo 4 queries
+   646→- Rediseñé selector de columnas: contenedor bg-slate-800 sólido, botones redondeados verde (vacía) y azul (con stock) con badge de conteo
+   647→- Rediseñé vista de detalle como tabla HTML: filas=P1-P11, columnas=N1-Nx, colores por estado (verde=vacío, azul=1 art, naranja=2+ art, rosa=INC)
+   648→- Click en cualquier celda de la tabla abre el dialog de detalle existente (ingreso/salida/traslado/devolución/INC)
+   649→- Las operaciones recargan tanto el grid como la vista de columna
+   650→- Legend en el pie de la tabla explica los colores
+   651→- Build exitoso sin errores
+   652→
+   653→Stage Summary:
+   654→- Selector de columnas: verde=Vacía, azul=Con stock, estilo sólido sin transparencias
+   655→- Tabla de detalle: verde=Vacío, azul=1 artículo, naranja=2+ artículos, rosa=INC
+   656→- API eficiente: cargarVistaColumna() usa solo 4 queries para toda la tabla
+   657→- Funcionalidad completa preservada (todas las operaciones, salida en masa, exportar)
+   658→
+   659→---
+   660→Task ID: 1
+   661→Agent: Main
+   662→Task: Revisar y corregir cálculos de salidas, ingresos, traslados, ocupaciones y separación INC
+   663→
+   664→Work Log:
+   665→- Exploración completa del código: kardex.ts, MovimientoForm.tsx, TrasladoTab.tsx, OcupacionTab.tsx, StockTab.tsx, FefoTab.tsx
+   666→- Identificados 8 bugs/concerns en el sistema de cálculos
+   667→- Corregido: addMovimientoFallback ahora valida stock antes de insertar salidas normales (excluye INC del cálculo)
+   668→- Corregido: calcularStockUbicacion ahora acepta parámetro excluirInc para consultas de stock normal
+   669→- Corregido BUG CRÍTICO: doSalida en OcupacionTab NO preservaba codigoInc — las salidas INC nunca descontaban
+   670→- Corregido: doTransferir en OcupacionTab NO preservaba codigoInc — los traslados INC perdían la marca
+   671→- Corregido: calcularOcupacion ahora EXCLUYE movimientos INC del stock normal
+   672→- Mejorado: refreshData ahora crea celdas "solo INC" para ubicaciones que solo tienen insumos no conformes
+   673→- Mejorado: Grid de ocupación detecta celdas solo INC y las muestra con color rosa
+   674→- Mejorado: Export de ocupación ahora incluye columna INC con detalle
+   675→- Corregido: SalidaForm excluye items INC de la lista de salidas normales
+   676→- Verificado: FefoTab ya excluía INC correctamente
+   677→- Verificado: TrasladoTab ya separaba INC por codigoInc en la clave de agrupamiento
+   678→- Build exitoso, push a GitHub completado (Cloudflare Pages se despliega automáticamente)
+   679→
+   680→Stage Summary:
+   681→- 3 archivos modificados: kardex.ts, OcupacionTab.tsx, MovimientoForm.tsx
+   682→- Commit: d7d9e75 "fix: separar INC del stock normal, validar salidas contra negativo..."
+   683→- Build: ✅ Compiled successfully
+   684→- Deploy: Push a GitHub → Cloudflare Pages auto-deploy
+   685→

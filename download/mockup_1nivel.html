@@ -1,31 +1,27 @@
 <!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { background:#0f172a; font-family:system-ui,-apple-system,sans-serif; padding:24px; color:#fff; }
-h2 { font-size:16px; font-weight:700; margin-bottom:4px; letter-spacing:0.5px; }
-.sub { font-size:11px; color:#94a3b8; margin-bottom:16px; }
-.legend { display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
-.legend span { display:flex; align-items:center; gap:5px; font-size:11px; color:#cbd5e1; }
-.dot { width:12px; height:12px; border-radius:4px; }
-.grid { display:grid; grid-template-columns:repeat(10,1fr); gap:8px; max-width:700px; }
-.cell {
-  aspect-ratio:1; border-radius:10px; display:flex; flex-direction:column;
-  align-items:center; justify-content:center; cursor:pointer; transition:transform 0.15s;
-  position:relative; min-height:56px;
-}
-.cell:hover { transform:scale(1.06); }
-.cell .num { font-size:18px; font-weight:700; }
-.cell .info { font-size:9px; opacity:0.85; margin-top:2px; }
-.green  { background:linear-gradient(135deg,#166534,#22c55e); color:#fff; }
-.blue   { background:linear-gradient(135deg,#1d4ed8,#3b82f6); color:#fff; }
-.orange { background:linear-gradient(135deg,#c2410c,#f97316); color:#fff; }
-.pink   { background:linear-gradient(135deg,#be123c,#ec4899); color:#fff; }
-.badge-inc { position:absolute; top:4px; right:4px; font-size:7px; background:#fff; color:#be123c; padding:1px 4px; border-radius:4px; font-weight:800; }
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f172a;font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#fff}
+h2{font-size:15px;font-weight:700;letter-spacing:.5px}
+.sub{font-size:11px;color:#94a3b8;margin-bottom:14px}
+.legend{display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap}
+.legend span{display:flex;align-items:center;gap:5px;font-size:10px;color:#cbd5e1}
+.dot{width:12px;height:12px;border-radius:4px}
+.grid{display:grid;grid-template-columns:repeat(10,1fr);gap:8px;max-width:720px}
+.cell{aspect-ratio:1;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:transform .15s;position:relative;min-height:54px}
+.cell:hover{transform:scale(1.06)}
+.num{font-size:17px;font-weight:700}
+.info{font-size:9px;opacity:.85;margin-top:1px}
+.c-green{background:linear-gradient(135deg,#166534,#22c55e);color:#fff}
+.c-blue{background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:#fff}
+.c-orange{background:linear-gradient(135deg,#c2410c,#f97316);color:#fff}
+.c-pink{background:linear-gradient(135deg,#be123c,#ec4899);color:#fff}
+.badge-inc{position:absolute;top:3px;right:3px;font-size:7px;background:#fff;color:#be123c;padding:1px 4px;border-radius:4px;font-weight:800}
 </style></head>
 <body>
 <h2>CAMARA DE FRIO</h2>
-<div class="sub">Sector · 1 columna · 1 subcolumna · 1 nivel · 20 posiciones</div>
+<div class="sub">1 columna · 1 subcolumna · 1 nivel · 20 posiciones</div>
 <div class="legend">
   <span><span class="dot" style="background:linear-gradient(135deg,#166534,#22c55e)"></span> Vacío</span>
   <span><span class="dot" style="background:linear-gradient(135deg,#1d4ed8,#3b82f6)"></span> 1 artículo</span>
@@ -33,33 +29,25 @@ h2 { font-size:16px; font-weight:700; margin-bottom:4px; letter-spacing:0.5px; }
   <span><span class="dot" style="background:linear-gradient(135deg,#be123c,#ec4899)"></span> INC</span>
 </div>
 <div class="grid">
-  <!-- Green = empty -->
-  <div class="cell green"><span class="num">1</span></div>
-  <div class="cell green"><span class="num">2</span></div>
-  <div class="cell green"><span class="num">3</span></div>
-  <!-- Blue = 1 article -->
-  <div class="cell blue"><span class="num">4</span><span class="info">500 KG</span></div>
-  <!-- Orange = 2+ articles -->
-  <div class="cell orange"><span class="num">5</span><span class="info">3 arts · 1,230 KG</span></div>
-  <div class="cell green"><span class="num">6</span></div>
-  <!-- Blue -->
-  <div class="cell blue"><span class="num">7</span><span class="info">200 KG</span></div>
-  <!-- Pink = INC -->
-  <div class="cell pink"><span class="num">8</span><span class="info">154 KG</span><span class="badge-inc">INC</span></div>
-  <!-- Green -->
-  <div class="cell green"><span class="num">9</span></div>
-  <!-- Blue -->
-  <div class="cell blue"><span class="num">10</span><span class="info">133 KG</span></div>
-  <!-- Row 2 -->
-  <div class="cell green"><span class="num">11</span></div>
-  <div class="cell orange"><span class="num">12</span><span class="info">2 arts · 845 KG</span></div>
-  <div class="cell green"><span class="num">13</span></div>
-  <div class="cell green"><span class="num">14</span></div>
-  <div class="cell pink"><span class="num">15</span><span class="info">50 KG</span><span class="badge-inc">INC</span></div>
-  <div class="cell green"><span class="num">16</span></div>
-  <div class="cell blue"><span class="num">17</span><span class="info">369 KG</span></div>
-  <div class="cell green"><span class="num">18</span></div>
-  <div class="cell orange"><span class="num">19</span><span class="info">4 arts · 2,100 KG</span></div>
-  <div class="cell green"><span class="num">20</span></div>
+  <div class="cell c-green"><span class="num">1</span></div>
+  <div class="cell c-green"><span class="num">2</span></div>
+  <div class="cell c-green"><span class="num">3</span></div>
+  <div class="cell c-blue"><span class="num">4</span><span class="info">500 KG</span></div>
+  <div class="cell c-orange"><span class="num">5</span><span class="info">3 arts · 1,230 KG</span></div>
+  <div class="cell c-green"><span class="num">6</span></div>
+  <div class="cell c-blue"><span class="num">7</span><span class="info">200 KG</span></div>
+  <div class="cell c-pink"><span class="num">8</span><span class="info">154 KG</span><span class="badge-inc">INC</span></div>
+  <div class="cell c-green"><span class="num">9</span></div>
+  <div class="cell c-blue"><span class="num">10</span><span class="info">133 KG</span></div>
+  <div class="cell c-green"><span class="num">11</span></div>
+  <div class="cell c-orange"><span class="num">12</span><span class="info">2 arts · 845 KG</span></div>
+  <div class="cell c-green"><span class="num">13</span></div>
+  <div class="cell c-green"><span class="num">14</span></div>
+  <div class="cell c-pink"><span class="num">15</span><span class="info">50 KG</span><span class="badge-inc">INC</span></div>
+  <div class="cell c-green"><span class="num">16</span></div>
+  <div class="cell c-blue"><span class="num">17</span><span class="info">369 KG</span></div>
+  <div class="cell c-green"><span class="num">18</span></div>
+  <div class="cell c-orange"><span class="num">19</span><span class="info">4 arts · 2,100 KG</span></div>
+  <div class="cell c-green"><span class="num">20</span></div>
 </div>
 </body></html>

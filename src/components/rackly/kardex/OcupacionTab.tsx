@@ -15,7 +15,7 @@ import {
 } from '@/lib/rackly/kardex'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
 import { SyncEngine } from '@/lib/rackly/sync-engine'
-import { supabase } from '@/lib/supabase/client'
+import { supabase, dataClient } from '@/lib/supabase/client'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
 import { requiereProveedor, extractError, isInsufficientStockError } from '@/lib/utils'
@@ -287,7 +287,7 @@ export function OcupacionTab() {
     if (!detail) return
     setHistorialLoading(true)
     try {
-      const { data, error } = await supabase
+      const { data, error } = await dataClient
         .from('movimientos')
         .select('id, tipo, turno, f_modificacion, usuario_nombre, codigo, descripcion, un, cantidad, f_vencimiento')
         .eq('bloque', detail.bloque)
@@ -295,7 +295,7 @@ export function OcupacionTab() {
         .eq('piso', detail.piso)
         .eq('posicion', detail.posicion)
         .order('f_modificacion', { ascending: false })
-        .range(offset, offset + 4)
+        .range(offset, offset + 5)
       if (error) throw error
       const items: HistorialItem[] = (data ?? []).map((r: any) => ({
         id: r.id,

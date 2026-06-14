@@ -1267,7 +1267,7 @@ export function OcupacionTab() {
                   const tipoLabel = esIngreso ? (item.tipo === 'stock_inicial' ? 'Stock Inicial' : 'Ingreso') : esSalida ? 'Salida' : esTraslado ? 'Traslado' : esDevolucion ? 'Devolucion' : esInc ? 'INC' : item.tipo
                   const fechaStr = item.fecha ? new Date(item.fecha).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
                   const iniciales = item.usuario_nombre ? item.usuario_nombre.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) : '??'
-                  const esPositivo = esIngreso || esDevolucion
+                  const esPositivo = esIngreso || esDevolucion || esInc
                   const currentCodigos = new Set(detail?.stock.map(s => s.codigo) ?? [])
                   const esRotacion = !currentCodigos.has(item.codigo)
 

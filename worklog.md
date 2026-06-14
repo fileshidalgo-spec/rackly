@@ -682,3 +682,26 @@ Stage Summary:
 - Commit: d7d9e75 "fix: separar INC del stock normal, validar salidas contra negativo..."
 - Build: ✅ Compiled successfully
 - Deploy: Push a GitHub → Cloudflare Pages auto-deploy
+
+---
+Task ID: 1
+Agent: main
+Task: Auditoría profunda de la implementación de historial en PisoSectoresTab y OcupacionTab
+
+Work Log:
+- Leído loadHistorial en PisoSectoresTab.tsx (líneas 263-340) - queries piso_movimiento_detalles + piso_movimientos + piso_bloques, agrupa por movimiento_id
+- Leído loadHistorial en OcupacionTab.tsx (líneas 287-328) - queries movimientos directamente con filtros bloque/torre/piso/posicion
+- Verificado types.ts: piso_movimientos NO tiene codigo_inc en el tipo generado (posiblemente columna agregada vía SQL sin regenerar tipos)
+- Verificado api.ts línea 1093: inserta codigo_inc en piso_movimientos, confirmando que la columna SÍ existe en la DB
+- Encontrado Error 1: En OcupacionTab, la detección de rotación creaba un new Set() por CADA item del historial dentro del .map() - ineficiente
+- Encontrado Error 2: f_vencimiento en OcupacionTab tipado como string pero puede ser null desde la DB
+- Corregido Error 1: Agregado useMemo para historialCurrentCodigos, igual que PisoSectoresTab
+- Corregido Error 2: Cambiado tipo a string | null
+- Agregado import de useMemo en OcupacionTab
+- Build limpio, deployado vía git push
+
+Stage Summary:
+- 2 errores corregidos en OcupacionTab.tsx (rotación ineficiente + tipo nullable)
+- La columna codigo_inc en piso_movimientos NO está en types.ts pero SÍ existe en la DB (confirmado por api.ts insert)
+- No se encontraron más errores críticos en la lógica de historial
+- Commit: e8289b5

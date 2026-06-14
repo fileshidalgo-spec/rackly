@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   listarSectores,
   cargarPosicionesSector,
@@ -222,6 +222,10 @@ export function PisoSectoresTab() {
   const [trDestNivelId, setTrDestNivelId] = useState<string>('')
   // Stock por nivel (para vista desglosada)
   const [stockByNivel, setStockByNivel] = useState<Record<string, DetailStock[]>>({})
+  // Codigos actuales en stock (para deteccion de rotacion en historial) — calculado una vez
+  const historialCurrentCodigos = useMemo(() =>
+    new Set(Object.values(stockByNivel).flat().map(s => s.bloque_codigo)),
+  [stockByNivel])
   const [viewNivelTab, setViewNivelTab] = useState<string>('all') // 'all' o nivel_id
   const [singleNivelMode, setSingleNivelMode] = useState(false) // true = clic desde celda nivel (mostrar solo ese nivel)
   // Salida: tab de nivel seleccionado
@@ -292,25 +296,30 @@ export function PisoSectoresTab() {
       if (bloqErr) throw bloqErr
       const bloqMap = new Map<string, { id: string; codigo: string; descripcion: string; unidad: string }>((bloqData ?? []).map((b: any) => [b.id, b]))
       const movMap = new Map<string, { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }>((movData ?? []).map((m: any) => [m.id, m]))
-      // 4) Agrupar detalles por movimiento_id, tomar el primero como representante
+      // 4) Agrupar detalles por movimiento_id, sumar cantidades de todos los detalles
       const grouped = new Map<string, HistorialItem>()
       for (const d of detData) {
         const mov = movMap.get(d.movimiento_id)
         const bloq = bloqMap.get(d.bloque_id)
-        if (!mov || !bloq || grouped.has(d.movimiento_id)) continue
-        grouped.set(d.movimiento_id, {
-          id: d.movimiento_id,
-          tipo: mov.tipo,
-          fecha: mov.fecha,
-          turno: mov.turno ?? '',
-          usuario_nombre: mov.usuario_nombre,
-          bloque_codigo: bloq.codigo,
-          bloque_descripcion: bloq.descripcion || '',
-          bloque_unidad: bloq.unidad,
-          cantidad: d.cantidad,
-          fecha_vencimiento: d.fecha_vencimiento,
-          codigo_inc: mov.codigo_inc || '',
-        })
+        if (!mov || !bloq) continue
+        const existing = grouped.get(d.movimiento_id)
+        if (existing) {
+          existing.cantidad += d.cantidad
+        } else {
+          grouped.set(d.movimiento_id, {
+            id: d.movimiento_id,
+            tipo: mov.tipo,
+            fecha: mov.fecha,
+            turno: mov.turno ?? '',
+            usuario_nombre: mov.usuario_nombre,
+            bloque_codigo: bloq.codigo,
+            bloque_descripcion: bloq.descripcion || '',
+            bloque_unidad: bloq.unidad,
+            cantidad: d.cantidad,
+            fecha_vencimiento: d.fecha_vencimiento,
+            codigo_inc: mov.codigo_inc || '',
+          })
+        }
       }
       const items = Array.from(grouped.values())
       // hasMore: si obtuvimos mas de 5 movimientos unicos O si la pagina de detalles esta llena (podria haber mas)
@@ -3092,12 +3101,8 @@ export function PisoSectoresTab() {
                   const tipoLabel = esIngreso ? (item.tipo === 'stock_inicial' ? 'Stock Inicial' : 'Ingreso') : esSalida ? 'Salida' : esTraslado ? 'Traslado' : esDevolucion ? 'Devolucion' : esInc ? 'INC' : item.tipo
                   const fechaStr = item.fecha ? new Date(item.fecha).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
                   const iniciales = item.usuario_nombre ? item.usuario_nombre.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '??'
-                  const esPositivo = esIngreso || esDevolucion
-                  // Detectar si el codigo NO esta en el stock actual → rotacion
-                  const currentCodigos = new Set(
-                    Object.values(stockByNivel).flat().map(s => s.bloque_codigo)
-                  )
-                  const esRotacion = !currentCodigos.has(item.bloque_codigo)
+                  const esPositivo = esIngreso || esDevolucion || esInc
+                  const esRotacion = !historialCurrentCodigos.has(item.bloque_codigo)
 
                   return (
                     <div key={item.id} className="relative pb-4 last:pb-0">

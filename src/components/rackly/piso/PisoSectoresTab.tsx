@@ -260,35 +260,46 @@ export function PisoSectoresTab() {
   const animatedEmpty = useAnimatedCounter(posiciones.length - posiciones.filter((p) => p.stock > 0).length)
 
   // ── Historial: cargar movimientos de la posicion ──
-  const loadHistorial = useCallback(async (offset = 0, append = false) => {
+  // Cache de todos los items del historial para paginacion rapida del lado del cliente
+  const [historialAllItems, setHistorialAllItems] = useState<HistorialItem[]>([])
+  const HISTORIAL_PAGE_SIZE = 5
+
+  const loadHistorial = useCallback(async () => {
     if (!detail) return
     setHistorialLoading(true)
     try {
       const nivelIds = niveles.map(n => n.id)
       if (nivelIds.length === 0) { setHistorialLoading(false); return }
-      // 1) Obtener detalles en estos niveles, con paginacion (1 item por detalle = 1 articulo)
-      const { data: detData, error: detErr } = await dataClient
+      // 1) Obtener todos los movimiento_ids que tienen detalles en estos niveles
+      const { data: idRows, error: idErr } = await dataClient
         .from('piso_movimiento_detalles')
-        .select('movimiento_id, cantidad, fecha_vencimiento, bloque_id, nivel_id')
+        .select('movimiento_id')
         .in('nivel_id', nivelIds)
-        .order('movimiento_id', { ascending: false })
-        .range(offset, offset + 5) // traer 6 para saber si hay mas
-      if (detErr) throw detErr
-      if (!detData || detData.length === 0) {
+      if (idErr) throw idErr
+      const allMovIds = [...new Set((idRows ?? []).map((d: any) => d.movimiento_id))]
+      if (allMovIds.length === 0) {
+        setHistorialAllItems([])
+        setHistorialData([])
         setHistorialHasMore(false)
-        if (!append) setHistorialData([])
         setHistorialLoading(false)
         return
       }
-      // 2) Obtener los movimientos
-      const uniqueMovIds = [...new Set(detData.map(d => d.movimiento_id))]
+      // 2) Obtener TODOS los movimientos ordenados por fecha (orden cronologico real)
       const { data: movData, error: movErr } = await dataClient
         .from('piso_movimientos')
         .select('id, tipo, turno, fecha, usuario_nombre, codigo_inc')
-        .in('id', uniqueMovIds)
+        .in('id', allMovIds)
+        .order('fecha', { ascending: false })
       if (movErr) throw movErr
-      // 3) Obtener info de bloques
-      const uniqueBloqueIds = [...new Set(detData.map(d => d.bloque_id))]
+      // 3) Obtener todos los detalles de estos movimientos en estos niveles
+      const { data: detData, error: detErr } = await dataClient
+        .from('piso_movimiento_detalles')
+        .select('movimiento_id, cantidad, fecha_vencimiento, bloque_id, nivel_id')
+        .in('movimiento_id', allMovIds)
+        .in('nivel_id', nivelIds)
+      if (detErr) throw detErr
+      // 4) Obtener info de bloques
+      const uniqueBloqueIds = [...new Set((detData ?? []).map((d: any) => d.bloque_id))]
       const { data: bloqData, error: bloqErr } = await dataClient
         .from('piso_bloques')
         .select('id, codigo, descripcion, unidad')
@@ -296,33 +307,33 @@ export function PisoSectoresTab() {
       if (bloqErr) throw bloqErr
       const bloqMap = new Map<string, { id: string; codigo: string; descripcion: string; unidad: string }>((bloqData ?? []).map((b: any) => [b.id, b]))
       const movMap = new Map<string, { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }>((movData ?? []).map((m: any) => [m.id, m]))
-      // 4) Crear un item por cada detalle (cada articulo ingresado/salido individualmente)
-      const items: HistorialItem[] = detData.map(d => {
-        const mov = movMap.get(d.movimiento_id)
-        const bloq = bloqMap.get(d.bloque_id)
-        return {
-          id: `${d.movimiento_id}-${d.bloque_id}-${d.nivel_id}`,
-          tipo: mov?.tipo ?? '',
-          fecha: mov?.fecha ?? '',
-          turno: mov?.turno ?? '',
-          usuario_nombre: mov?.usuario_nombre,
-          bloque_codigo: bloq?.codigo ?? '',
-          bloque_descripcion: bloq?.descripcion || '',
-          bloque_unidad: bloq?.unidad ?? '',
-          cantidad: d.cantidad,
-          fecha_vencimiento: d.fecha_vencimiento,
-          codigo_inc: mov?.codigo_inc || '',
+      // 5) Crear items por detalle, manteniendo orden cronologico del movimiento
+      const allItems: HistorialItem[] = []
+      for (const mov of (movData ?? [])) {
+        const movDets = (detData ?? []).filter((d: any) => d.movimiento_id === mov.id)
+        for (const d of movDets) {
+          const bloq = bloqMap.get(d.bloque_id)
+          if (!bloq) continue
+          allItems.push({
+            id: `${mov.id}-${d.bloque_id}-${d.nivel_id}`,
+            tipo: mov.tipo ?? '',
+            fecha: mov.fecha ?? '',
+            turno: mov.turno ?? '',
+            usuario_nombre: mov.usuario_nombre,
+            bloque_codigo: bloq.codigo,
+            bloque_descripcion: bloq.descripcion || '',
+            bloque_unidad: bloq.unidad,
+            cantidad: d.cantidad,
+            fecha_vencimiento: d.fecha_vencimiento,
+            codigo_inc: mov.codigo_inc || '',
+          })
         }
-      }).filter(i => i.tipo && i.bloque_codigo)
-      // hasMore: si hay mas de 5 items validos O si la pagina raw esta llena (podria haber mas en la siguiente pagina)
-      setHistorialHasMore(items.length > 5 || detData.length === 6)
-      const trimmed = items.slice(0, 5)
-      if (append) {
-        setHistorialData(prev => [...prev, ...trimmed])
-      } else {
-        setHistorialData(trimmed)
       }
-      setHistorialOffset(offset + 6)
+      // 6) Guardar cache y mostrar primera pagina
+      setHistorialAllItems(allItems)
+      setHistorialData(allItems.slice(0, HISTORIAL_PAGE_SIZE))
+      setHistorialOffset(HISTORIAL_PAGE_SIZE)
+      setHistorialHasMore(allItems.length > HISTORIAL_PAGE_SIZE)
     } catch (err) {
       console.error('[Piso] Error cargando historial:', err)
       toast.error('Error al cargar historial')
@@ -331,11 +342,19 @@ export function PisoSectoresTab() {
     }
   }, [detail, niveles])
 
+  const loadMoreHistorial = useCallback(() => {
+    const next = historialAllItems.slice(historialOffset, historialOffset + HISTORIAL_PAGE_SIZE)
+    setHistorialData(prev => [...prev, ...next])
+    setHistorialOffset(prev => prev + HISTORIAL_PAGE_SIZE)
+    setHistorialHasMore(historialOffset + HISTORIAL_PAGE_SIZE < historialAllItems.length)
+  }, [historialAllItems, historialOffset])
+
   const openHistorial = useCallback(() => {
     setHistorialOffset(0)
     setHistorialData([])
+    setHistorialAllItems([])
     setHistorialOpen(true)
-    loadHistorial(0, false)
+    loadHistorial()
   }, [loadHistorial])
 
   // Cargar sectores
@@ -3131,7 +3150,7 @@ export function PisoSectoresTab() {
                 {/* Load More */}
                 {historialHasMore && (
                   <button
-                    onClick={() => loadHistorial(historialOffset, true)}
+                    onClick={loadMoreHistorial}
                     disabled={historialLoading}
                     className="w-full flex items-center justify-center gap-1.5 mt-3 py-2 rounded-xl border border-dashed border-violet-500/25 bg-violet-500/[0.03] text-violet-400 text-[10px] font-semibold hover:bg-violet-500/[0.07] hover:border-violet-500/40 transition-all duration-300 disabled:opacity-50"
                   >

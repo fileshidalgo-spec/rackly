@@ -415,7 +415,15 @@ export function OcupacionTab() {
     const qty = parseFloat(salidaCantidad)
     if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
     // Las salidas normales NO pueden exceder stock. Las salidas INC sí permiten exceder (autoajuste).
-    if (!item.codigoInc && qty > item.stock) { toast.error(`Cantidad excede stock (${item.stock})`); return }
+    // La validacion debe usar el stock TOTAL del codigo en esta ubicacion (igual que la RPC
+    // registrar_movimiento_kardex), NO el stock por lote individual. La UI agrupa por lote
+    // (f_vencimiento) pero la RPC suma TODOS los movimientos del codigo sin distinguir lotes.
+    if (!item.codigoInc) {
+      const totalStockForCodigo = detail.stock
+        .filter(s => s.codigo === item.codigo)
+        .reduce((sum, s) => sum + s.stock, 0)
+      if (qty > totalStockForCodigo) { toast.error(`Stock insuficiente. Stock total disponible: ${totalStockForCodigo} ${item.un}`); return }
+    }
     setActionBusy(true)
     try {
       const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({

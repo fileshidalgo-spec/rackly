@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import FechaVencimientoField from './FechaVencimientoField'
 import {
   listarSectores,
   cargarPosicionesSector,
@@ -428,7 +429,12 @@ export function PisoSectoresTab() {
   }
 
   // Realtime: auto-refresh positions when piso_movimientos changes (polling solo como respaldo si WebSocket cae)
+  // CRÍTICO: NO refrescar cuando el usuario está en modo ingreso/devolución/traslado/salida/inc
+  // porque eso causa re-renders que cierran el date picker nativo
   const silentRefreshPos = useCallback(() => {
+    // No actualizar posiciones mientras el usuario interactúa con un formulario
+    // Esto evita que el date picker se cierre por re-renders
+    if (mode !== 'view') return
     loadPosiciones(true)
     const sec = sectores.find(s => s.id === sectorFilter)
     if (selectedColumn && sectorFilter !== 'all' && (sec?.n_niveles ?? 0) > 1) {
@@ -436,7 +442,7 @@ export function PisoSectoresTab() {
         if (mountedRef.current) setColDetail(d)
       }).catch(() => {})
     }
-  }, [loadPosiciones, selectedColumn, sectorFilter, sectores])
+  }, [loadPosiciones, selectedColumn, sectorFilter, sectores, mode])
   usePisoRealtime(silentRefreshPos)
 
   // Filtrar catalogo para autocomplete
@@ -1145,44 +1151,10 @@ export function PisoSectoresTab() {
     } catch (err: unknown) { toast.error('Error al exportar', { description: extractError(err) }) } finally { setBusyExport(false) }
   }
 
-  // ─── Fecha de vencimiento sub-component ───
-  function FechaVencimientoField({
-    prefix, idx, row, onFechaChange, onToggleSin,
-  }: {
-    prefix: 'ing' | 'dev'; idx: number; row: RowEntry
-    onFechaChange: (idx: number, val: string) => void
-    onToggleSin: (idx: number) => void
-  }) {
-    const isIng = prefix === 'ing'
-    return (
-      <div className="col-span-12 sm:col-span-6 flex items-end gap-2">
-        <div className="flex-1">
-          <Label className="text-[10px] text-slate-400 font-medium">Fecha de Vencimiento</Label>
-          <div className="relative">
-            <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
-            <input
-              type="date"
-              value={row.fecha_vencimiento}
-              onChange={(e) => onFechaChange(idx, e.target.value)}
-              disabled={row.sin_vencimiento}
-              className={`w-full h-9 rounded-xl border text-xs pl-8 pr-2 font-mono focus:outline-none focus:ring-2 transition-all duration-300 [color-scheme:dark] ${row.sin_vencimiento ? 'border-slate-700 bg-slate-800/50 text-slate-600 cursor-not-allowed' : isIng ? 'border-emerald-500/50 bg-slate-900 text-white focus:ring-emerald-500/50' : 'border-amber-500/50 bg-slate-900 text-white focus:ring-amber-500/50'}`}
-            />
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => onToggleSin(idx)}
-          className={`flex items-center gap-1 px-2.5 h-9 rounded-xl text-[10px] font-semibold border transition-all duration-300 whitespace-nowrap ${row.sin_vencimiento
-            ? isIng ? 'bg-emerald-600/20 border-emerald-500/40 text-emerald-400 shadow-inner' : 'bg-amber-600/20 border-amber-500/40 text-amber-400 shadow-inner'
-            : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
-            }`}
-        >
-          <CalendarOff className="h-3 w-3" />
-          Sin vencimiento
-        </button>
-      </div>
-    )
-  }
+  // ─── FechaVencimientoField movido a archivo separado ───
+  // (importado arriba) — ver /src/components/rackly/piso/FechaVencimientoField.tsx
+  // Se extrajo porque estar definido DENTRO de PisoSectoresTab causaba que
+  // React.memo fuera completamente inútil (nueva referencia cada render).
 
   // ─── Autocomplete dropdown sub-component ───
   function AutocompleteDropdown({
@@ -2188,7 +2160,7 @@ export function PisoSectoresTab() {
                       </div>
 
                       {/* Fecha de vencimiento */}
-                      <FechaVencimientoField prefix="ing" idx={i} row={row} onFechaChange={updateIngresoFecha} onToggleSin={toggleIngresoSinVencimiento} />
+                      <FechaVencimientoField value={row.fecha_vencimiento} disabled={row.sin_vencimiento} variant="ing" onChange={(val) => updateIngresoFecha(i, val)} onToggleSin={() => toggleIngresoSinVencimiento(i)} />
 
                       {ingRows.length > 1 && (
                         <div className="flex justify-end">
@@ -2612,7 +2584,7 @@ export function PisoSectoresTab() {
                       </div>
 
                       {/* Fecha de vencimiento */}
-                      <FechaVencimientoField prefix="dev" idx={i} row={row} onFechaChange={updateDevFecha} onToggleSin={toggleDevSinVencimiento} />
+                      <FechaVencimientoField value={row.fecha_vencimiento} disabled={row.sin_vencimiento} variant="dev" onChange={(val) => updateDevFecha(i, val)} onToggleSin={() => toggleDevSinVencimiento(i)} />
 
                       {devRows.length > 1 && (
                         <div className="flex justify-end">
@@ -2725,10 +2697,10 @@ export function PisoSectoresTab() {
                       </div>
                       <div className="col-span-12 sm:col-span-4">
                         <FechaVencimientoField
-                          prefix="ing"
-                          idx={0}
-                          row={{ ...EMPTY_ROW, fecha_vencimiento: incFechaVencimiento, sin_vencimiento: incSinVencimiento }}
-                          onFechaChange={(_, val) => setIncFechaVencimiento(val)}
+                          value={incFechaVencimiento}
+                          disabled={incSinVencimiento}
+                          variant="inc"
+                          onChange={(val) => setIncFechaVencimiento(val)}
                           onToggleSin={() => setIncSinVencimiento(!incSinVencimiento)}
                         />
                       </div>

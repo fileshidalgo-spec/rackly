@@ -103,6 +103,61 @@ export async function fetchMovimientosByCodigo(codigo: string): Promise<Movimien
   return (data ?? []).map(fromRow)
 }
 
+// ═══ Stock cruzado: Racks por código (usado desde PisoStockTab) ═══
+
+export type StockRacksPorCodigoItem = {
+  bloque: string
+  torre: string
+  piso: string
+  posicion: string
+  stock: number
+  descripcion: string
+  un: string
+  fVencimiento: string
+  codigo_inc?: string
+}
+
+/**
+ * Calcula el stock neto en Racks para un código dado.
+ * Usado por PisoStockTab para mostrar "También en Kardex Racks".
+ * Solo lectura, no modifica nada.
+ */
+export async function buscarStockRacksPorCodigo(codigo: string): Promise<StockRacksPorCodigoItem[]> {
+  const movs = await fetchMovimientosByCodigo(codigo)
+  const locMap = new Map<string, StockRacksPorCodigoItem>()
+
+  for (const m of movs) {
+    const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
+    const current = locMap.get(key)
+    const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+    if (current) {
+      current.stock += delta
+    } else {
+      locMap.set(key, {
+        bloque: m.bloque,
+        torre: m.torre,
+        piso: m.piso,
+        posicion: m.posicion,
+        stock: delta,
+        descripcion: m.descripcion,
+        un: m.un,
+        fVencimiento: m.fVencimiento || '',
+        codigo_inc: m.codigoInc || undefined,
+      })
+    }
+  }
+
+  return Array.from(locMap.values())
+    .filter(l => l.stock > 0)
+    .sort((a, b) => {
+      // FEFO primero
+      if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
+      if (a.fVencimiento && !b.fVencimiento) return -1
+      if (!a.fVencimiento && b.fVencimiento) return 1
+      return 0
+    })
+}
+
 /** Fallback: insert directo cuando la RPC no existe en Supabase */
 async function addMovimientoFallback(
   m: Omit<Movimiento, 'id' | 'fModificacion'>,

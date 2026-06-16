@@ -5,6 +5,7 @@ import {
   type Movimiento,
   eliminarUbicacion,
 } from '@/lib/rackly/kardex'
+import { stockPisoGlobal, type StockPisoItem } from '@/lib/piso/api'
 import {
   findCatalogoByCodigo,
   fetchCatalogo,
@@ -25,8 +26,163 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { toast } from 'sonner'
-import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle } from 'lucide-react'
+import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle, Layers3, MapPin, Loader2 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+
+// ═══ Sub-componente: Sección cruzada Kardex Piso ═══
+function CrossSectionPiso({
+  selectedCodigo,
+  stockFilter,
+  pisoStock,
+  setPisoStock,
+  pisoLoading,
+  setPisoLoading,
+  pisoSearchedCode,
+  setPisoSearchedCode,
+}: {
+  selectedCodigo: string
+  stockFilter: string
+  pisoStock: StockPisoItem[]
+  setPisoStock: (v: StockPisoItem[]) => void
+  pisoLoading: boolean
+  setPisoLoading: (v: boolean) => void
+  pisoSearchedCode: string
+  setPisoSearchedCode: (v: string) => void
+}) {
+  // Buscar stock en Piso cuando se selecciona un código en Racks
+  useEffect(() => {
+    if (!selectedCodigo) {
+      setPisoStock([])
+      setPisoSearchedCode('')
+      return
+    }
+    if (selectedCodigo === pisoSearchedCode) return
+
+    let cancelled = false
+    setPisoLoading(true)
+    setPisoSearchedCode(selectedCodigo)
+
+    stockPisoGlobal()
+      .then((allPiso) => {
+        if (cancelled) return
+        const code = selectedCodigo.toUpperCase()
+        const filtered = allPiso.filter(item =>
+          item.bloque_codigo.toUpperCase() === code
+        )
+        setPisoStock(filtered)
+        setPisoLoading(false)
+      })
+      .catch(() => {
+        if (!cancelled) setPisoLoading(false)
+      })
+
+    return () => { cancelled = true }
+  }, [selectedCodigo, pisoSearchedCode, setPisoStock, setPisoLoading, setPisoSearchedCode])
+
+  // Aplicar filtro INC
+  const filtered = pisoStock.filter((i) => {
+    if (stockFilter === 'inc') return !!i.codigo_inc
+    if (stockFilter === 'disponibles') return !i.codigo_inc
+    return true
+  })
+
+  const totalPiso = filtered.reduce((sum, i) => sum + i.cantidad, 0)
+
+  if (pisoLoading || filtered.length > 0) {
+    return (
+      <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-50 dark:bg-amber-950/20 overflow-hidden">
+        <div className="px-4 py-3 bg-amber-100/50 dark:bg-amber-900/20 border-b border-amber-500/20 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-amber-500/20 flex items-center justify-center">
+              <Layers3 className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-amber-700 dark:text-amber-300">Tambien en Kardex Piso</p>
+              <p className="text-[10px] text-amber-500/70">Stock en piso para este articulo</p>
+            </div>
+          </div>
+          {pisoLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+          ) : (
+            <Badge variant="outline" className="text-xs px-2.5 py-0.5 border-amber-500/40 text-amber-700 dark:text-amber-300">
+              Total: <span className="font-bold ml-1">{totalPiso}</span>
+            </Badge>
+          )}
+        </div>
+
+        {pisoLoading ? (
+          <div className="px-4 py-6 text-center text-amber-500/60 text-xs">
+            <Loader2 className="h-4 w-4 animate-spin inline mr-1.5" />
+            Buscando en Kardex Piso...
+          </div>
+        ) : filtered.length > 0 ? (
+          <div className="hidden sm:block overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-amber-50/50 dark:bg-amber-900/10 hover:bg-amber-900/10">
+                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase">Ubicacion</TableHead>
+                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase hidden lg:table-cell">Sector</TableHead>
+                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase hidden sm:table-cell">Descripcion</TableHead>
+                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase">UN</TableHead>
+                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase">Vencimiento</TableHead>
+                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase text-right">Cantidad</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((r, i) => (
+                  <TableRow key={i} className="border-amber-500/10 hover:bg-amber-50/50 dark:hover:bg-amber-900/10">
+                    <TableCell className="text-xs text-amber-800 dark:text-amber-200 whitespace-nowrap font-medium">{r.ubicacion}</TableCell>
+                    <TableCell className="hidden lg:table-cell text-xs text-slate-500">{r.sector_nombre || '—'}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-xs text-slate-500 max-w-[200px] truncate">{r.bloque_descripcion}</TableCell>
+                    <TableCell className="text-xs text-slate-600 dark:text-slate-400">{r.bloque_unidad}</TableCell>
+                    <TableCell>
+                      {r.fecha_vencimiento ? (
+                        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${(() => {
+                          const hoy = new Date(new Date().toDateString())
+                          const fVen = new Date(r.fecha_vencimiento + 'T00:00:00')
+                          const diff = (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
+                          return diff < 0
+                            ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+                            : diff <= 15
+                              ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
+                              : diff <= 30
+                                ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+                                : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
+                        })()}`}>
+                          {r.fecha_vencimiento}
+                        </Badge>
+                      ) : <span className="text-xs text-slate-500">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right text-xs font-bold text-amber-800 dark:text-amber-200">{r.cantidad}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : null}
+
+        {/* Mobile cards */}
+        {filtered.length > 0 && (
+          <div className="sm:hidden divide-y divide-amber-500/10">
+            {filtered.map((r, i) => (
+              <div key={i} className="px-4 py-2.5 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-[10px]">
+                  <MapPin className="h-3 w-3 text-amber-500" />
+                  <span className="font-medium text-amber-800 dark:text-amber-200">{r.ubicacion}</span>
+                  {r.sector_nombre && (
+                    <span className="text-amber-500/60">{r.sector_nombre}</span>
+                  )}
+                </div>
+                <span className="text-xs font-bold text-amber-800 dark:text-amber-200">{r.cantidad} {r.bloque_unidad}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+  return null
+}
 
 export function StockTab() {
   const { perfil } = useAuth()
@@ -34,6 +190,10 @@ export function StockTab() {
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [query, setQuery] = useState('')
   const [selectedCodigo, setSelectedCodigo] = useState('')
+  // Stock cruzado: Piso
+  const [pisoStock, setPisoStock] = useState<StockPisoItem[]>([])
+  const [pisoLoading, setPisoLoading] = useState(false)
+  const [pisoSearchedCode, setPisoSearchedCode] = useState('')
   const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>('todos')
   const [stock, setStock] = useState<
     {
@@ -390,6 +550,7 @@ export function StockTab() {
 
       {/* Stock por ubicación */}
       {stock.length > 0 ? (
+        <>
         <div className="space-y-3">
 
           {/* ── Mobile: Card layout ── */}
@@ -533,6 +694,19 @@ export function StockTab() {
             </Badge>
           </div>
         </div>
+
+        {/* ═══ SECCIÓN CRUZADA: También en Kardex Piso ═══ */}
+        <CrossSectionPiso
+          selectedCodigo={selectedCodigo}
+          stockFilter={stockFilter}
+          pisoStock={pisoStock}
+          setPisoStock={setPisoStock}
+          pisoLoading={pisoLoading}
+          setPisoLoading={setPisoLoading}
+          pisoSearchedCode={pisoSearchedCode}
+          setPisoSearchedCode={setPisoSearchedCode}
+        />
+        </>
       ) : (
         /* Sin stock en ubicaciones — mostrar info del catálogo + Big Magic */
         <div className="space-y-3">

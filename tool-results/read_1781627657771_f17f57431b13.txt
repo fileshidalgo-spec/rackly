@@ -1,0 +1,784 @@
+     1→'use client'
+     2→
+     3→import { dataClient } from '@/lib/supabase/client'
+     4→import { PAGE_SIZE, MAX_ITERATIONS, MOVIMIENTOS_ENTRADA, TURNO_DIA, TURNO_NOCHE } from './constants'
+     5→import { impactoStock } from '@/lib/utils'
+     6→
+     7→export type Turno = typeof TURNO_DIA | typeof TURNO_NOCHE
+     8→export type TipoMovimiento = 'ingreso' | 'salida' | 'devolucion' | 'traslado'
+     9→
+    10→export type Movimiento = {
+    11→  id: string
+    12→  tipo: TipoMovimiento
+    13→  bloque: string
+    14→  torre: string
+    15→  piso: string
+    16→  posicion: string
+    17→  codigo: string
+    18→  descripcion: string
+    19→  un: string
+    20→  cantidad: number
+    21→  fVencimiento: string
+    22→  fModificacion: string
+    23→  turno: Turno
+    24→  usuarioId: string
+    25→  usuarioNombre?: string
+    26→  usuarioCorreo?: string
+    27→  proveedor?: string
+    28→  codigoInc?: string // maps from codigo_inc column
+    29→}
+    30→
+    31→export type IncEnCelda = {
+    32→  codigo: string
+    33→  descripcion: string
+    34→  codigoInc: string
+    35→  cantidad: number
+    36→}
+    37→
+    38→export type OcupacionCelda = {
+    39→  bloque: string
+    40→  torre: string
+    41→  piso: string
+    42→  posicion: string
+    43→  stock: number
+    44→  codigos: string[]
+    45→  lotes: number
+    46→  tieneInc: boolean
+    47→  incItems: IncEnCelda[]
+    48→}
+    49→
+    50→function fromRow(r: Record<string, unknown>): Movimiento {
+    51→  return {
+    52→    id: r.id as string,
+    53→    tipo: r.tipo as TipoMovimiento,
+    54→    bloque: r.bloque as string,
+    55→    torre: r.torre as string,
+    56→    piso: r.piso as string,
+    57→    posicion: r.posicion as string,
+    58→    codigo: r.codigo as string,
+    59→    descripcion: r.descripcion as string,
+    60→    un: r.un as string,
+    61→    cantidad: typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0,
+    62→    fVencimiento: (r.f_vencimiento as string) ?? '',
+    63→    fModificacion: r.f_modificacion as string,
+    64→    turno: r.turno as Turno,
+    65→    usuarioId: (r.usuario_id as string) ?? '',
+    66→    usuarioNombre: (r.usuario_nombre as string) ?? undefined,
+    67→    usuarioCorreo: (r.usuario_correo as string) ?? undefined,
+    68→    proveedor: (r.proveedor as string) ?? undefined,
+    69→    codigoInc: (r.codigo_inc as string) ?? undefined,
+    70→  }
+    71→}
+    72→
+    73→export async function fetchMovimientos(): Promise<Movimiento[]> {
+    74→  const all: Record<string, unknown>[] = []
+    75→  let from = 0
+    76→  let iterations = 0
+    77→  while (iterations < MAX_ITERATIONS) {
+    78→    iterations++
+    79→    const to = from + PAGE_SIZE - 1
+    80→    const { data, error } = await dataClient
+    81→      .from('movimientos')
+    82→      .select('*')
+    83→      .order('f_modificacion', { ascending: false })
+    84→      .order('id', { ascending: true })
+    85→      .range(from, to)
+    86→    if (error) throw error
+    87→    const rows = data ?? []
+    88→    all.push(...rows)
+    89→    if (rows.length < PAGE_SIZE) break
+    90→    from += PAGE_SIZE
+    91→  }
+    92→  return all.map(fromRow)
+    93→}
+    94→
+    95→export async function fetchMovimientosByCodigo(codigo: string): Promise<Movimiento[]> {
+    96→  const upperCode = codigo.trim().toUpperCase()
+    97→  const { data, error } = await dataClient
+    98→    .from('movimientos')
+    99→    .select('*')
+   100→    .eq('codigo', upperCode)
+   101→    .order('f_modificacion', { ascending: false })
+   102→  if (error) throw error
+   103→  return (data ?? []).map(fromRow)
+   104→}
+   105→
+   106→/** Fallback: insert directo cuando la RPC no existe en Supabase */
+   107→async function addMovimientoFallback(
+   108→  m: Omit<Movimiento, 'id' | 'fModificacion'>,
+   109→  uuidSync?: string
+   110→): Promise<Movimiento[]> {
+   111→  console.warn('[addMovimiento] RPC no encontrada, usando insert directo como fallback')
+   112→
+   113→  // ── Validación de stock negativo para salidas NORMALES (no INC) ──
+   114→  // Las salidas normales NUNCA deben generar stock negativo.
+   115→  // Los traslados se manejan aparte con autoajuste.
+   116→  if (m.tipo === 'salida' && !m.codigoInc) {
+   117→    try {
+   118→      const currentStock = await calcularStockUbicacion(
+   119→        m.codigo, m.bloque, m.torre, m.piso, m.posicion, true // excluir INC
+   120→      )
+   121→      if (m.cantidad > currentStock) {
+   122→        const err = new Error('INSUFFICIENT_STOCK')
+   123→        ;(err as unknown as Record<string, string>).detail =
+   124→          `Stock actual = ${Math.round(currentStock * 1000) / 1000} ${m.un}, cantidad solicitada = ${m.cantidad} ${m.un}`
+   125→        throw err
+   126→      }
+   127→    } catch (stockErr) {
+   128→      // Si es error de stock insuficiente, propagarlo
+   129→      if (stockErr instanceof Error && stockErr.message === 'INSUFFICIENT_STOCK') throw stockErr
+   130→      // Si falla la consulta de stock, permitir la inserción (fallback del fallback)
+   131→      console.warn('[addMovimientoFallback] No se pudo verificar stock, permitiendo inserción:', stockErr)
+   132→    }
+   133→  }
+   134→
+   135→  const { error } = await dataClient.from('movimientos').insert({
+   136→    tipo: m.tipo,
+   137→    bloque: m.bloque,
+   138→    torre: m.torre,
+   139→    piso: m.piso,
+   140→    posicion: m.posicion,
+   141→    codigo: m.codigo.trim().toUpperCase(),
+   142→    descripcion: m.descripcion,
+   143→    un: m.un,
+   144→    cantidad: m.cantidad,
+   145→    f_vencimiento: m.fVencimiento || null,
+   146→    turno: m.turno,
+   147→    usuario_id: m.usuarioId,
+   148→    usuario_nombre: m.usuarioNombre ?? null,
+   149→    usuario_correo: m.usuarioCorreo ?? null,
+   150→    proveedor: m.proveedor ? m.proveedor : null,
+   151→    uuid_sync: uuidSync || null,
+   152→    codigo_inc: m.codigoInc || null,
+   153→  })
+   154→  if (error) throw error
+   155→  try {
+   156→    return await fetchMovimientos()
+   157→  } catch {
+   158→    return []
+   159→  }
+   160→}
+   161→
+   162→/** Chequeo de idempotencia: verificar si un movimiento con este uuid_sync ya existe */
+   163→async function checkExistingByUuidSync(uuidSync: string): Promise<boolean> {
+   164→  const { data, error } = await dataClient
+   165→    .from('movimientos')
+   166→    .select('id')
+   167→    .eq('uuid_sync', uuidSync)
+   168→    .limit(1)
+   169→  if (error) {
+   170→    console.warn('[checkExistingByUuidSync] Error consultando:', error.message)
+   171→    return false // Si falla la consulta, seguir con el insert normal
+   172→  }
+   173→  return (data ?? []).length > 0
+   174→}
+   175→
+   176→export async function addMovimiento(
+   177→  m: Omit<Movimiento, 'id' | 'fModificacion'>,
+   178→  uuidSync?: string
+   179→): Promise<Movimiento[]> {
+   180→  // Idempotencia: si viene uuidSync, verificar si ya existe en el servidor
+   181→  if (uuidSync) {
+   182→    const exists = await checkExistingByUuidSync(uuidSync)
+   183→    if (exists) {
+   184→      console.log('[addMovimiento] Movimiento ya existe (uuid_sync):', uuidSync, '— saltando insert.')
+   185→      // Ya existe: refrescar y retornar como si hubiera sido exitoso
+   186→      try { return await fetchMovimientos() } catch { return [] }
+   187→    }
+   188→  }
+   189→
+   190→  // ── INC: usar insert directo porque la RPC no incluye codigo_inc ──
+   191→  // Los movimientos INC son siempre tipo 'ingreso' (no necesitan validación de stock).
+   192→  // La RPC registrar_movimiento_kardex no tiene el parámetro p_codigo_inc, así que
+   193→  // Supabase lo ignora silenciosamente y el campo queda NULL.
+   194→  if (m.codigoInc) {
+   195→    console.log('[addMovimiento] INC detectado, usando insert directo para preservar codigo_inc')
+   196→    const { error } = await dataClient.from('movimientos').insert({
+   197→      tipo: m.tipo,
+   198→      bloque: m.bloque,
+   199→      torre: m.torre,
+   200→      piso: m.piso,
+   201→      posicion: m.posicion,
+   202→      codigo: m.codigo.trim().toUpperCase(),
+   203→      descripcion: m.descripcion,
+   204→      un: m.un,
+   205→      cantidad: m.cantidad,
+   206→      f_vencimiento: m.fVencimiento || null,
+   207→      turno: m.turno,
+   208→      usuario_id: m.usuarioId,
+   209→      usuario_nombre: m.usuarioNombre ?? null,
+   210→      usuario_correo: m.usuarioCorreo ?? null,
+   211→      proveedor: m.proveedor ? m.proveedor : null,
+   212→      uuid_sync: uuidSync || null,
+   213→      codigo_inc: m.codigoInc,
+   214→    })
+   215→    if (error) throw error
+   216→    try {
+   217→      return await fetchMovimientos()
+   218→    } catch {
+   219→      return []
+   220→    }
+   221→  }
+   222→
+   223→  // Usar RPC atómica con advisory lock para evitar race conditions
+   224→  try {
+   225→    const { data, error } = await dataClient.rpc('registrar_movimiento_kardex', {
+   226→      p_tipo: m.tipo,
+   227→      p_bloque: m.bloque,
+   228→      p_torre: m.torre,
+   229→      p_piso: m.piso,
+   230→      p_posicion: m.posicion,
+   231→      p_codigo: m.codigo.trim().toUpperCase(),
+   232→      p_descripcion: m.descripcion,
+   233→      p_un: m.un,
+   234→      p_cantidad: m.cantidad,
+   235→      p_f_vencimiento: m.fVencimiento || null,
+   236→      p_turno: m.turno,
+   237→      p_usuario_id: m.usuarioId,
+   238→      p_usuario_nombre: m.usuarioNombre ?? null,
+   239→      p_usuario_correo: m.usuarioCorreo ?? null,
+   240→      p_proveedor: m.proveedor ? m.proveedor : null,
+   241→      p_uuid_sync: uuidSync || null,
+   242→      p_codigo_inc: m.codigoInc || null,
+   243→    })
+   244→    // Stock insuficiente es un error controlado, no excepción cruda
+   245→    if (error) {
+   246→      const msg = error.message || ''
+   247→      const code = (error as unknown as Record<string, string>).code || ''
+   248→      if (msg.includes('INSUFFICIENT_STOCK')) {
+   249→        const parts = msg.split('|')
+   250→        const detail = parts.length > 1 ? parts[1] : 'Stock insuficiente para esta operación'
+   251→        const err = new Error('INSUFFICIENT_STOCK')
+   252→        ;(err as unknown as Record<string, string>).detail = detail
+   253→        throw err
+   254→      }
+   255→      // Si la RPC no existe (404 / 42883 / 'Could not find'), usar fallback
+   256→      if (code === '42883' || code === 'PGRST202' || msg.includes('Could not find') || msg.includes('does not exist') || msg.includes('404')) {
+   257→        return await addMovimientoFallback(m, uuidSync)
+   258→      }
+   259→      throw error
+   260→    }
+   261→    // RPC exitosa: el movimiento ya fue registrado en la DB.
+   262→    // Intentar refrescar la lista de movimientos, pero si falla (timeout, red)
+   263→    // NO propagar el error — el movimiento ya está guardado.
+   264→    try {
+   265→      return await fetchMovimientos()
+   266→    } catch {
+   267→      console.warn('[addMovimiento] RPC exitosa pero fetchMovimientos() falló. Movimiento ya registrado.')
+   268→      return []
+   269→    }
+   270→  } catch (err: unknown) {
+   271→    // Si la RPC no existe aún (SQL no ejecutado), fallback al insert directo
+   272→    const errMsg = err instanceof Error ? err.message : ''
+   273→    const errCode = err instanceof Error ? (err as unknown as Record<string, string>).code || '' : ''
+   274→    if (errCode === '42883' || errCode === 'PGRST202' || errMsg.includes('Could not find') || errMsg.includes('does not exist')) {
+   275→      return await addMovimientoFallback(m, uuidSync)
+   276→    }
+   277→    throw err
+   278→  }
+   279→}
+   280→
+   281→export async function deleteMovimiento(id: string): Promise<Movimiento[]> {
+   282→  const { error } = await dataClient.from('movimientos').delete().eq('id', id)
+   283→  if (error) throw error
+   284→  return fetchMovimientos()
+   285→}
+   286→
+   287→export async function calcularStockUbicacion(
+   288→  codigo: string,
+   289→  bloque: string,
+   290→  torre: string,
+   291→  piso: string,
+   292→  posicion: string,
+   293→  excluirInc: boolean = false
+   294→): Promise<number> {
+   295→  const target = codigo.trim().toUpperCase()
+   296→  let query = dataClient
+   297→    .from('movimientos')
+   298→    .select('tipo, cantidad')
+   299→    .eq('codigo', target)
+   300→    .eq('bloque', bloque)
+   301→    .eq('torre', torre)
+   302→    .eq('piso', piso)
+   303→    .eq('posicion', posicion)
+   304→  // Excluir movimientos INC para validar stock normal
+   305→  if (excluirInc) {
+   306→    query = query.is('codigo_inc', null)
+   307→  }
+   308→  const { data, error } = await query
+   309→  if (error) throw error
+   310→  return (data ?? []).reduce(
+   311→    (s: number, r: { tipo: string; cantidad: unknown }) => {
+   312→      const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
+   313→      return s + impactoStock(r.tipo, qty)
+   314→    },
+   315→    0
+   316→  )
+   317→}
+   318→
+   319→export type StockEnUbicacion = {
+   320→  codigo: string
+   321→  descripcion: string
+   322→  un: string
+   323→  stock: number
+   324→  fVencimiento?: string
+   325→  usuarioPrimerNombre?: string
+   326→  proveedor?: string
+   327→  codigoInc?: string
+   328→}
+   329→
+   330→export async function stockEnUbicacion(
+   331→  bloque: string,
+   332→  torre: string,
+   333→  piso: string,
+   334→  posicion: string
+   335→): Promise<StockEnUbicacion[]> {
+   336→  try {
+   337→    // Método principal: consultar movimientos directamente con paginación
+   338→    // Agrupa por (codigo, f_vencimiento) para separar lotes con distintas fechas de vencimiento
+   339→    const allRows: Record<string, unknown>[] = []
+   340→    let from = 0
+   341→    const BATCH = 1000
+   342→    const MAX_PAGES = 10 // máximo 10,000 movimientos por ubicación
+   343→
+   344→    for (let page = 0; page < MAX_PAGES; page++) {
+   345→      const { data, error } = await dataClient
+   346→        .from('movimientos')
+   347→        .select('*')
+   348→        .eq('bloque', bloque)
+   349→        .eq('torre', torre)
+   350→        .eq('piso', piso)
+   351→        .eq('posicion', posicion)
+   352→        .order('f_modificacion', { ascending: true })
+   353→        .range(from, from + BATCH - 1)
+   354→
+   355→      if (error) throw error
+   356→      const rows = data ?? []
+   357→      allRows.push(...rows)
+   358→      if (rows.length < BATCH) break
+   359→      from += BATCH
+   360→    }
+   361→
+   362→    // Agrupar por (codigo, f_vencimiento, codigo_inc)
+   363→    const groups = new Map<string, {
+   364→      codigo: string; descripcion: string; un: string;
+   365→      stock: number; fVencimiento: string;
+   366→      usuarioPrimerNombre: string; proveedor: string; codigoInc: string;
+   367→    }>()
+   368→
+   369→    for (const r of allRows) {
+   370→      const m = fromRow(r)
+   371→      const fvKey = m.fVencimiento || ''
+   372→      const key = `${m.codigo}||${fvKey}||${m.codigoInc || ''}`
+   373→
+   374→      let group = groups.get(key)
+   375→      if (!group) {
+   376→        group = {
+   377→          codigo: m.codigo,
+   378→          descripcion: m.descripcion,
+   379→          un: m.un,
+   380→          stock: 0,
+   381→          fVencimiento: m.fVencimiento,
+   382→          usuarioPrimerNombre: m.usuarioNombre?.split(' ')[0] ?? '',
+   383→          proveedor: m.proveedor ?? '',
+   384→          codigoInc: m.codigoInc || '',
+   385→        }
+   386→        groups.set(key, group)
+   387→      } else {
+   388→        // Si el grupo no tiene descripción pero este movimiento sí, usarla
+   389→        if (!group.descripcion && m.descripcion) group.descripcion = m.descripcion
+   390→      }
+   391→
+   392→      // Calcular stock neto (ingreso/devolucion/traslado = +, salida = -)
+   393→      const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
+   394→      const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? qty : -qty
+   395→      group.stock += delta
+   396→    }
+   397→
+   398→    // Filtrar solo artículos con stock > 0
+   399→    const results = Array.from(groups.values()).filter(g => g.stock > 0)
+   400→
+   401→    // Ordenar por FEFO: fecha de vencimiento más próxima primero, sin fecha al final
+   402→    results.sort((a, b) => {
+   403→      if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
+   404→      if (a.fVencimiento && !b.fVencimiento) return -1
+   405→      if (!a.fVencimiento && b.fVencimiento) return 1
+   406→      return 0
+   407→    })
+   408→
+   409→    return results.map(g => ({
+   410→      codigo: g.codigo,
+   411→      descripcion: g.descripcion,
+   412→      un: g.un,
+   413→      stock: Math.round(g.stock * 1000) / 1000,
+   414→      fVencimiento: g.fVencimiento || undefined,
+   415→      usuarioPrimerNombre: g.usuarioPrimerNombre || undefined,
+   416→      proveedor: g.proveedor || undefined,
+   417→      codigoInc: g.codigoInc || undefined,
+   418→    }))
+   419→  } catch {
+   420→    // Fallback al RPC original si falla la consulta directa
+   421→    try {
+   422→      const { data, error } = await dataClient.rpc('stock_en_ubicacion', {
+   423→        _bloque: bloque,
+   424→        _torre: torre,
+   425→        _piso: piso,
+   426→        _posicion: posicion,
+   427→      })
+   428→      if (error) throw error
+   429→      return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+   430→        codigo: String(r.codigo ?? '').trim().toUpperCase(),
+   431→        descripcion: (r.descripcion as string) ?? '',
+   432→        un: (r.un as string) ?? '',
+   433→        stock: Number(r.stock ?? 0),
+   434→        fVencimiento: (r.f_vencimiento as string) ?? '',
+   435→        usuarioPrimerNombre: (r.usuario_primer_nombre as string) ?? '',
+   436→        proveedor: (r.proveedor as string) ?? '',
+   437→        codigoInc: (r.codigo_inc as string) ?? undefined,
+   438→      }))
+   439→    } catch {
+   440→      return []
+   441→    }
+   442→  }
+   443→}
+   444→
+   445→/** Consulta dedicada: ubicaciones que tienen INC con stock > 0 */
+   446→export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]>> {
+   447→  try {
+   448→    const allRows: Record<string, unknown>[] = []
+   449→    let from = 0
+   450→    const BATCH = 1000
+   451→    for (let page = 0; page < 10; page++) {
+   452→      const { data, error } = await dataClient
+   453→        .from('movimientos')
+   454→        .select('bloque, torre, piso, posicion, codigo, descripcion, un, codigo_inc, tipo, cantidad')
+   455→        .not('codigo_inc', 'is', null)
+   456→        .neq('codigo_inc', '')
+   457→        .range(from, from + BATCH - 1)
+   458→      if (error) return new Map()
+   459→      const rows = data ?? []
+   460→      allRows.push(...rows)
+   461→      if (rows.length < BATCH) break
+   462→      from += BATCH
+   463→    }
+   464→    // Calcular stock neto por ubicación + código INC
+   465→    const map = new Map<string, Map<string, { codigo: string; descripcion: string; codigoInc: string; stock: number }>>()
+   466→    for (const r of allRows) {
+   467→      const key = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
+   468→      const code = String(r.codigo ?? '').trim().toUpperCase()
+   469→      const codeInc = String(r.codigo_inc ?? '').trim()
+   470→      const incKey = `${code}||${codeInc}`
+   471→      let locMap = map.get(key)
+   472→      if (!locMap) { locMap = new Map(); map.set(key, locMap) }
+   473→      const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
+   474→      const delta = ['ingreso', 'devolucion', 'traslado'].includes(String(r.tipo)) ? qty : -qty
+   475→      const item = locMap.get(incKey)
+   476→      if (item) { item.stock += delta } else {
+   477→        locMap.set(incKey, { codigo: code, descripcion: String(r.descripcion ?? ''), codigoInc: codeInc, stock: delta })
+   478→      }
+   479→    }
+   480→    const result = new Map<string, IncEnCelda[]>()
+   481→    for (const [key, locMap] of map) {
+   482→      const items: IncEnCelda[] = []
+   483→      for (const [, item] of locMap) {
+   484→        if (item.stock > 0) items.push({ codigo: item.codigo, descripcion: item.descripcion, codigoInc: item.codigoInc, cantidad: item.stock })
+   485→      }
+   486→      if (items.length > 0) result.set(key, items)
+   487→    }
+   488→    return result
+   489→  } catch { return new Map() }
+   490→}
+   491→
+   492→export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
+   493→  const { data, error } = await dataClient.rpc('ocupacion_celdas')
+   494→  if (error) throw error
+   495→  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+   496→    bloque: String(r.bloque ?? ''),
+   497→    torre: String(r.torre ?? ''),
+   498→    piso: String(r.piso ?? ''),
+   499→    posicion: String(r.posicion ?? ''),
+   500→    stock: Number(r.stock ?? 0),
+   501→    codigos: Array.isArray(r.codigos) ? (r.codigos as string[]).map(String) : [],
+   502→    lotes: Array.isArray(r.codigos) ? (r.codigos as string[]).length : 0,
+   503→    tieneInc: false,
+   504→    incItems: [],
+   505→  }))
+   506→}
+   507→
+   508→export type TrasladoInput = {
+   509→  codigo: string
+   510→  descripcion: string
+   511→  un: string
+   512→  cantidad: number
+   513→  origen: { bloque: string; torre: string; piso: string; posicion: string }
+   514→  destino: { bloque: string; torre: string; piso: string; posicion: string }
+   515→  turno: Turno
+   516→  usuarioId: string
+   517→  usuarioNombre?: string
+   518→  usuarioCorreo?: string
+   519→  fVencimiento?: string
+   520→  proveedor?: string
+   521→  codigoInc?: string
+   522→  /** Cantidad de ajuste en origen. Positivo = ingreso (qty > stock), Negativo = salida (qty < stock) */
+   523→  cantidadAjuste?: number
+   524→}
+   525→
+   526→/** Fallback: insert directo para traslado cuando la RPC no existe en Supabase */
+   527→async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento[]> {
+   528→  console.warn('[trasladarMovimiento] RPC no encontrada, usando insert directo como fallback')
+   529→  const codigo = t.codigo.trim().toUpperCase()
+   530→  const base = {
+   531→    codigo,
+   532→    descripcion: t.descripcion,
+   533→    un: t.un,
+   534→    f_vencimiento: t.fVencimiento || null,
+   535→    turno: t.turno,
+   536→    usuario_id: t.usuarioId,
+   537→    usuario_nombre: t.usuarioNombre ?? null,
+   538→    usuario_correo: t.usuarioCorreo ?? null,
+   539→    proveedor: t.proveedor ? t.proveedor : null,
+   540→    codigo_inc: t.codigoInc || null,
+   541→  }
+   542→  const ajuste = (t.cantidadAjuste ?? 0) !== 0
+   543→    ? [{
+   544→        ...base,
+   545→        tipo: (t.cantidadAjuste ?? 0) > 0 ? 'ingreso' as const : 'salida' as const,
+   546→        bloque: t.origen.bloque,
+   547→        torre: t.origen.torre,
+   548→        piso: t.origen.piso,
+   549→        posicion: t.origen.posicion,
+   550→        cantidad: Math.abs(t.cantidadAjuste!),
+   551→      }]
+   552→    : []
+   553→  const { error } = await dataClient.from('movimientos').insert([
+   554→    ...ajuste,
+   555→    {
+   556→      ...base,
+   557→      tipo: 'salida',
+   558→      bloque: t.origen.bloque,
+   559→      torre: t.origen.torre,
+   560→      piso: t.origen.piso,
+   561→      posicion: t.origen.posicion,
+   562→      cantidad: t.cantidad,
+   563→    },
+   564→    {
+   565→      ...base,
+   566→      tipo: 'traslado',
+   567→      bloque: t.destino.bloque,
+   568→      torre: t.destino.torre,
+   569→      piso: t.destino.piso,
+   570→      posicion: t.destino.posicion,
+   571→      cantidad: t.cantidad,
+   572→    },
+   573→  ])
+   574→  if (error) throw error
+   575→  try {
+   576→    return await fetchMovimientos()
+   577→  } catch {
+   578→    return []
+   579→  }
+   580→}
+   581→
+   582→export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[]> {
+   583→  // Usar RPC atómica con advisory locks en origen Y destino
+   584→  try {
+   585→    const { data, error } = await dataClient.rpc('registrar_traslado_kardex', {
+   586→      p_codigo: t.codigo,
+   587→      p_descripcion: t.descripcion,
+   588→      p_un: t.un,
+   589→      p_cantidad: t.cantidad,
+   590→      p_orig_bloque: t.origen.bloque,
+   591→      p_orig_torre: t.origen.torre,
+   592→      p_orig_piso: t.origen.piso,
+   593→      p_orig_pos: t.origen.posicion,
+   594→      p_dest_bloque: t.destino.bloque,
+   595→      p_dest_torre: t.destino.torre,
+   596→      p_dest_piso: t.destino.piso,
+   597→      p_dest_pos: t.destino.posicion,
+   598→      p_turno: t.turno,
+   599→      p_usuario_id: t.usuarioId,
+   600→      p_usuario_nombre: t.usuarioNombre ?? null,
+   601→      p_usuario_correo: t.usuarioCorreo ?? null,
+   602→      p_f_vencimiento: t.fVencimiento || null,
+   603→      p_proveedor: t.proveedor ? t.proveedor : null,
+   604→      p_cantidad_ajuste: t.cantidadAjuste ?? 0,
+   605→      p_codigo_inc: t.codigoInc || null,
+   606→    })
+   607→    // Stock insuficiente en origen
+   608→    if (error) {
+   609→      const msg = error.message || ''
+   610→      const code = (error as unknown as Record<string, string>).code || ''
+   611→      if (msg.includes('INSUFFICIENT_STOCK')) {
+   612→        const parts = msg.split('|')
+   613→        const detail = parts.length > 1 ? parts[1] : 'Stock insuficiente en origen para este traslado'
+   614→        const err = new Error('INSUFFICIENT_STOCK')
+   615→        ;(err as unknown as Record<string, string>).detail = detail
+   616→        throw err
+   617→      }
+   618→      // Si la RPC no existe (404 / 42883 / 'Could not find'), usar fallback
+   619→      if (code === '42883' || code === 'PGRST202' || msg.includes('Could not find') || msg.includes('does not exist') || msg.includes('404')) {
+   620→        return await trasladarMovimientoFallback(t)
+   621→      }
+   622→      throw error
+   623→    }
+   624→    // RPC exitosa: refrescar movimientos, pero no fallar si fetchMovimientos falla
+   625→    try {
+   626→      return await fetchMovimientos()
+   627→    } catch {
+   628→      console.warn('[trasladarMovimiento] RPC exitosa pero fetchMovimientos() falló. Traslado ya registrado.')
+   629→      return []
+   630→    }
+   631→  } catch (err: unknown) {
+   632→    // Fallback si la RPC no existe aún
+   633→    const errMsg = err instanceof Error ? err.message : ''
+   634→    const errCode = err instanceof Error ? (err as unknown as Record<string, string>).code || '' : ''
+   635→    if (errCode === '42883' || errCode === 'PGRST202' || errMsg.includes('Could not find') || errMsg.includes('does not exist')) {
+   636→      return await trasladarMovimientoFallback(t)
+   637→    }
+   638→    throw err
+   639→  }
+   640→}
+   641→
+   642→/**
+   643→ * Elimina TODOS los movimientos de la tabla.
+   644→ * Usa service_role para bypassear RLS.
+   645→ * Borra en lotes de 1000 IDs para no exceder límites de URL.
+   646→ */
+   647→export async function deleteAllMovimientos(): Promise<{ deleted: boolean; error?: string }> {
+   648→  // Usar dataClient (service role) ya configurado — sin credenciales hardcodeadas
+   649→  const admin = dataClient
+   650→
+   651→  // Obtener todos los IDs
+   652→  const allIds: string[] = []
+   653→  let from = 0
+   654→  let iterations = 0
+   655→  const BATCH = 1000
+   656→  while (iterations++ < MAX_ITERATIONS) {
+   657→    const { data, error } = await admin
+   658→      .from('movimientos')
+   659→      .select('id')
+   660→      .range(from, from + BATCH - 1)
+   661→    if (error) return { deleted: false, error: error.message }
+   662→    if (!data || data.length === 0) break
+   663→    allIds.push(...data.map((r: { id: string }) => r.id))
+   664→    if (data.length < BATCH) break
+   665→    from += BATCH
+   666→  }
+   667→
+   668→  if (allIds.length === 0) return { deleted: true }
+   669→
+   670→  // Borrar en lotes usando .in('id', [...])
+   671→  const DELETE_BATCH = 500
+   672→  for (let i = 0; i < allIds.length; i += DELETE_BATCH) {
+   673→    const batch = allIds.slice(i, i + DELETE_BATCH)
+   674→    const { error } = await admin
+   675→      .from('movimientos')
+   676→      .delete()
+   677→      .in('id', batch)
+   678→    if (error) return { deleted: false, error: `Lote ${Math.floor(i / DELETE_BATCH) + 1}: ${error.message}` }
+   679→  }
+   680→
+   681→  return { deleted: true }
+   682→}
+   683→
+   684→export type UploadStockRow = {
+   685→  codigo: string
+   686→  descripcion: string
+   687→  un: string
+   688→  bloque: string
+   689→  torre: string
+   690→  piso: string
+   691→  posicion: string
+   692→  cantidad: number
+   693→  fVencimiento?: string
+   694→  proveedor?: string
+   695→}
+   696→
+   697→/**
+   698→ * Inserta movimientos de ingreso masivamente desde un archivo Excel.
+   699→ * Usa service_role para bypassear RLS.
+   700→ * Usa batch inserts de 1000 filas para no exceder límites de Supabase.
+   701→ */
+   702→export async function addMovimientosBatch(
+   703→  rows: UploadStockRow[],
+   704→  usuarioId: string,
+   705→  usuarioNombre?: string,
+   706→  usuarioCorreo?: string,
+   707→): Promise<{ inserted: number; errors: string[] }> {
+   708→  // Usar dataClient (service role) ya configurado — sin credenciales hardcodeadas
+   709→  const admin = dataClient
+   710→
+   711→  const turno = (await import('./turno')).calcularTurno()
+   712→  const errors: string[] = []
+   713→  let inserted = 0
+   714→  const BATCH_SIZE = 1000
+   715→
+   716→  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+   717→    const batch = rows.slice(i, i + BATCH_SIZE)
+   718→    const inserts = batch.map((r) => ({
+   719→      tipo: 'ingreso' as const,
+   720→      bloque: String(r.bloque),
+   721→      torre: String(r.torre),
+   722→      piso: String(r.piso),
+   723→      posicion: String(r.posicion),
+   724→      codigo: r.codigo.trim().toUpperCase(),
+   725→      descripcion: r.descripcion,
+   726→      un: r.un || 'KG',
+   727→      cantidad: Number(r.cantidad),
+   728→      f_vencimiento: r.fVencimiento || null,
+   729→      turno,
+   730→      usuario_id: usuarioId,
+   731→      usuario_nombre: usuarioNombre ?? null,
+   732→      usuario_correo: usuarioCorreo ?? null,
+   733→      proveedor: r.proveedor ? r.proveedor : null,
+   734→      codigo_inc: null,
+   735→    }))
+   736→
+   737→    const { error } = await admin.from('movimientos').insert(inserts)
+   738→    if (error) {
+   739→      errors.push(`Lote ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`)
+   740→      // Intentar insertar uno por uno el lote fallido para identificar la fila
+   741→      for (let j = 0; j < inserts.length; j++) {
+   742→        const { error: singleErr } = await admin
+   743→          .from('movimientos')
+   744→          .insert(inserts[j])
+   745→        if (singleErr) {
+   746→          errors.push(`Fila ${i + j + 1}: ${singleErr.message}`)
+   747→        } else {
+   748→          inserted++
+   749→        }
+   750→      }
+   751→    } else {
+   752→      inserted += batch.length
+   753→    }
+   754→  }
+   755→
+   756→  return { inserted, errors }
+   757→}
+   758→
+   759→export async function eliminarUbicacion(
+   760→  codigo: string,
+   761→  bloque: string,
+   762→  torre: string,
+   763→  piso: string,
+   764→  posicion: string,
+   765→  fVencimiento?: string
+   766→): Promise<Movimiento[]> {
+   767→  const target = codigo.trim().toUpperCase()
+   768→  let query = dataClient
+   769→    .from('movimientos')
+   770→    .delete()
+   771→    .eq('codigo', target)
+   772→    .eq('bloque', bloque)
+   773→    .eq('torre', torre)
+   774→    .eq('piso', piso)
+   775→    .eq('posicion', posicion)
+   776→  // Si se especifica fVencimiento, filtrar solo ese lote
+   777→  if (fVencimiento) {
+   778→    query = query.eq('f_vencimiento', fVencimiento)
+   779→  }
+   780→  const { error } = await query
+   781→  if (error) throw error
+   782→  return fetchMovimientos()
+   783→}
+   784→

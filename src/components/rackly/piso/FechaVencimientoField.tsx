@@ -7,27 +7,27 @@ import { Calendar, CalendarOff, ChevronLeft, ChevronRight, X } from 'lucide-reac
 /**
  * FechaVencimientoField — Calendario custom para fecha de vencimiento.
  *
- * Por qué NO usamos <input type="date"> nativo:
- * El date picker nativo se cierra cuando CUALQUIER cosa en el DOM se re-renderiza,
- * incluso si es un elemento hermano. PisoSectoresTab tiene ~40 useState y
- * usePisoRealtime causa re-renders. Aunque React.memo evite re-renderizar
- * ESTE componente, el navegador igual cierra el popup nativo cuando
- * elementos hermanos cambian en el DOM.
+ * Formato visual: DD-MM-YYYY (input y display)
+ * Formato interno/sistema: YYYY-MM-DD (onChange devuelve este formato)
  *
- * Solución: Calendario custom montado via createPortal en document.body,
- * completamente independiente del DOM del formulario.
+ * Por qué NO usamos <input type="date"> nativo:
+ * El date picker nativo se cierra cuando CUALQUIER cosa en el DOM se re-renderiza.
+ * Solución: Calendario custom montado via createPortal en document.body.
  */
 
 interface FechaVencimientoFieldProps {
-  value: string
+  value: string  // formato YYYY-MM-DD (interno)
   disabled: boolean
   variant: 'ing' | 'dev' | 'inc'
-  onChange: (value: string) => void
+  onChange: (value: string) => void  // formato YYYY-MM-DD
   onToggleSin: () => void
 }
 
-const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+const MESES_CORTO = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+const MESES_LARGO = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 const DIAS_SEMANA = ['Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab', 'Dom']
+
+// ═══ Utilidades de fecha ═══
 
 function getDaysInMonth(y: number, m: number): number {
   return new Date(y, m, 0).getDate()
@@ -35,7 +35,6 @@ function getDaysInMonth(y: number, m: number): number {
 
 function getFirstDayOfWeek(y: number, m: number): number {
   const d = new Date(y, m - 1, 1).getDay()
-  // Convertir: 0=Dom -> 6, 1=Lun -> 0, ..., 6=Sab -> 5
   return d === 0 ? 6 : d - 1
 }
 
@@ -43,15 +42,56 @@ function pad(n: number): string {
   return String(n).padStart(2, '0')
 }
 
-function fmt(y: number, m: number, d: number): string {
+/** Formato interno: YYYY-MM-DD */
+function toInternal(y: number, m: number, d: number): string {
   return `${y}-${pad(m)}-${pad(d)}`
 }
+
+/** Formato display: DD-MM-YYYY */
+function toDisplay(y: number, m: number, d: number): string {
+  return `${pad(d)}-${pad(m)}-${y}`
+}
+
+/** Parsear YYYY-MM-DD */
+function parseInternal(v: string): { y: number; m: number; d: number } | null {
+  if (!v) return null
+  const parts = v.split('-')
+  if (parts.length !== 3) return null
+  const y = parseInt(parts[0], 10)
+  const m = parseInt(parts[1], 10)
+  const d = parseInt(parts[2], 10)
+  if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1 || d > 31) return null
+  return { y, m, d }
+}
+
+/** Parsear DD-MM-YYYY */
+function parseDisplay(v: string): { y: number; m: number; d: number } | null {
+  if (!v) return null
+  const parts = v.split('-')
+  if (parts.length !== 3) return null
+  const d = parseInt(parts[0], 10)
+  const m = parseInt(parts[1], 10)
+  const y = parseInt(parts[2], 10)
+  if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1 || d > 31) return null
+  return { y, m, d }
+}
+
+/** Auto-formatear mientras el usuario escribe DD-MM-YYYY */
+function autoFormatInput(raw: string): string {
+  const digits = raw.replace(/[^\d]/g, '').slice(0, 8)
+  if (digits.length <= 2) return digits
+  if (digits.length <= 4) return `${digits.slice(0, 2)}-${digits.slice(2)}`
+  return `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4)}`
+}
+
+type CalView = 'days' | 'months'
 
 type CalendarState = {
   year: number
   month: number
   selectedDay: number | null
   position: { top: number; left: number }
+  view: CalView
 }
 
 const FechaVencimientoField = memo(function FechaVencimientoField({
@@ -61,16 +101,20 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
   onChange,
   onToggleSin,
 }: FechaVencimientoFieldProps) {
-  const [manualInput, setManualInput] = useState(value)
+  const [displayValue, setDisplayValue] = useState(() => {
+    const p = parseInternal(value)
+    return p ? toDisplay(p.y, p.m, p.d) : ''
+  })
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [calState, setCalState] = useState<CalendarState | null>(null)
   const inputContainerRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(false)
 
-  // Sincronizar valor del padre
+  // Sincronizar valor del padre (solo cuando el calendario está cerrado)
   useEffect(() => {
     if (!calendarOpen) {
-      setManualInput(value)
+      const p = parseInternal(value)
+      setDisplayValue(p ? toDisplay(p.y, p.m, p.d) : '')
     }
   }, [value, calendarOpen])
 
@@ -79,28 +123,17 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
     mountedRef.current = true
     return () => {
       mountedRef.current = false
-      // Quitar listener global
       document.removeEventListener('mousedown', handleGlobalClick)
       document.removeEventListener('keydown', handleEsc)
     }
   }, [])
 
-  // Parsear la fecha actual
-  const parseValue = useCallback((v: string) => {
-    if (!v) return null
-    const parts = v.split('-')
-    if (parts.length !== 3) return null
-    const y = parseInt(parts[0], 10)
-    const m = parseInt(parts[1], 10)
-    const d = parseInt(parts[2], 10)
-    if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1 || d > 31) return null
-    return { y, m, d }
-  }, [])
+  // ═══ Abrir / cerrar calendario ═══
 
   const openCalendar = () => {
     if (disabled) return
     const now = new Date()
-    const parsed = parseValue(value)
+    const parsed = parseInternal(value)
     const y = parsed?.y ?? now.getFullYear()
     const m = parsed?.m ?? (now.getMonth() + 1)
 
@@ -112,10 +145,9 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
       left = Math.max(8, Math.min(rect.left, window.innerWidth - 260))
     }
 
-    setCalState({ year: y, month: m, selectedDay: parsed?.d ?? null, position: { top, left } })
+    setCalState({ year: y, month: m, selectedDay: parsed?.d ?? null, position: { top, left }, view: 'days' })
     setCalendarOpen(true)
 
-    // Agregar listeners globales con delay para evitar cierre inmediato
     setTimeout(() => {
       document.addEventListener('mousedown', handleGlobalClick)
       document.addEventListener('keydown', handleEsc)
@@ -129,12 +161,12 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
     document.removeEventListener('keydown', handleEsc)
   }, [])
 
+  // ═══ Click fuera / Escape ═══
+
   const handleGlobalClick = (e: MouseEvent) => {
     if (!mountedRef.current) return
     const target = e.target as HTMLElement
-    // Si el click es dentro del popup del calendario, no cerrar
     if (target.closest('[data-cal-popup]')) return
-    // Si el click es dentro del input container, no cerrar (el botón del calendario lo maneja)
     if (inputContainerRef.current?.contains(target)) return
     closeCalendar()
   }
@@ -143,57 +175,84 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
     if (e.key === 'Escape') closeCalendar()
   }
 
+  // ═══ Navegación del calendario ═══
+
   const selectDay = useCallback((day: number) => {
     if (!calState) return
-    const formatted = fmt(calState.year, calState.month, day)
-    setManualInput(formatted)
-    onChange(formatted)
+    const internal = toInternal(calState.year, calState.month, day)
+    setDisplayValue(toDisplay(calState.year, calState.month, day))
+    onChange(internal)
     closeCalendar()
   }, [calState, onChange, closeCalendar])
 
   const prevMonth = useCallback(() => {
-    if (!calState) return
     setCalState(prev => {
       if (!prev) return prev
       if (prev.month === 1) return { ...prev, month: 12, year: prev.year - 1 }
       return { ...prev, month: prev.month - 1 }
     })
-  }, [calState])
+  }, [])
 
   const nextMonth = useCallback(() => {
-    if (!calState) return
     setCalState(prev => {
       if (!prev) return prev
       if (prev.month === 12) return { ...prev, month: 1, year: prev.year + 1 }
       return { ...prev, month: prev.month + 1 }
     })
-  }, [calState])
+  }, [])
+
+  const prevYear = useCallback(() => {
+    setCalState(prev => prev ? { ...prev, year: prev.year - 1 } : prev)
+  }, [])
+
+  const nextYear = useCallback(() => {
+    setCalState(prev => prev ? { ...prev, year: prev.year + 1 } : prev)
+  }, [])
+
+  const switchToMonthView = useCallback(() => {
+    setCalState(prev => prev ? { ...prev, view: 'months' } : prev)
+  }, [])
+
+  const selectMonth = useCallback((m: number) => {
+    setCalState(prev => prev ? { ...prev, month: m, view: 'days' } : prev)
+  }, [])
+
+  // ═══ Input manual ═══
 
   const handleManualChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = e.target.value
-    setManualInput(v)
-    // Auto-formatear mientras escribe: si escribe 2025-06-15, notificar
-    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-      const p = parseValue(v)
-      if (p) onChange(v)
+    const raw = e.target.value
+    const formatted = autoFormatInput(raw)
+    setDisplayValue(formatted)
+
+    // Si completó DD-MM-YYYY, notificar al padre en formato interno
+    if (/^\d{2}-\d{2}-\d{4}$/.test(formatted)) {
+      const p = parseDisplay(formatted)
+      if (p) onChange(toInternal(p.y, p.m, p.d))
     }
   }
 
   const handleManualBlur = () => {
-    // Al perder foco, si escribió una fecha válida, usarla
-    if (manualInput && manualInput !== value) {
-      const p = parseValue(manualInput)
+    if (displayValue && displayValue !== '') {
+      const p = parseDisplay(displayValue)
       if (p) {
-        onChange(manualInput)
+        const internal = toInternal(p.y, p.m, p.d)
+        setDisplayValue(toDisplay(p.y, p.m, p.d))
+        onChange(internal)
       } else {
-        setManualInput(value) // Revertir si no es válido
+        // Revertir al valor del padre
+        const pp = parseInternal(value)
+        setDisplayValue(pp ? toDisplay(pp.y, pp.m, pp.d) : '')
       }
-    } else if (!manualInput) {
-      setManualInput(value)
+    } else {
+      const pp = parseInternal(value)
+      setDisplayValue(pp ? toDisplay(pp.y, pp.m, pp.d) : '')
     }
   }
 
+  // ═══ Colores por variante ═══
+
   const accentBg = variant === 'ing' ? 'bg-emerald-600' : variant === 'dev' ? 'bg-amber-600' : 'bg-purple-600'
+  const accentText = variant === 'ing' ? 'text-emerald-400' : variant === 'dev' ? 'text-amber-400' : 'text-purple-400'
   const borderActive = variant === 'ing' ? 'border-emerald-500/50 focus-within:ring-emerald-500/30'
     : variant === 'dev' ? 'border-amber-500/50 focus-within:ring-amber-500/30'
     : 'border-purple-500/50 focus-within:ring-purple-500/30'
@@ -213,11 +272,11 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
             <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
             <input
               type="text"
-              value={manualInput}
+              value={displayValue}
               onChange={handleManualChange}
               onBlur={handleManualBlur}
               disabled={disabled}
-              placeholder="YYYY-MM-DD"
+              placeholder="DD-MM-YYYY"
               maxLength={10}
               className={[
                 'w-full h-9 rounded-xl border text-xs pl-8 pr-2 font-mono text-white focus:outline-none focus:ring-2',
@@ -251,7 +310,7 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
         Sin vencimiento
       </button>
 
-      {/* Calendario — PORTAL en document.body, completamente independiente del DOM del formulario */}
+      {/* ═══ PORTAL del Calendario ═══ */}
       {calendarOpen && calState && typeof document !== 'undefined' && createPortal(
         <div
           data-cal-popup
@@ -266,95 +325,158 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
               pointerEvents: 'auto',
             }}
           >
-            {/* Header con navegación */}
-            <div className="flex items-center justify-between mb-2">
-              <button
-                type="button"
-                onMouseDown={(e) => { e.preventDefault(); prevMonth() }}
-                className="p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <span className="text-xs font-bold text-slate-200">
-                {MESES[calState.month - 1]} {calState.year}
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onMouseDown={(e) => { e.preventDefault(); nextMonth() }}
-                  className="p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={(e) => { e.preventDefault(); closeCalendar() }}
-                  className="p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Días de la semana */}
-            <div className="grid grid-cols-7 gap-0.5 mb-1">
-              {DIAS_SEMANA.map((d) => (
-                <div key={d} className="text-center text-[10px] font-semibold text-slate-500 py-1">{d}</div>
-              ))}
-            </div>
-
-            {/* Celdas de días */}
-            <div className="grid grid-cols-7 gap-0.5">
-              {(() => {
-                const daysInMonth = getDaysInMonth(calState.year, calState.month)
-                const firstDay = getFirstDayOfWeek(calState.year, calState.month)
-                const today = new Date()
-                const todayStr = fmt(today.getFullYear(), today.getMonth() + 1, today.getDate())
-                const cells: (number | null)[] = []
-                for (let i = 0; i < firstDay; i++) cells.push(null)
-                for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-
-                return cells.map((day, i) => {
-                  if (day === null) return <div key={`e-${i}`} />
-                  const isSelected = day === calState.selectedDay
-                  const dateStr = fmt(calState.year, calState.month, day)
-                  const isToday = dateStr === todayStr
-                  return (
+            {calState.view === 'days' ? (
+              /* ═══ VISTA DÍAS ═══ */
+              <>
+                {/* Header: < Mes Año > X */}
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); prevMonth() }}
+                    className="p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); switchToMonthView() }}
+                    className={`text-xs font-bold px-2 py-1 rounded-lg transition-colors ${accentText} hover:bg-slate-700`}
+                  >
+                    {MESES_LARGO[calState.month - 1]} {calState.year}
+                  </button>
+                  <div className="flex items-center gap-1">
                     <button
-                      key={day}
                       type="button"
-                      onMouseDown={(e) => { e.preventDefault(); selectDay(day) }}
-                      className={[
-                        'h-7 w-full rounded-lg text-[11px] font-medium transition-colors',
-                        isSelected
-                          ? `${accentBg} text-white shadow-md`
-                          : isToday
-                            ? 'bg-slate-700 text-white font-bold'
-                            : 'text-slate-300 hover:bg-slate-700/60',
-                      ].join(' ')}
+                      onMouseDown={(e) => { e.preventDefault(); nextMonth() }}
+                      className="p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
                     >
-                      {day}
+                      <ChevronRight className="h-4 w-4" />
                     </button>
-                  )
-                })
-              })()}
-            </div>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); closeCalendar() }}
+                      className="p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
 
-            {/* Opción de hoy */}
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault()
-                const today = new Date()
-                const todayStr = fmt(today.getFullYear(), today.getMonth() + 1, today.getDate())
-                setManualInput(todayStr)
-                onChange(todayStr)
-                closeCalendar()
-              }}
-              className="mt-2 w-full text-center text-[10px] text-slate-400 hover:text-white py-1 rounded-lg hover:bg-slate-700/60 transition-colors"
-            >
-              Hoy
-            </button>
+                {/* Días de la semana */}
+                <div className="grid grid-cols-7 gap-0.5 mb-1">
+                  {DIAS_SEMANA.map((d) => (
+                    <div key={d} className="text-center text-[10px] font-semibold text-slate-500 py-1">{d}</div>
+                  ))}
+                </div>
+
+                {/* Celdas de días */}
+                <div className="grid grid-cols-7 gap-0.5">
+                  {(() => {
+                    const daysInMonth = getDaysInMonth(calState.year, calState.month)
+                    const firstDay = getFirstDayOfWeek(calState.year, calState.month)
+                    const today = new Date()
+                    const todayStr = toInternal(today.getFullYear(), today.getMonth() + 1, today.getDate())
+                    const cells: (number | null)[] = []
+                    for (let i = 0; i < firstDay; i++) cells.push(null)
+                    for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+
+                    return cells.map((day, i) => {
+                      if (day === null) return <div key={`e-${i}`} />
+                      const isSelected = day === calState.selectedDay
+                      const dateStr = toInternal(calState.year, calState.month, day)
+                      const isToday = dateStr === todayStr
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); selectDay(day) }}
+                          className={[
+                            'h-7 w-full rounded-lg text-[11px] font-medium transition-colors',
+                            isSelected
+                              ? `${accentBg} text-white shadow-md`
+                              : isToday
+                                ? 'bg-slate-700 text-white font-bold'
+                                : 'text-slate-300 hover:bg-slate-700/60',
+                          ].join(' ')}
+                        >
+                          {day}
+                        </button>
+                      )
+                    })
+                  })()}
+                </div>
+
+                {/* Hoy */}
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    const today = new Date()
+                    const internal = toInternal(today.getFullYear(), today.getMonth() + 1, today.getDate())
+                    setDisplayValue(toDisplay(today.getFullYear(), today.getMonth() + 1, today.getDate()))
+                    onChange(internal)
+                    closeCalendar()
+                  }}
+                  className="mt-2 w-full text-center text-[10px] text-slate-400 hover:text-white py-1 rounded-lg hover:bg-slate-700/60 transition-colors"
+                >
+                  Hoy
+                </button>
+              </>
+            ) : (
+              /* ═══ VISTA MESES ═══ */
+              <>
+                {/* Header: < Año > */}
+                <div className="flex items-center justify-between mb-3">
+                  <button
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); prevYear() }}
+                    className="p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="text-sm font-bold text-white">{calState.year}</span>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => { e.preventDefault(); nextYear() }}
+                    className="p-1 rounded-lg hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Grid de 12 meses */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  {MESES_CORTO.map((mes, idx) => {
+                    const m = idx + 1
+                    const isCurrent = m === calState.month
+                    return (
+                      <button
+                        key={mes}
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); selectMonth(m) }}
+                        className={[
+                          'h-9 rounded-lg text-[11px] font-medium transition-colors',
+                          isCurrent
+                            ? `${accentBg} text-white shadow-md font-bold`
+                            : 'text-slate-300 hover:bg-slate-700/60',
+                        ].join(' ')}
+                      >
+                        {mes}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Volver a días */}
+                <button
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); setCalState(prev => prev ? { ...prev, view: 'days' as CalView } : prev) }}
+                  className="mt-3 w-full text-center text-[10px] text-slate-400 hover:text-white py-1 rounded-lg hover:bg-slate-700/60 transition-colors"
+                >
+                  Volver a dias
+                </button>
+              </>
+            )}
           </div>
         </div>,
         document.body

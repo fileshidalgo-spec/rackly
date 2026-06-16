@@ -695,17 +695,6 @@ export function StockTab() {
           </div>
         </div>
 
-        {/* ═══ SECCIÓN CRUZADA: También en Kardex Piso ═══ */}
-        <CrossSectionPiso
-          selectedCodigo={selectedCodigo}
-          stockFilter={stockFilter}
-          pisoStock={pisoStock}
-          setPisoStock={setPisoStock}
-          pisoLoading={pisoLoading}
-          setPisoLoading={setPisoLoading}
-          pisoSearchedCode={pisoSearchedCode}
-          setPisoSearchedCode={setPisoSearchedCode}
-        />
         </>
       ) : (
         /* Sin stock en ubicaciones — mostrar info del catálogo + Big Magic */
@@ -750,6 +739,18 @@ export function StockTab() {
           )}
         </div>
       )}
+
+      {/* ═══ SECCIÓN CRUZADA: También en Kardex Piso ═══ */}
+      <CrossSectionPiso
+        selectedCodigo={selectedCodigo}
+        stockFilter={stockFilter}
+        pisoStock={pisoStock}
+        setPisoStock={setPisoStock}
+        pisoLoading={pisoLoading}
+        setPisoLoading={setPisoLoading}
+        pisoSearchedCode={pisoSearchedCode}
+        setPisoSearchedCode={setPisoSearchedCode}
+      />
     </div>
   )
 }

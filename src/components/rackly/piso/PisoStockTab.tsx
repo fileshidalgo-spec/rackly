@@ -3,13 +3,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { stockPisoGlobal, type StockPisoItem } from '@/lib/piso/api'
 import { findCatalogoByCodigo, fetchCatalogo, isCatalogoLoaded } from '@/lib/rackly/catalogo'
+import { buscarStockRacksPorCodigo, type StockRacksPorCodigoItem } from '@/lib/rackly/kardex'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
-import { Search, PackageSearch, Loader2, RefreshCw, MapPin, AlertTriangle } from 'lucide-react'
+import { Search, PackageSearch, Loader2, RefreshCw, MapPin, AlertTriangle, Warehouse } from 'lucide-react'
 
 export function PisoStockTab() {
   const [query, setQuery] = useState('')
@@ -18,6 +19,11 @@ export function PisoStockTab() {
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+
+  // Stock cruzado: Racks
+  const [racksStock, setRacksStock] = useState<StockRacksPorCodigoItem[]>([])
+  const [racksLoading, setRacksLoading] = useState(false)
+  const [racksSearchedCode, setRacksSearchedCode] = useState('')
 
   const mountedRef = useRef(true)
 
@@ -47,9 +53,65 @@ export function PisoStockTab() {
     return () => { mountedRef.current = false }
   }, [loadStock])
 
-  // Realtime: auto-refresh when piso_movimientos changes (polling solo como respaldo si WebSocket cae)
+  // Realtime: auto-refresh when piso_movimientos changes
   const silentRefresh = useCallback(() => loadStock(true), [loadStock])
   usePisoRealtime(silentRefresh)
+
+  // Buscar stock en Racks cuando el filtro coincide con códigos de producto
+  useEffect(() => {
+    const term = query.trim().toUpperCase()
+    if (!term || items.length === 0) {
+      setRacksStock([])
+      setRacksSearchedCode('')
+      return
+    }
+
+    // Obtener los códigos únicos que coinciden con la búsqueda
+    const matchedCodes = new Set<string>()
+    for (const item of items) {
+      if (
+        item.bloque_codigo.toUpperCase().includes(term) ||
+        item.bloque_descripcion.toUpperCase().includes(term) ||
+        (item.codigo_inc && item.codigo_inc.toUpperCase().includes(term))
+      ) {
+        matchedCodes.add(item.bloque_codigo.toUpperCase())
+      }
+    }
+
+    if (matchedCodes.size === 0) {
+      setRacksStock([])
+      setRacksSearchedCode('')
+      return
+    }
+
+    // Solo buscar si los códigos cambiaron
+    const codeKey = [...matchedCodes].sort().join(',')
+    if (codeKey === racksSearchedCode) return
+
+    let cancelled = false
+    setRacksLoading(true)
+    setRacksSearchedCode(codeKey)
+
+    // Buscar cada código en Racks en paralelo
+    Promise.all(
+      [...matchedCodes].map(async (codigo) => {
+        try {
+          return await buscarStockRacksPorCodigo(codigo)
+        } catch {
+          return []
+        }
+      })
+    ).then((results) => {
+      if (cancelled || !mountedRef.current) return
+      const flat = results.flat()
+      setRacksStock(flat)
+      setRacksLoading(false)
+    }).catch(() => {
+      if (!cancelled && mountedRef.current) setRacksLoading(false)
+    })
+
+    return () => { cancelled = true }
+  }, [query, items, racksSearchedCode])
 
   // Get Big Magic stock for the search term
   const bmItem = query.trim() ? findCatalogoByCodigo(query.trim()) : null
@@ -85,7 +147,19 @@ export function PisoStockTab() {
     grouped.set(item.bloque_codigo, arr)
   }
 
+  // Filtrar stock de Racks solo para los códigos que coinciden con la búsqueda actual
+  const filteredRacksStock = term
+    ? racksStock.filter(r => {
+        // Buscar si el código del item de racks coincide con algo en la búsqueda
+        // Como racksStock ya se cargó solo para códigos que matchean, filtramos por INC si aplica
+        if (stockFilter === 'inc') return !!r.codigo_inc
+        if (stockFilter === 'disponibles') return !r.codigo_inc
+        return true
+      })
+    : []
+
   const totalFiltered = filtered.reduce((sum, i) => sum + i.cantidad, 0)
+  const totalRacks = filteredRacksStock.reduce((sum, r) => sum + r.stock, 0)
 
   function vencimientoBadge(fv: string) {
     if (!fv) return <span className="text-xs text-slate-500">—</span>
@@ -100,6 +174,13 @@ export function PisoStockTab() {
           ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
           : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
     return <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${cls}`}>{fv}</Badge>
+  }
+
+  // Calcular total de Racks agrupado por código para el mobile
+  const racksByCode = new Map<string, number>()
+  for (const r of filteredRacksStock) {
+    // No tenemos el campo código directamente en StockRacksPorCodigoItem, 
+    // pero todos los items de racksStock son del mismo código buscado
   }
 
   return (
@@ -265,6 +346,108 @@ export function PisoStockTab() {
               </TableBody>
             </Table>
           </div>
+
+          {/* ═══ SECCIÓN CRUZADA: También en Kardex Racks ═══ */}
+          {(racksLoading || filteredRacksStock.length > 0) && term && (
+            <div className="mt-4 rounded-xl border border-cyan-500/30 bg-cyan-950/20 overflow-hidden">
+              {/* Header */}
+              <div className="px-4 py-3 bg-cyan-900/20 border-b border-cyan-500/20 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-cyan-500/20 flex items-center justify-center">
+                    <Warehouse className="h-4 w-4 text-cyan-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-cyan-300">Tambien en Kardex Racks</p>
+                    <p className="text-[10px] text-cyan-500/70">Stock en racks para estos articulos</p>
+                  </div>
+                </div>
+                {racksLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-cyan-400" />
+                ) : (
+                  <Badge variant="outline" className="text-xs px-2.5 py-0.5 border-cyan-500/40 text-cyan-300">
+                    Total: <span className="font-bold ml-1">{totalRacks}</span>
+                  </Badge>
+                )}
+              </div>
+
+              {/* Contenido */}
+              {racksLoading ? (
+                <div className="px-4 py-6 text-center text-cyan-400/60 text-xs">
+                  <Loader2 className="h-4 w-4 animate-spin inline mr-1.5" />
+                  Buscando en Kardex Racks...
+                </div>
+              ) : filteredRacksStock.length > 0 ? (
+                <div className="hidden sm:block overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-cyan-900/10 hover:bg-cyan-900/10">
+                        <TableHead className="text-[10px] font-semibold text-cyan-400/80 uppercase">Bloque</TableHead>
+                        <TableHead className="text-[10px] font-semibold text-cyan-400/80 uppercase">Torre</TableHead>
+                        <TableHead className="text-[10px] font-semibold text-cyan-400/80 uppercase">Piso</TableHead>
+                        <TableHead className="text-[10px] font-semibold text-cyan-400/80 uppercase">Posicion</TableHead>
+                        <TableHead className="text-[10px] font-semibold text-cyan-400/80 uppercase">Vencimiento</TableHead>
+                        <TableHead className="text-[10px] font-semibold text-cyan-400/80 uppercase text-right">Stock</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredRacksStock.map((r, i) => (
+                        <TableRow key={i} className="border-slate-700/30 hover:bg-cyan-900/10">
+                          <TableCell className="font-mono text-xs text-cyan-300">{r.bloque}</TableCell>
+                          <TableCell className="text-xs text-slate-300">{r.torre}</TableCell>
+                          <TableCell className="text-xs text-slate-300">{r.piso}</TableCell>
+                          <TableCell className="text-xs text-slate-300">{r.posicion}</TableCell>
+                          <TableCell>
+                            {r.fVencimiento ? (
+                              <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${(() => {
+                                const hoy = new Date(new Date().toDateString())
+                                const fVen = new Date(r.fVencimiento + 'T00:00:00')
+                                const diff = (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
+                                return diff < 0
+                                  ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+                                  : diff <= 15
+                                    ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
+                                    : diff <= 30
+                                      ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+                                      : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
+                              })()}`}>
+                                {r.fVencimiento}
+                              </Badge>
+                            ) : <span className="text-xs text-slate-500">—</span>}
+                          </TableCell>
+                          <TableCell className="text-right text-xs font-bold text-cyan-200">{r.stock} <span className="font-normal text-slate-400">{r.un}</span></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : null}
+
+              {/* Mobile cards para Racks */}
+              {filteredRacksStock.length > 0 && (
+                <div className="sm:hidden divide-y divide-cyan-500/10">
+                  {filteredRacksStock.map((r, i) => (
+                    <div key={i} className="px-4 py-2.5 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-[10px]">
+                        <span className="font-mono text-cyan-300 font-semibold">B{r.bloque}</span>
+                        <span className="text-slate-500">/</span>
+                        <span className="text-slate-300">T{r.torre}</span>
+                        <span className="text-slate-500">/</span>
+                        <span className="text-slate-300">P{r.piso}</span>
+                        <span className="text-slate-500">/</span>
+                        <span className="text-slate-300">Pos{r.posicion}</span>
+                        {r.fVencimiento && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800">
+                            {r.fVencimiento}
+                          </Badge>
+                        )}
+                      </div>
+                      <span className="text-xs font-bold text-cyan-200">{r.stock} {r.un}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : !loading && (query.trim() || items.length === 0) ? (
         <div className="flex flex-col items-center gap-2 py-12 text-slate-500">

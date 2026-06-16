@@ -50,10 +50,13 @@ function CrossSectionPiso({
   setPisoSearchedCode: (v: string) => void
 }) {
   // Buscar stock en Piso cuando se selecciona un código en Racks
+  const [pisoError, setPisoError] = useState(false)
+
   useEffect(() => {
     if (!selectedCodigo) {
       setPisoStock([])
       setPisoSearchedCode('')
+      setPisoError(false)
       return
     }
     if (selectedCodigo === pisoSearchedCode) return
@@ -61,19 +64,31 @@ function CrossSectionPiso({
     let cancelled = false
     setPisoLoading(true)
     setPisoSearchedCode(selectedCodigo)
+    setPisoError(false)
 
     stockPisoGlobal()
       .then((allPiso) => {
         if (cancelled) return
-        const code = selectedCodigo.toUpperCase()
+        const code = selectedCodigo.toUpperCase().trim()
         const filtered = allPiso.filter(item =>
-          item.bloque_codigo.toUpperCase() === code
+          item.bloque_codigo.toUpperCase().trim() === code
         )
+        console.log('[CrossSectionPiso] buscando:', code, 'en', allPiso.length, 'items de Piso, encontrados:', filtered.length)
+        if (filtered.length === 0 && allPiso.length > 0) {
+          const codes = [...new Set(allPiso.map(i => i.bloque_codigo.toUpperCase().trim()))]
+          console.log('[CrossSectionPiso] codigos disponibles (primeros 20):', codes.slice(0, 20))
+          const similar = codes.filter(c => c.includes(code) || code.includes(c))
+          console.log('[CrossSectionPiso] similares:', similar)
+        }
         setPisoStock(filtered)
         setPisoLoading(false)
       })
-      .catch(() => {
-        if (!cancelled) setPisoLoading(false)
+      .catch((err) => {
+        console.error('[CrossSectionPiso] error:', err)
+        if (!cancelled) {
+          setPisoLoading(false)
+          setPisoError(true)
+        }
       })
 
     return () => { cancelled = true }
@@ -88,8 +103,10 @@ function CrossSectionPiso({
 
   const totalPiso = filtered.reduce((sum, i) => sum + i.cantidad, 0)
 
-  if (pisoLoading || filtered.length > 0) {
-    return (
+  // Siempre mostrar la sección cuando hay un código seleccionado (loading, resultados, o vacío)
+  if (!selectedCodigo) return null
+
+  return (
       <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-50 dark:bg-amber-950/20 overflow-hidden">
         <div className="px-4 py-3 bg-amber-100/50 dark:bg-amber-900/20 border-b border-amber-500/20 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -110,7 +127,11 @@ function CrossSectionPiso({
           )}
         </div>
 
-        {pisoLoading ? (
+        {pisoError ? (
+          <div className="px-4 py-4 text-center text-amber-600/60 text-xs">
+            Error al buscar en Kardex Piso. Intenta de nuevo.
+          </div>
+        ) : pisoLoading ? (
           <div className="px-4 py-6 text-center text-amber-500/60 text-xs">
             <Loader2 className="h-4 w-4 animate-spin inline mr-1.5" />
             Buscando en Kardex Piso...
@@ -178,10 +199,13 @@ function CrossSectionPiso({
             ))}
           </div>
         )}
+        {!pisoLoading && !pisoError && filtered.length === 0 && (
+          <div className="px-4 py-4 text-center text-amber-600/50 text-xs">
+            Sin stock en Kardex Piso para este codigo
+          </div>
+        )}
       </div>
     )
-  }
-  return null
 }
 
 export function StockTab() {

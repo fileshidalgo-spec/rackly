@@ -324,6 +324,7 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
               left: calState.position.left,
               pointerEvents: 'auto',
             }}
+            onMouseDown={(e) => e.stopPropagation()}
           >
             {calState.view === 'days' ? (
               /* ═══ VISTA DÍAS ═══ */

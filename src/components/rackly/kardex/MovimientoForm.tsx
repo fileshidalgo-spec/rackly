@@ -244,9 +244,10 @@ function IngresoForm({
       }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
+        const detail = (err as Record<string, string>).detail || ''
         toast.error('Stock insuficiente', {
-          description: 'Otro usuario pudo haber modificado el stock mientras tú operabas.',
-          duration: 6000,
+          description: detail || 'Otro usuario pudo haber modificado el stock mientras tú operabas.',
+          duration: 8000,
         })
       } else {
         const message = extractError(err)
@@ -654,7 +655,8 @@ function SalidaForm({
         } catch (err) {
           if (isInsufficientStockError(err)) {
             stockErrors++
-            errorDetails.push(`Stock insuficiente en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion} (otro usuario modificó el stock)`)
+            const detail = (err as Record<string, string>).detail || ''
+            errorDetails.push(`Stock insuficiente en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}${detail ? ` (${detail})` : ''}`)
           } else {
             const msg = extractError(err)
             errorDetails.push(`Error en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}: ${msg}`)
@@ -868,9 +870,10 @@ function SalidaForm({
       onCreated(movs)
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
+        const detail = (err as Record<string, string>).detail || ''
         toast.error('Stock insuficiente', {
-          description: 'Otro usuario pudo haber modificado el stock mientras tú operabas. Los datos se han actualizado.',
-          duration: 6000,
+          description: detail || 'Otro usuario pudo haber modificado el stock mientras tú operabas. Los datos se han actualizado.',
+          duration: 8000,
         })
         setConfirmState(null)
         refreshLocations() // refrescar datos reales

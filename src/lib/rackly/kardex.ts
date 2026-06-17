@@ -161,19 +161,30 @@ export async function buscarStockRacksPorCodigo(codigo: string): Promise<StockRa
 /** Fallback: insert directo cuando la RPC no existe en Supabase */
 async function addMovimientoFallback(
   m: Omit<Movimiento, 'id' | 'fModificacion'>,
-  uuidSync?: string
+  uuidSync?: string,
+  skipValidation: boolean = false
 ): Promise<Movimiento[]> {
   console.warn('[addMovimiento] RPC no encontrada, usando insert directo como fallback')
 
   // ── Validación de stock negativo para salidas NORMALES (no INC) ──
   // Las salidas normales NUNCA deben generar stock negativo.
   // Los traslados se manejan aparte con autoajuste.
-  if (m.tipo === 'salida' && !m.codigoInc) {
+  if (!skipValidation && m.tipo === 'salida' && !m.codigoInc) {
     try {
-      const currentStock = await calcularStockUbicacion(
-        m.codigo, m.bloque, m.torre, m.piso, m.posicion, true // excluir INC
-      )
-      if (m.cantidad > currentStock) {
+      // Validar por lote específico si hay fVencimiento, si no por ubicación completa
+      let currentStock: number
+      if (m.fVencimiento) {
+        currentStock = await calcularStockLote(
+          m.codigo, m.bloque, m.torre, m.piso, m.posicion,
+          m.fVencimiento, true // excluir INC
+        )
+      } else {
+        currentStock = await calcularStockUbicacion(
+          m.codigo, m.bloque, m.torre, m.piso, m.posicion, true // excluir INC
+        )
+      }
+      // Tolerancia de 0.001 para redondeo
+      if (m.cantidad > currentStock + 0.001) {
         const err = new Error('INSUFFICIENT_STOCK')
         ;(err as unknown as Record<string, string>).detail =
           `Stock actual = ${Math.round(currentStock * 1000) / 1000} ${m.un}, cantidad solicitada = ${m.cantidad} ${m.un}`
@@ -296,15 +307,37 @@ export async function addMovimiento(
       p_uuid_sync: uuidSync || null,
       p_codigo_inc: m.codigoInc || null,
     })
-    // Stock insuficiente es un error controlado, no excepción cruda
+    // Stock insuficiente es un error controlado — verificar por lote antes de fallar
     if (error) {
       const msg = error.message || ''
       const code = (error as unknown as Record<string, string>).code || ''
       if (msg.includes('INSUFFICIENT_STOCK')) {
         const parts = msg.split('|')
-        const detail = parts.length > 1 ? parts[1] : 'Stock insuficiente para esta operación'
+        const rpcDetail = parts.length > 1 ? parts[1] : 'Stock insuficiente para esta operación'
+
+        // Si es salida con fVencimiento, el RPC valida por ubicación completa
+        // pero el display muestra por lote. Verificar por lote específico.
+        if (m.tipo === 'salida' && m.fVencimiento) {
+          try {
+            const stockLote = await calcularStockLote(
+              m.codigo, m.bloque, m.torre, m.piso, m.posicion,
+              m.fVencimiento, true // excluir INC
+            )
+            // Redondear igual que el display (3 decimales)
+            const stockRedondeado = Math.round(stockLote * 1000) / 1000
+            if (m.cantidad <= stockRedondeado + 0.001) {
+              // El lote SÍ tiene stock suficiente → usar fallback (insert directo)
+              console.log(`[addMovimiento] RPC rechazó pero el lote tiene stock: ${stockRedondeado} >= ${m.cantidad}, usando fallback`)
+              return await addMovimientoFallback(m, uuidSync, true) // skipValidation = true
+            }
+          } catch (verifyErr) {
+            console.warn('[addMovimiento] No se pudo verificar stock por lote:', verifyErr)
+          }
+        }
+
+        // Si la verificación por lote también falló, mostrar error con detalle real
         const err = new Error('INSUFFICIENT_STOCK')
-        ;(err as unknown as Record<string, string>).detail = detail
+        ;(err as unknown as Record<string, string>).detail = rpcDetail
         throw err
       }
       // Si la RPC no existe (404 / 42883 / 'Could not find'), usar fallback
@@ -357,6 +390,46 @@ export async function calcularStockUbicacion(
     .eq('piso', piso)
     .eq('posicion', posicion)
   // Excluir movimientos INC para validar stock normal
+  if (excluirInc) {
+    query = query.is('codigo_inc', null)
+  }
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []).reduce(
+    (s: number, r: { tipo: string; cantidad: unknown }) => {
+      const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
+      return s + impactoStock(r.tipo, qty)
+    },
+    0
+  )
+}
+
+/** Calcular stock de un lote específico (codigo + ubicacion + fVencimiento).
+ *  Esto es más preciso que calcularStockUbicacion porque aísla el lote exacto
+ *  que el usuario ve en pantalla. */
+export async function calcularStockLote(
+  codigo: string,
+  bloque: string,
+  torre: string,
+  piso: string,
+  posicion: string,
+  fVencimiento: string,
+  excluirInc: boolean = false
+): Promise<number> {
+  const target = codigo.trim().toUpperCase()
+  let query = dataClient
+    .from('movimientos')
+    .select('tipo, cantidad')
+    .eq('codigo', target)
+    .eq('bloque', bloque)
+    .eq('torre', torre)
+    .eq('piso', piso)
+    .eq('posicion', posicion)
+  if (fVencimiento) {
+    query = query.eq('f_vencimiento', fVencimiento)
+  } else {
+    query = query.is('f_vencimiento', null)
+  }
   if (excluirInc) {
     query = query.is('codigo_inc', null)
   }

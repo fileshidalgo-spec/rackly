@@ -173,8 +173,10 @@ async function addMovimientoFallback(
   // f_vencimiento es solo para FEFO, NO para calcular stock.
   if (!skipValidation && m.tipo === 'salida' && !m.codigoInc) {
     try {
+      // Stock real = movimientos en la ubicacion para ese codigo, EXCLUYENDO INC.
+      // f_vencimiento es solo para FEFO, NO para calcular stock.
       const currentStock = await calcularStockUbicacion(
-        m.codigo, m.bloque, m.torre, m.piso, m.posicion, false // NO excluir INC
+        m.codigo, m.bloque, m.torre, m.piso, m.posicion, true // excluir INC
       )
       // Tolerancia de 0.001 para redondeo (display redondea a 3 decimales)
       const stockRedondeado = Math.round(currentStock * 1000) / 1000
@@ -314,21 +316,21 @@ export async function addMovimiento(
         // Verificar con el MISMO calculo que usa el display (stockEnUbicacion).
         if (m.tipo === 'salida') {
           try {
-            // Calcular igual que el display: suma todos los movimientos de esa ubicacion
-            // para ese codigo, SIN excluir INC (el display los separa en grupos propios).
+            // Stock real = movimientos en la ubicacion para ese codigo, EXCLUYENDO INC.
+            // f_vencimiento es solo para FEFO, NO para calcular stock.
             const stockReal = await calcularStockUbicacion(
-              m.codigo, m.bloque, m.torre, m.piso, m.posicion, false // NO excluir INC
+              m.codigo, m.bloque, m.torre, m.piso, m.posicion, true // excluir INC
             )
             const stockRedondeado = Math.round(stockReal * 1000) / 1000
-            console.log(`[addMovimiento] RPC rechazó salida. Stock display (ubicacion completa, sin excluir INC): ${stockRedondeado}, solicitada: ${m.cantidad}`)
+            console.log(`[addMovimiento] RPC rechazó salida. Stock real (excluyendo INC): ${stockRedondeado}, solicitada: ${m.cantidad}`)
             if (m.cantidad <= stockRedondeado + 0.001) {
               // El stock real SI es suficiente → el RPC tiene un calculo diferente
-              // Usar fallback con validacion propia
-              console.log(`[addMovimiento] Stock display confirma ${stockRedondeado} >= ${m.cantidad}, usando fallback`)
+              // (el RPC puede incluir INC o filtrar por f_vencimiento)
+              console.log(`[addMovimiento] Stock real confirma ${stockRedondeado} >= ${m.cantidad}, usando fallback directo`)
               return await addMovimientoFallback(m, uuidSync, true) // skipValidation
             }
           } catch (verifyErr) {
-            console.warn('[addMovimiento] No se pudo verificar stock de display:', verifyErr)
+            console.warn('[addMovimiento] No se pudo verificar stock real:', verifyErr)
           }
         }
 
@@ -697,18 +699,18 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
         const parts = msg.split('|')
         const rpcDetail = parts.length > 1 ? parts[1] : 'Stock insuficiente en origen para este traslado'
 
-        // Verificar con el mismo calculo que el display
+        // Verificar con el stock real (excluyendo INC)
         try {
           const stockReal = await calcularStockUbicacion(
-            t.codigo, t.origen.bloque, t.origen.torre, t.origen.piso, t.origen.posicion, false
+            t.codigo, t.origen.bloque, t.origen.torre, t.origen.piso, t.origen.posicion, true // excluir INC
           )
           const stockRedondeado = Math.round(stockReal * 1000) / 1000
           if (t.cantidad <= stockRedondeado + 0.001) {
-            console.log(`[trasladarMovimiento] RPC rechazó pero stock display confirma ${stockRedondeado} >= ${t.cantidad}, usando fallback`)
+            console.log(`[trasladarMovimiento] RPC rechazó pero stock real confirma ${stockRedondeado} >= ${t.cantidad}, usando fallback`)
             return await trasladarMovimientoFallback(t)
           }
         } catch (verifyErr) {
-          console.warn('[trasladarMovimiento] No se pudo verificar stock:', verifyErr)
+          console.warn('[trasladarMovimiento] No se pudo verificar stock real:', verifyErr)
         }
 
         const err = new Error('INSUFFICIENT_STOCK')

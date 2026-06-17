@@ -441,7 +441,8 @@ export function OcupacionTab() {
       if (mountedRef.current && !wasOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
-        toast.error('Stock insuficiente', { description: 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 6000 })
+        const detail = (err as Record<string, string>).detail || ''
+        toast.error('Stock insuficiente', { description: detail || 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 8000 })
         refreshDetail(); refreshData()
       } else { toast.error('Error al registrar salida', { description: extractError(err) }) }
     } finally { setActionBusy(false) }
@@ -480,7 +481,8 @@ export function OcupacionTab() {
       if (mountedRef.current && !wasTrOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
-        toast.error('Stock insuficiente en origen', { description: 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 6000 })
+        const detail = (err as Record<string, string>).detail || ''
+        toast.error('Stock insuficiente en origen', { description: detail || 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 8000 })
         refreshDetail(); refreshData()
       } else { toast.error('Error al trasladar', { description: extractError(err) }) }
     } finally { setActionBusy(false) }

@@ -65,40 +65,39 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
   return multiples
 }
 
-// Calcula ocupación desde movimientos — rastrea stock POR LOTE (código + vencimiento).
+// Calcula ocupación desde movimientos — stock POR CÓDIGO (no por lote).
+// f_vencimiento es SOLO para FEFO (ordenamiento), NO para particionar stock.
 // IMPORTANTE: Los movimientos INC se EXCLUYEN del stock normal.
 // La detección INC se hace por separado con fetchIncPorUbicacion().
 function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
-  // Mapa: ubicacion_key → (lote_key "codigo||fVencimiento" → stock)
+  // Mapa: ubicacion_key → (codigo → stock)
   const cellMap = new Map<string, Map<string, number>>()
   for (const m of movs) {
     // EXCLUIR movimientos INC del cálculo de ocupación normal
     if (m.codigoInc) continue
     const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
     const code = m.codigo.trim().toUpperCase()
-    const lotKey = `${code}||${m.fVencimiento || ''}`
-    let lotMap = cellMap.get(key)
-    if (!lotMap) { lotMap = new Map(); cellMap.set(key, lotMap) }
+    let codeMap = cellMap.get(key)
+    if (!codeMap) { codeMap = new Map(); cellMap.set(key, codeMap) }
     const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
-    const current = lotMap.get(lotKey) ?? 0
-    lotMap.set(lotKey, current + delta)
+    const current = codeMap.get(code) ?? 0
+    codeMap.set(code, current + delta)
   }
   // Construir resultado: solo celdas con stock total > 0
   const result: OcupacionCelda[] = []
-  for (const [key, lotMap] of cellMap) {
+  for (const [key, codeMap] of cellMap) {
     let totalStock = 0
     const codigos = new Set<string>()
-    let lotes = 0
-    for (const [lotKey, stock] of lotMap) {
+    for (const [code, stock] of codeMap) {
       if (stock > 0) {
         totalStock += stock
-        lotes++
-        codigos.add(lotKey.split('||')[0])
+        codigos.add(code)
       }
     }
     if (totalStock > 0) {
       const [bloque, torre, piso, posicion] = key.split('-')
-      result.push({ bloque, torre, piso, posicion, stock: totalStock, codigos: Array.from(codigos), lotes, tieneInc: false, incItems: [] })
+      // lotes = número de códigos distintos (ya no se cuenta por f_vencimiento)
+      result.push({ bloque, torre, piso, posicion, stock: totalStock, codigos: Array.from(codigos), lotes: codigos.size, tieneInc: false, incItems: [] })
     }
   }
   return result

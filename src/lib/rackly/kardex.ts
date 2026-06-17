@@ -422,7 +422,8 @@ export async function stockEnUbicacion(
 ): Promise<StockEnUbicacion[]> {
   try {
     // Método principal: consultar movimientos directamente con paginación
-    // Agrupa por (codigo, f_vencimiento) para separar lotes con distintas fechas de vencimiento
+    // f_vencimiento es SOLO para FEFO (ordenamiento), NO para particionar stock.
+    // Se agrupa por (codigo, codigo_inc) — el stock es la suma de TODOS los lotes.
     const allRows: Record<string, unknown>[] = []
     let from = 0
     const BATCH = 1000
@@ -446,17 +447,18 @@ export async function stockEnUbicacion(
       from += BATCH
     }
 
-    // Agrupar por (codigo, f_vencimiento, codigo_inc)
+    // Agrupar por (codigo, codigo_inc) — f_vencimiento NO participa en la agrupación.
+    // Se rastrea la fecha de vencimiento más próxima (FEFO) para cada grupo.
     const groups = new Map<string, {
       codigo: string; descripcion: string; un: string;
-      stock: number; fVencimiento: string;
+      stock: number; fVencimientoMasProxima: string;
       usuarioPrimerNombre: string; proveedor: string; codigoInc: string;
     }>()
 
     for (const r of allRows) {
       const m = fromRow(r)
-      const fvKey = m.fVencimiento || ''
-      const key = `${m.codigo}||${fvKey}||${m.codigoInc || ''}`
+      const incKey = m.codigoInc || ''
+      const key = `${m.codigo}||${incKey}`
 
       let group = groups.get(key)
       if (!group) {
@@ -465,15 +467,21 @@ export async function stockEnUbicacion(
           descripcion: m.descripcion,
           un: m.un,
           stock: 0,
-          fVencimiento: m.fVencimiento,
+          fVencimientoMasProxima: m.fVencimiento || '',
           usuarioPrimerNombre: m.usuarioNombre?.split(' ')[0] ?? '',
           proveedor: m.proveedor ?? '',
-          codigoInc: m.codigoInc || '',
+          codigoInc: incKey,
         }
         groups.set(key, group)
       } else {
         // Si el grupo no tiene descripción pero este movimiento sí, usarla
         if (!group.descripcion && m.descripcion) group.descripcion = m.descripcion
+        // Rastrear la fecha de vencimiento más próxima (para FEFO)
+        if (m.fVencimiento) {
+          if (!group.fVencimientoMasProxima || m.fVencimiento < group.fVencimientoMasProxima) {
+            group.fVencimientoMasProxima = m.fVencimiento
+          }
+        }
       }
 
       // Calcular stock neto (ingreso/devolucion/traslado = +, salida = -)
@@ -487,9 +495,9 @@ export async function stockEnUbicacion(
 
     // Ordenar por FEFO: fecha de vencimiento más próxima primero, sin fecha al final
     results.sort((a, b) => {
-      if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
-      if (a.fVencimiento && !b.fVencimiento) return -1
-      if (!a.fVencimiento && b.fVencimiento) return 1
+      if (a.fVencimientoMasProxima && b.fVencimientoMasProxima) return a.fVencimientoMasProxima.localeCompare(b.fVencimientoMasProxima)
+      if (a.fVencimientoMasProxima && !b.fVencimientoMasProxima) return -1
+      if (!a.fVencimientoMasProxima && b.fVencimientoMasProxima) return 1
       return 0
     })
 
@@ -498,7 +506,7 @@ export async function stockEnUbicacion(
       descripcion: g.descripcion,
       un: g.un,
       stock: Math.round(g.stock * 1000) / 1000,
-      fVencimiento: g.fVencimiento || undefined,
+      fVencimiento: g.fVencimientoMasProxima || undefined,
       usuarioPrimerNombre: g.usuarioPrimerNombre || undefined,
       proveedor: g.proveedor || undefined,
       codigoInc: g.codigoInc || undefined,

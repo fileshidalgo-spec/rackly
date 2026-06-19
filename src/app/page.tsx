@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { AuthGate } from '@/components/rackly/auth/AuthGate'
 import { SesionBar } from '@/components/rackly/kardex/SesionBar'
@@ -680,12 +680,46 @@ function RacklyApp() {
   )
 }
 
+/**
+ * HydrationGuard — avoids React hydration mismatch in static export.
+ *
+ * During SSG, Next.js renders HTML WITHOUT env vars → AuthGate shows error page.
+ * During client hydration, env vars ARE available → AuthGate shows spinner/login/app.
+ *
+ * Without this guard, React detects a severe DOM mismatch and must discard
+ * the entire server HTML, re-rendering from scratch. On mobile this causes
+ * a long "stuck loading" appearance.
+ *
+ * The guard simply shows a spinner until client-side mount, ensuring both
+ * SSG and first client paint produce identical HTML (just a spinner),
+ * then React hydrates cleanly and transitions to the real UI.
+ */
+function HydrationGuard({ children }: { children: ReactNode }) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+  if (!mounted) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-300 border-t-slate-900" />
+          <p className="text-sm text-slate-500">Cargando Rackly…</p>
+        </div>
+      </main>
+    )
+  }
+  return <>{children}</>
+}
+
 export default function Page() {
   return (
-    <AuthProvider>
-      <AuthGate>
-        <RacklyApp />
-      </AuthGate>
-    </AuthProvider>
+    <HydrationGuard>
+      <AuthProvider>
+        <AuthGate>
+          <RacklyApp />
+        </AuthGate>
+      </AuthProvider>
+    </HydrationGuard>
   )
 }

@@ -75,14 +75,14 @@ export function usePisoRealtime(onChange: () => void) {
           'postgres_changes',
           { event: '*', schema: 'public', table: 'piso_movimientos' },
           () => {
-            setTimeout(() => { if (active) refresh() }, 500)
+            setTimeout(() => { if (active) refresh() }, 150)
           }
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'piso_movimiento_detalles' },
           () => {
-            setTimeout(() => { if (active) refresh() }, 500)
+            setTimeout(() => { if (active) refresh() }, 150)
           }
         )
         .subscribe((status, err) => {

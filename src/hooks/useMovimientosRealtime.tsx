@@ -54,8 +54,8 @@ export function useMovimientosRealtime(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'movimientos' },
           () => {
-            // Debounce: esperar 500ms antes de refrescar para evitar múltiples refrescos rápidos
-            setTimeout(() => { if (active) refresh() }, 500)
+            // Debounce: esperar 150ms antes de refrescar para evitar múltiples refrescos rápidos
+            setTimeout(() => { if (active) refresh() }, 150)
           }
         )
         .subscribe((status, err) => {

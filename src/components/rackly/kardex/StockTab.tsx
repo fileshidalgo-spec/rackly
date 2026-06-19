@@ -5,7 +5,7 @@ import {
   type Movimiento,
   eliminarUbicacion,
 } from '@/lib/rackly/kardex'
-import { stockPisoGlobal, type StockPisoItem } from '@/lib/piso/api'
+import { stockPisoPorCodigo, type StockPisoItem } from '@/lib/piso/api'
 import {
   findCatalogoByCodigo,
   fetchCatalogo,
@@ -75,21 +75,11 @@ function CrossSectionPiso({
       }
     }, 8000)
 
-    stockPisoGlobal()
-      .then((allPiso) => {
+    stockPisoPorCodigo(selectedCodigo)
+      .then((filtered) => {
         if (cancelled) return
         clearTimeout(timeout)
-        const code = selectedCodigo.toUpperCase().trim()
-        const filtered = allPiso.filter(item =>
-          item.bloque_codigo.toUpperCase().trim() === code
-        )
-        console.log('[CrossSectionPiso] buscando:', code, 'en', allPiso.length, 'items de Piso, encontrados:', filtered.length)
-        if (filtered.length === 0 && allPiso.length > 0) {
-          const codes = [...new Set(allPiso.map(i => i.bloque_codigo.toUpperCase().trim()))]
-          console.log('[CrossSectionPiso] codigos disponibles (primeros 20):', codes.slice(0, 20))
-          const similar = codes.filter(c => c.includes(code) || code.includes(c))
-          console.log('[CrossSectionPiso] similares:', similar)
-        }
+        console.log('[CrossSectionPiso] buscando:', selectedCodigo.toUpperCase().trim(), 'encontrados:', filtered.length)
         setPisoStock(filtered)
         setPisoLoading(false)
       })

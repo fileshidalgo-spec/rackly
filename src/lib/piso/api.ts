@@ -1690,31 +1690,50 @@ export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[
 
     // 1. Buscar bloque_id que tenga este código
     // Puede ser un bloque real (piso_bloques.codigo) o virtual (cat_CODIGO / manual_CODIGO)
-    const bloqueIds: string[] = []
+    const realBloqueIds: string[] = []
+    const virtualBloqueIds: string[] = [`cat_${code}`, `manual_${code}`]
 
     // Buscar en piso_bloques
     const { data: bloqData, error: bloqErr } = await dataClient
       .from('piso_bloques')
       .select('id')
-      .eq('codigo', code)
+      .ilike('codigo', code)
     if (!bloqErr && bloqData) {
-      for (const b of bloqData) bloqueIds.push((b as { id: string }).id)
+      for (const b of bloqData) realBloqueIds.push((b as { id: string }).id)
     }
 
-    // IDs virtuales
-    bloqueIds.push(`cat_${code}`)
-    bloqueIds.push(`manual_${code}`)
+    // 2. Buscar detalles — separar query para UUIDs y strings virtuales
+    //    porque .in() falla si la columna es UUID y se le pasa strings como 'cat_CODE'
+    type RawDet = {
+      bloque_id: string; nivel_id: string; cantidad: unknown
+      fecha_vencimiento?: string | null; movimiento_id: string
+      piso_movimientos: { tipo: string; codigo_inc?: string | null } | null | { tipo: string; codigo_inc?: string | null }[]
+    }
+    const rawDets: RawDet[] = []
+    const selectFields = 'bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)'
 
-    // 2. Buscar detalles solo para esos bloque_ids
-    if (bloqueIds.length === 0) return []
+    // 2a. Query para bloque IDs reales (UUIDs)
+    if (realBloqueIds.length > 0) {
+      const { data, error } = await dataClient
+        .from('piso_movimiento_detalles')
+        .select(selectFields)
+        .in('bloque_id', realBloqueIds)
+      if (error) console.error('[stockPisoPorCodigo] error real IDs:', error)
+      else rawDets.push(...((data ?? []) as RawDet[]))
+    }
 
-    const { data: detData, error: detErr } = await dataClient
-      .from('piso_movimiento_detalles')
-      .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)')
-      .in('bloque_id', bloqueIds)
-    if (detErr) throw detErr
+    // 2b. Query para bloque IDs virtuales (strings como cat_CODE, manual_CODE)
+    if (virtualBloqueIds.length > 0) {
+      const orParts = virtualBloqueIds.map(id => `bloque_id.eq.${id}`).join(',')
+      const { data, error } = await dataClient
+        .from('piso_movimiento_detalles')
+        .select(selectFields)
+        .or(orParts)
+      if (error) console.error('[stockPisoPorCodigo] error virtual IDs:', error)
+      else rawDets.push(...((data ?? []) as RawDet[]))
+    }
 
-    if (!detData || detData.length === 0) return []
+    if (rawDets.length === 0) return []
 
     // 3. FEFO calculation (same as stockPisoGlobal but only for this code's blocks)
     const isIngresoType = (tipo: string) =>
@@ -1729,13 +1748,6 @@ export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[
       if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { codigo_inc?: string | null }).codigo_inc || '' : ''
       return (pm as { codigo_inc?: string | null }).codigo_inc || ''
     }
-
-    type RawDet = {
-      bloque_id: string; nivel_id: string; cantidad: unknown
-      fecha_vencimiento?: string | null; movimiento_id: string
-      piso_movimientos: { tipo: string; codigo_inc?: string | null } | null | { tipo: string; codigo_inc?: string | null }[]
-    }
-    const rawDets = (detData ?? []) as RawDet[]
 
     const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[]>()
     for (const d of rawDets) {

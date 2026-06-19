@@ -705,3 +705,27 @@ Stage Summary:
 - La columna codigo_inc en piso_movimientos NO está en types.ts pero SÍ existe en la DB (confirmado por api.ts insert)
 - No se encontraron más errores críticos en la lógica de historial
 - Commit: e8289b5
+---
+Task ID: MOBILE-FIX-1
+Agent: Main Agent
+Task: Fix mobile loading issue - HydrationGuard missing in page.tsx
+
+Work Log:
+- Investigated why mobile version shows "loading page" and cannot access the app
+- Found ROOT CAUSE: page.tsx (active page) was missing HydrationGuard wrapper
+- app-content.tsx (unused duplicate) had the HydrationGuard but was never used by Next.js routing
+- During SSG, Next.js renders HTML without env vars -> AuthGate shows "Configuración incompleta" error
+- During client hydration, env vars ARE available -> AuthGate shows spinner/login/app
+- Without HydrationGuard, React detects severe DOM mismatch and discards server HTML, re-rendering from scratch
+- On mobile, this re-render is very slow, causing the "stuck loading" appearance
+- Fix: Added HydrationGuard component to page.tsx that shows spinner until client-side mount
+- Removed duplicate app-content.tsx file
+- Cleaned up tool-results directory
+- Build successful, pushed to GitHub, Cloudflare Pages deploy triggered
+
+Stage Summary:
+- Key fix: HydrationGuard in page.tsx ensures SSG and first client paint produce identical HTML
+- Both now show a spinner, then React hydrates cleanly and transitions to real UI
+- Commit: 9f879e8 pushed to main
+- Deploy: GitHub Actions -> Cloudflare Pages (automatic)
+

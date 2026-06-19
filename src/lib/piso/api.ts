@@ -1688,6 +1688,21 @@ export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[
   const code = codigo.trim().toUpperCase()
   console.log('[stockPisoPorCodigo] Iniciando búsqueda para código:', code)
 
+  // ─── TIMEOUT GARANTIZADO: nunca dejar la promesa colgada ───
+  const TIMEOUT_MS = 10000
+  const result = await Promise.race([
+    stockPisoPorCodigoInner(code),
+    new Promise<StockPisoItem[]>((resolve) =>
+      setTimeout(() => {
+        console.warn('[stockPisoPorCodigo] TIMEOUT HARD after', TIMEOUT_MS, 'ms — retornando vacío')
+        resolve([])
+      }, TIMEOUT_MS)
+    ),
+  ])
+  return result
+}
+
+async function stockPisoPorCodigoInner(code: string): Promise<StockPisoItem[]> {
   try {
     // ─── Helper: ejecutar query con fallback dataClient → supabase ───
     const queryBloques = async (queryFn: (client: any) => any) => {

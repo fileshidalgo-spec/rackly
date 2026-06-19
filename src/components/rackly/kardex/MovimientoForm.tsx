@@ -183,16 +183,24 @@ function IngresoForm({
           description: 'Se sincronizará al reconectarse',
           duration: 5000,
         })
+        // OFFLINE: Limpiar formulario para evitar duplicados
+        setCodigo('')
+        setDescripcion('')
+        setUn('')
+        setCantidad('')
+        setFVencimiento('')
+        setProveedor('')
+        setConfirmData(null)
       } else {
         toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
+        setCodigo('')
+        setDescripcion('')
+        setUn('')
+        setCantidad('')
+        setFVencimiento('')
+        setProveedor('')
+        onCreated(movs)
       }
-      setCodigo('')
-      setDescripcion('')
-      setUn('')
-      setCantidad('')
-      setFVencimiento('')
-      setProveedor('')
-      onCreated(movs)
     } catch (err: unknown) {
       const message = extractError(err)
       toast.error('Error al registrar ingreso', { description: message })
@@ -225,10 +233,12 @@ function IngresoForm({
       })
       if (wasOffline) {
         toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
-          description: 'Se sincronizará al reconectarse',
+          description: 'Se sincronizará al reconectarse. La ubicación se actualizará cuando haya conexión.',
           duration: 5000,
         })
+        // OFFLINE: Limpiar UI para evitar doble operación
         setConfirmData(null)
+        setSalidaBusy(null)
       } else {
         toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
         onCreated(movs)
@@ -676,8 +686,15 @@ function SalidaForm({
       setMassConfirmOpen(false)
       setSelected(new Set())
       setQtyMap({})
-      // Refrescar datos en vez de limpiar todo
-      await refreshLocations()
+      // Si hubo operaciones offline, limpiar UI para evitar doble salida
+      if (totalProcessed > 0 && SyncEngine.isOffline()) {
+        setLocations([])
+        setProductoDesc('')
+        setProductoUn('')
+      } else {
+        // Refrescar datos reales cuando estamos online
+        await refreshLocations()
+      }
       onCreated([]) // trigger re-render
     } catch (err: unknown) {
       const message = extractError(err)
@@ -866,16 +883,23 @@ function SalidaForm({
       })
       if (wasOffline) {
         toast.success(`Salida de ${qtyNum} ${loc.un} guardada (offline)`, {
-          description: 'Se sincronizará al reconectarse',
+          description: 'Se sincronizará al reconectarse. La ubicación se actualizará cuando haya conexión.',
           duration: 5000,
         })
+        // OFFLINE: Limpiar UI inmediatamente para evitar doble salida
+        setConfirmState(null)
+        setSearchCode('')
+        setQtyMap({})
+        setLocations([])
+        setProductoDesc('')
+        setProductoUn('')
       } else {
         toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
+        setConfirmState(null)
+        setSearchCode('')
+        setQtyMap({})
+        onCreated(movs)
       }
-      setConfirmState(null)
-      setSearchCode('')
-      setQtyMap({})
-      onCreated(movs)
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         const detail = (err as Record<string, string>).detail || ''
@@ -1598,16 +1622,23 @@ function SalidaIncForm({
       })
       if (wasOffline) {
         toast.success(`Salida INC de ${qtyNum} ${loc.un} guardada (offline)`, {
-          description: 'Se sincronizará al reconectarse',
+          description: 'Se sincronizará al reconectarse. La ubicación se actualizará cuando haya conexión.',
           duration: 5000,
         })
+        // OFFLINE: Limpiar UI para evitar doble salida
+        setConfirmState(null)
+        setSearchCode('')
+        setQtyMap({})
+        setLocations([])
+        setProductoDesc('')
+        setProductoUn('')
       } else {
         toast.success(`Salida INC de ${qtyNum} ${loc.un} registrada`)
+        setConfirmState(null)
+        setSearchCode('')
+        setQtyMap({})
+        onCreated(movs)
       }
-      setConfirmState(null)
-      setSearchCode('')
-      setQtyMap({})
-      onCreated(movs)
     } catch (err: unknown) {
       const message = extractError(err)
       toast.error('Error al registrar salida INC', { description: message })
@@ -2182,18 +2213,26 @@ function IncForm({
           description: 'Se sincronizará al reconectarse',
           duration: 5000,
         })
+        // OFFLINE: Limpiar formulario para evitar duplicados
+        setCodigo('')
+        setDescripcion('')
+        setUn('')
+        setCantidad('')
+        setCodigoInc('')
+        setFVencimiento('')
+        setSinVencimiento(false)
       } else {
         toast.success('Insumo No Conforme registrado')
+        // Limpiar formulario
+        setCodigo('')
+        setDescripcion('')
+        setUn('')
+        setCantidad('')
+        setCodigoInc('')
+        setFVencimiento('')
+        setSinVencimiento(false)
+        onCreated(movs)
       }
-      // Limpiar formulario
-      setCodigo('')
-      setDescripcion('')
-      setUn('')
-      setCantidad('')
-      setCodigoInc('')
-      setFVencimiento('')
-      setSinVencimiento(false)
-      onCreated(movs)
     } catch (err: unknown) {
       const message = extractError(err)
       toast.error('Error al registrar INC', { description: message })

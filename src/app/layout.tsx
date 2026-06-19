@@ -21,6 +21,10 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "RACKLY — Gestión de Almacenes",
   description: "Sistema de gestión de inventario y almacenes por racks",
+  other: {
+    // Prevent aggressive caching on mobile browsers
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+  },
 };
 
 export default function RootLayout({

@@ -701,10 +701,10 @@ function HydrationGuard({ children }: { children: ReactNode }) {
   }, [])
   if (!mounted) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-background">
+      <main className="flex min-h-screen items-center justify-center bg-slate-100">
         <div className="flex flex-col items-center gap-4">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-300 border-t-slate-900" />
-          <p className="text-sm text-slate-500">Cargando Rackly…</p>
+          <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-200 border-t-blue-700" />
+          <p className="text-base font-medium text-slate-700">Cargando Rackly…</p>
         </div>
       </main>
     )

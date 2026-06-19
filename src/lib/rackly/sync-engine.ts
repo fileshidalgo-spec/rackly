@@ -683,7 +683,9 @@ class SyncEngineSingleton {
     } catch (offlineErr) {
       // IndexedDB no disponible — intentar enviar al servidor como último recurso
       console.error('[SyncEngine] IndexedDB no disponible, intentando traslado directo:', offlineErr)
-      const movs = await trasladarMovimiento(t)
+      // PASAR syncId para idempotencia — si el intento online parcial funcionó,
+      // el uuidSync evitará duplicados en el servidor.
+      const movs = await trasladarMovimiento({ ...t, uuidSync: syncId })
       return { movs, wasOffline: false }
     }
   }

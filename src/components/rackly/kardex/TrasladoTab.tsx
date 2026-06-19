@@ -201,6 +201,8 @@ export function TrasladoTab() {
         usuarioNombre: perfil.nombre,
         usuarioCorreo: perfil.correo,
         proveedor: stockItem.proveedor,
+        // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
+        codigoInc: stockItem.codigoInc || undefined,
       })
       if (wasOffline) {
         toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo} (offline)`, {

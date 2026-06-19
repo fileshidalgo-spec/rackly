@@ -395,6 +395,11 @@ class SyncEngineSingleton {
         const errMsg = err instanceof Error ? err.message : String(err)
         const isConflict = errMsg.includes('INSUFFICIENT_STOCK')
         const isDuplicate = errMsg.includes('duplicate') || errMsg.includes('UNIQUE')
+        // STOCK_VALIDATION_FAILED: la RPC no existe o falló la consulta de stock.
+        // Si ya hubo 2 reintentos, asumir que la RPC no existe y marcar como error permanente
+        // para que el usuario sepa que debe ejecutar el SQL en Supabase.
+        const isValidationFailed = errMsg.includes('STOCK_VALIDATION_FAILED')
+
 
         if (isDuplicate) {
           // Ya existe en el servidor (idempotencia) — eliminar de cola
@@ -410,6 +415,16 @@ class SyncEngineSingleton {
           })
           conflicts++
           console.warn(`[SyncEngine] ⚠ Conflicto de stock: ${mov.codigo} en B${mov.bloque}/T${mov.torre}/P${mov.piso}/Pos${mov.posicion}`)
+        } else if (isValidationFailed && mov.retries >= 2) {
+          // RPC no existe o consulta de stock falla persistentemente.
+          // Marcar como error permanente con mensaje claro para el usuario.
+          await updatePendingMovement(mov.id, {
+            status: 'error',
+            retries: mov.retries + 1,
+            lastError: 'VALIDACION_FALLIDA_RPC|La función RPC no existe en la base de datos. Ejecute el SQL de migración en Supabase Dashboard y reintente.',
+          })
+          errors++
+          console.error(`[SyncEngine] ✗ Validación de stock fallida (RPC no encontrada?): ${mov.uuidSync}`)
         } else {
           // Error genérico — reintentable
           const newRetries = mov.retries + 1

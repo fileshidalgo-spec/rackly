@@ -1,0 +1,2002 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { dataClient, supabase } from '@/lib/supabase/client'
+     4→     4→
+     5→     5→/** Limpia el prefijo del sector del código de subcolumna.
+     6→     6→ *  BD guarda "BA1" (prefijo "B" + letra "A" + idx "1"), queremos solo "A1" */
+     7→     7→function cleanSubcolCode(codigo: string, columnaLetra: string): string {
+     8→     8→  const idx = codigo.indexOf(columnaLetra)
+     9→     9→  return idx >= 0 ? codigo.substring(idx) : codigo
+    10→    10→}
+    11→    11→
+    12→    12→export type Sector = {
+    13→    13→  id: string
+    14→    14→  nombre: string
+    15→    15→  prefijo: string
+    16→    16→  n_columnas: number
+    17→    17→  n_subcolumnas: number
+    18→    18→  n_posiciones: number
+    19→    19→  n_niveles: number
+    20→    20→  created_at: string
+    21→    21→}
+    22→    22→
+    23→    23→export type Columna = {
+    24→    24→  id: string
+    25→    25→  letra: string
+    26→    26→  sector_id: string
+    27→    27→}
+    28→    28→
+    29→    29→export type Subcolumna = {
+    30→    30→  id: string
+    31→    31→  codigo: string
+    32→    32→  columna_id: string
+    33→    33→}
+    34→    34→
+    35→    35→export type Posicion = {
+    36→    36→  id: string
+    37→    37→  numero: number
+    38→    38→  subcolumna_id: string
+    39→    39→}
+    40→    40→
+    41→    41→export type Nivel = {
+    42→    42→  id: string
+    43→    43→  numero: number
+    44→    44→  posicion_id: string
+    45→    45→  codigo_ubicacion: string | null
+    46→    46→}
+    47→    47→
+    48→    48→export type Bloque = {
+    49→    49→  id: string
+    50→    50→  codigo: string
+    51→    51→  descripcion: string
+    52→    52→  unidad: string
+    53→    53→  created_at: string
+    54→    54→}
+    55→    55→
+    56→    56→export type PisoMovimiento = {
+    57→    57→  id: string
+    58→    58→  numero_operacion: number
+    59→    59→  tipo: string
+    60→    60→  fecha: string
+    61→    61→  turno: string
+    62→    62→  usuario_id: string | null
+    63→    63→  usuario_nombre: string | null
+    64→    64→  usuario_correo: string | null
+    65→    65→}
+    66→    66→
+    67→    67→export type MovimientoDetalle = {
+    68→    68→  id: string
+    69→    69→  movimiento_id: string
+    70→    70→  nivel_id: string
+    71→    71→  bloque_id: string
+    72→    72→  cantidad: number
+    73→    73→  fecha_vencimiento?: string | null
+    74→    74→}
+    75→    75→
+    76→    76→export type MovimientoConDetalles = PisoMovimiento & {
+    77→    77→  detalles: (MovimientoDetalle & {
+    78→    78→    bloque_codigo?: string
+    79→    79→    nivel_codigo?: string
+    80→    80→    sector_nombre?: string
+    81→    81→    posicion_label?: string
+    82→    82→  })[]
+    83→    83→}
+    84→    84→
+    85→    85→export type DetalleInput = {
+    86→    86→  nivel_id: string
+    87→    87→  bloque_id: string
+    88→    88→  cantidad: number
+    89→    89→  fecha_vencimiento?: string | null
+    90→    90→}
+    91→    91→
+    92→    92→// ---- Sector CRUD ----
+    93→    93→export async function listarSectores(): Promise<Sector[]> {
+    94→    94→  const { data, error } = await dataClient
+    95→    95→    .from('piso_sectores')
+    96→    96→    .select('*')
+    97→    97→    .order('nombre')
+    98→    98→  if (error) throw error
+    99→    99→  return (data ?? []) as Sector[]
+   100→   100→}
+   101→   101→
+   102→   102→export async function crearSector(
+   103→   103→  nombre: string,
+   104→   104→  prefijo: string,
+   105→   105→  n_columnas: number,
+   106→   106→  n_subcolumnas: number,
+   107→   107→  n_posiciones: number,
+   108→   108→  n_niveles: number
+   109→   109→): Promise<Sector[]> {
+   110→   110→  const { error } = await dataClient.from('piso_sectores').insert({
+   111→   111→    nombre,
+   112→   112→    prefijo,
+   113→   113→    n_columnas,
+   114→   114→    n_subcolumnas,
+   115→   115→    n_posiciones,
+   116→   116→    n_niveles,
+   117→   117→  })
+   118→   118→  if (error) throw error
+   119→   119→  return listarSectores()
+   120→   120→}
+   121→   121→
+   122→   122→export async function eliminarSector(id: string): Promise<Sector[]> {
+   123→   123→  const { error } = await dataClient.from('piso_sectores').delete().eq('id', id)
+   124→   124→  if (error) throw error
+   125→   125→  return listarSectores()
+   126→   126→}
+   127→   127→
+   128→   128→// ---- Structure queries ----
+   129→   129→export async function listarColumnas(
+   130→   130→  sectorId: string
+   131→   131→): Promise<Columna[]> {
+   132→   132→  const { data, error } = await dataClient
+   133→   133→    .from('piso_columnas')
+   134→   134→    .select('*')
+   135→   135→    .eq('sector_id', sectorId)
+   136→   136→    .order('letra')
+   137→   137→  if (error) throw error
+   138→   138→  return (data ?? []) as Columna[]
+   139→   139→}
+   140→   140→
+   141→   141→export async function listarSubcolumnas(
+   142→   142→  columnaId: string
+   143→   143→): Promise<Subcolumna[]> {
+   144→   144→  const { data, error } = await dataClient
+   145→   145→    .from('piso_subcolumnas')
+   146→   146→    .select('*')
+   147→   147→    .eq('columna_id', columnaId)
+   148→   148→    .order('codigo')
+   149→   149→  if (error) throw error
+   150→   150→  return (data ?? []) as Subcolumna[]
+   151→   151→}
+   152→   152→
+   153→   153→export async function listarNivelesDeSubcolumna(
+   154→   154→  subcolumnaId: string
+   155→   155→): Promise<{ posicion: Posicion; niveles: Nivel[] }[]> {
+   156→   156→  const { data: posData, error: posErr } = await dataClient
+   157→   157→    .from('piso_posiciones')
+   158→   158→    .select('*')
+   159→   159→    .eq('subcolumna_id', subcolumnaId)
+   160→   160→    .order('numero')
+   161→   161→  if (posErr) throw posErr
+   162→   162→
+   163→   163→  const posiciones = (posData ?? []) as Posicion[]
+   164→   164→  if (posiciones.length === 0) return []
+   165→   165→
+   166→   166→  const posIds = posiciones.map((p) => p.id)
+   167→   167→  const { data: nivData, error: nivErr } = await dataClient
+   168→   168→    .from('piso_niveles')
+   169→   169→    .select('*')
+   170→   170→    .in('posicion_id', posIds)
+   171→   171→    .order('numero')
+   172→   172→  if (nivErr) throw nivErr
+   173→   173→
+   174→   174→  const niveles = (nivData ?? []) as Nivel[]
+   175→   175→
+   176→   176→  return posiciones.map((pos) => ({
+   177→   177→    posicion: pos,
+   178→   178→    niveles: niveles.filter((n) => n.posicion_id === pos.id),
+   179→   179→  }))
+   180→   180→}
+   181→   181→
+   182→   182→// ---- Bloques ----
+   183→   183→export async function listarBloques(): Promise<Bloque[]> {
+   184→   184→  const { data, error } = await dataClient
+   185→   185→    .from('piso_bloques')
+   186→   186→    .select('*')
+   187→   187→    .order('codigo')
+   188→   188→  if (error) throw error
+   189→   189→  return (data ?? []) as Bloque[]
+   190→   190→}
+   191→   191→
+   192→   192→export async function crearBloque(
+   193→   193→  codigo: string,
+   194→   194→  descripcion: string,
+   195→   195→  unidad: string
+   196→   196→): Promise<Bloque[]> {
+   197→   197→  const { error } = await dataClient.from('piso_bloques').insert({
+   198→   198→    codigo: codigo.trim().toUpperCase(),
+   199→   199→    descripcion,
+   200→   200→    unidad,
+   201→   201→  })
+   202→   202→  if (error) throw error
+   203→   203→  return listarBloques()
+   204→   204→}
+   205→   205→
+   206→   206→export async function eliminarBloque(id: string): Promise<Bloque[]> {
+   207→   207→  await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', id)
+   208→   208→  const { error } = await dataClient.from('piso_bloques').delete().eq('id', id)
+   209→   209→  if (error) throw error
+   210→   210→  return listarBloques()
+   211→   211→}
+   212→   212→
+   213→   213→export async function reemplazarCatalogoBloques(
+   214→   214→  items: { codigo: string; descripcion: string; unidad: string }[]
+   215→   215→): Promise<Bloque[]> {
+   216→   216→  await dataClient.from('piso_bloques').delete().neq('id', '')
+   217→   217→  if (items.length === 0) return []
+   218→   218→  const rows = items.map((i) => ({
+   219→   219→    codigo: i.codigo.trim().toUpperCase(),
+   220→   220→    descripcion: i.descripcion,
+   221→   221→    unidad: i.unidad,
+   222→   222→  }))
+   223→   223→  const { error } = await dataClient.from('piso_bloques').insert(rows)
+   224→   224→  if (error) throw error
+   225→   225→  return listarBloques()
+   226→   226→}
+   227→   227→
+   228→   228→// ---- Column-Block assignments ----
+   229→   229→export async function listarBloquesDeColumna(
+   230→   230→  columnaId: string
+   231→   231→): Promise<Bloque[]> {
+   232→   232→  const { data, error } = await dataClient
+   233→   233→    .from('piso_columna_bloques')
+   234→   234→    .select('bloque_id, piso_bloques(*)')
+   235→   235→    .eq('columna_id', columnaId)
+   236→   236→  if (error) throw error
+   237→   237→  return ((data ?? []) as unknown as { bloque_id: string; piso_bloques: Bloque }[]).map(
+   238→   238→    (r) => r.piso_bloques
+   239→   239→  )
+   240→   240→}
+   241→   241→
+   242→   242→export async function asignarBloqueAColumna(
+   243→   243→  bloqueId: string,
+   244→   244→  columnaId: string
+   245→   245→) {
+   246→   246→  const { error } = await dataClient
+   247→   247→    .from('piso_columna_bloques')
+   248→   248→    .insert({ bloque_id: bloqueId, columna_id: columnaId })
+   249→   249→  if (error) throw error
+   250→   250→}
+   251→   251→
+   252→   252→export async function quitarBloqueDeColumna(
+   253→   253→  bloqueId: string,
+   254→   254→  columnaId: string
+   255→   255→) {
+   256→   256→  const { error } = await dataClient
+   257→   257→    .from('piso_columna_bloques')
+   258→   258→    .delete()
+   259→   259→    .eq('bloque_id', bloqueId)
+   260→   260→    .eq('columna_id', columnaId)
+   261→   261→  if (error) throw error
+   262→   262→}
+   263→   263→
+   264→   264→// ---- Movements ----
+   265→   265→export async function registrarMovimiento(
+   266→   266→  tipo: string,
+   267→   267→  turno: string,
+   268→   268→  detalles: DetalleInput[]
+   269→   269→): Promise<PisoMovimiento> {
+   270→   270→  const { data, error } = await dataClient.rpc('piso_registrar_movimiento', {
+   271→   271→    _tipo: tipo,
+   272→   272→    _turno: turno,
+   273→   273→    _detalles: detalles,
+   274→   274→  })
+   275→   275→  if (error) throw error
+   276→   276→  const result = data as unknown[]
+   277→   277→  return result[0] as PisoMovimiento
+   278→   278→}
+   279→   279→
+   280→   280→export async function eliminarMovimiento(movimientoId: string): Promise<void> {
+   281→   281→  // First delete details, then the movement header
+   282→   282→  const { error: detErr } = await dataClient
+   283→   283→    .from('piso_movimiento_detalles')
+   284→   284→    .delete()
+   285→   285→    .eq('movimiento_id', movimientoId)
+   286→   286→  if (detErr) throw detErr
+   287→   287→  const { error: movErr } = await dataClient
+   288→   288→    .from('piso_movimientos')
+   289→   289→    .delete()
+   290→   290→    .eq('id', movimientoId)
+   291→   291→  if (movErr) throw movErr
+   292→   292→}
+   293→   293→
+   294→   294→export async function listarMovimientos(
+   295→   295→  sectorId?: string,
+   296→   296→  columnaId?: string,
+   297→   297→  bloqueId?: string,
+   298→   298→  desde?: string,
+   299→   299→  hasta?: string
+   300→   300→): Promise<MovimientoConDetalles[]> {
+   301→   301→  let query = dataClient
+   302→   302→    .from('piso_movimientos')
+   303→   303→    .select('*')
+   304→   304→    .order('fecha', { ascending: false })
+   305→   305→    .order('numero_operacion', { ascending: false })
+   306→   306→
+   307→   307→  if (desde) query = query.gte('fecha', desde)
+   308→   308→  if (hasta) query = query.lte('fecha', hasta + 'T23:59:59')
+   309→   309→  const PAGE_SIZE = 500
+   310→   310→  const MAX_PAGES = 100
+   311→   311→  let all: PisoMovimiento[] = []
+   312→   312→  let from = 0
+   313→   313→  let pages = 0
+   314→   314→  while (pages++ < MAX_PAGES) {
+   315→   315→    const to = from + PAGE_SIZE - 1
+   316→   316→    const { data, error } = await query.range(from, to)
+   317→   317→    if (error) throw error
+   318→   318→    const rows = (data ?? []) as PisoMovimiento[]
+   319→   319→    all.push(...rows)
+   320→   320→    if (rows.length < PAGE_SIZE) break
+   321→   321→    from += PAGE_SIZE
+   322→   322→  }
+   323→   323→
+   324→   324→  if (all.length === 0) return []
+   325→   325→
+   326→   326→  const movIds = all.map((m) => m.id)
+   327→   327→  const { data: detData, error: detErr } = await dataClient
+   328→   328→    .from('piso_movimiento_detalles')
+   329→   329→    .select('*')
+   330→   330→    .in('movimiento_id', movIds)
+   331→   331→  if (detErr) throw detErr
+   332→   332→  const detalles = (detData ?? []) as MovimientoDetalle[]
+   333→   333→
+   334→   334→  const detalleMap = new Map<
+   335→   335→    string,
+   336→   336→    (MovimientoDetalle & { bloque_codigo?: string; nivel_codigo?: string })[]
+   337→   337→  >()
+   338→   338→  for (const d of detalles) {
+   339→   339→    if (!detalleMap.has(d.movimiento_id)) detalleMap.set(d.movimiento_id, [])
+   340→   340→    detalleMap.get(d.movimiento_id)!.push(d)
+   341→   341→  }
+   342→   342→
+   343→   343→  const blockIds = [...new Set(detalles.map((d) => d.bloque_id))]
+   344→   344→  const nivelIds = [...new Set(detalles.map((d) => d.nivel_id))]
+   345→   345→
+   346→   346→  const [bloquesRes, nivelesRes] = await Promise.all([
+   347→   347→    blockIds.length > 0
+   348→   348→      ? dataClient
+   349→   349→          .from('piso_bloques')
+   350→   350→          .select('id, codigo')
+   351→   351→          .in('id', blockIds)
+   352→   352→      : Promise.resolve({ data: [], error: null }),
+   353→   353→    nivelIds.length > 0
+   354→   354→      ? dataClient
+   355→   355→          .from('piso_niveles')
+   356→   356→          .select('id, codigo_ubicacion, posicion_id')
+   357→   357→          .in('id', nivelIds)
+   358→   358→      : Promise.resolve({ data: [], error: null }),
+   359→   359→  ])
+   360→   360→
+   361→   361→  const bloqueMap = new Map<string, string>()
+   362→   362→  ;((bloquesRes.data ?? []) as { id: string; codigo: string }[]).forEach(
+   363→   363→    (b) => bloqueMap.set(b.id, b.codigo)
+   364→   364→  )
+   365→   365→  const nivelMap = new Map<string, string | null>()
+   366→   366→  const nivelToPos = new Map<string, string>()
+   367→   367→  ;(
+   368→   368→    (nivelesRes.data ?? []) as { id: string; codigo_ubicacion: string | null; posicion_id: string }[]
+   369→   369→  ).forEach((n) => {
+   370→   370→    nivelMap.set(n.id, n.codigo_ubicacion)
+   371→   371→    nivelToPos.set(n.id, n.posicion_id)
+   372→   372→  })
+   373→   373→
+   374→   374→  // Resolve sector and position for each nivel
+   375→   375→  const posIds = [...new Set(nivelToPos.values())]
+   376→   376→  let sectorPosMap = new Map<string, { sector_nombre: string; posicion_label: string }>()
+   377→   377→  if (posIds.length > 0) {
+   378→   378→    const posRes = await dataClient.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds)
+   379→   379→    const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
+   380→   380→    ;((posRes.data ?? []) as { id: string; numero: number; subcolumna_id: string }[]).forEach(
+   381→   381→      (p) => posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id })
+   382→   382→    )
+   383→   383→    const subIds = [...new Set([...posMap.values()].map((p) => p.subcolumna_id))]
+   384→   384→    if (subIds.length > 0) {
+   385→   385→      const subRes = await dataClient.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds)
+   386→   386→      const subMap = new Map<string, { codigo: string; columna_id: string }>()
+   387→   387→      ;((subRes.data ?? []) as { id: string; codigo: string; columna_id: string }[]).forEach(
+   388→   388→        (s) => subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id })
+   389→   389→      )
+   390→   390→      const colIds = [...new Set([...subMap.values()].map((s) => s.columna_id))]
+   391→   391→      if (colIds.length > 0) {
+   392→   392→        const colRes = await dataClient.from('piso_columnas').select('id, letra, sector_id').in('id', colIds)
+   393→   393→        const colMap = new Map<string, { letra: string; sector_id: string }>()
+   394→   394→        ;((colRes.data ?? []) as { id: string; letra: string; sector_id: string }[]).forEach(
+   395→   395→          (c) => colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id })
+   396→   396→        )
+   397→   397→        const sIds = [...new Set([...colMap.values()].map((c) => c.sector_id))]
+   398→   398→        if (sIds.length > 0) {
+   399→   399→          const secData = await dataClient.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', sIds)
+   400→   400→          const secInfoMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
+   401→   401→          ;((secData.data ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[]).forEach(
+   402→   402→            (s) => secInfoMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
+   403→   403→          )
+   404→   404→          // Build final map: nivel_id -> { sector_nombre, posicion_label }
+   405→   405→          for (const [nivId, posId] of nivelToPos) {
+   406→   406→            const pos = posMap.get(posId)
+   407→   407→            if (!pos) continue
+   408→   408→            const sub = subMap.get(pos.subcolumna_id)
+   409→   409→            if (!sub) continue
+   410→   410→            const col = colMap.get(sub.columna_id)
+   411→   411→            if (!col) continue
+   412→   412→            const secInfo = secInfoMap.get(col.sector_id)
+   413→   413→            const secName = secInfo?.nombre ?? ''
+   414→   414→            const label = !secInfo
+   415→   415→              ? `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+   416→   416→              : secInfo.nCol === 1 && secInfo.nSub === 1
+   417→   417→                ? `Pos ${pos.numero}`
+   418→   418→                : secInfo.nSub === 1
+   419→   419→                  ? `${col.letra}-Pos ${pos.numero}`
+   420→   420→                  : `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+   421→   421→            sectorPosMap.set(nivId, {
+   422→   422→              sector_nombre: secName,
+   423→   423→              posicion_label: label,
+   424→   424→            })
+   425→   425→          }
+   426→   426→        }
+   427→   427→      }
+   428→   428→    }
+   429→   429→  }
+   430→   430→
+   431→   431→  let result = all.map((m) => ({
+   432→   432→    ...m,
+   433→   433→    detalles: (detalleMap.get(m.id) ?? []).map((d) => {
+   434→   434→      const locInfo = sectorPosMap.get(d.nivel_id)
+   435→   435→      return {
+   436→   436→        ...d,
+   437→   437→        bloque_codigo: bloqueMap.get(d.bloque_id),
+   438→   438→        nivel_codigo: nivelMap.get(d.nivel_id) ?? undefined,
+   439→   439→        sector_nombre: locInfo?.sector_nombre ?? '',
+   440→   440→        posicion_label: locInfo?.posicion_label ?? (d.nivel_codigo || ''),
+   441→   441→      }
+   442→   442→    }),
+   443→   443→  }))
+   444→   444→
+   445→   445→  // Filter by sector/columna/bloque if specified
+   446→   446→  if (sectorId || columnaId || bloqueId) {
+   447→   447→    if (columnaId) {
+   448→   448→      const { data: cols, error: colErr } = await dataClient
+   449→   449→        .from('piso_columnas')
+   450→   450→        .select('id')
+   451→   451→        .eq('sector_id', sectorId ?? columnaId)
+   452→   452→      if (!colErr && cols) {
+   453→   453→        const colIds = new Set(
+   454→   454→          (cols as { id: string }[]).map((c) => c.id)
+   455→   455→        )
+   456→   456→        if (!colIds.has(columnaId)) {
+   457→   457→          return []
+   458→   458→        }
+   459→   459→      }
+   460→   460→    }
+   461→   461→  }
+   462→   462→
+   463→   463→  return result
+   464→   464→}
+   465→   465→
+   466→   466→export async function calcularStockNivel(
+   467→   467→  nivelId: string
+   468→   468→): Promise<{ bloque_codigo: string; cantidad: number }[]> {
+   469→   469→  const { data, error } = await dataClient
+   470→   470→    .from('piso_movimiento_detalles')
+   471→   471→    .select(
+   472→   472→      'cantidad, bloque_id, movimiento_id, piso_movimientos!inner(tipo)'
+   473→   473→    )
+   474→   474→    .eq('nivel_id', nivelId)
+   475→   475→  if (error) throw error
+   476→   476→
+   477→   477→  const bloquesIds = [
+   478→   478→    ...new Set((data ?? []).map((d: Record<string, unknown>) => d.bloque_id as string)),
+   479→   479→  ] as string[]
+   480→   480→  if (bloquesIds.length === 0) return []
+   481→   481→
+   482→   482→  const bloqueMap = new Map<string, string>()
+   483→   483→  // Buscar en piso_bloques (solo IDs reales, no virtuales)
+   484→   484→  const realIds = bloquesIds.filter((id) => !id.startsWith('cat_'))
+   485→   485→  if (realIds.length > 0) {
+   486→   486→    const { data: bloques } = await dataClient
+   487→   487→      .from('piso_bloques')
+   488→   488→      .select('id, codigo')
+   489→   489→      .in('id', realIds)
+   490→   490→    ;((bloques ?? []) as { id: string; codigo: string }[]).forEach((b) =>
+   491→   491→      bloqueMap.set(b.id, b.codigo)
+   492→   492→    )
+   493→   493→  }
+   494→   494→  // Para IDs virtuales de catálogo, extraer código del ID
+   495→   495→  for (const id of bloquesIds) {
+   496→   496→    if (id.startsWith('cat_') && !bloqueMap.has(id)) {
+   497→   497→      bloqueMap.set(id, id.replace('cat_', ''))
+   498→   498→    }
+   499→   499→  }
+   500→   500→
+   501→   501→  const stockMap = new Map<string, number>()
+   502→   502→  for (const d of data ?? []) {
+   503→   503→    const det = d as unknown as {
+   504→   504→      cantidad: number
+   505→   505→      bloque_id: string
+   506→   506→      movimiento_id: string
+   507→   507→      piso_movimientos: { tipo: string }
+   508→   508→    }
+   509→   509→    const bloque = bloqueMap.get(det.bloque_id) ?? det.bloque_id
+   510→   510→    const current = stockMap.get(bloque) ?? 0
+   511→   511→    stockMap.set(
+   512→   512→      bloque,
+   513→   513→      current +
+   514→   514→        (det.piso_movimientos.tipo === 'ingreso' ||
+   515→   515→        det.piso_movimientos.tipo === 'stock_inicial' ||
+   516→   516→        det.piso_movimientos.tipo === 'devolucion'
+   517→   517→          ? det.cantidad
+   518→   518→          : -det.cantidad)
+   519→   519→    )
+   520→   520→  }
+   521→   521→
+   522→   522→  return Array.from(stockMap.entries())
+   523→   523→    .filter(([, qty]) => qty > 0)
+   524→   524→    .map(([bloque_codigo, cantidad]) => ({ bloque_codigo, cantidad }))
+   525→   525→}
+   526→   526→
+   527→   527→// ═══ Piso Sectores Grid — Carga completa de posiciones con stock ═══
+   528→   528→
+   529→   529→export type PosicionConStock = {
+   530→   530→  posicionId: string
+   531→   531→  posicionNumero: number
+   532→   532→  subcolumnaCodigo: string
+   533→   533→  columnaLetra: string
+   534→   534→  stock: number
+   535→   535→  bloques: { bloque_id: string; bloque_codigo: string; cantidad: number }[]
+   536→   536→}
+   537→   537→
+   538→   538→/**
+   539→   539→ * Obtiene todas las posiciones de un sector con su stock por bloque.
+   540→   540→ * Retorna un arreglo plano de posiciones con información de columna y stock.
+   541→   541→ * Usa RPC server-side cuando disponible, fallback client-side.
+   542→   542→ */
+   543→   543→export async function cargarPosicionesSector(
+   544→   544→  sectorId: string
+   545→   545→): Promise<PosicionConStock[]> {
+   546→   546→  // ═══ MÉTODO PRINCIPAL: RPC server-side (JHIA-57b) ═══
+   547→   547→  try {
+   548→   548→    const { data, error } = await dataClient.rpc('piso_stock_sector_grid', {
+   549→   549→      _sector_id: sectorId,
+   550→   550→    })
+   551→   551→    if (!error && Array.isArray(data) && data.length >= 0) {
+   552→   552→      // El RPC retorna posiciones con stock > 0, pero necesitamos TODAS las posiciones (incluidas vacías)
+   553→   553→      // 1. Obtener todas las posiciones del sector
+   554→   554→      const { data: cols, error: colErr } = await dataClient
+   555→   555→        .from('piso_columnas').select('id, letra').eq('sector_id', sectorId).order('letra')
+   556→   556→      if (colErr) throw colErr
+   557→   557→      const columnas = (cols ?? []) as { id: string; letra: string }[]
+   558→   558→      if (columnas.length === 0) return []
+   559→   559→      const colMap = new Map(columnas.map((c) => [c.id, c.letra]))
+   560→   560→
+   561→   561→      const { data: subs } = await dataClient
+   562→   562→        .from('piso_subcolumnas').select('id, codigo, columna_id').in('columna_id', columnas.map((c) => c.id))
+   563→   563→      const subMap = new Map(((subs ?? []) as { id: string; codigo: string; columna_id: string }[]).map((s) => [s.id, s]))
+   564→   564→
+   565→   565→      const { data: posData } = await dataClient
+   566→   566→        .from('piso_posiciones').select('id, numero, subcolumna_id').in('subcolumna_id', ((subs ?? []) as { id: string }[]).map((s) => s.id))
+   567→   567→      const posiciones = (posData ?? []) as { id: string; numero: number; subcolumna_id: string }[]
+   568→   568→
+   569→   569→      // 2. Mapear resultados del RPC por posicion_id
+   570→   570→      const rpcData = data as unknown as {
+   571→   571→        posicion_id: string; posicion_numero: number; subcolumna_codigo: string;
+   572→   572→        columna_letra: string; stock_total: unknown; bloques_json: unknown;
+   573→   573→      }[]
+   574→   574→      const rpcStockMap = new Map<string, { stock: number; bloques: { bloque_id: string; bloque_codigo: string; cantidad: number }[] }>()
+   575→   575→      for (const r of rpcData) {
+   576→   576→        const qty = typeof r.stock_total === 'number' ? r.stock_total : parseFloat(String(r.stock_total ?? '0')) || 0
+   577→   577→        let bloques: { bloque_id: string; bloque_codigo: string; cantidad: number }[] = []
+   578→   578→        try {
+   579→   579→          let rawBloques = r.bloques_json
+   580→   580→          // bloques_json puede venir como string JSON o como objeto ya parseado
+   581→   581→          if (typeof rawBloques === 'string') {
+   582→   582→            try { rawBloques = JSON.parse(rawBloques) } catch { rawBloques = [] }
+   583→   583→          }
+   584→   584→          const arr = (Array.isArray(rawBloques) ? rawBloques : []) as { bloque_id: string; bloque_codigo: string; cantidad: unknown; stock: unknown }[]
+   585→   585→          bloques = arr.map((b) => ({
+   586→   586→            bloque_id: b.bloque_id ?? '',
+   587→   587→            bloque_codigo: b.bloque_codigo ?? '',
+   588→   588→            // El RPC usa 'stock' como clave, el fallback usa 'cantidad'
+   589→   589→            cantidad: typeof b.cantidad === 'number' ? b.cantidad
+   590→   590→              : typeof b.stock === 'number' ? b.stock
+   591→   591→              : parseFloat(String(b.cantidad ?? b.stock ?? '0')) || 0,
+   592→   592→          }))
+   593→   593→        } catch { /* json parse error */ }
+   594→   594→        rpcStockMap.set(r.posicion_id, { stock: qty, bloques })
+   595→   595→      }
+   596→   596→
+   597→   597→      // Debug: log primer resultado del RPC para verificar datos
+   598→   598→      if (rpcData.length > 0) {
+   599→   599→        const sample = rpcData[0]
+   600→   600→        console.log('[Piso] RPC sample row:', {
+   601→   601→          posicion_id: sample.posicion_id,
+   602→   602→          stock_total: sample.stock_total,
+   603→   603→          bloques_json_type: typeof sample.bloques_json,
+   604→   604→          bloques_json_val: typeof sample.bloques_json === 'string' ? sample.bloques_json.substring(0, 100) : sample.bloques_json,
+   605→   605→          parsed_bloques: rpcStockMap.get(sample.posicion_id)?.bloques,
+   606→   606→        })
+   607→   607→      }
+   608→   608→      console.log(`[Piso] RPC: ${rpcData.length} posiciones con stock, ${posiciones.length} posiciones totales`)
+   609→   609→
+   610→   610→      // 3. Construir resultado para TODAS las posiciones
+   611→   611→      const result: PosicionConStock[] = posiciones.map((pos) => {
+   612→   612→        const sub = subMap.get(pos.subcolumna_id)
+   613→   613→        const rpcInfo = rpcStockMap.get(pos.id)
+   614→   614→        const cLetra = sub ? (colMap.get(sub.columna_id) ?? '') : ''
+   615→   615→        return {
+   616→   616→          posicionId: pos.id,
+   617→   617→          posicionNumero: pos.numero,
+   618→   618→          subcolumnaCodigo: sub ? cleanSubcolCode(sub.codigo, cLetra) : '',
+   619→   619→          columnaLetra: cLetra,
+   620→   620→          stock: rpcInfo?.stock ?? 0,
+   621→   621→          bloques: (rpcInfo?.bloques ?? []).filter((b) => b.cantidad > 0),
+   622→   622→        }
+   623→   623→      })
+   624→   624→      return result
+   625→   625→    }
+   626→   626→  } catch (rpcErr) {
+   627→   627→    console.warn('[Piso] RPC piso_stock_sector_grid no disponible, usando fallback:', rpcErr)
+   628→   628→  }
+   629→   629→
+   630→   630→  // ═══ FALLBACK: Cálculo client-side ═══
+   631→   631→  // 1. Obtener todas las columnas del sector
+   632→   632→  const { data: cols, error: colErr } = await dataClient
+   633→   633→    .from('piso_columnas')
+   634→   634→    .select('id, letra')
+   635→   635→    .eq('sector_id', sectorId)
+   636→   636→    .order('letra')
+   637→   637→  if (colErr) throw colErr
+   638→   638→  const columnas = (cols ?? []) as { id: string; letra: string }[]
+   639→   639→
+   640→   640→  if (columnas.length === 0) return []
+   641→   641→
+   642→   642→  const colIds = columnas.map((c) => c.id)
+   643→   643→
+   644→   644→  // 2. Obtener todas las subcolumnas
+   645→   645→  const { data: subs, error: subErr } = await dataClient
+   646→   646→    .from('piso_subcolumnas')
+   647→   647→    .select('id, codigo, columna_id')
+   648→   648→    .in('columna_id', colIds)
+   649→   649→    .order('codigo')
+   650→   650→  if (subErr) throw subErr
+   651→   651→  const subcolumnas = (subs ?? []) as { id: string; codigo: string; columna_id: string }[]
+   652→   652→
+   653→   653→  if (subcolumnas.length === 0) return []
+   654→   654→
+   655→   655→  const subIds = subcolumnas.map((s) => s.id)
+   656→   656→
+   657→   657→  // 3. Obtener todas las posiciones
+   658→   658→  const { data: posData, error: posErr } = await dataClient
+   659→   659→    .from('piso_posiciones')
+   660→   660→    .select('id, numero, subcolumna_id')
+   661→   661→    .in('subcolumna_id', subIds)
+   662→   662→    .order('numero')
+   663→   663→  if (posErr) throw posErr
+   664→   664→  const posiciones = (posData ?? []) as { id: string; numero: number; subcolumna_id: string }[]
+   665→   665→
+   666→   666→  if (posiciones.length === 0) return []
+   667→   667→
+   668→   668→  // 4. Obtener todos los niveles de las posiciones
+   669→   669→  const posIds = posiciones.map((p) => p.id)
+   670→   670→  const { data: nivData, error: nivErr } = await dataClient
+   671→   671→    .from('piso_niveles')
+   672→   672→    .select('id, posicion_id')
+   673→   673→    .in('posicion_id', posIds)
+   674→   674→  if (nivErr) throw nivErr
+   675→   675→  const niveles = (nivData ?? []) as { id: string; posicion_id: string }[]
+   676→   676→
+   677→   677→  const nivelIds = niveles.map((n) => n.id)
+   678→   678→
+   679→   679→  // 5. Obtener stock por nivel y bloque
+   680→   680→  let stockPorNivel: { nivel_id: string; bloque_id: string; cantidad: number; tipo: string }[] = []
+   681→   681→  if (nivelIds.length > 0) {
+   682→   682→    const { data: detData, error: detErr } = await dataClient
+   683→   683→      .from('piso_movimiento_detalles')
+   684→   684→      .select('nivel_id, bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+   685→   685→      .in('nivel_id', nivelIds)
+   686→   686→    if (detErr) throw detErr
+   687→   687→
+   688→   688→    const stockMap = new Map<string, { bloque_id: string; cantidad: number }[]>()
+   689→   689→
+   690→   690→    for (const d of (detData ?? []) as unknown as {
+   691→   691→      nivel_id: string
+   692→   692→      bloque_id: string
+   693→   693→      cantidad: unknown
+   694→   694→      piso_movimientos: { tipo: string }
+   695→   695→    }[]) {
+   696→   696→      const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+   697→   697→      const delta = (d.piso_movimientos.tipo === 'ingreso' || d.piso_movimientos.tipo === 'stock_inicial' || d.piso_movimientos.tipo === 'devolucion')
+   698→   698→        ? qty : -qty
+   699→   699→      if (delta === 0) continue
+   700→   700→
+   701→   701→      let arr = stockMap.get(d.nivel_id)
+   702→   702→      if (!arr) { arr = []; stockMap.set(d.nivel_id, arr) }
+   703→   703→      const existing = arr.find((e) => e.bloque_id === d.bloque_id)
+   704→   704→      if (existing) {
+   705→   705→        existing.cantidad += delta
+   706→   706→      } else {
+   707→   707→        arr.push({ bloque_id: d.bloque_id, cantidad: delta })
+   708→   708→      }
+   709→   709→    }
+   710→   710→
+   711→   711→    // Filtrar solo stock positivo
+   712→   712→    for (const [nivelId, bloques] of stockMap) {
+   713→   713→      for (const b of bloques) {
+   714→   714→        if (b.cantidad > 0) {
+   715→   715→          stockPorNivel.push({ nivel_id: nivelId, bloque_id: b.bloque_id, cantidad: b.cantidad, tipo: '' })
+   716→   716→        }
+   717→   717→      }
+   718→   718→    }
+   719→   719→  }
+   720→   720→
+   721→   721→  // 6. Obtener códigos de bloques
+   722→   722→  const bloqueIdsSet = [...new Set(stockPorNivel.map((s) => s.bloque_id))]
+   723→   723→  let bloqueMap = new Map<string, string>()
+   724→   724→  // Buscar IDs reales en piso_bloques
+   725→   725→  const realBloqueIds = bloqueIdsSet.filter((id) => !id.startsWith('cat_'))
+   726→   726→  if (realBloqueIds.length > 0) {
+   727→   727→    const { data: bloqData } = await dataClient
+   728→   728→      .from('piso_bloques')
+   729→   729→      .select('id, codigo')
+   730→   730→      .in('id', realBloqueIds)
+   731→   731→    for (const b of (bloqData ?? []) as { id: string; codigo: string }[]) {
+   732→   732→      bloqueMap.set(b.id, b.codigo)
+   733→   733→    }
+   734→   734→  }
+   735→   735→  // Para IDs virtuales, extraer código del formato cat_CODIGO
+   736→   736→  for (const id of bloqueIdsSet) {
+   737→   737→    if (id.startsWith('cat_')) {
+   738→   738→      bloqueMap.set(id, id.replace('cat_', ''))
+   739→   739→    }
+   740→   740→  }
+   741→   741→
+   742→   742→  // 7. Construir resultado por posición
+   743→   743→  const subMap = new Map(subcolumnas.map((s) => [s.id, s]))
+   744→   744→  const colMap = new Map(columnas.map((c) => [c.id, c.letra]))
+   745→   745→
+   746→   746→  // Agrupar niveles por posición
+   747→   747→  const nivelesPorPosicion = new Map<string, string[]>()
+   748→   748→  for (const n of niveles) {
+   749→   749→    const arr = nivelesPorPosicion.get(n.posicion_id) ?? []
+   750→   750→    arr.push(n.id)
+   751→   751→    nivelesPorPosicion.set(n.posicion_id, arr)
+   752→   752→  }
+   753→   753→
+   754→   754→  // Agrupar stock por posición
+   755→   755→  const stockPorPosicion = new Map<string, { bloque_id: string; bloque_codigo: string; cantidad: number }[]>()
+   756→   756→  for (const s of stockPorNivel) {
+   757→   757→    // Encontrar la posición de este nivel
+   758→   758→    for (const pos of posiciones) {
+   759→   759→      const posNivIds = nivelesPorPosicion.get(pos.id) ?? []
+   760→   760→      if (posNivIds.includes(s.nivel_id)) {
+   761→   761→        const arr = stockPorPosicion.get(pos.id) ?? []
+   762→   762→        const existing = arr.find((e) => e.bloque_id === s.bloque_id)
+   763→   763→        if (existing) {
+   764→   764→          existing.cantidad += s.cantidad
+   765→   765→        } else {
+   766→   766→          arr.push({
+   767→   767→            bloque_id: s.bloque_id,
+   768→   768→            bloque_codigo: bloqueMap.get(s.bloque_id) ?? s.bloque_id,
+   769→   769→            cantidad: s.cantidad,
+   770→   770→          })
+   771→   771→        }
+   772→   772→        stockPorPosicion.set(pos.id, arr)
+   773→   773→        break
+   774→   774→      }
+   775→   775→    }
+   776→   776→  }
+   777→   777→
+   778→   778→  const result: PosicionConStock[] = posiciones.map((pos) => {
+   779→   779→    const sub = subMap.get(pos.subcolumna_id)
+   780→   780→    const bloques = (stockPorPosicion.get(pos.id) ?? []).filter((b) => b.cantidad > 0)
+   781→   781→    const totalStock = bloques.reduce((sum, b) => sum + b.cantidad, 0)
+   782→   782→    const cLetra = sub ? (colMap.get(sub.columna_id) ?? '') : ''
+   783→   783→    return {
+   784→   784→      posicionId: pos.id,
+   785→   785→      posicionNumero: pos.numero,
+   786→   786→      subcolumnaCodigo: sub ? cleanSubcolCode(sub.codigo, cLetra) : '',
+   787→   787→      columnaLetra: cLetra,
+   788→   788→      stock: totalStock,
+   789→   789→      bloques,
+   790→   790→    }
+   791→   791→  })
+   792→   792→
+   793→   793→  return result
+   794→   794→}
+   795→   795→
+   796→   796→/**
+   797→   797→ * Obtiene el stock detallado de una posición específica (todos los bloques y cantidades).
+   798→   798→ * Usa el RPC server-side `piso_stock_detalle_posicion` para cálculo FEFO robusto.
+   799→   799→ * Fallback: cálculo client-side si el RPC no existe aún.
+   800→   800→ */
+   801→   801→export async function stockDetallePosicion(
+   802→   802→  posicionId: string
+   803→   803→): Promise<{ bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[]> {
+   804→   804→  // ═══ MÉTODO PRINCIPAL: RPC server-side (JHIA-57b) ═══
+   805→   805→  try {
+   806→   806→    const { data, error } = await dataClient.rpc('piso_stock_detalle_posicion', {
+   807→   807→      _posicion_id: posicionId,
+   808→   808→    })
+   809→   809→    if (!error && data) {
+   810→   810→      return (data as unknown as {
+   811→   811→        bloque_id: string; bloque_codigo: string; bloque_descripcion: string;
+   812→   812→        bloque_unidad: string; cantidad: unknown; fecha_vencimiento: string | null;
+   813→   813→      }[]).map((r) => ({
+   814→   814→        bloque_id: r.bloque_id,
+   815→   815→        bloque_codigo: r.bloque_codigo,
+   816→   816→        bloque_descripcion: r.bloque_descripcion ?? '',
+   817→   817→        bloque_unidad: r.bloque_unidad || 'KG',
+   818→   818→        cantidad: Math.round((typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0) * 1000) / 1000,
+   819→   819→        fecha_vencimiento: r.fecha_vencimiento ?? '',
+   820→   820→      }))
+   821→   821→    }
+   822→   822→    // Si el RPC no existe (error 428P01), caer al fallback
+   823→   823→    console.warn('[Piso] RPC piso_stock_detalle_posicion no disponible, usando fallback client-side')
+   824→   824→  } catch (rpcErr) {
+   825→   825→    console.warn('[Piso] Error RPC piso_stock_detalle_posicion:', rpcErr)
+   826→   826→  }
+   827→   827→
+   828→   828→  // ═══ FALLBACK: Cálculo client-side FEFO ═══
+   829→   829→  const { data: nivData, error: nivErr } = await dataClient
+   830→   830→    .from('piso_niveles')
+   831→   831→    .select('id')
+   832→   832→    .eq('posicion_id', posicionId)
+   833→   833→  if (nivErr) throw nivErr
+   834→   834→  const nivelIds = ((nivData ?? []) as { id: string }[]).map((n) => n.id)
+   835→   835→  if (nivelIds.length === 0) return []
+   836→   836→
+   837→   837→  // Intentar select con fecha_vencimiento primero; si falla (columna no existe), reintentar sin ella
+   838→   838→  const getDetalles = async () => {
+   839→   839→    // Intento 1: con fecha_vencimiento
+   840→   840→    const { data: d1, error: e1 } = await dataClient
+   841→   841→      .from('piso_movimiento_detalles')
+   842→   842→      .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
+   843→   843→      .in('nivel_id', nivelIds)
+   844→   844→    if (!e1) return d1 as unknown[]
+   845→   845→    // Intento 2: sin fecha_vencimiento (columna no existe en la DB)
+   846→   846→    console.warn('[Piso] fallback: fecha_vencimiento no disponible, calculando sin FEFO')
+   847→   847→    const { data: d2, error: e2 } = await dataClient
+   848→   848→      .from('piso_movimiento_detalles')
+   849→   849→      .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+   850→   850→      .in('nivel_id', nivelIds)
+   851→   851→    if (e2) throw e2
+   852→   852→    return d2 as unknown[]
+   853→   853→  }
+   854→   854→  const rawDetalles = await getDetalles()
+   855→   855→
+   856→   856→  type DetRow = { bloque_id: string; cantidad: unknown; fecha_vencimiento?: string | null; piso_movimientos: { tipo: string } | null | { tipo: string }[] }
+   857→   857→  const detalles = (rawDetalles ?? []) as DetRow[]
+   858→   858→
+   859→   859→  const isIngresoType = (tipo: string) =>
+   860→   860→    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+   861→   861→  const getTipo = (pm: DetRow['piso_movimientos']): string | null => {
+   862→   862→    if (!pm) return null
+   863→   863→    if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo : null
+   864→   864→    return pm.tipo
+   865→   865→  }
+   866→   866→
+   867→   867→  // Pool de lotes por ingreso
+   868→   868→  const ingresoPools = new Map<string, Map<string, number>>()
+   869→   869→  for (const d of detalles) {
+   870→   870→    const tipo = getTipo(d.piso_movimientos)
+   871→   871→    if (!tipo || !isIngresoType(tipo)) continue
+   872→   872→    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+   873→   873→    if (qty <= 0) continue
+   874→   874→    const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
+   875→   875→    const pool = ingresoPools.get(d.bloque_id) ?? new Map<string, number>()
+   876→   876→    pool.set(fv, (pool.get(fv) ?? 0) + qty)
+   877→   877→    ingresoPools.set(d.bloque_id, pool)
+   878→   878→  }
+   879→   879→
+   880→   880→  // Sumar salidas por bloque_id (sin importar fecha)
+   881→   881→  const salidasPorBloque = new Map<string, number>()
+   882→   882→  for (const d of detalles) {
+   883→   883→    const tipo = getTipo(d.piso_movimientos)
+   884→   884→    if (!tipo || isIngresoType(tipo)) continue
+   885→   885→    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+   886→   886→    if (qty <= 0) continue
+   887→   887→    salidasPorBloque.set(d.bloque_id, (salidasPorBloque.get(d.bloque_id) ?? 0) + qty)
+   888→   888→  }
+   889→   889→
+   890→   890→  // FEFO: descontar salidas del pool
+   891→   891→  const lotesRestantes = new Map<string, { fecha: string; qty: number }[]>()
+   892→   892→  for (const [bloqueId, pool] of ingresoPools) {
+   893→   893→    const sortedLots = [...pool.entries()].sort(([a], [b]) => {
+   894→   894→      if (!a && b) return 1
+   895→   895→      if (a && !b) return -1
+   896→   896→      return a.localeCompare(b)
+   897→   897→    })
+   898→   898→    const totalSalida = salidasPorBloque.get(bloqueId) ?? 0
+   899→   899→    let pendiente = totalSalida
+   900→   900→    const restantes: { fecha: string; qty: number }[] = []
+   901→   901→    for (const [fecha, qty] of sortedLots) {
+   902→   902→      if (pendiente <= 0) { restantes.push({ fecha, qty }) }
+   903→   903→      else if (qty <= pendiente) { pendiente -= qty }
+   904→   904→      else { restantes.push({ fecha, qty: qty - pendiente }); pendiente = 0 }
+   905→   905→    }
+   906→   906→    if (restantes.length > 0) lotesRestantes.set(bloqueId, restantes)
+   907→   907→  }
+   908→   908→
+   909→   909→  if (lotesRestantes.size === 0) return []
+   910→   910→
+   911→   911→  // Info de bloques
+   912→   912→  const bloqueIds = [...lotesRestantes.keys()]
+   913→   913→  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
+   914→   914→  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_'))
+   915→   915→  if (realIds.length > 0) {
+   916→   916→    const { data: bloqData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
+   917→   917→    for (const b of (bloqData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
+   918→   918→      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
+   919→   919→  }
+   920→   920→  const virtualIds = bloqueIds.filter((id) => id.startsWith('cat_'))
+   921→   921→  if (virtualIds.length > 0) {
+   922→   922→    const codes = virtualIds.map((id) => id.replace('cat_', ''))
+   923→   923→    const { data: catData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
+   924→   924→    for (const c of (catData ?? []) as { codigo: string; descripcion: string; un: string }[])
+   925→   925→      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+   926→   926→  }
+   927→   927→
+   928→   928→  const results: { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[] = []
+   929→   929→  for (const [bloqueId, lots] of lotesRestantes) {
+   930→   930→    const info = bloqueInfoMap.get(bloqueId)
+   931→   931→    if (!info) continue
+   932→   932→    for (const lot of lots) {
+   933→   933→      if (lot.qty <= 0) continue
+   934→   934→      results.push({
+   935→   935→        bloque_id: bloqueId, bloque_codigo: info.codigo, bloque_descripcion: info.descripcion,
+   936→   936→        bloque_unidad: info.unidad || 'KG', cantidad: Math.round(lot.qty * 1000) / 1000, fecha_vencimiento: lot.fecha,
+   937→   937→      })
+   938→   938→    }
+   939→   939→  }
+   940→   940→  results.sort((a, b) => {
+   941→   941→    if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+   942→   942→    if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
+   943→   943→    if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
+   944→   944→    return a.bloque_codigo.localeCompare(b.bloque_codigo)
+   945→   945→  })
+   946→   946→  return results
+   947→   947→}
+   948→   948→
+   949→   949→/**
+   950→   950→ * Obtiene el stock detallado de un NIVEL específico (para vista por niveles).
+   951→   951→ * Usa cálculo client-side FEFO idéntico al fallback de stockDetallePosicion
+   952→   952→ * pero filtrado a un solo nivel_id.
+   953→   953→ */
+   954→   954→export async function stockDetalleNivel(
+   955→   955→  nivelId: string
+   956→   956→): Promise<{ bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[]> {
+   957→   957→  // Obtener detalles de movimiento para este nivel específico
+   958→   958→  const getDetalles = async () => {
+   959→   959→    const { data: d1, error: e1 } = await dataClient
+   960→   960→      .from('piso_movimiento_detalles')
+   961→   961→      .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
+   962→   962→      .eq('nivel_id', nivelId)
+   963→   963→    if (!e1) return d1 as unknown[]
+   964→   964→    const { data: d2, error: e2 } = await dataClient
+   965→   965→      .from('piso_movimiento_detalles')
+   966→   966→      .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+   967→   967→      .eq('nivel_id', nivelId)
+   968→   968→    if (e2) throw e2
+   969→   969→    return d2 as unknown[]
+   970→   970→  }
+   971→   971→  const rawDetalles = await getDetalles()
+   972→   972→
+   973→   973→  type DetRow = { bloque_id: string; cantidad: unknown; fecha_vencimiento?: string | null; piso_movimientos: { tipo: string } | null | { tipo: string }[] }
+   974→   974→  const detalles = (rawDetalles ?? []) as DetRow[]
+   975→   975→
+   976→   976→  const isIngresoType = (tipo: string) =>
+   977→   977→    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+   978→   978→  const getTipo = (pm: DetRow['piso_movimientos']): string | null => {
+   979→   979→    if (!pm) return null
+   980→   980→    if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo : null
+   981→   981→    return pm.tipo
+   982→   982→  }
+   983→   983→
+   984→   984→  // Pool de lotes por ingreso
+   985→   985→  const ingresoPools = new Map<string, Map<string, number>>()
+   986→   986→  for (const d of detalles) {
+   987→   987→    const tipo = getTipo(d.piso_movimientos)
+   988→   988→    if (!tipo || !isIngresoType(tipo)) continue
+   989→   989→    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+   990→   990→    if (qty <= 0) continue
+   991→   991→    const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
+   992→   992→    const pool = ingresoPools.get(d.bloque_id) ?? new Map<string, number>()
+   993→   993→    pool.set(fv, (pool.get(fv) ?? 0) + qty)
+   994→   994→    ingresoPools.set(d.bloque_id, pool)
+   995→   995→  }
+   996→   996→
+   997→   997→  // Sumar salidas por bloque_id
+   998→   998→  const salidasPorBloque = new Map<string, number>()
+   999→   999→  for (const d of detalles) {
+  1000→  1000→    const tipo = getTipo(d.piso_movimientos)
+  1001→  1001→    if (!tipo || isIngresoType(tipo)) continue
+  1002→  1002→    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+  1003→  1003→    if (qty <= 0) continue
+  1004→  1004→    salidasPorBloque.set(d.bloque_id, (salidasPorBloque.get(d.bloque_id) ?? 0) + qty)
+  1005→  1005→  }
+  1006→  1006→
+  1007→  1007→  // FEFO: descontar salidas del pool
+  1008→  1008→  const lotesRestantes = new Map<string, { fecha: string; qty: number }[]>()
+  1009→  1009→  for (const [bloqueId, pool] of ingresoPools) {
+  1010→  1010→    const sortedLots = [...pool.entries()].sort(([a], [b]) => {
+  1011→  1011→      if (!a && b) return 1
+  1012→  1012→      if (a && !b) return -1
+  1013→  1013→      return a.localeCompare(b)
+  1014→  1014→    })
+  1015→  1015→    const totalSalida = salidasPorBloque.get(bloqueId) ?? 0
+  1016→  1016→    let pendiente = totalSalida
+  1017→  1017→    const restantes: { fecha: string; qty: number }[] = []
+  1018→  1018→    for (const [fecha, qty] of sortedLots) {
+  1019→  1019→      if (pendiente <= 0) { restantes.push({ fecha, qty }) }
+  1020→  1020→      else if (qty <= pendiente) { pendiente -= qty }
+  1021→  1021→      else { restantes.push({ fecha, qty: qty - pendiente }); pendiente = 0 }
+  1022→  1022→    }
+  1023→  1023→    if (restantes.length > 0) lotesRestantes.set(bloqueId, restantes)
+  1024→  1024→  }
+  1025→  1025→
+  1026→  1026→  if (lotesRestantes.size === 0) return []
+  1027→  1027→
+  1028→  1028→  // Info de bloques
+  1029→  1029→  const bloqueIds = [...lotesRestantes.keys()]
+  1030→  1030→  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
+  1031→  1031→  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_') && !id.startsWith('manual_'))
+  1032→  1032→  if (realIds.length > 0) {
+  1033→  1033→    const { data: bloqData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
+  1034→  1034→    for (const b of (bloqData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
+  1035→  1035→      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
+  1036→  1036→  }
+  1037→  1037→  const virtualIds = bloqueIds.filter((id) => id.startsWith('cat_'))
+  1038→  1038→  if (virtualIds.length > 0) {
+  1039→  1039→    const codes = virtualIds.map((id) => id.replace('cat_', ''))
+  1040→  1040→    const { data: catData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
+  1041→  1041→    for (const c of (catData ?? []) as { codigo: string; descripcion: string; un: string }[])
+  1042→  1042→      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+  1043→  1043→  }
+  1044→  1044→  // Handle manual_ IDs
+  1045→  1045→  for (const id of bloqueIds) {
+  1046→  1046→    if (id.startsWith('manual_') && !bloqueInfoMap.has(id)) {
+  1047→  1047→      bloqueInfoMap.set(id, { codigo: id.replace('manual_', ''), descripcion: 'Articulo nuevo (manual)', unidad: 'KG' })
+  1048→  1048→    }
+  1049→  1049→  }
+  1050→  1050→
+  1051→  1051→  const results: { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[] = []
+  1052→  1052→  for (const [bloqueId, lots] of lotesRestantes) {
+  1053→  1053→    const info = bloqueInfoMap.get(bloqueId)
+  1054→  1054→    if (!info) continue
+  1055→  1055→    for (const lot of lots) {
+  1056→  1056→      if (lot.qty <= 0) continue
+  1057→  1057→      results.push({
+  1058→  1058→        bloque_id: bloqueId, bloque_codigo: info.codigo, bloque_descripcion: info.descripcion,
+  1059→  1059→        bloque_unidad: info.unidad || 'KG', cantidad: Math.round(lot.qty * 1000) / 1000, fecha_vencimiento: lot.fecha,
+  1060→  1060→      })
+  1061→  1061→    }
+  1062→  1062→  }
+  1063→  1063→  results.sort((a, b) => {
+  1064→  1064→    if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+  1065→  1065→    if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
+  1066→  1066→    if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
+  1067→  1067→    return a.bloque_codigo.localeCompare(b.bloque_codigo)
+  1068→  1068→  })
+  1069→  1069→  return results
+  1070→  1070→}
+  1071→  1071→
+  1072→  1072→/**
+  1073→  1073→ * Registra un ingreso directo a una posición (sin pasar por el RPC completo).
+  1074→  1074→ * Permite múltiples bloques en una sola posición.
+  1075→  1075→ */
+  1076→  1076→export async function registrarIngresoPosicion(
+  1077→  1077→  turno: string,
+  1078→  1078→  usuarioId: string,
+  1079→  1079→  usuarioNombre: string,
+  1080→  1080→  usuarioCorreo: string,
+  1081→  1081→  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[],
+  1082→  1082→  opts?: { posicion_id?: string; codigo_inc?: string }
+  1083→  1083→): Promise<void> {
+  1084→  1084→  // Crear cabecera
+  1085→  1085→  const insertPayload: Record<string, unknown> = {
+  1086→  1086→    tipo: 'ingreso',
+  1087→  1087→    turno,
+  1088→  1088→    usuario_id: usuarioId,
+  1089→  1089→    usuario_nombre: usuarioNombre,
+  1090→  1090→    usuario_correo: usuarioCorreo,
+  1091→  1091→  }
+  1092→  1092→  if (opts?.posicion_id) insertPayload.posicion_id = opts.posicion_id
+  1093→  1093→  if (opts?.codigo_inc) insertPayload.codigo_inc = opts.codigo_inc
+  1094→  1094→
+  1095→  1095→  const { data: movData, error: movErr } = await dataClient
+  1096→  1096→    .from('piso_movimientos')
+  1097→  1097→    .insert(insertPayload)
+  1098→  1098→    .select('id')
+  1099→  1099→    .single()
+  1100→  1100→  if (movErr) throw movErr
+  1101→  1101→  const movimientoId = (movData as { id: string }).id
+  1102→  1102→
+  1103→  1103→  // Crear detalles
+  1104→  1104→  if (detalles.length > 0) {
+  1105→  1105→    const detRows = detalles.map((d) => ({
+  1106→  1106→      movimiento_id: movimientoId,
+  1107→  1107→      nivel_id: d.nivel_id,
+  1108→  1108→      bloque_id: d.bloque_id,
+  1109→  1109→      cantidad: d.cantidad,
+  1110→  1110→      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
+  1111→  1111→    }))
+  1112→  1112→    const { error: detErr } = await dataClient
+  1113→  1113→      .from('piso_movimiento_detalles')
+  1114→  1114→      .insert(detRows)
+  1115→  1115→    if (detErr) throw detErr
+  1116→  1116→  }
+  1117→  1117→}
+  1118→  1118→
+  1119→  1119→/**
+  1120→  1120→ * Registra una salida de stock de una posición.
+  1121→  1121→ */
+  1122→  1122→export async function registrarSalidaPosicion(
+  1123→  1123→  turno: string,
+  1124→  1124→  usuarioId: string,
+  1125→  1125→  usuarioNombre: string,
+  1126→  1126→  usuarioCorreo: string,
+  1127→  1127→  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
+  1128→  1128→): Promise<void> {
+  1129→  1129→  const { data: movData, error: movErr } = await dataClient
+  1130→  1130→    .from('piso_movimientos')
+  1131→  1131→    .insert({ tipo: 'salida', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+  1132→  1132→    .select('id')
+  1133→  1133→    .single()
+  1134→  1134→  if (movErr) throw movErr
+  1135→  1135→  const movimientoId = (movData as { id: string }).id
+  1136→  1136→
+  1137→  1137→  if (detalles.length > 0) {
+  1138→  1138→    const detRows = detalles.map((d) => ({
+  1139→  1139→      movimiento_id: movimientoId,
+  1140→  1140→      nivel_id: d.nivel_id,
+  1141→  1141→      bloque_id: d.bloque_id,
+  1142→  1142→      cantidad: d.cantidad,
+  1143→  1143→      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
+  1144→  1144→    }))
+  1145→  1145→    const { error: detErr } = await dataClient
+  1146→  1146→      .from('piso_movimiento_detalles')
+  1147→  1147→      .insert(detRows)
+  1148→  1148→    if (detErr) throw detErr
+  1149→  1149→  }
+  1150→  1150→}
+  1151→  1151→
+  1152→  1152→/**
+  1153→  1153→ * Registra una devolución de stock a una posición.
+  1154→  1154→ * Funciona como un ingreso pero con tipo 'devolucion'.
+  1155→  1155→ */
+  1156→  1156→export async function registrarDevolucionPosicion(
+  1157→  1157→  turno: string,
+  1158→  1158→  usuarioId: string,
+  1159→  1159→  usuarioNombre: string,
+  1160→  1160→  usuarioCorreo: string,
+  1161→  1161→  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
+  1162→  1162→): Promise<void> {
+  1163→  1163→  const { data: movData, error: movErr } = await dataClient
+  1164→  1164→    .from('piso_movimientos')
+  1165→  1165→    .insert({ tipo: 'devolucion', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+  1166→  1166→    .select('id')
+  1167→  1167→    .single()
+  1168→  1168→  if (movErr) throw movErr
+  1169→  1169→  const movimientoId = (movData as { id: string }).id
+  1170→  1170→
+  1171→  1171→  if (detalles.length > 0) {
+  1172→  1172→    const detRows = detalles.map((d) => ({
+  1173→  1173→      movimiento_id: movimientoId,
+  1174→  1174→      nivel_id: d.nivel_id,
+  1175→  1175→      bloque_id: d.bloque_id,
+  1176→  1176→      cantidad: d.cantidad,
+  1177→  1177→      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
+  1178→  1178→    }))
+  1179→  1179→    const { error: detErr } = await dataClient
+  1180→  1180→      .from('piso_movimiento_detalles')
+  1181→  1181→      .insert(detRows)
+  1182→  1182→    if (detErr) throw detErr
+  1183→  1183→  }
+  1184→  1184→}
+  1185→  1185→
+  1186→  1186→/**
+  1187→  1187→ * Registra un traslado entre posiciones del mismo sector.
+  1188→  1188→ * Crea una salida en el origen y un ingreso en el destino.
+  1189→  1189→ */
+  1190→  1190→export async function registrarTrasladoPosicion(
+  1191→  1191→  turno: string,
+  1192→  1192→  usuarioId: string,
+  1193→  1193→  usuarioNombre: string,
+  1194→  1194→  usuarioCorreo: string,
+  1195→  1195→  detallesSalida: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[],
+  1196→  1196→  detallesIngreso: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
+  1197→  1197→): Promise<void> {
+  1198→  1198→  // Crear movimiento de salida (origen)
+  1199→  1199→  const { data: salData, error: salErr } = await dataClient
+  1200→  1200→    .from('piso_movimientos')
+  1201→  1201→    .insert({ tipo: 'salida', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+  1202→  1202→    .select('id')
+  1203→  1203→    .single()
+  1204→  1204→  if (salErr) throw salErr
+  1205→  1205→
+  1206→  1206→  // Crear movimiento de ingreso (destino) con tipo 'ingreso'
+  1207→  1207→  const { data: ingData, error: ingErr } = await dataClient
+  1208→  1208→    .from('piso_movimientos')
+  1209→  1209→    .insert({ tipo: 'ingreso', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+  1210→  1210→    .select('id')
+  1211→  1211→    .single()
+  1212→  1212→  if (ingErr) throw ingErr
+  1213→  1213→
+  1214→  1214→  // Insertar detalles de salida
+  1215→  1215→  if (detallesSalida.length > 0) {
+  1216→  1216→    await dataClient.from('piso_movimiento_detalles').insert(
+  1217→  1217→      detallesSalida.map((d) => ({
+  1218→  1218→        movimiento_id: (salData as { id: string }).id,
+  1219→  1219→        nivel_id: d.nivel_id,
+  1220→  1220→        bloque_id: d.bloque_id,
+  1221→  1221→        cantidad: d.cantidad,
+  1222→  1222→        ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
+  1223→  1223→      }))
+  1224→  1224→    )
+  1225→  1225→  }
+  1226→  1226→
+  1227→  1227→  // Insertar detalles de ingreso
+  1228→  1228→  if (detallesIngreso.length > 0) {
+  1229→  1229→    await dataClient.from('piso_movimiento_detalles').insert(
+  1230→  1230→      detallesIngreso.map((d) => ({
+  1231→  1231→        movimiento_id: (ingData as { id: string }).id,
+  1232→  1232→        nivel_id: d.nivel_id,
+  1233→  1233→        bloque_id: d.bloque_id,
+  1234→  1234→        cantidad: d.cantidad,
+  1235→  1235→        ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
+  1236→  1236→      }))
+  1237→  1237→    )
+  1238→  1238→  }
+  1239→  1239→}
+  1240→  1240→
+  1241→  1241→/**
+  1242→  1242→ * Obtiene el primer nivel disponible de una posición.
+  1243→  1243→ */
+  1244→  1244→export async function obtenerPrimerNivel(posicionId: string): Promise<string | null> {
+  1245→  1245→  const { data, error } = await dataClient
+  1246→  1246→    .from('piso_niveles')
+  1247→  1247→    .select('id')
+  1248→  1248→    .eq('posicion_id', posicionId)
+  1249→  1249→    .order('numero')
+  1250→  1250→    .limit(1)
+  1251→  1251→  if (error) throw error
+  1252→  1252→  const rows = (data ?? []) as { id: string }[]
+  1253→  1253→  return rows.length > 0 ? rows[0].id : null
+  1254→  1254→}
+  1255→  1255→
+  1256→  1256→export type NivelInfo = { id: string; numero: number; codigo_ubicacion: string | null }
+  1257→  1257→
+  1258→  1258→/**
+  1259→  1259→ * Obtiene todos los niveles de una posición, ordenados por número.
+  1260→  1260→ */
+  1261→  1261→export async function obtenerNivelesPosicion(posicionId: string, columnaLetra?: string): Promise<NivelInfo[]> {
+  1262→  1262→  const { data, error } = await dataClient
+  1263→  1263→    .from('piso_niveles')
+  1264→  1264→    .select('id, numero, codigo_ubicacion')
+  1265→  1265→    .eq('posicion_id', posicionId)
+  1266→  1266→    .order('numero')
+  1267→  1267→  if (error) throw error
+  1268→  1268→  const result = (data ?? []) as NivelInfo[]
+  1269→  1269→  if (columnaLetra) {
+  1270→  1270→    for (const n of result) {
+  1271→  1271→      if (n.codigo_ubicacion) {
+  1272→  1272→        const idx = n.codigo_ubicacion.indexOf(columnaLetra)
+  1273→  1273→        if (idx >= 0) n.codigo_ubicacion = n.codigo_ubicacion.substring(idx)
+  1274→  1274→      }
+  1275→  1275→    }
+  1276→  1276→  }
+  1277→  1277→  return result
+  1278→  1278→}
+  1279→  1279→
+  1280→  1280→/**
+  1281→  1281→ * Obtiene el stock detallado de una posición desglosado por nivel.
+  1282→  1282→ */
+  1283→  1283→export async function stockPorNivelPosicion(
+  1284→  1284→  posicionId: string
+  1285→  1285→): Promise<{ nivel_id: string; nivel_numero: number; bloque_codigo: string; cantidad: number }[]> {
+  1286→  1286→  const { data: nivData, error: nivErr } = await dataClient
+  1287→  1287→    .from('piso_niveles')
+  1288→  1288→    .select('id, numero')
+  1289→  1289→    .eq('posicion_id', posicionId)
+  1290→  1290→    .order('numero')
+  1291→  1291→  if (nivErr) throw nivErr
+  1292→  1292→  const niveles = (nivData ?? []) as { id: string; numero: number }[]
+  1293→  1293→  if (niveles.length === 0) return []
+  1294→  1294→
+  1295→  1295→  const nivelIds = niveles.map((n) => n.id)
+  1296→  1296→  const nivelMap = new Map(niveles.map((n) => [n.id, n.numero]))
+  1297→  1297→
+  1298→  1298→  const { data: detData, error: detErr } = await dataClient
+  1299→  1299→    .from('piso_movimiento_detalles')
+  1300→  1300→    .select('nivel_id, bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+  1301→  1301→    .in('nivel_id', nivelIds)
+  1302→  1302→  if (detErr) throw detErr
+  1303→  1303→
+  1304→  1304→  // Calcular stock neto por nivel y bloque
+  1305→  1305→  const stockMap = new Map<string, number>()
+  1306→  1306→  for (const d of (detData ?? []) as unknown as {
+  1307→  1307→    nivel_id: string; bloque_id: string; cantidad: unknown;
+  1308→  1308→    piso_movimientos: { tipo: string } | null | { tipo: string }[]
+  1309→  1309→  }[]) {
+  1310→  1310→    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+  1311→  1311→    const tipo = Array.isArray(d.piso_movimientos) ? (d.piso_movimientos[0]?.tipo ?? '') : (d.piso_movimientos?.tipo ?? '')
+  1312→  1312→    const delta = (tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion') ? qty : -qty
+  1313→  1313→    if (delta === 0) continue
+  1314→  1314→    stockMap.set(d.nivel_id, (stockMap.get(d.nivel_id) ?? 0) + delta)
+  1315→  1315→  }
+  1316→  1316→
+  1317→  1317→  // Obtener códigos de bloques
+  1318→  1318→  const bloqueIds = [...new Set((detData ?? []).map((d: unknown) => (d as { bloque_id: string }).bloque_id))] as string[]
+  1319→  1319→  const bloqueMap = new Map<string, string>()
+  1320→  1320→  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_') && !id.startsWith('manual_'))
+  1321→  1321→  if (realIds.length > 0) {
+  1322→  1322→    const { data: bloqData } = await dataClient.from('piso_bloques').select('id, codigo').in('id', realIds)
+  1323→  1323→    for (const b of (bloqData ?? []) as { id: string; codigo: string }[]) bloqueMap.set(b.id, b.codigo)
+  1324→  1324→  }
+  1325→  1325→  for (const id of bloqueIds) {
+  1326→  1326→    if (!bloqueMap.has(id)) {
+  1327→  1327→      bloqueMap.set(id, id.startsWith('cat_') ? id.replace('cat_', '') : id.startsWith('manual_') ? id.replace('manual_', '') : id)
+  1328→  1328→    }
+  1329→  1329→  }
+  1330→  1330→
+  1331→  1331→  const results: { nivel_id: string; nivel_numero: number; bloque_codigo: string; cantidad: number }[] = []
+  1332→  1332→  for (const [nivelId, stock] of stockMap) {
+  1333→  1333→    if (stock > 0) {
+  1334→  1334→      results.push({ nivel_id: nivelId, nivel_numero: nivelMap.get(nivelId) ?? 0, bloque_codigo: '', cantidad: stock })
+  1335→  1335→    }
+  1336→  1336→  }
+  1337→  1337→  return results
+  1338→  1338→}
+  1339→  1339→
+  1340→  1340→/**
+  1341→  1341→ * Lista bloques disponibles para selección.
+  1342→  1342→ * Busca en piso_bloques PRIMERO y luego en catalogo (Racks) como respaldo.
+  1343→  1343→ * Fusiona ambos resultados sin duplicar por código.
+  1344→  1344→ */
+  1345→  1345→export async function listarBloquesParaSelect(): Promise<{ id: string; codigo: string; descripcion: string; unidad: string }[]> {
+  1346→  1346→  const results: { id: string; codigo: string; descripcion: string; unidad: string }[] = []
+  1347→  1347→  const seen = new Map<string, boolean>()
+  1348→  1348→
+  1349→  1349→  // 1. piso_bloques (tabla local de Piso)
+  1350→  1350→  try {
+  1351→  1351→    const { data, error } = await dataClient
+  1352→  1352→      .from('piso_bloques')
+  1353→  1353→      .select('id, codigo, descripcion, unidad')
+  1354→  1354→      .order('codigo')
+  1355→  1355→    if (error) console.error('[Piso] Error consultando piso_bloques:', error.message)
+  1356→  1356→    for (const b of (data ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
+  1357→  1357→      const code = (b.codigo ?? '').trim().toUpperCase()
+  1358→  1358→      if (code && !seen.has(code)) {
+  1359→  1359→        seen.set(code, true)
+  1360→  1360→        results.push({
+  1361→  1361→          id: b.id,
+  1362→  1362→          codigo: code,
+  1363→  1363→          descripcion: b.descripcion ?? '',
+  1364→  1364→          unidad: b.unidad ?? '',
+  1365→  1365→        })
+  1366→  1366→      }
+  1367→  1367→    }
+  1368→  1368→    console.log(`[Piso] piso_bloques: ${(data ?? []).length} items cargados`)
+  1369→  1369→  } catch (err) { console.error('[Piso] Error en piso_bloques:', err) }
+  1370→  1370→
+  1371→  1371→  // 2. catalogo (tabla de Racks como respaldo)
+  1372→  1372→  try {
+  1373→  1373→    const { data, error } = await dataClient
+  1374→  1374→      .from('catalogo')
+  1375→  1375→      .select('codigo, descripcion, un')
+  1376→  1376→      .order('codigo')
+  1377→  1377→    if (error) console.error('[Piso] Error consultando catalogo:', error.message)
+  1378→  1378→    for (const c of (data ?? []) as { codigo: string; descripcion: string; un: string }[]) {
+  1379→  1379→      const code = (c.codigo ?? '').trim().toUpperCase()
+  1380→  1380→      if (code && !seen.has(code)) {
+  1381→  1381→        seen.set(code, true)
+  1382→  1382→        results.push({
+  1383→  1383→          id: `cat_${code}`, // ID virtual para items del catálogo de Racks
+  1384→  1384→          codigo: code,
+  1385→  1385→          descripcion: c.descripcion ?? '',
+  1386→  1386→          unidad: c.un ?? '',
+  1387→  1387→        })
+  1388→  1388→      }
+  1389→  1389→    }
+  1390→  1390→    console.log(`[Piso] catalogo (respaldo): ${(data ?? []).length} items, total merge: ${results.length}`)
+  1391→  1391→  } catch (err) { console.error('[Piso] Error en catalogo:', err) }
+  1392→  1392→
+  1393→  1393→  return results
+  1394→  1394→}
+  1395→  1395→
+  1396→  1396→/**
+  1397→  1397→ * Busca un bloque por código exacto. Busca en piso_bloques primero, luego en catalogo.
+  1398→  1398→ * Si lo encuentra en catalogo pero no en piso_bloques, lo crea automáticamente.
+  1399→  1399→ */
+  1400→  1400→export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: string; codigo: string; descripcion: string; unidad: string } | null> {
+  1401→  1401→  const target = codigo.trim().toUpperCase()
+  1402→  1402→  if (!target) return null
+  1403→  1403→
+  1404→  1404→  // 1. Buscar en piso_bloques
+  1405→  1405→  try {
+  1406→  1406→    const { data, error } = await dataClient
+  1407→  1407→      .from('piso_bloques')
+  1408→  1408→      .select('id, codigo, descripcion, unidad')
+  1409→  1409→      .eq('codigo', target)
+  1410→  1410→      .limit(1)
+  1411→  1411→    if (error) console.error('[Piso] Error buscando en piso_bloques:', error.message)
+  1412→  1412→    if (data && data.length > 0) {
+  1413→  1413→      const b = data[0] as { id: string; codigo: string; descripcion: string; unidad: string }
+  1414→  1414→      console.log('[Piso] Bloque encontrado en piso_bloques:', b.codigo)
+  1415→  1415→      return { id: b.id, codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' }
+  1416→  1416→    }
+  1417→  1417→  } catch (err) { console.error('[Piso] Error en búsqueda piso_bloques:', err) }
+  1418→  1418→
+  1419→  1419→  // 2. Buscar en catalogo (Racks)
+  1420→  1420→  try {
+  1421→  1421→    const { data, error } = await dataClient
+  1422→  1422→      .from('catalogo')
+  1423→  1423→      .select('codigo, descripcion, un')
+  1424→  1424→      .eq('codigo', target)
+  1425→  1425→      .limit(1)
+  1426→  1426→    if (error) console.error('[Piso] Error buscando en catalogo:', error.message)
+  1427→  1427→    if (data && data.length > 0) {
+  1428→  1428→      const c = data[0] as { codigo: string; descripcion: string; un: string }
+  1429→  1429→      console.log('[Piso] Bloque encontrado en catalogo:', c.codigo)
+  1430→  1430→      // Auto-crear en piso_bloques para futuro uso
+  1431→  1431→      try {
+  1432→  1432→        const { data: inserted } = await dataClient
+  1433→  1433→          .from('piso_bloques')
+  1434→  1434→          .insert({ codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+  1435→  1435→          .select('id')
+  1436→  1436→          .single()
+  1437→  1437→        if (inserted) {
+  1438→  1438→          return {
+  1439→  1439→            id: (inserted as { id: string }).id,
+  1440→  1440→            codigo: c.codigo,
+  1441→  1441→            descripcion: c.descripcion ?? '',
+  1442→  1442→            unidad: c.un ?? '',
+  1443→  1443→          }
+  1444→  1444→        }
+  1445→  1445→      } catch (insertErr) { console.warn('[Piso] Auto-create piso_bloques falló, usando ID virtual:', insertErr) }
+  1446→  1446→      return { id: `cat_${c.codigo}`, codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' }
+  1447→  1447→    }
+  1448→  1448→  } catch (err) { console.error('[Piso] Error en búsqueda catalogo:', err) }
+  1449→  1449→
+  1450→  1450→  // 3. No encontrado en ninguna tabla — auto-crear en piso_bloques con info mínima
+  1451→  1451→  try {
+  1452→  1452→    console.log('[Piso] Bloque no encontrado en ninguna tabla, auto-creando:', target)
+  1453→  1453→    const { data: inserted, error: insertErr } = await dataClient
+  1454→  1454→      .from('piso_bloques')
+  1455→  1455→      .insert({ codigo: target, descripcion: '', unidad: 'KG' })
+  1456→  1456→      .select('id')
+  1457→  1457→      .single()
+  1458→  1458→    if (!insertErr && inserted) {
+  1459→  1459→      return {
+  1460→  1460→        id: (inserted as { id: string }).id,
+  1461→  1461→        codigo: target,
+  1462→  1462→        descripcion: '',
+  1463→  1463→        unidad: 'KG',
+  1464→  1464→      }
+  1465→  1465→    }
+  1466→  1466→    console.warn('[Piso] Auto-crear piso_bloques falló:', insertErr)
+  1467→  1467→  } catch (err) { console.warn('[Piso] Error auto-creando bloque:', err) }
+  1468→  1468→
+  1469→  1469→  return null
+  1470→  1470→}
+  1471→  1471→
+  1472→  1472→// ═══ Stock global Piso — todos los lotes FEFO con ubicación ═══
+  1473→  1473→
+  1474→  1474→export type StockPisoItem = {
+  1475→  1475→  bloque_codigo: string
+  1476→  1476→  bloque_descripcion: string
+  1477→  1477→  bloque_unidad: string
+  1478→  1478→  ubicacion: string
+  1479→  1479→  sector_nombre: string
+  1480→  1480→  cantidad: number
+  1481→  1481→  fecha_vencimiento: string
+  1482→  1482→  codigo_inc?: string
+  1483→  1483→}
+  1484→  1484→
+  1485→  1485→/**
+  1486→  1486→ * Obtiene todo el stock de Piso con FEFO y ubicación resuelta.
+  1487→  1487→ * Para cada (bloque_id, nivel_id) calcula el stock FEFO restante
+  1488→  1488→ * y resuelve la ubicación (sector, columna, subcolumna, posicion).
+  1489→  1489→ */
+  1490→  1490→export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
+  1491→  1491→  try {
+  1492→  1492→  // 1. Fetch ALL detalles with movement type
+  1493→  1493→  const { data: detData, error: detErr } = await dataClient
+  1494→  1494→    .from('piso_movimiento_detalles')
+  1495→  1495→    .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)')
+  1496→  1496→  if (detErr) throw detErr
+  1497→  1497→
+  1498→  1498→  // 2. Group by (bloque_id, nivel_id)
+  1499→  1499→  const isIngresoType = (tipo: string) =>
+  1500→  1500→    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+  1501→  1501→  const getTipo = (pm: unknown): string => {
+  1502→  1502→    if (!pm) return ''
+  1503→  1503→    if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { tipo: string }).tipo : ''
+  1504→  1504→    return (pm as { tipo: string }).tipo ?? ''
+  1505→  1505→  }
+  1506→  1506→
+  1507→  1507→  type RawDet = {
+  1508→  1508→    bloque_id: string
+  1509→  1509→    nivel_id: string
+  1510→  1510→    cantidad: unknown
+  1511→  1511→    fecha_vencimiento?: string | null
+  1512→  1512→    movimiento_id: string
+  1513→  1513→    piso_movimientos: { tipo: string; codigo_inc?: string | null } | null | { tipo: string; codigo_inc?: string | null }[]
+  1514→  1514→  }
+  1515→  1515→  const rawDets = (detData ?? []) as RawDet[]
+  1516→  1516→
+  1517→  1517→  const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[]>()
+  1518→  1518→  for (const d of rawDets) {
+  1519→  1519→    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+  1520→  1520→    if (qty <= 0) continue
+  1521→  1521→    const tipo = getTipo(d.piso_movimientos)
+  1522→  1522→    if (!tipo) continue
+  1523→  1523→    const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
+  1524→  1524→    const getCodigoInc = (pm: unknown): string => {
+  1525→  1525→      if (!pm) return ''
+  1526→  1526→      if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { codigo_inc?: string | null }).codigo_inc || '' : ''
+  1527→  1527→      return (pm as { codigo_inc?: string | null }).codigo_inc || ''
+  1528→  1528→    }
+  1529→  1529→    const codigoInc = getCodigoInc(d.piso_movimientos)
+  1530→  1530→    const key = `${d.bloque_id}__${d.nivel_id}`
+  1531→  1531→    const arr = blockNivelMap.get(key) ?? []
+  1532→  1532→    arr.push({ bloque_id: d.bloque_id, nivel_id: d.nivel_id, tipo, cantidad: qty, fecha_vencimiento: fv, codigo_inc: codigoInc })
+  1533→  1533→    blockNivelMap.set(key, arr)
+  1534→  1534→  }
+  1535→  1535→
+  1536→  1536→  // 3. FEFO per (bloque_id, nivel_id)
+  1537→  1537→  const fefoResults: { bloque_id: string; nivel_id: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[] = []
+  1538→  1538→  for (const [key, details] of blockNivelMap) {
+  1539→  1539→    const ingresoPool = new Map<string, { cantidad: number; codigo_inc: string }>()
+  1540→  1540→    let totalExit = 0
+  1541→  1541→    for (const d of details) {
+  1542→  1542→      if (isIngresoType(d.tipo)) {
+  1543→  1543→        const existing = ingresoPool.get(d.fecha_vencimiento)
+  1544→  1544→        if (existing) {
+  1545→  1545→          existing.cantidad += d.cantidad
+  1546→  1546→          if (!existing.codigo_inc && d.codigo_inc) existing.codigo_inc = d.codigo_inc
+  1547→  1547→        } else {
+  1548→  1548→          ingresoPool.set(d.fecha_vencimiento, { cantidad: d.cantidad, codigo_inc: d.codigo_inc })
+  1549→  1549→        }
+  1550→  1550→      } else {
+  1551→  1551→        totalExit += d.cantidad
+  1552→  1552→      }
+  1553→  1553→    }
+  1554→  1554→    const sortedLots = [...ingresoPool.entries()].sort(([a], [b]) => {
+  1555→  1555→      if (!a && b) return 1
+  1556→  1556→      if (a && !b) return -1
+  1557→  1557→      return a.localeCompare(b)
+  1558→  1558→    })
+  1559→  1559→    let pendiente = totalExit
+  1560→  1560→    for (const [fecha, pool] of sortedLots) {
+  1561→  1561→      if (pendiente <= 0) {
+  1562→  1562→        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
+  1563→  1563→      } else if (pool.cantidad <= pendiente) {
+  1564→  1564→        pendiente -= pool.cantidad
+  1565→  1565→      } else {
+  1566→  1566→        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad - pendiente, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
+  1567→  1567→        pendiente = 0
+  1568→  1568→      }
+  1569→  1569→    }
+  1570→  1570→  }
+  1571→  1571→
+  1572→  1572→  if (fefoResults.length === 0) return []
+  1573→  1573→
+  1574→  1574→  // 4. Resolve bloque info
+  1575→  1575→  const bloqueIds = [...new Set(fefoResults.map(r => r.bloque_id))]
+  1576→  1576→  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
+  1577→  1577→  const realIds = bloqueIds.filter(id => !id.startsWith('cat_') && !id.startsWith('manual_'))
+  1578→  1578→  if (realIds.length > 0) {
+  1579→  1579→    const { data: bData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
+  1580→  1580→    for (const b of (bData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
+  1581→  1581→      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
+  1582→  1582→  }
+  1583→  1583→  const catIds = bloqueIds.filter(id => id.startsWith('cat_'))
+  1584→  1584→  if (catIds.length > 0) {
+  1585→  1585→    const codes = catIds.map(id => id.replace('cat_', ''))
+  1586→  1586→    const { data: cData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
+  1587→  1587→    for (const c of (cData ?? []) as { codigo: string; descripcion: string; un: string }[])
+  1588→  1588→      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+  1589→  1589→  }
+  1590→  1590→  for (const id of bloqueIds) {
+  1591→  1591→    if (id.startsWith('manual_') && !bloqueInfoMap.has(id))
+  1592→  1592→      bloqueInfoMap.set(id, { codigo: id.replace('manual_', ''), descripcion: 'Articulo nuevo', unidad: 'KG' })
+  1593→  1593→  }
+  1594→  1594→
+  1595→  1595→  // 5. Resolve location for each nivel_id
+  1596→  1596→  const nivelIds = [...new Set(fefoResults.map(r => r.nivel_id))]
+  1597→  1597→  const locMap = new Map<string, { ubicacion: string; sector_nombre: string }>()
+  1598→  1598→  if (nivelIds.length > 0) {
+  1599→  1599→    const { data: nivData } = await dataClient.from('piso_niveles').select('id, posicion_id').in('id', nivelIds)
+  1600→  1600→    const nivToPos = new Map<string, string>()
+  1601→  1601→    for (const n of (nivData ?? []) as { id: string; posicion_id: string }[]) nivToPos.set(n.id, n.posicion_id)
+  1602→  1602→
+  1603→  1603→    const posIds = [...nivToPos.values()]
+  1604→  1604→    if (posIds.length > 0) {
+  1605→  1605→      const { data: posData } = await dataClient.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds)
+  1606→  1606→      const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
+  1607→  1607→      for (const p of (posData ?? []) as { id: string; numero: number; subcolumna_id: string }[])
+  1608→  1608→        posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id })
+  1609→  1609→      const subIds = [...new Set([...posMap.values()].map(p => p.subcolumna_id))]
+  1610→  1610→      if (subIds.length > 0) {
+  1611→  1611→        const { data: subData } = await dataClient.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds)
+  1612→  1612→        const subMap = new Map<string, { codigo: string; columna_id: string }>()
+  1613→  1613→        for (const s of (subData ?? []) as { id: string; codigo: string; columna_id: string }[])
+  1614→  1614→          subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id })
+  1615→  1615→        const colIds = [...new Set([...subMap.values()].map(s => s.columna_id))]
+  1616→  1616→        if (colIds.length > 0) {
+  1617→  1617→          const { data: colData } = await dataClient.from('piso_columnas').select('id, letra, sector_id').in('id', colIds)
+  1618→  1618→          const colMap = new Map<string, { letra: string; sector_id: string }>()
+  1619→  1619→          for (const c of (colData ?? []) as { id: string; letra: string; sector_id: string }[])
+  1620→  1620→            colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id })
+  1621→  1621→          const secIds = [...new Set([...colMap.values()].map(c => c.sector_id))]
+  1622→  1622→          if (secIds.length > 0) {
+  1623→  1623→            const { data: secData } = await dataClient.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', secIds)
+  1624→  1624→            const secMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
+  1625→  1625→            for (const s of (secData ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[]) secMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
+  1626→  1626→            for (const [nivId, posId] of nivToPos) {
+  1627→  1627→              const pos = posMap.get(posId)
+  1628→  1628→              if (!pos) continue
+  1629→  1629→              const sub = subMap.get(pos.subcolumna_id)
+  1630→  1630→              if (!sub) continue
+  1631→  1631→              const col = colMap.get(sub.columna_id)
+  1632→  1632→              if (!col) continue
+  1633→  1633→              const secInfo = secMap.get(col.sector_id)
+  1634→  1634→              const ubicacion = !secInfo
+  1635→  1635→                ? `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+  1636→  1636→                : secInfo.nCol === 1 && secInfo.nSub === 1
+  1637→  1637→                  ? `Pos ${pos.numero}`
+  1638→  1638→                  : secInfo.nSub === 1
+  1639→  1639→                    ? `${col.letra}-Pos ${pos.numero}`
+  1640→  1640→                    : `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+  1641→  1641→              locMap.set(nivId, {
+  1642→  1642→                ubicacion,
+  1643→  1643→                sector_nombre: secInfo?.nombre ?? '',
+  1644→  1644→              })
+  1645→  1645→            }
+  1646→  1646→          }
+  1647→  1647→        }
+  1648→  1648→      }
+  1649→  1649→    }
+  1650→  1650→  }
+  1651→  1651→
+  1652→  1652→  // 6. Build results
+  1653→  1653→  return fefoResults
+  1654→  1654→    .filter(r => r.cantidad > 0)
+  1655→  1655→    .map(r => {
+  1656→  1656→      const info = bloqueInfoMap.get(r.bloque_id)
+  1657→  1657→      const loc = locMap.get(r.nivel_id)
+  1658→  1658→      return {
+  1659→  1659→        bloque_codigo: info?.codigo ?? r.bloque_id,
+  1660→  1660→        bloque_descripcion: info?.descripcion ?? '',
+  1661→  1661→        bloque_unidad: info?.unidad ?? 'KG',
+  1662→  1662→        ubicacion: loc?.ubicacion ?? '',
+  1663→  1663→        sector_nombre: loc?.sector_nombre ?? '',
+  1664→  1664→        cantidad: Math.round(r.cantidad * 1000) / 1000,
+  1665→  1665→        fecha_vencimiento: r.fecha_vencimiento,
+  1666→  1666→        codigo_inc: r.codigo_inc || undefined,
+  1667→  1667→      }
+  1668→  1668→    })
+  1669→  1669→    .sort((a, b) => {
+  1670→  1670→      if (a.bloque_codigo !== b.bloque_codigo) return a.bloque_codigo.localeCompare(b.bloque_codigo)
+  1671→  1671→      if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+  1672→  1672→      if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
+  1673→  1673→      if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
+  1674→  1674→      return a.ubicacion.localeCompare(b.ubicacion)
+  1675→  1675→    })
+  1676→  1676→  } catch (err) {
+  1677→  1677→    console.error('[stockPisoGlobal] Error consultando stock de Piso:', err)
+  1678→  1678→    return []
+  1679→  1679→  }
+  1680→  1680→}
+  1681→  1681→
+  1682→  1682→/**
+  1683→  1683→ * Busca stock en Piso para UN código específico (optimizado).
+  1684→  1684→ * En vez de descargar TODOS los detalles y filtrar en memoria,
+  1685→  1685→ * busca primero el bloque_id y luego solo los detalles de ese bloque.
+  1686→  1686→ */
+  1687→  1687→export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[]> {
+  1688→  1688→  const code = codigo.trim().toUpperCase()
+  1689→  1689→  console.log('[stockPisoPorCodigo] Iniciando búsqueda para código:', code)
+  1690→  1690→
+  1691→  1691→  // ─── TIMEOUT GARANTIZADO: nunca dejar la promesa colgada ───
+  1692→  1692→  const TIMEOUT_MS = 10000
+  1693→  1693→  const result = await Promise.race([
+  1694→  1694→    stockPisoPorCodigoInner(code),
+  1695→  1695→    new Promise<StockPisoItem[]>((resolve) =>
+  1696→  1696→      setTimeout(() => {
+  1697→  1697→        console.warn('[stockPisoPorCodigo] TIMEOUT HARD after', TIMEOUT_MS, 'ms — retornando vacío')
+  1698→  1698→        resolve([])
+  1699→  1699→      }, TIMEOUT_MS)
+  1700→  1700→    ),
+  1701→  1701→  ])
+  1702→  1702→  return result
+  1703→  1703→}
+  1704→  1704→
+  1705→  1705→async function stockPisoPorCodigoInner(code: string): Promise<StockPisoItem[]> {
+  1706→  1706→  try {
+  1707→  1707→    // ─── Helper: ejecutar query con fallback dataClient → supabase ───
+  1708→  1708→    const queryBloques = async (queryFn: (client: any) => any) => {
+  1709→  1709→      // Intentar con dataClient (service role) primero
+  1710→  1710→      try {
+  1711→  1711→        const result = await queryFn(dataClient)
+  1712→  1712→        if (result.error) {
+  1713→  1713→          console.warn('[stockPisoPorCodigo] dataClient error:', result.error.message)
+  1714→  1714→        }
+  1715→  1715→        return result
+  1716→  1716→      } catch (err) {
+  1717→  1717→        console.warn('[stockPisoPorCodigo] dataClient falló, intentando supabase:', err)
+  1718→  1718→      }
+  1719→  1719→      // Fallback a supabase (anon)
+  1720→  1720→      try {
+  1721→  1721→        return await queryFn(supabase)
+  1722→  1722→      } catch (err2) {
+  1723→  1723→        console.error('[stockPisoPorCodigo] supabase también falló:', err2)
+  1724→  1724→        return { data: null, error: err2 }
+  1725→  1725→      }
+  1726→  1726→    }
+  1727→  1727→
+  1728→  1728→    // ─── 1. Buscar bloque_id en piso_bloques por código ───
+  1729→  1729→    // Intentar múltiples estrategias de búsqueda
+  1730→  1730→    const realBloqueIds: string[] = []
+  1731→  1731→
+  1732→  1732→    // Estrategia A: coincidencia exacta (case insensitive)
+  1733→  1733→    const { data: exactMatch, error: errExact } = await queryBloques((client: any) =>
+  1734→  1734→      client.from('piso_bloques').select('id, codigo').ilike('codigo', code)
+  1735→  1735→    )
+  1736→  1736→    if (!errExact && exactMatch) {
+  1737→  1737→      for (const b of (exactMatch as { id: string; codigo: string }[])) {
+  1738→  1738→        realBloqueIds.push(b.id)
+  1739→  1739→        console.log('[stockPisoPorCodigo] Bloque encontrado (exact):', b.id, b.codigo)
+  1740→  1740→      }
+  1741→  1741→    }
+  1742→  1742→
+  1743→  1743→    // Estrategia B: si no encontró con exact, buscar que contenga el código
+  1744→  1744→    if (realBloqueIds.length === 0) {
+  1745→  1745→      const { data: containsMatch, error: errContains } = await queryBloques((client: any) =>
+  1746→  1746→        client.from('piso_bloques').select('id, codigo').ilike('codigo', `%${code}%`)
+  1747→  1747→      )
+  1748→  1748→      if (!errContains && containsMatch) {
+  1749→  1749→        for (const b of (containsMatch as { id: string; codigo: string }[])) {
+  1750→  1750→          // Solo incluir si el código del bloque empieza con lo que buscamos
+  1751→  1751→          // (evitar falsos positivos como "1223" cuando buscamos "122")
+  1752→  1752→          const bloqCode = (b.codigo || '').trim().toUpperCase()
+  1753→  1753→          if (bloqCode === code || bloqCode.startsWith(code + ' ') || bloqCode.startsWith(code + '-')) {
+  1754→  1754→            realBloqueIds.push(b.id)
+  1755→  1755→            console.log('[stockPisoPorCodigo] Bloque encontrado (contains):', b.id, b.codigo)
+  1756→  1756→          }
+  1757→  1757→        }
+  1758→  1758→      }
+  1759→  1759→    }
+  1760→  1760→
+  1761→  1761→    // Estrategia C: buscar en catalogo de racks (por si el artículo existe en racks pero no en piso_bloques)
+  1762→  1762→    // Esto permite mostrar "existe en Racks pero no en Piso"
+  1763→  1763→    let hasCatalogMatch = false
+  1764→  1764→    if (realBloqueIds.length === 0) {
+  1765→  1765→      try {
+  1766→  1766→        const { data: catData } = await supabase.from('catalogo').select('codigo').ilike('codigo', code).limit(1)
+  1767→  1767→        if (catData && catData.length > 0) {
+  1768→  1768→          hasCatalogMatch = true
+  1769→  1769→          console.log('[stockPisoPorCodigo] Código existe en catálogo racks pero no en piso_bloques')
+  1770→  1770→        }
+  1771→  1771→      } catch { /* ignore */ }
+  1772→  1772→    }
+  1773→  1773→
+  1774→  1774→    console.log('[stockPisoPorCodigo] Total bloque IDs encontrados:', realBloqueIds.length)
+  1775→  1775→
+  1776→  1776→    // ─── 2. Buscar detalles de movimiento para esos bloques ───
+  1777→  1777→    type RawDet = {
+  1778→  1778→      bloque_id: string; nivel_id: string; cantidad: unknown
+  1779→  1779→      fecha_vencimiento?: string | null; movimiento_id: string
+  1780→  1780→      piso_movimientos: { tipo: string; codigo_inc?: string | null } | null | { tipo: string; codigo_inc?: string | null }[]
+  1781→  1781→    }
+  1782→  1782→    const selectFields = 'bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)'
+  1783→  1783→    const rawDets: RawDet[] = []
+  1784→  1784→
+  1785→  1785→    if (realBloqueIds.length === 0) {
+  1786→  1786→      console.log('[stockPisoPorCodigo] No se encontraron bloques para', code, '- cat match:', hasCatalogMatch)
+  1787→  1787→      // Estrategia D: quizá bloque_id en detalles NO es UUID sino el código de artículo directamente
+  1788→  1788→      // Intentar buscar como texto
+  1789→  1789→      try {
+  1790→  1790→        const { data: textMatch, error: textErr } = await queryBloques((client: any) =>
+  1791→  1791→          client.from('piso_movimiento_detalles')
+  1792→  1792→            .select(selectFields)
+  1793→  1793→            .ilike('bloque_id', `%${code}%`)
+  1794→  1794→            .limit(200)
+  1795→  1795→        )
+  1796→  1796→        if (!textErr && textMatch && (textMatch as RawDet[]).length > 0) {
+  1797→  1797→          console.log('[stockPisoPorCodigo] Estrategia D: bloque_id como texto encontró', (textMatch as RawDet[]).length, 'registros')
+  1798→  1798→          rawDets.push(...((textMatch as RawDet[])))
+  1799→  1799→        }
+  1800→  1800→      } catch (textQueryErr) {
+  1801→  1801→        console.warn('[stockPisoPorCodigo] Estrategia D falló:', textQueryErr)
+  1802→  1802→      }
+  1803→  1803→      if (rawDets.length === 0) return []
+  1804→  1804→    } else {
+  1805→  1805→      // Query para bloque IDs reales (UUIDs)
+  1806→  1806→      const { data: detData, error: detErr } = await queryBloques((client: any) =>
+  1807→  1807→        client.from('piso_movimiento_detalles').select(selectFields).in('bloque_id', realBloqueIds)
+  1808→  1808→      )
+  1809→  1809→      if (!detErr && detData) {
+  1810→  1810→        rawDets.push(...((detData as RawDet[])))
+  1811→  1811→      }
+  1812→  1812→      if (detErr) console.error('[stockPisoPorCodigo] error buscando detalles:', detErr)
+  1813→  1813→    }
+  1814→  1814→
+  1815→  1815→    console.log('[stockPisoPorCodigo] Detalles encontrados:', rawDets.length)
+  1816→  1816→
+  1817→  1817→    if (rawDets.length === 0) {
+  1818→  1818→      console.log('[stockPisoPorCodigo] Bloques existen pero no tienen movimientos')
+  1819→  1819→      return []
+  1820→  1820→    }
+  1821→  1821→
+  1822→  1822→    // 3. FEFO calculation (same as stockPisoGlobal but only for this code's blocks)
+  1823→  1823→    const isIngresoType = (tipo: string) =>
+  1824→  1824→      tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+  1825→  1825→    const getTipo = (pm: unknown): string => {
+  1826→  1826→      if (!pm) return ''
+  1827→  1827→      if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { tipo: string }).tipo : ''
+  1828→  1828→      return (pm as { tipo: string }).tipo ?? ''
+  1829→  1829→    }
+  1830→  1830→    const getCodigoInc = (pm: unknown): string => {
+  1831→  1831→      if (!pm) return ''
+  1832→  1832→      if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { codigo_inc?: string | null }).codigo_inc || '' : ''
+  1833→  1833→      return (pm as { codigo_inc?: string | null }).codigo_inc || ''
+  1834→  1834→    }
+  1835→  1835→
+  1836→  1836→    const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[]>()
+  1837→  1837→    for (const d of rawDets) {
+  1838→  1838→      const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
+  1839→  1839→      if (qty <= 0) continue
+  1840→  1840→      const tipo = getTipo(d.piso_movimientos)
+  1841→  1841→      if (!tipo) continue
+  1842→  1842→      const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
+  1843→  1843→      const codigoInc = getCodigoInc(d.piso_movimientos)
+  1844→  1844→      const key = `${d.bloque_id}__${d.nivel_id}`
+  1845→  1845→      const arr = blockNivelMap.get(key) ?? []
+  1846→  1846→      arr.push({ bloque_id: d.bloque_id, nivel_id: d.nivel_id, tipo, cantidad: qty, fecha_vencimiento: fv, codigo_inc: codigoInc })
+  1847→  1847→      blockNivelMap.set(key, arr)
+  1848→  1848→    }
+  1849→  1849→
+  1850→  1850→    // FEFO per (bloque_id, nivel_id)
+  1851→  1851→    const fefoResults: { bloque_id: string; nivel_id: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[] = []
+  1852→  1852→    for (const [, details] of blockNivelMap) {
+  1853→  1853→      const ingresoPool = new Map<string, { cantidad: number; codigo_inc: string }>()
+  1854→  1854→      let totalExit = 0
+  1855→  1855→      for (const d of details) {
+  1856→  1856→        if (isIngresoType(d.tipo)) {
+  1857→  1857→          const existing = ingresoPool.get(d.fecha_vencimiento)
+  1858→  1858→          if (existing) {
+  1859→  1859→            existing.cantidad += d.cantidad
+  1860→  1860→            if (!existing.codigo_inc && d.codigo_inc) existing.codigo_inc = d.codigo_inc
+  1861→  1861→          } else {
+  1862→  1862→            ingresoPool.set(d.fecha_vencimiento, { cantidad: d.cantidad, codigo_inc: d.codigo_inc })
+  1863→  1863→          }
+  1864→  1864→        } else {
+  1865→  1865→          totalExit += d.cantidad
+  1866→  1866→        }
+  1867→  1867→      }
+  1868→  1868→      const sortedLots = [...ingresoPool.entries()].sort(([a], [b]) => {
+  1869→  1869→        if (!a && b) return 1
+  1870→  1870→        if (a && !b) return -1
+  1871→  1871→        return a.localeCompare(b)
+  1872→  1872→      })
+  1873→  1873→      let pendiente = totalExit
+  1874→  1874→      for (const [fecha, pool] of sortedLots) {
+  1875→  1875→        if (pendiente <= 0) {
+  1876→  1876→          fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
+  1877→  1877→        } else if (pool.cantidad <= pendiente) {
+  1878→  1878→          pendiente -= pool.cantidad
+  1879→  1879→        } else {
+  1880→  1880→          fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad - pendiente, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
+  1881→  1881→          pendiente = 0
+  1882→  1882→        }
+  1883→  1883→      }
+  1884→  1884→    }
+  1885→  1885→
+  1886→  1886→    if (fefoResults.length === 0) return []
+  1887→  1887→
+  1888→  1888→    // 4. Resolve bloque info
+  1889→  1889→    const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
+  1890→  1890→    const realIds = [...new Set(fefoResults.map(r => r.bloque_id))].filter(id => !id.startsWith('cat_') && !id.startsWith('manual_'))
+  1891→  1891→    if (realIds.length > 0) {
+  1892→  1892→      const bResult = await queryBloques((client: any) => client.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds))
+  1893→  1893→      for (const b of ((bResult.data ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]))
+  1894→  1894→        bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
+  1895→  1895→    }
+  1896→  1896→    const catIds = [...new Set(fefoResults.map(r => r.bloque_id))].filter(id => id.startsWith('cat_'))
+  1897→  1897→    if (catIds.length > 0) {
+  1898→  1898→      const codes = catIds.map(id => id.replace('cat_', ''))
+  1899→  1899→      const cResult = await queryBloques((client: any) => client.from('catalogo').select('codigo, descripcion, un').in('codigo', codes))
+  1900→  1900→      for (const c of ((cResult.data ?? []) as { codigo: string; descripcion: string; un: string }[]))
+  1901→  1901→        bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
+  1902→  1902→    }
+  1903→  1903→    for (const id of [...new Set(fefoResults.map(r => r.bloque_id))]) {
+  1904→  1904→      if (id.startsWith('manual_') && !bloqueInfoMap.has(id))
+  1905→  1905→        bloqueInfoMap.set(id, { codigo: id.replace('manual_', ''), descripcion: 'Articulo nuevo', unidad: 'KG' })
+  1906→  1906→    }
+  1907→  1907→
+  1908→  1908→    // 5. Resolve location
+  1909→  1909→    const nivelIds = [...new Set(fefoResults.map(r => r.nivel_id))]
+  1910→  1910→    const locMap = new Map<string, { ubicacion: string; sector_nombre: string }>()
+  1911→  1911→    if (nivelIds.length > 0) {
+  1912→  1912→      const nivResult = await queryBloques((client: any) => client.from('piso_niveles').select('id, posicion_id').in('id', nivelIds))
+  1913→  1913→      const nivToPos = new Map<string, string>()
+  1914→  1914→      for (const n of ((nivResult.data ?? []) as { id: string; posicion_id: string }[])) nivToPos.set(n.id, n.posicion_id)
+  1915→  1915→
+  1916→  1916→      const posIds = [...nivToPos.values()]
+  1917→  1917→      if (posIds.length > 0) {
+  1918→  1918→        const posResult = await queryBloques((client: any) => client.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds))
+  1919→  1919→        const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
+  1920→  1920→        for (const p of ((posResult.data ?? []) as { id: string; numero: number; subcolumna_id: string }[]))
+  1921→  1921→          posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id })
+  1922→  1922→        const subIds = [...new Set([...posMap.values()].map(p => p.subcolumna_id))]
+  1923→  1923→        if (subIds.length > 0) {
+  1924→  1924→          const subResult = await queryBloques((client: any) => client.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds))
+  1925→  1925→          const subMap = new Map<string, { codigo: string; columna_id: string }>()
+  1926→  1926→          for (const s of ((subResult.data ?? []) as { id: string; codigo: string; columna_id: string }[]))
+  1927→  1927→            subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id })
+  1928→  1928→          const colIds = [...new Set([...subMap.values()].map(s => s.columna_id))]
+  1929→  1929→          if (colIds.length > 0) {
+  1930→  1930→            const colResult = await queryBloques((client: any) => client.from('piso_columnas').select('id, letra, sector_id').in('id', colIds))
+  1931→  1931→            const colMap = new Map<string, { letra: string; sector_id: string }>()
+  1932→  1932→            for (const c of ((colResult.data ?? []) as { id: string; letra: string; sector_id: string }[]))
+  1933→  1933→              colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id })
+  1934→  1934→            const secIds = [...new Set([...colMap.values()].map(c => c.sector_id))]
+  1935→  1935→            if (secIds.length > 0) {
+  1936→  1936→              const secResult = await queryBloques((client: any) => client.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', secIds))
+  1937→  1937→              const secMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
+  1938→  1938→              for (const s of ((secResult.data ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[])) secMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
+  1939→  1939→              for (const [nivId, posId] of nivToPos) {
+  1940→  1940→                const pos = posMap.get(posId)
+  1941→  1941→                if (!pos) continue
+  1942→  1942→                const sub = subMap.get(pos.subcolumna_id)
+  1943→  1943→                if (!sub) continue
+  1944→  1944→                const col = colMap.get(sub.columna_id)
+  1945→  1945→                if (!col) continue
+  1946→  1946→                const secInfo = secMap.get(col.sector_id)
+  1947→  1947→                const ubicacion = !secInfo
+  1948→  1948→                  ? `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+  1949→  1949→                  : secInfo.nCol === 1 && secInfo.nSub === 1
+  1950→  1950→                    ? `Pos ${pos.numero}`
+  1951→  1951→                    : secInfo.nSub === 1
+  1952→  1952→                      ? `${col.letra}-Pos ${pos.numero}`
+  1953→  1953→                      : `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
+  1954→  1954→                locMap.set(nivId, {
+  1955→  1955→                  ubicacion,
+  1956→  1956→                  sector_nombre: secInfo?.nombre ?? '',
+  1957→  1957→                })
+  1958→  1958→              }
+  1959→  1959→            }
+  1960→  1960→          }
+  1961→  1961→        }
+  1962→  1962→      }
+  1963→  1963→    }
+  1964→  1964→
+  1965→  1965→    // 6. Build results
+  1966→  1966→    return fefoResults
+  1967→  1967→      .filter(r => r.cantidad > 0)
+  1968→  1968→      .map(r => {
+  1969→  1969→        const info = bloqueInfoMap.get(r.bloque_id)
+  1970→  1970→        const loc = locMap.get(r.nivel_id)
+  1971→  1971→        return {
+  1972→  1972→          bloque_codigo: info?.codigo ?? r.bloque_id,
+  1973→  1973→          bloque_descripcion: info?.descripcion ?? '',
+  1974→  1974→          bloque_unidad: info?.unidad ?? 'KG',
+  1975→  1975→          ubicacion: loc?.ubicacion ?? '',
+  1976→  1976→          sector_nombre: loc?.sector_nombre ?? '',
+  1977→  1977→          cantidad: Math.round(r.cantidad * 1000) / 1000,
+  1978→  1978→          fecha_vencimiento: r.fecha_vencimiento,
+  1979→  1979→          codigo_inc: r.codigo_inc || undefined,
+  1980→  1980→        }
+  1981→  1981→      })
+  1982→  1982→      .sort((a, b) => {
+  1983→  1983→        if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+  1984→  1984→        if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
+  1985→  1985→        if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
+  1986→  1986→        return a.ubicacion.localeCompare(b.ubicacion)
+  1987→  1987→      })
+  1988→  1988→  } catch (err) {
+  1989→  1989→    console.error('[stockPisoPorCodigo] Error:', err)
+  1990→  1990→    return []
+  1991→  1991→  }
+  1992→  1992→}
+  1993→  1993→
+  1994→  1994→// ═══════════════════════════════════════════════════════════
+  1995→  1995→//  VISTA COLUMNA — Tabla de posiciones × niveles
+  1996→  1996→// ═══════════════════════════════════════════════════════════
+  1997→  1997→
+  1998→  1998→export type VistaNivelStock = {
+  1999→  1999→  nivelId: string
+  2000→  2000→  nivelNumero: number
+
+[showing lines 1-2000 of 2002; use offset=2001 with limit to continue reading]

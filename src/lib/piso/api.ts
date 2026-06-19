@@ -1680,21 +1680,22 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
 }
 
 /**
- * Busca stock en Piso para UN código específico (optimizado).
- * En vez de descargar TODOS los detalles y filtrar en memoria,
- * busca primero el bloque_id y luego solo los detalles de ese bloque.
+ * Busca stock en Piso para UN código específico.
+ * Usa supabase (anon) directamente con JOINs profundos para resolver
+ * toda la cadena de ubicación en una sola query, evitando la cadena
+ * de 6-7 queries secuenciales que causaba loading infinito.
  */
 export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[]> {
   const code = codigo.trim().toUpperCase()
-  console.log('[stockPisoPorCodigo] Iniciando búsqueda para código:', code)
+  console.log('[stockPisoPorCodigo] Buscando código:', code)
 
-  // ─── TIMEOUT GARANTIZADO: nunca dejar la promesa colgada ───
-  const TIMEOUT_MS = 10000
+  // ─── TIMEOUT: seguridad contra hang ───
+  const TIMEOUT_MS = 8000
   const result = await Promise.race([
-    stockPisoPorCodigoInner(code),
+    _stockPisoPorCodigoImpl(code),
     new Promise<StockPisoItem[]>((resolve) =>
       setTimeout(() => {
-        console.warn('[stockPisoPorCodigo] TIMEOUT HARD after', TIMEOUT_MS, 'ms — retornando vacío')
+        console.warn('[stockPisoPorCodigo] TIMEOUT', TIMEOUT_MS, 'ms')
         resolve([])
       }, TIMEOUT_MS)
     ),
@@ -1702,167 +1703,161 @@ export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[
   return result
 }
 
-async function stockPisoPorCodigoInner(code: string): Promise<StockPisoItem[]> {
+async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
   try {
-    // ─── Helper: ejecutar query con fallback dataClient → supabase ───
-    const queryBloques = async (queryFn: (client: any) => any) => {
-      // Intentar con dataClient (service role) primero
-      try {
-        const result = await queryFn(dataClient)
-        if (result.error) {
-          console.warn('[stockPisoPorCodigo] dataClient error:', result.error.message)
-        }
-        return result
-      } catch (err) {
-        console.warn('[stockPisoPorCodigo] dataClient falló, intentando supabase:', err)
-      }
-      // Fallback a supabase (anon)
-      try {
-        return await queryFn(supabase)
-      } catch (err2) {
-        console.error('[stockPisoPorCodigo] supabase también falló:', err2)
-        return { data: null, error: err2 }
-      }
+    // ─── 1. Buscar bloque por código ───
+    const { data: bloques, error: errB } = await supabase
+      .from('piso_bloques')
+      .select('id, codigo, descripcion, unidad')
+      .ilike('codigo', code)
+    if (errB) {
+      console.warn('[stockPisoPorCodigo] Error buscando bloques:', errB.message)
+      return []
+    }
+    if (!bloques || bloques.length === 0) {
+      console.log('[stockPisoPorCodigo] Sin bloques para:', code)
+      return []
     }
 
-    // ─── 1. Buscar bloque_id en piso_bloques por código ───
-    // Intentar múltiples estrategias de búsqueda
-    const realBloqueIds: string[] = []
-
-    // Estrategia A: coincidencia exacta (case insensitive)
-    const { data: exactMatch, error: errExact } = await queryBloques((client: any) =>
-      client.from('piso_bloques').select('id, codigo').ilike('codigo', code)
-    )
-    if (!errExact && exactMatch) {
-      for (const b of (exactMatch as { id: string; codigo: string }[])) {
-        realBloqueIds.push(b.id)
-        console.log('[stockPisoPorCodigo] Bloque encontrado (exact):', b.id, b.codigo)
-      }
+    const bloqueIds = bloques.map((b: any) => b.id)
+    const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
+    for (const b of bloques as any[]) {
+      bloqueInfoMap.set(b.id, {
+        codigo: b.codigo ?? '',
+        descripcion: b.descripcion ?? '',
+        unidad: b.unidad ?? 'KG',
+      })
     }
 
-    // Estrategia B: si no encontró con exact, buscar que contenga el código
-    if (realBloqueIds.length === 0) {
-      const { data: containsMatch, error: errContains } = await queryBloques((client: any) =>
-        client.from('piso_bloques').select('id, codigo').ilike('codigo', `%${code}%`)
-      )
-      if (!errContains && containsMatch) {
-        for (const b of (containsMatch as { id: string; codigo: string }[])) {
-          // Solo incluir si el código del bloque empieza con lo que buscamos
-          // (evitar falsos positivos como "1223" cuando buscamos "122")
-          const bloqCode = (b.codigo || '').trim().toUpperCase()
-          if (bloqCode === code || bloqCode.startsWith(code + ' ') || bloqCode.startsWith(code + '-')) {
-            realBloqueIds.push(b.id)
-            console.log('[stockPisoPorCodigo] Bloque encontrado (contains):', b.id, b.codigo)
+    // ─── 2. Detalles de movimiento con JOIN profundo: movimiento + nivel → posicion → subcolumna → columna → sector ───
+    // Una sola query que resuelve toda la cadena de ubicación
+    const { data: detalles, error: errD } = await supabase
+      .from('piso_movimiento_detalles')
+      .select(`
+        bloque_id,
+        nivel_id,
+        cantidad,
+        fecha_vencimiento,
+        piso_movimientos(tipo, codigo_inc),
+        piso_niveles!inner(
+          posicion_id,
+          piso_posiciones!inner(
+            numero,
+            subcolumna_id,
+            piso_subcolumnas!inner(
+              codigo,
+              columna_id,
+              piso_columnas!inner(
+                letra,
+                sector_id,
+                piso_sectores!inner(
+                  nombre,
+                  n_columnas,
+                  n_subcolumnas
+                )
+              )
+            )
+          )
+        )
+      `)
+      .in('bloque_id', bloqueIds)
+    if (errD) {
+      console.warn('[stockPisoPorCodigo] Error detalles:', errD.message)
+      return []
+    }
+    if (!detalles || detalles.length === 0) {
+      console.log('[stockPisoPorCodigo] Sin movimientos para los bloques')
+      return []
+    }
+
+    // ─── 3. FEFO calculation ───
+    type DetRow = {
+      bloque_id: string
+      nivel_id: string
+      cantidad: unknown
+      fecha_vencimiento?: string | null
+      piso_movimientos: any
+      piso_niveles: {
+        posicion_id: string
+        piso_posiciones: {
+          numero: number
+          subcolumna_id: string
+          piso_subcolumnas: {
+            codigo: string
+            columna_id: string
+            piso_columnas: {
+              letra: string
+              sector_id: string
+              piso_sectores: {
+                nombre: string
+                n_columnas: number
+                n_subcolumnas: number
+              }
+            }
           }
         }
       }
     }
 
-    // Estrategia C: buscar en catalogo de racks (por si el artículo existe en racks pero no en piso_bloques)
-    // Esto permite mostrar "existe en Racks pero no en Piso"
-    let hasCatalogMatch = false
-    if (realBloqueIds.length === 0) {
-      try {
-        const { data: catData } = await supabase.from('catalogo').select('codigo').ilike('codigo', code).limit(1)
-        if (catData && catData.length > 0) {
-          hasCatalogMatch = true
-          console.log('[stockPisoPorCodigo] Código existe en catálogo racks pero no en piso_bloques')
-        }
-      } catch { /* ignore */ }
-    }
-
-    console.log('[stockPisoPorCodigo] Total bloque IDs encontrados:', realBloqueIds.length)
-
-    // ─── 2. Buscar detalles de movimiento para esos bloques ───
-    type RawDet = {
-      bloque_id: string; nivel_id: string; cantidad: unknown
-      fecha_vencimiento?: string | null; movimiento_id: string
-      piso_movimientos: { tipo: string; codigo_inc?: string | null } | null | { tipo: string; codigo_inc?: string | null }[]
-    }
-    const selectFields = 'bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)'
-    const rawDets: RawDet[] = []
-
-    if (realBloqueIds.length === 0) {
-      console.log('[stockPisoPorCodigo] No se encontraron bloques para', code, '- cat match:', hasCatalogMatch)
-      // Estrategia D: quizá bloque_id en detalles NO es UUID sino el código de artículo directamente
-      // Intentar buscar como texto
-      try {
-        const { data: textMatch, error: textErr } = await queryBloques((client: any) =>
-          client.from('piso_movimiento_detalles')
-            .select(selectFields)
-            .ilike('bloque_id', `%${code}%`)
-            .limit(200)
-        )
-        if (!textErr && textMatch && (textMatch as RawDet[]).length > 0) {
-          console.log('[stockPisoPorCodigo] Estrategia D: bloque_id como texto encontró', (textMatch as RawDet[]).length, 'registros')
-          rawDets.push(...((textMatch as RawDet[])))
-        }
-      } catch (textQueryErr) {
-        console.warn('[stockPisoPorCodigo] Estrategia D falló:', textQueryErr)
-      }
-      if (rawDets.length === 0) return []
-    } else {
-      // Query para bloque IDs reales (UUIDs)
-      const { data: detData, error: detErr } = await queryBloques((client: any) =>
-        client.from('piso_movimiento_detalles').select(selectFields).in('bloque_id', realBloqueIds)
-      )
-      if (!detErr && detData) {
-        rawDets.push(...((detData as RawDet[])))
-      }
-      if (detErr) console.error('[stockPisoPorCodigo] error buscando detalles:', detErr)
-    }
-
-    console.log('[stockPisoPorCodigo] Detalles encontrados:', rawDets.length)
-
-    if (rawDets.length === 0) {
-      console.log('[stockPisoPorCodigo] Bloques existen pero no tienen movimientos')
-      return []
-    }
-
-    // 3. FEFO calculation (same as stockPisoGlobal but only for this code's blocks)
-    const isIngresoType = (tipo: string) =>
-      tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
-    const getTipo = (pm: unknown): string => {
+    const getTipo = (pm: any): string => {
       if (!pm) return ''
-      if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { tipo: string }).tipo : ''
-      return (pm as { tipo: string }).tipo ?? ''
+      if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo ?? '' : ''
+      return pm.tipo ?? ''
     }
-    const getCodigoInc = (pm: unknown): string => {
+    const getCodigoInc = (pm: any): string => {
       if (!pm) return ''
-      if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { codigo_inc?: string | null }).codigo_inc || '' : ''
-      return (pm as { codigo_inc?: string | null }).codigo_inc || ''
+      if (Array.isArray(pm)) return pm.length > 0 ? pm[0].codigo_inc || '' : ''
+      return pm.codigo_inc || ''
     }
+    const isIngreso = (t: string) => t === 'ingreso' || t === 'stock_inicial' || t === 'devolucion'
 
-    const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[]>()
-    for (const d of rawDets) {
+    // Group by (bloque_id, nivel_id)
+    const groups = new Map<string, {
+      bloque_id: string
+      nivel_id: string
+      tipo: string
+      cantidad: number
+      fecha_vencimiento: string
+      codigo_inc: string
+      loc: DetRow['piso_niveles']
+    }[]>()
+
+    for (const d of detalles as DetRow[]) {
       const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
       if (qty <= 0) continue
       const tipo = getTipo(d.piso_movimientos)
       if (!tipo) continue
       const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
-      const codigoInc = getCodigoInc(d.piso_movimientos)
       const key = `${d.bloque_id}__${d.nivel_id}`
-      const arr = blockNivelMap.get(key) ?? []
-      arr.push({ bloque_id: d.bloque_id, nivel_id: d.nivel_id, tipo, cantidad: qty, fecha_vencimiento: fv, codigo_inc: codigoInc })
-      blockNivelMap.set(key, arr)
+      const arr = groups.get(key) ?? []
+      arr.push({
+        bloque_id: d.bloque_id,
+        nivel_id: d.nivel_id,
+        tipo,
+        cantidad: qty,
+        fecha_vencimiento: fv,
+        codigo_inc: getCodigoInc(d.piso_movimientos),
+        loc: d.piso_niveles,
+      })
+      groups.set(key, arr)
     }
 
-    // FEFO per (bloque_id, nivel_id)
-    const fefoResults: { bloque_id: string; nivel_id: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[] = []
-    for (const [, details] of blockNivelMap) {
+    // FEFO per group
+    const results: StockPisoItem[] = []
+    for (const [, entries] of groups) {
       const ingresoPool = new Map<string, { cantidad: number; codigo_inc: string }>()
       let totalExit = 0
-      for (const d of details) {
-        if (isIngresoType(d.tipo)) {
-          const existing = ingresoPool.get(d.fecha_vencimiento)
+      for (const e of entries) {
+        if (isIngreso(e.tipo)) {
+          const existing = ingresoPool.get(e.fecha_vencimiento)
           if (existing) {
-            existing.cantidad += d.cantidad
-            if (!existing.codigo_inc && d.codigo_inc) existing.codigo_inc = d.codigo_inc
+            existing.cantidad += e.cantidad
+            if (!existing.codigo_inc && e.codigo_inc) existing.codigo_inc = e.codigo_inc
           } else {
-            ingresoPool.set(d.fecha_vencimiento, { cantidad: d.cantidad, codigo_inc: d.codigo_inc })
+            ingresoPool.set(e.fecha_vencimiento, { cantidad: e.cantidad, codigo_inc: e.codigo_inc })
           }
         } else {
-          totalExit += d.cantidad
+          totalExit += e.cantidad
         }
       }
       const sortedLots = [...ingresoPool.entries()].sort(([a], [b]) => {
@@ -1873,122 +1868,65 @@ async function stockPisoPorCodigoInner(code: string): Promise<StockPisoItem[]> {
       let pendiente = totalExit
       for (const [fecha, pool] of sortedLots) {
         if (pendiente <= 0) {
-          fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
+          // Lote completo disponible
+          const e = entries[0]
+          results.push({
+            bloque_codigo: bloqueInfoMap.get(e.bloque_id)?.codigo ?? e.bloque_id,
+            bloque_descripcion: bloqueInfoMap.get(e.bloque_id)?.descripcion ?? '',
+            bloque_unidad: bloqueInfoMap.get(e.bloque_id)?.unidad ?? 'KG',
+            ubicacion: buildUbicacion(e.loc),
+            sector_nombre: e.loc?.piso_posiciones?.piso_subcolumnas?.piso_columnas?.piso_sectores?.nombre ?? '',
+            cantidad: Math.round(pool.cantidad * 1000) / 1000,
+            fecha_vencimiento: fecha,
+            codigo_inc: pool.codigo_inc || undefined,
+          })
         } else if (pool.cantidad <= pendiente) {
           pendiente -= pool.cantidad
         } else {
-          fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad - pendiente, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
+          const remaining = pool.cantidad - pendiente
           pendiente = 0
+          const e = entries[0]
+          results.push({
+            bloque_codigo: bloqueInfoMap.get(e.bloque_id)?.codigo ?? e.bloque_id,
+            bloque_descripcion: bloqueInfoMap.get(e.bloque_id)?.descripcion ?? '',
+            bloque_unidad: bloqueInfoMap.get(e.bloque_id)?.unidad ?? 'KG',
+            ubicacion: buildUbicacion(e.loc),
+            sector_nombre: e.loc?.piso_posiciones?.piso_subcolumnas?.piso_columnas?.piso_sectores?.nombre ?? '',
+            cantidad: Math.round(remaining * 1000) / 1000,
+            fecha_vencimiento: fecha,
+            codigo_inc: pool.codigo_inc || undefined,
+          })
         }
       }
     }
 
-    if (fefoResults.length === 0) return []
-
-    // 4. Resolve bloque info
-    const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
-    const realIds = [...new Set(fefoResults.map(r => r.bloque_id))].filter(id => !id.startsWith('cat_') && !id.startsWith('manual_'))
-    if (realIds.length > 0) {
-      const bResult = await queryBloques((client: any) => client.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds))
-      for (const b of ((bResult.data ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]))
-        bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
-    }
-    const catIds = [...new Set(fefoResults.map(r => r.bloque_id))].filter(id => id.startsWith('cat_'))
-    if (catIds.length > 0) {
-      const codes = catIds.map(id => id.replace('cat_', ''))
-      const cResult = await queryBloques((client: any) => client.from('catalogo').select('codigo, descripcion, un').in('codigo', codes))
-      for (const c of ((cResult.data ?? []) as { codigo: string; descripcion: string; un: string }[]))
-        bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
-    }
-    for (const id of [...new Set(fefoResults.map(r => r.bloque_id))]) {
-      if (id.startsWith('manual_') && !bloqueInfoMap.has(id))
-        bloqueInfoMap.set(id, { codigo: id.replace('manual_', ''), descripcion: 'Articulo nuevo', unidad: 'KG' })
-    }
-
-    // 5. Resolve location
-    const nivelIds = [...new Set(fefoResults.map(r => r.nivel_id))]
-    const locMap = new Map<string, { ubicacion: string; sector_nombre: string }>()
-    if (nivelIds.length > 0) {
-      const nivResult = await queryBloques((client: any) => client.from('piso_niveles').select('id, posicion_id').in('id', nivelIds))
-      const nivToPos = new Map<string, string>()
-      for (const n of ((nivResult.data ?? []) as { id: string; posicion_id: string }[])) nivToPos.set(n.id, n.posicion_id)
-
-      const posIds = [...nivToPos.values()]
-      if (posIds.length > 0) {
-        const posResult = await queryBloques((client: any) => client.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds))
-        const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
-        for (const p of ((posResult.data ?? []) as { id: string; numero: number; subcolumna_id: string }[]))
-          posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id })
-        const subIds = [...new Set([...posMap.values()].map(p => p.subcolumna_id))]
-        if (subIds.length > 0) {
-          const subResult = await queryBloques((client: any) => client.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds))
-          const subMap = new Map<string, { codigo: string; columna_id: string }>()
-          for (const s of ((subResult.data ?? []) as { id: string; codigo: string; columna_id: string }[]))
-            subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id })
-          const colIds = [...new Set([...subMap.values()].map(s => s.columna_id))]
-          if (colIds.length > 0) {
-            const colResult = await queryBloques((client: any) => client.from('piso_columnas').select('id, letra, sector_id').in('id', colIds))
-            const colMap = new Map<string, { letra: string; sector_id: string }>()
-            for (const c of ((colResult.data ?? []) as { id: string; letra: string; sector_id: string }[]))
-              colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id })
-            const secIds = [...new Set([...colMap.values()].map(c => c.sector_id))]
-            if (secIds.length > 0) {
-              const secResult = await queryBloques((client: any) => client.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', secIds))
-              const secMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
-              for (const s of ((secResult.data ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[])) secMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
-              for (const [nivId, posId] of nivToPos) {
-                const pos = posMap.get(posId)
-                if (!pos) continue
-                const sub = subMap.get(pos.subcolumna_id)
-                if (!sub) continue
-                const col = colMap.get(sub.columna_id)
-                if (!col) continue
-                const secInfo = secMap.get(col.sector_id)
-                const ubicacion = !secInfo
-                  ? `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
-                  : secInfo.nCol === 1 && secInfo.nSub === 1
-                    ? `Pos ${pos.numero}`
-                    : secInfo.nSub === 1
-                      ? `${col.letra}-Pos ${pos.numero}`
-                      : `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
-                locMap.set(nivId, {
-                  ubicacion,
-                  sector_nombre: secInfo?.nombre ?? '',
-                })
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // 6. Build results
-    return fefoResults
-      .filter(r => r.cantidad > 0)
-      .map(r => {
-        const info = bloqueInfoMap.get(r.bloque_id)
-        const loc = locMap.get(r.nivel_id)
-        return {
-          bloque_codigo: info?.codigo ?? r.bloque_id,
-          bloque_descripcion: info?.descripcion ?? '',
-          bloque_unidad: info?.unidad ?? 'KG',
-          ubicacion: loc?.ubicacion ?? '',
-          sector_nombre: loc?.sector_nombre ?? '',
-          cantidad: Math.round(r.cantidad * 1000) / 1000,
-          fecha_vencimiento: r.fecha_vencimiento,
-          codigo_inc: r.codigo_inc || undefined,
-        }
-      })
-      .sort((a, b) => {
-        if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
-        if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
-        if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
-        return a.ubicacion.localeCompare(b.ubicacion)
-      })
+    console.log('[stockPisoPorCodigo] Resultados:', results.length)
+    return results.sort((a, b) => {
+      if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+      if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
+      if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
+      return a.ubicacion.localeCompare(b.ubicacion)
+    })
   } catch (err) {
     console.error('[stockPisoPorCodigo] Error:', err)
     return []
   }
+}
+
+/** Construye string de ubicación legible a partir de la cadena de JOINs */
+function buildUbicacion(loc: any): string {
+  if (!loc?.piso_posiciones) return ''
+  const pos = loc.piso_posiciones
+  const sub = pos.piso_subcolumnas
+  const col = sub?.piso_columnas
+  const sec = col?.piso_sectores
+  if (!col || !sec) return `Pos ${pos.numero}`
+  const numPos = pos.numero
+  const letra = col.letra ?? ''
+  const subCode = sub?.codigo ?? ''
+  if (sec.n_columnas === 1 && sec.n_subcolumnas === 1) return `Pos ${numPos}`
+  if (sec.n_subcolumnas === 1) return `${letra}-Pos ${numPos}`
+  return `${letra}-${cleanSubcolCode(subCode, letra)}-Pos ${numPos}`
 }
 
 // ═══════════════════════════════════════════════════════════

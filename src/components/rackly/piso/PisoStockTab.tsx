@@ -92,6 +92,14 @@ export function PisoStockTab() {
     setRacksLoading(true)
     setRacksSearchedCode(codeKey)
 
+    // Timeout de 8 segundos para evitar loading infinito
+    const timeout = setTimeout(() => {
+      if (!cancelled && mountedRef.current) {
+        console.warn('[CrossSectionRacks] timeout: no se pudo obtener stock de Racks')
+        setRacksLoading(false)
+      }
+    }, 8000)
+
     // Buscar cada código en Racks en paralelo
     Promise.all(
       [...matchedCodes].map(async (codigo) => {
@@ -103,14 +111,18 @@ export function PisoStockTab() {
       })
     ).then((results) => {
       if (cancelled || !mountedRef.current) return
+      clearTimeout(timeout)
       const flat = results.flat()
       setRacksStock(flat)
       setRacksLoading(false)
     }).catch(() => {
-      if (!cancelled && mountedRef.current) setRacksLoading(false)
+      if (!cancelled && mountedRef.current) {
+        clearTimeout(timeout)
+        setRacksLoading(false)
+      }
     })
 
-    return () => { cancelled = true }
+    return () => { cancelled = true; clearTimeout(timeout) }
   }, [query, items, racksSearchedCode])
 
   // Get Big Magic stock for the search term

@@ -1,0 +1,2002 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useState, useEffect, useCallback, useRef } from 'react'
+     4→     4→import {
+     5→     5→  addMovimiento,
+     6→     6→  stockEnUbicacion,
+     7→     7→  type Movimiento,
+     8→     8→  type TipoMovimiento,
+     9→     9→  type StockEnUbicacion,
+    10→    10→  type Turno,
+    11→    11→} from '@/lib/rackly/kardex'
+    12→    12→import { SyncEngine } from '@/lib/rackly/sync-engine'
+    13→    13→import { calcularTurno } from '@/lib/rackly/turno'
+    14→    14→import { BLOQUES, PISOS, PROVEEDORES_FILM } from '@/lib/rackly/constants'
+    15→    15→import { torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
+    16→    16→import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
+    17→    17→import { useAuth } from '@/hooks/useAuth'
+    18→    18→import { CatalogoSearchInput } from './CatalogoSearchInput'
+    19→    19→import {
+    20→    20→  requiereProveedor,
+    21→    21→  formatDate,
+    22→    22→  isExpired,
+    23→    23→  isExpiringSoon,
+    24→    24→  extractError,
+    25→    25→  isInsufficientStockError,
+    26→    26→  impactoStock,
+    27→    27→} from '@/lib/utils'
+    28→    28→import { Button } from '@/components/ui/button'
+    29→    29→import { Input } from '@/components/ui/input'
+    30→    30→import { Label } from '@/components/ui/label'
+    31→    31→import { Checkbox } from '@/components/ui/checkbox'
+    32→    32→import {
+    33→    33→  Select,
+    34→    34→  SelectContent,
+    35→    35→  SelectItem,
+    36→    36→  SelectTrigger,
+    37→    37→  SelectValue,
+    38→    38→} from '@/components/ui/select'
+    39→    39→import {
+    40→    40→  AlertDialog,
+    41→    41→  AlertDialogAction,
+    42→    42→  AlertDialogCancel,
+    43→    43→  AlertDialogContent,
+    44→    44→  AlertDialogDescription,
+    45→    45→  AlertDialogFooter,
+    46→    46→  AlertDialogHeader,
+    47→    47→  AlertDialogTitle,
+    48→    48→} from '@/components/ui/alert-dialog'
+    49→    49→import {
+    50→    50→  Table,
+    51→    51→  TableBody,
+    52→    52→  TableCell,
+    53→    53→  TableHead,
+    54→    54→  TableHeader,
+    55→    55→  TableRow,
+    56→    56→} from '@/components/ui/table'
+    57→    57→import { Badge } from '@/components/ui/badge'
+    58→    58→import { toast } from 'sonner'
+    59→    59→import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, TriangleAlert, MapPin, Package, X } from 'lucide-react'
+    60→    60→import type { CatalogoItem } from '@/lib/rackly/catalogo'
+    61→    61→
+    62→    62→type Props = {
+    63→    63→  tipo: TipoMovimiento | 'inc' | 'salida-inc'
+    64→    64→  onCreated: (movs: Movimiento[]) => void
+    65→    65→}
+    66→    66→
+    67→    67→export function MovimientoForm({ tipo, onCreated }: Props) {
+    68→    68→  const { perfil } = useAuth()
+    69→    69→  const [turno, setTurno] = useState<Turno>(calcularTurno())
+    70→    70→
+    71→    71→  useEffect(() => {
+    72→    72→    const interval = setInterval(() => setTurno(calcularTurno()), 60000)
+    73→    73→    return () => clearInterval(interval)
+    74→    74→  }, [])
+    75→    75→
+    76→    76→  if (!perfil) {
+    77→    77→    return <div className='p-4 text-muted-foreground animate-pulse'>Cargando usuario...</div>
+    78→    78→  }
+    79→    79→  if (tipo === 'salida') {
+    80→    80→    return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil} />
+    81→    81→  }
+    82→    82→  if (tipo === 'salida-inc') {
+    83→    83→    return <SalidaIncForm turno={turno} onCreated={onCreated} perfil={perfil} />
+    84→    84→  }
+    85→    85→  if (tipo === 'inc') {
+    86→    86→    return <IncForm turno={turno} onCreated={onCreated} perfil={perfil} />
+    87→    87→  }
+    88→    88→  // ingreso y devolucion usan el mismo formulario, solo cambia el tipo
+    89→    89→  return <IngresoForm turno={turno} onCreated={onCreated} perfil={perfil} tipo={tipo} />
+    90→    90→}
+    91→    91→
+    92→    92→/* ═══════════════════════════════════════════
+    93→    93→   INGRESO FORM
+    94→    94→   ═══════════════════════════════════════════ */
+    95→    95→function IngresoForm({
+    96→    96→  turno,
+    97→    97→  onCreated,
+    98→    98→  perfil,
+    99→    99→  tipo = 'ingreso',
+   100→   100→}: {
+   101→   101→  turno: Turno
+   102→   102→  onCreated: (movs: Movimiento[]) => void
+   103→   103→  perfil: { id: string; nombre: string; correo: string }
+   104→   104→  tipo?: TipoMovimiento
+   105→   105→}) {
+   106→   106→  const [bloque, setBloque] = useState('')
+   107→   107→  const [torre, setTorre] = useState('')
+   108→   108→  const [piso, setPiso] = useState('')
+   109→   109→  const [posicion, setPosicion] = useState('')
+   110→   110→  const [codigo, setCodigo] = useState('')
+   111→   111→  const [descripcion, setDescripcion] = useState('')
+   112→   112→  const [un, setUn] = useState('')
+   113→   113→  const [cantidad, setCantidad] = useState('')
+   114→   114→  const [fVencimiento, setFVencimiento] = useState('')
+   115→   115→  const [sinVencimiento, setSinVencimiento] = useState(false)
+   116→   116→  const [proveedor, setProveedor] = useState('')
+   117→   117→  const [busy, setBusy] = useState(false)
+   118→   118→  const [confirmData, setConfirmData] = useState<StockEnUbicacion[] | null>(null)
+   119→   119→  const [salidaBusy, setSalidaBusy] = useState<string | null>(null)
+   120→   120→
+   121→   121→  const torres = torresDeBloque(bloque)
+   122→   122→  const posiciones = posicionesDeBloque(bloque)
+   123→   123→
+   124→   124→  function handleCatalogoPick(item: CatalogoItem) {
+   125→   125→    setCodigo(item.codigo)
+   126→   126→    setDescripcion(item.descripcion)
+   127→   127→    setUn(item.un)
+   128→   128→  }
+   129→   129→
+   130→   130→  async function handleSubmit(e: React.FormEvent) {
+   131→   131→    e.preventDefault()
+   132→   132→    if (!bloque || !torre || !piso || !posicion || !codigo.trim() || !cantidad) {
+   133→   133→      toast.error('Completa todos los campos requeridos')
+   134→   134→      return
+   135→   135→    }
+   136→   136→    if (requiereProveedor(descripcion) && !proveedor) {
+   137→   137→      toast.error('Selecciona un proveedor para este producto')
+   138→   138→      return
+   139→   139→    }
+   140→   140→    const qty = parseFloat(cantidad)
+   141→   141→    if (isNaN(qty) || qty <= 0) {
+   142→   142→      toast.error('La cantidad debe ser mayor a 0')
+   143→   143→      return
+   144→   144→    }
+   145→   145→    setBusy(true)
+   146→   146→    try {
+   147→   147→      // Verificar si CUALQUIER producto existe en esta posición
+   148→   148→      const details = await stockEnUbicacion(bloque, torre, piso, posicion)
+   149→   149→      if (details.length > 0) {
+   150→   150→        setConfirmData(details)
+   151→   151→        setBusy(false)
+   152→   152→        return
+   153→   153→      }
+   154→   154→      await doInsert(qty)
+   155→   155→    } catch (err: unknown) {
+   156→   156→      const message = extractError(err)
+   157→   157→      toast.error('Error al verificar stock', { description: message })
+   158→   158→      setBusy(false)
+   159→   159→    }
+   160→   160→  }
+   161→   161→
+   162→   162→  async function doInsert(qty: number) {
+   163→   163→    try {
+   164→   164→      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+   165→   165→        tipo,
+   166→   166→        bloque,
+   167→   167→        torre,
+   168→   168→        piso,
+   169→   169→        posicion,
+   170→   170→        codigo,
+   171→   171→        descripcion,
+   172→   172→        un,
+   173→   173→        cantidad: qty,
+   174→   174→        fVencimiento: sinVencimiento ? '' : fVencimiento,
+   175→   175→        turno,
+   176→   176→        usuarioId: perfil.id,
+   177→   177→        usuarioNombre: perfil.nombre,
+   178→   178→        usuarioCorreo: perfil.correo,
+   179→   179→        proveedor: proveedor || undefined,
+   180→   180→      })
+   181→   181→      if (wasOffline) {
+   182→   182→        toast.success(tipo === 'devolucion' ? 'Devolución guardada (offline)' : 'Ingreso guardado (offline)', {
+   183→   183→          description: 'Se sincronizará al reconectarse',
+   184→   184→          duration: 5000,
+   185→   185→        })
+   186→   186→        // OFFLINE: Limpiar formulario para evitar duplicados
+   187→   187→        setCodigo('')
+   188→   188→        setDescripcion('')
+   189→   189→        setUn('')
+   190→   190→        setCantidad('')
+   191→   191→        setFVencimiento('')
+   192→   192→        setProveedor('')
+   193→   193→        setConfirmData(null)
+   194→   194→      } else {
+   195→   195→        toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
+   196→   196→        setCodigo('')
+   197→   197→        setDescripcion('')
+   198→   198→        setUn('')
+   199→   199→        setCantidad('')
+   200→   200→        setFVencimiento('')
+   201→   201→        setProveedor('')
+   202→   202→        onCreated(movs)
+   203→   203→      }
+   204→   204→    } catch (err: unknown) {
+   205→   205→      const message = extractError(err)
+   206→   206→      toast.error('Error al registrar ingreso', { description: message })
+   207→   207→    } finally {
+   208→   208→      setBusy(false)
+   209→   209→      setConfirmData(null)
+   210→   210→    }
+   211→   211→  }
+   212→   212→
+   213→   213→  // Dar salida a un producto desde el alerta de ubicación ocupada
+   214→   214→  async function handleSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
+   215→   215→    setSalidaBusy(stockItem.codigo)
+   216→   216→    try {
+   217→   217→      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+   218→   218→        tipo: 'salida',
+   219→   219→        bloque,
+   220→   220→        torre,
+   221→   221→        piso,
+   222→   222→        posicion,
+   223→   223→        codigo: stockItem.codigo,
+   224→   224→        descripcion: stockItem.descripcion,
+   225→   225→        un: stockItem.un,
+   226→   226→        cantidad: stockItem.stock,
+   227→   227→        fVencimiento: stockItem.fVencimiento ?? '',
+   228→   228→        turno,
+   229→   229→        usuarioId: perfil.id,
+   230→   230→        usuarioNombre: perfil.nombre,
+   231→   231→        usuarioCorreo: perfil.correo,
+   232→   232→        proveedor: stockItem.proveedor,
+   233→   233→        // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
+   234→   234→        codigoInc: stockItem.codigoInc || undefined,
+   235→   235→      })
+   236→   236→      if (wasOffline) {
+   237→   237→        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
+   238→   238→          description: 'Se sincronizará al reconectarse. La ubicación se actualizará cuando haya conexión.',
+   239→   239→          duration: 5000,
+   240→   240→        })
+   241→   241→        // OFFLINE: Limpiar UI para evitar doble operación
+   242→   242→        setConfirmData(null)
+   243→   243→        setSalidaBusy(null)
+   244→   244→      } else {
+   245→   245→        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
+   246→   246→        onCreated(movs)
+   247→   247→        // Refrescar datos del alerta
+   248→   248→        const updated = await stockEnUbicacion(bloque, torre, piso, posicion)
+   249→   249→        if (updated.length > 0) {
+   250→   250→          setConfirmData(updated)
+   251→   251→        } else {
+   252→   252→          setConfirmData(null)
+   253→   253→          // Ya no hay productos, hacer el ingreso directamente
+   254→   254→          await doInsert(parseFloat(cantidad))
+   255→   255→        }
+   256→   256→      }
+   257→   257→    } catch (err: unknown) {
+   258→   258→      if (isInsufficientStockError(err)) {
+   259→   259→        const detail = (err as Record<string, string>).detail || ''
+   260→   260→        toast.error('Stock insuficiente', {
+   261→   261→          description: detail || 'Otro usuario pudo haber modificado el stock mientras tú operabas.',
+   262→   262→          duration: 8000,
+   263→   263→        })
+   264→   264→      } else {
+   265→   265→        const message = extractError(err)
+   266→   266→        toast.error('Error al dar salida', { description: message })
+   267→   267→      }
+   268→   268→    } finally {
+   269→   269→      setSalidaBusy(null)
+   270→   270→    }
+   271→   271→  }
+   272→   272→
+   273→   273→  return (
+   274→   274→    <>
+   275→   275→      <div className={`flex items-center gap-2 mb-4 p-3 rounded-lg border ${
+   276→   276→        tipo === 'devolucion'
+   277→   277→          ? 'bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800'
+   278→   278→          : 'bg-green-50 dark:bg-green-950/40 border-green-200 dark:border-green-800'
+   279→   279→      }`}>
+   280→   280→        {tipo === 'devolucion' ? (
+   281→   281→          <ArrowRightLeft className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0" />
+   282→   282→        ) : (
+   283→   283→          <ArrowDownToLine className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+   284→   284→        )}
+   285→   285→        <div className="min-w-0">
+   286→   286→          <p className={`text-sm font-semibold ${
+   287→   287→            tipo === 'devolucion'
+   288→   288→              ? 'text-orange-700 dark:text-orange-300'
+   289→   289→              : 'text-green-700 dark:text-green-300'
+   290→   290→          }`}>
+   291→   291→            {tipo === 'devolucion' ? 'Ingreso por devolución' : 'Ingreso de mercadería'}
+   292→   292→          </p>
+   293→   293→          <p className="text-xs text-muted-foreground">Turno: {turno}</p>
+   294→   294→        </div>
+   295→   295→      </div>
+   296→   296→
+   297→   297→      <form onSubmit={handleSubmit} className="space-y-4">
+   298→   298→        <div className="space-y-1">
+   299→   299→          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Ubicación</Label>
+   300→   300→          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+   301→   301→            <div className="space-y-1">
+   302→   302→              <Label className="text-xs text-muted-foreground">Bloque</Label>
+   303→   303→              <Select value={bloque} onValueChange={(v) => { setBloque(v); setTorre(''); setPiso(''); setPosicion('') }}>
+   304→   304→                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Bloque" /></SelectTrigger>
+   305→   305→                <SelectContent>
+   306→   306→                  {BLOQUES.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+   307→   307→                </SelectContent>
+   308→   308→              </Select>
+   309→   309→            </div>
+   310→   310→            <div className="space-y-1">
+   311→   311→              <Label className="text-xs text-muted-foreground">Torre</Label>
+   312→   312→              <Select value={torre} onValueChange={setTorre} disabled={!bloque}>
+   313→   313→                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Torre" /></SelectTrigger>
+   314→   314→                <SelectContent>
+   315→   315→                  {torres.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+   316→   316→                </SelectContent>
+   317→   317→              </Select>
+   318→   318→            </div>
+   319→   319→            <div className="space-y-1">
+   320→   320→              <Label className="text-xs text-muted-foreground">Piso</Label>
+   321→   321→              <Select value={piso} onValueChange={setPiso} disabled={!bloque}>
+   322→   322→                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Piso" /></SelectTrigger>
+   323→   323→                <SelectContent>
+   324→   324→                  {PISOS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+   325→   325→                </SelectContent>
+   326→   326→              </Select>
+   327→   327→            </div>
+   328→   328→            <div className="space-y-1">
+   329→   329→              <Label className="text-xs text-muted-foreground">Posición</Label>
+   330→   330→              <Select value={posicion} onValueChange={setPosicion} disabled={!bloque}>
+   331→   331→                <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Pos." /></SelectTrigger>
+   332→   332→                <SelectContent>
+   333→   333→                  {posiciones.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+   334→   334→                </SelectContent>
+   335→   335→              </Select>
+   336→   336→            </div>
+   337→   337→            <div className="space-y-1 col-span-2 sm:col-span-1">
+   338→   338→              <Label className="text-xs text-muted-foreground">Turno</Label>
+   339→   339→              <Input value={turno} readOnly className="h-10 bg-muted text-sm" />
+   340→   340→            </div>
+   341→   341→          </div>
+   342→   342→        </div>
+   343→   343→
+   344→   344→        <div className="space-y-1">
+   345→   345→          <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Producto</Label>
+   346→   346→          <CatalogoSearchInput
+   347→   347→            onPick={handleCatalogoPick}
+   348→   348→            value={codigo}
+   349→   349→            onChange={(v) => {
+   350→   350→              setCodigo(v)
+   351→   351→              const cat = findCatalogoByCodigo(v)
+   352→   352→              if (cat) {
+   353→   353→                setDescripcion(cat.descripcion)
+   354→   354→                setUn(cat.un)
+   355→   355→              }
+   356→   356→            }}
+   357→   357→          />
+   358→   358→        </div>
+   359→   359→
+   360→   360→        {descripcion && (
+   361→   361→          <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 p-3 space-y-2 transition-all">
+   362→   362→            <div className="flex items-start gap-3 flex-wrap">
+   363→   363→              <div className="min-w-0 flex-1">
+   364→   364→                <p className="text-xs text-muted-foreground">Descripción</p>
+   365→   365→                <p className="text-sm font-medium truncate">{descripcion}</p>
+   366→   366→              </div>
+   367→   367→              <div className="min-w-[60px]">
+   368→   368→                <p className="text-xs text-muted-foreground">UN</p>
+   369→   369→                <p className="text-sm font-medium">{un || '—'}</p>
+   370→   370→              </div>
+   371→   371→            </div>
+   372→   372→          </div>
+   373→   373→        )}
+   374→   374→
+   375→   375→        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+   376→   376→          <div className="space-y-1 col-span-2 sm:col-span-1">
+   377→   377→            <Label className="text-xs text-muted-foreground">Cantidad</Label>
+   378→   378→            <Input type="number" step="any" min="0.001" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="0" className="h-10" />
+   379→   379→          </div>
+   380→   380→          <div className="space-y-1 col-span-2 sm:col-span-1">
+   381→   381→            <Label className="text-xs text-muted-foreground">F. Vencimiento</Label>
+   382→   382→            <div className="flex items-center gap-1.5">
+   383→   383→              <Input type="date" value={fVencimiento} onChange={(e) => setFVencimiento(e.target.value)} disabled={sinVencimiento} className="h-10 [color-scheme:dark]" />
+   384→   384→              <Checkbox checked={sinVencimiento} onCheckedChange={(v) => setSinVencimiento(!!v)} />
+   385→   385→            </div>
+   386→   386→          </div>
+   387→   387→          {requiereProveedor(descripcion) && (
+   388→   388→            <div className="space-y-1 col-span-2">
+   389→   389→              <Label className="text-xs text-muted-foreground font-medium">Proveedor <span className="text-red-500">*</span></Label>
+   390→   390→              <Select value={proveedor} onValueChange={setProveedor}>
+   391→   391→                <SelectTrigger className="h-10">
+   392→   392→                  <SelectValue placeholder="Selecciona proveedor" />
+   393→   393→                </SelectTrigger>
+   394→   394→                <SelectContent>
+   395→   395→                  {PROVEEDORES_FILM.map((p) => (
+   396→   396→                    <SelectItem key={p} value={p}>{p}</SelectItem>
+   397→   397→                  ))}
+   398→   398→                </SelectContent>
+   399→   399→              </Select>
+   400→   400→            </div>
+   401→   401→          )}
+   402→   402→        </div>
+   403→   403→
+   404→   404→        <Button type="submit" disabled={busy} className={`w-full h-11 text-white text-sm font-medium sm:w-auto ${
+   405→   405→          tipo === 'devolucion'
+   406→   406→            ? 'bg-orange-600 hover:bg-orange-700'
+   407→   407→            : 'bg-green-600 hover:bg-green-700'
+   408→   408→        }`}>
+   409→   409→          {busy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+   410→   410→          {tipo === 'devolucion' ? 'Registrar Devolución' : 'Registrar Ingreso'}
+   411→   411→        </Button>
+   412→   412→      </form>
+   413→   413→
+   414→   414→      {/* ═══ DIÁLOGO DE CONFIRMACIÓN — Ubicación Ocupada ═══ */}
+   415→   415→      <AlertDialog open={!!confirmData} onOpenChange={() => setConfirmData(null)}>
+   416→   416→        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+   417→   417→          {/* Header con gradiente */}
+   418→   418→          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 px-4 sm:px-6 py-5 text-white shrink-0">
+   419→   419→            <div className="flex items-center gap-3">
+   420→   420→              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+   421→   421→                <TriangleAlert className="h-6 w-6 text-white" />
+   422→   422→              </div>
+   423→   423→              <div>
+   424→   424→                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+   425→   425→                  Ubicación Ocupada
+   426→   426→                </AlertDialogTitle>
+   427→   427→                <AlertDialogDescription className="text-amber-100 text-sm mt-0.5">
+   428→   428→                  Esta posición ya tiene stock registrado. Revisa el detalle.
+   429→   429→                </AlertDialogDescription>
+   430→   430→              </div>
+   431→   431→            </div>
+   432→   432→          </div>
+   433→   433→
+   434→   434→          {/* Contenido scrolleable */}
+   435→   435→          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+   436→   436→            {/* Ubicación destino */}
+   437→   437→            <div className="px-4 sm:px-6 pt-4 pb-2">
+   438→   438→              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ubicación destino</p>
+   439→   439→              <div className="flex items-center gap-2 text-sm text-muted-foreground bg-slate-50 dark:bg-slate-900 rounded-lg px-3 py-2.5">
+   440→   440→                <MapPin className="h-4 w-4 text-orange-500 flex-shrink-0" />
+   441→   441→                <span className="font-mono font-medium text-slate-700 dark:text-slate-300">
+   442→   442→                  Bloque {bloque} · Torre {torre} · Piso {piso} · Pos {posicion}
+   443→   443→                </span>
+   444→   444→              </div>
+   445→   445→            </div>
+   446→   446→
+   447→   447→            {/* Producto que se desea ingresar */}
+   448→   448→            <div className="px-4 sm:px-6 pb-3">
+   449→   449→              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Producto a {tipo === 'devolucion' ? 'devolver' : 'ingresar'}</p>
+   450→   450→              <div className="rounded-xl border-2 border-dashed border-green-300 dark:border-green-700 bg-green-50/60 dark:bg-green-950/20 p-3 space-y-1.5">
+   451→   451→                <div className="flex items-center justify-between">
+   452→   452→                  <div className="flex items-center gap-2 min-w-0">
+   453→   453→                    <span className="font-mono font-bold text-sm text-green-800 dark:text-green-300">{codigo}</span>
+   454→   454→                    <span className="text-[10px] text-green-700/60 dark:text-green-400/60 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded">{un || '—'}</span>
+   455→   455→                  </div>
+   456→   456→                  <div className="flex items-center gap-1 flex-shrink-0">
+   457→   457→                    <ArrowDownToLine className="h-3.5 w-3.5 text-green-600" />
+   458→   458→                    <span className="font-bold text-green-700 dark:text-green-300">+{cantidad}</span>
+   459→   459→                  </div>
+   460→   460→                </div>
+   461→   461→                {descripcion && (
+   462→   462→                  <p className="text-xs text-green-700/70 dark:text-green-400/70 truncate">{descripcion}</p>
+   463→   463→                )}
+   464→   464→                {fVencimiento && !sinVencimiento && (
+   465→   465→                  <p className="text-[10px] text-muted-foreground">Venc: {fVencimiento}</p>
+   466→   466→                )}
+   467→   467→              </div>
+   468→   468→            </div>
+   469→   469→
+   470→   470→            {/* Separador */}
+   471→   471→            {confirmData && confirmData.length > 0 && (
+   472→   472→              <div className="px-4 sm:px-6 pb-2">
+   473→   473→                <div className="flex items-center gap-2">
+   474→   474→                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+   475→   475→                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Stock actual en esta ubicación</span>
+   476→   476→                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+   477→   477→                </div>
+   478→   478→              </div>
+   479→   479→            )}
+   480→   480→
+   481→   481→            {/* Productos existentes en la ubicación */}
+   482→   482→            {confirmData && confirmData.length > 0 && (
+   483→   483→              <div className="px-4 sm:px-6 pb-4">
+   484→   484→                <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-2">
+   485→   485→                  {confirmData.length} producto{confirmData.length !== 1 ? 's' : ''} encontrado{confirmData.length !== 1 ? 's' : ''}
+   486→   486→                </p>
+   487→   487→                <div className="space-y-2">
+   488→   488→                  {confirmData.map((s, i) => (
+   489→   489→                    <div
+   490→   490→                      key={`${s.codigo}-${i}`}
+   491→   491→                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3"
+   492→   492→                    >
+   493→   493→                      <div className="flex items-start gap-3">
+   494→   494→                        <div className="w-9 h-9 rounded-lg bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+   495→   495→                          <Package className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+   496→   496→                        </div>
+   497→   497→                        <div className="flex-1 min-w-0">
+   498→   498→                          <div className="flex items-center gap-2 flex-wrap">
+   499→   499→                            <span className="font-mono font-semibold text-sm text-slate-800 dark:text-slate-200">{s.codigo}</span>
+   500→   500→                            <span className="text-[10px] text-muted-foreground bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{s.un}</span>
+   501→   501→                          </div>
+   502→   502→                          <p className="text-xs text-muted-foreground truncate mt-0.5">{s.descripcion}</p>
+   503→   503→                          <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
+   504→   504→                            <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{s.stock} {s.un}</span>
+   505→   505→                            {s.fVencimiento && <span>Venc: {s.fVencimiento}</span>}
+   506→   506→                            {s.proveedor && <span>Prov: {s.proveedor}</span>}
+   507→   507→                          </div>
+   508→   508→                        </div>
+   509→   509→                        <Button
+   510→   510→                          size="sm"
+   511→   511→                          variant="outline"
+   512→   512→                          onClick={() => handleSalidaDesdeAlerta(s)}
+   513→   513→                          disabled={salidaBusy === s.codigo}
+   514→   514→                          className="h-9 px-3 text-xs font-semibold border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 hover:border-red-300 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300 dark:hover:border-red-700 flex-shrink-0 gap-1.5 self-center"
+   515→   515→                        >
+   516→   516→                          {salidaBusy === s.codigo ? (
+   517→   517→                            <><Loader2 className="h-3 w-3 animate-spin" /> Procesando...</>
+   518→   518→                          ) : (
+   519→   519→                            <><ArrowUpFromLine className="h-3 w-3" /> Dar Salida</>
+   520→   520→                          )}
+   521→   521→                        </Button>
+   522→   522→                      </div>
+   523→   523→                    </div>
+   524→   524→                  ))}
+   525→   525→                </div>
+   526→   526→                <p className="text-[10px] text-muted-foreground mt-2 italic">
+   527→   527→                  Presiona "Dar Salida" para retirar productos que ya no están físicamente en esta ubicación.
+   528→   528→                </p>
+   529→   529→              </div>
+   530→   530→            )}
+   531→   531→          </div>
+   532→   532→
+   533→   533→          {/* Botones de acción */}
+   534→   534→          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2 shrink-0">
+   535→   535→            <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium border-slate-300 dark:border-slate-600">
+   536→   536→              Cancelar
+   537→   537→            </AlertDialogCancel>
+   538→   538→            <Button
+   539→   539→              onClick={(e) => { e.preventDefault(); doInsert(parseFloat(cantidad)) }}
+   540→   540→              disabled={busy}
+   541→   541→              className="flex-1 h-11 rounded-lg text-sm font-bold bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white shadow-md shadow-green-600/20 gap-2"
+   542→   542→            >
+   543→   543→              {busy ? (
+   544→   544→                <Loader2 className="h-4 w-4 animate-spin" />
+   545→   545→              ) : (
+   546→   546→                <ArrowDownToLine className="h-4 w-4" />
+   547→   547→              )}
+   548→   548→              {tipo === 'devolucion' ? 'Confirmar Devolución' : 'Confirmar Ingreso'}
+   549→   549→            </Button>
+   550→   550→          </AlertDialogFooter>
+   551→   551→        </AlertDialogContent>
+   552→   552→      </AlertDialog>
+   553→   553→    </>
+   554→   554→  )
+   555→   555→}
+   556→   556→
+   557→   557→/* ═══════════════════════════════════════════
+   558→   558→   SALIDA FORM — Tabla con formato exacto de la imagen
+   559→   559→   ═══════════════════════════════════════════ */
+   560→   560→type LocWithKey = StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string }
+   561→   561→
+   562→   562→function SalidaForm({
+   563→   563→  turno,
+   564→   564→  onCreated,
+   565→   565→  perfil,
+   566→   566→}: {
+   567→   567→  turno: Turno
+   568→   568→  onCreated: (movs: Movimiento[]) => void
+   569→   569→  perfil: { id: string; nombre: string; correo: string }
+   570→   570→}) {
+   571→   571→  const [searchCode, setSearchCode] = useState('')
+   572→   572→  const [productoDesc, setProductoDesc] = useState('')
+   573→   573→  const [productoUn, setProductoUn] = useState('')
+   574→   574→  const [locations, setLocations] = useState<LocWithKey[]>([])
+   575→   575→  const [qtyMap, setQtyMap] = useState<Record<string, string>>({})
+   576→   576→  const [busy, setBusy] = useState(false)
+   577→   577→  const [loading, setLoading] = useState(false)
+   578→   578→  const searchCodeRef = useRef(searchCode)
+   579→   579→  searchCodeRef.current = searchCode
+   580→   580→
+   581→   581→  // ─── Selección múltiple ───
+   582→   582→  const [selected, setSelected] = useState<Set<string>>(new Set())
+   583→   583→  const [massConfirmOpen, setMassConfirmOpen] = useState(false)
+   584→   584→
+   585→   585→  function toggleSelect(key: string) {
+   586→   586→    setSelected((prev) => {
+   587→   587→      const next = new Set(prev)
+   588→   588→      if (next.has(key)) next.delete(key)
+   589→   589→      else next.add(key)
+   590→   590→      return next
+   591→   591→    })
+   592→   592→  }
+   593→   593→  function toggleSelectAll() {
+   594→   594→    if (selected.size === locations.length) {
+   595→   595→      setSelected(new Set())
+   596→   596→    } else {
+   597→   597→      setSelected(new Set(locations.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`)))
+   598→   598→    }
+   599→   599→  }
+   600→   600→
+   601→   601→  // Reset selección al cambiar búsqueda
+   602→   602→  useEffect(() => {
+   603→   603→    setSelected(new Set())
+   604→   604→  }, [searchCode])
+   605→   605→
+   606→   606→  // NOTA: NO resetear selección cuando locations se refresca (polling).
+   607→   607→  // Las selecciones se mantienen mientras el searchCode no cambie.
+   608→   608→  // Solo se limpian manualmente al cambiar búsqueda o al completar una salida.
+   609→   609→
+   610→   610→  // ─── Salida en masa ───
+   611→   611→  const [massBusy, setMassBusy] = useState(false)
+   612→   612→  // Refs para leer estado actualizado dentro del loop async
+   613→   613→  const locationsRef = useRef(locations)
+   614→   614→  locationsRef.current = locations
+   615→   615→  const qtyMapRef = useRef(qtyMap)
+   616→   616→  qtyMapRef.current = qtyMap
+   617→   617→  const selectedRef = useRef(selected)
+   618→   618→  selectedRef.current = selected
+   619→   619→
+   620→   620→  function openMassConfirm() {
+   621→   621→    if (selected.size === 0) {
+   622→   622→      toast.error('Selecciona al menos una ubicación')
+   623→   623→      return
+   624→   624→    }
+   625→   625→    setMassConfirmOpen(true)
+   626→   626→  }
+   627→   627→
+   628→   628→  async function doMassSalida() {
+   629→   629→    setMassBusy(true)
+   630→   630→    const totalToProcess = selectedRef.current.size
+   631→   631→    let totalProcessed = 0
+   632→   632→    let totalErrors = 0
+   633→   633→    let stockErrors = 0
+   634→   634→    const errorDetails: string[] = []
+   635→   635→    try {
+   636→   636→      // Usar los values actuales al momento de iniciar (no refs que cambian durante el loop)
+   637→   637→      const selectedKeys = Array.from(selectedRef.current)
+   638→   638→      const locsSnap = [...locationsRef.current]
+   639→   639→      const qtySnap = { ...qtyMapRef.current }
+   640→   640→
+   641→   641→      for (const key of selectedKeys) {
+   642→   642→        const loc = locsSnap.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === key)
+   643→   643→        if (!loc) {
+   644→   644→          errorDetails.push(`Ubicación ${key} no encontrada`)
+   645→   645→          totalErrors++
+   646→   646→          continue
+   647→   647→        }
+   648→   648→        const qtyVal = qtySnap[key] || ''
+   649→   649→        const qtyNum = qtyVal ? parseFloat(qtyVal.trim()) : loc.stock
+   650→   650→        if (isNaN(qtyNum) || qtyNum <= 0) {
+   651→   651→          errorDetails.push(`Cantidad inválida en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}`)
+   652→   652→          totalErrors++
+   653→   653→          continue
+   654→   654→        }
+   655→   655→        const finalQty = Math.min(qtyNum, loc.stock)
+   656→   656→        try {
+   657→   657→          const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+   658→   658→            tipo: 'salida',
+   659→   659→            bloque: loc.bloque, torre: loc.torre, piso: loc.piso, posicion: loc.posicion,
+   660→   660→            codigo: loc.codigo, descripcion: loc.descripcion, un: loc.un,
+   661→   661→            cantidad: finalQty,
+   662→   662→            fVencimiento: loc.fVencimiento ?? '', turno,
+   663→   663→            usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+   664→   664→            proveedor: loc.proveedor,
+   665→   665→            // PRESERVAR codigoInc para consistencia (aunque SalidaForm excluye INC)
+   666→   666→            codigoInc: loc.codigoInc || undefined,
+   667→   667→          })
+   668→   668→          totalProcessed++
+   669→   669→        } catch (err) {
+   670→   670→          if (isInsufficientStockError(err)) {
+   671→   671→            stockErrors++
+   672→   672→            const detail = (err as Record<string, string>).detail || ''
+   673→   673→            errorDetails.push(`Stock insuficiente en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}${detail ? ` (${detail})` : ''}`)
+   674→   674→          } else {
+   675→   675→            const msg = extractError(err)
+   676→   676→            errorDetails.push(`Error en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}: ${msg}`)
+   677→   677→          }
+   678→   678→          totalErrors++
+   679→   679→        }
+   680→   680→      }
+   681→   681→      if (totalErrors > 0) {
+   682→   682→        const stockNote = stockErrors > 0 ? ` (${stockErrors} por stock insuficiente)` : ''
+   683→   683→        const desc = totalProcessed > 0
+   684→   684→          ? `${totalProcessed} de ${totalToProcess} correctas${stockNote}:\n${errorDetails.slice(0, 5).join('\n')}${errorDetails.length > 5 ? `\n...y ${errorDetails.length - 5} más` : ''}`
+   685→   685→          : `Errores${stockNote}:\n${errorDetails.join('\n')}`
+   686→   686→        toast.warning(`Salida completada con ${totalErrors} error${totalErrors > 1 ? 'es' : ''}`, { description: desc, duration: 10000 })
+   687→   687→      } else {
+   688→   688→        toast.success(`Salida registrada en ${totalProcessed} ubicacion${totalProcessed > 1 ? 'es' : ''}`)
+   689→   689→      }
+   690→   690→      setMassConfirmOpen(false)
+   691→   691→      setSelected(new Set())
+   692→   692→      setQtyMap({})
+   693→   693→      // Si hubo operaciones offline, limpiar UI para evitar doble salida
+   694→   694→      if (totalProcessed > 0 && SyncEngine.isOffline()) {
+   695→   695→        setLocations([])
+   696→   696→        setProductoDesc('')
+   697→   697→        setProductoUn('')
+   698→   698→      } else {
+   699→   699→        // Refrescar datos reales cuando estamos online
+   700→   700→        await refreshLocations()
+   701→   701→      }
+   702→   702→      onCreated([]) // trigger re-render
+   703→   703→    } catch (err: unknown) {
+   704→   704→      const message = extractError(err)
+   705→   705→      toast.error('Error en salida masiva', { description: message })
+   706→   706→    } finally {
+   707→   707→      setMassBusy(false)
+   708→   708→    }
+   709→   709→  }
+   710→   710→
+   711→   711→  const allSelected = locations.length > 0 && selected.size === locations.length
+   712→   712→
+   713→   713→  // Función central para refrescar las ubicaciones
+   714→   714→  const refreshLocations = useCallback(async () => {
+   715→   715→    const code = searchCodeRef.current.trim()
+   716→   716→    if (!code) {
+   717→   717→      setLocations([])
+   718→   718→      setProductoDesc('')
+   719→   719→      setProductoUn('')
+   720→   720→      setQtyMap({})
+   721→   721→      return
+   722→   722→    }
+   723→   723→    try {
+   724→   724→      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string; codigoInc?: string }>
+   725→   725→      try {
+   726→   726→        // Intentar obtener del servidor - consulta optimizada por código
+   727→   727→        const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
+   728→   728→        movs = await fetchMovimientosByCodigo(code)
+   729→   729→      } catch {
+   730→   730→        // Fallback: usar movimientos cacheados en IndexedDB y filtrar por código
+   731→   731→        const cached = await SyncEngine.getCachedMovimientosForStock()
+   732→   732→        movs = cached.filter((m) => m.codigo === code.toUpperCase())
+   733→   733→      }
+   734→   734→      const upperCode = code.toUpperCase()
+   735→   735→      const locMap = new Map<string, LocWithKey>()
+   736→   736→      // EXCLUIR movimientos INC de la vista de salidas normales
+   737→   737→      const relevant = movs.filter((m) => m.codigo === upperCode && !m.codigoInc)
+   738→   738→      let desc = ''
+   739→   739→      let un = ''
+   740→   740→      for (const m of relevant) {
+   741→   741→        if (!desc && m.descripcion) desc = m.descripcion
+   742→   742→        if (!un && m.un) un = m.un
+   743→   743→        const impact = impactoStock(m.tipo, m.cantidad)
+   744→   744→        if (isNaN(impact) || !isFinite(impact)) continue
+   745→   745→        // Agrupar por ubicación SOLAMENTE — f_vencimiento NO participa.
+   746→   746→        // Se rastrea la fecha más próxima (FEFO) para pasar en la salida.
+   747→   747→        const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+   748→   748→        const current = locMap.get(key)
+   749→   749→        if (current) {
+   750→   750→          current.stock += impact
+   751→   751→          // Rastrear f_vencimiento más próxima para FEFO
+   752→   752→          if (m.fVencimiento) {
+   753→   753→            if (!current.fVencimiento || m.fVencimiento < current.fVencimiento) {
+   754→   754→              current.fVencimiento = m.fVencimiento
+   755→   755→            }
+   756→   756→          }
+   757→   757→        } else {
+   758→   758→          locMap.set(key, {
+   759→   759→            bloque: m.bloque,
+   760→   760→            torre: m.torre,
+   761→   761→            piso: m.piso,
+   762→   762→            posicion: m.posicion,
+   763→   763→            codigo: m.codigo,
+   764→   764→            descripcion: m.descripcion,
+   765→   765→            un: m.un,
+   766→   766→            stock: impact,
+   767→   767→            fVencimiento: m.fVencimiento || undefined,
+   768→   768→            proveedor: m.proveedor,
+   769→   769→          })
+   770→   770→        }
+   771→   771→      }
+   772→   772→      const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
+   773→   773→      // Ordenar: FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
+   774→   774→      results.sort((a, b) => {
+   775→   775→        const aHasDate = !!a.fVencimiento
+   776→   776→        const bHasDate = !!b.fVencimiento
+   777→   777→        if (aHasDate && bHasDate) return a.fVencimiento!.localeCompare(b.fVencimiento!)
+   778→   778→        if (aHasDate && !bHasDate) return -1
+   779→   779→        if (!aHasDate && bHasDate) return 1
+   780→   780→        // Ambos sin fecha: ordenar por bloque, torre, piso, posición
+   781→   781→        const aB = parseInt(a.bloque, 10) || 0
+   782→   782→        const bB = parseInt(b.bloque, 10) || 0
+   783→   783→        if (aB !== bB) return aB - bB
+   784→   784→        const aT = parseInt(a.torre, 10) || 0
+   785→   785→        const bT = parseInt(b.torre, 10) || 0
+   786→   786→        if (aT !== bT) return aT - bT
+   787→   787→        const aP = parseInt(a.piso, 10) || 0
+   788→   788→        const bP = parseInt(b.piso, 10) || 0
+   789→   789→        if (aP !== bP) return aP - bP
+   790→   790→        const aPos = parseInt(a.posicion, 10) || 0
+   791→   791→        const bPos = parseInt(b.posicion, 10) || 0
+   792→   792→        return aPos - bPos
+   793→   793→      })
+   794→   794→      // Limpiar selecciones de ubicaciones que ya no tienen stock
+   795→   795→      const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`))
+   796→   796→      setSelected((prev) => {
+   797→   797→        const cleaned = new Set<string>()
+   798→   798→        for (const k of prev) {
+   799→   799→          if (newKeys.has(k)) cleaned.add(k)
+   800→   800→        }
+   801→   801→        return cleaned.size === prev.size ? prev : cleaned
+   802→   802→      })
+   803→   803→      setLocations(results)
+   804→   804→      setProductoDesc(desc)
+   805→   805→      setProductoUn(un)
+   806→   806→    } catch (err) {
+   807→   807→      console.error('[MovimientoForm] refreshLocations error:', err)
+   808→   808→      toast.error('Error al buscar stock', { description: extractError(err) })
+   809→   809→    }
+   810→   810→  }, [])
+   811→   811→
+   812→   812→  // Búsqueda inicial con debounce
+   813→   813→  useEffect(() => {
+   814→   814→    if (!searchCode.trim()) {
+   815→   815→      setLocations([])
+   816→   816→      setProductoDesc('')
+   817→   817→      setProductoUn('')
+   818→   818→      setQtyMap({})
+   819→   819→      return
+   820→   820→    }
+   821→   821→    setLoading(true)
+   822→   822→    const timer = setTimeout(async () => {
+   823→   823→      await refreshLocations()
+   824→   824→      setLoading(false)
+   825→   825→    }, 300)
+   826→   826→    return () => clearTimeout(timer)
+   827→   827→  }, [searchCode, refreshLocations])
+   828→   828→
+   829→   829→  // POLLING: refrescar automáticamente cada 8 segundos
+   830→   830→  useEffect(() => {
+   831→   831→    if (!searchCode.trim()) return
+   832→   832→    const interval = setInterval(() => {
+   833→   833→      refreshLocations()
+   834→   834→    }, 8000)
+   835→   835→    return () => clearInterval(interval)
+   836→   836→  }, [searchCode, refreshLocations])
+   837→   837→
+   838→   838→  async function handleSalidaParcial(locKey: string) {
+   839→   839→    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
+   840→   840→    if (!loc) return
+   841→   841→    const qtyVal = qtyMap[locKey] || ''
+   842→   842→    const qtyNum = parseFloat(qtyVal)
+   843→   843→    if (isNaN(qtyNum) || qtyNum <= 0) {
+   844→   844→      toast.error('Ingresa una cantidad válida para la salida parcial')
+   845→   845→      return
+   846→   846→    }
+   847→   847→    if (qtyNum > loc.stock) {
+   848→   848→      toast.error('La cantidad excede el stock disponible')
+   849→   849→      return
+   850→   850→    }
+   851→   851→    setConfirmState({ loc, qtyNum, full: false })
+   852→   852→  }
+   853→   853→
+   854→   854→  function handleRetirarTodo(locKey: string) {
+   855→   855→    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
+   856→   856→    if (!loc) return
+   857→   857→    setConfirmState({ loc, qtyNum: loc.stock, full: true })
+   858→   858→  }
+   859→   859→
+   860→   860→  const [confirmState, setConfirmState] = useState<{
+   861→   861→    loc: LocWithKey
+   862→   862→    qtyNum: number
+   863→   863→    full: boolean
+   864→   864→  } | null>(null)
+   865→   865→
+   866→   866→  async function doSalida() {
+   867→   867→    if (!confirmState) return
+   868→   868→    const { loc, qtyNum } = confirmState
+   869→   869→    setBusy(true)
+   870→   870→    try {
+   871→   871→      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+   872→   872→        tipo: 'salida',
+   873→   873→        bloque: loc.bloque,
+   874→   874→        torre: loc.torre,
+   875→   875→        piso: loc.piso,
+   876→   876→        posicion: loc.posicion,
+   877→   877→        codigo: loc.codigo,
+   878→   878→        descripcion: loc.descripcion,
+   879→   879→        un: loc.un,
+   880→   880→        cantidad: qtyNum,
+   881→   881→        fVencimiento: loc.fVencimiento ?? '',
+   882→   882→        turno,
+   883→   883→        usuarioId: perfil.id,
+   884→   884→        usuarioNombre: perfil.nombre,
+   885→   885→        usuarioCorreo: perfil.correo,
+   886→   886→        proveedor: loc.proveedor,
+   887→   887→        // PRESERVAR codigoInc para consistencia (aunque SalidaForm excluye INC)
+   888→   888→        codigoInc: loc.codigoInc || undefined,
+   889→   889→      })
+   890→   890→      if (wasOffline) {
+   891→   891→        toast.success(`Salida de ${qtyNum} ${loc.un} guardada (offline)`, {
+   892→   892→          description: 'Se sincronizará al reconectarse. La ubicación se actualizará cuando haya conexión.',
+   893→   893→          duration: 5000,
+   894→   894→        })
+   895→   895→        // OFFLINE: Limpiar UI inmediatamente para evitar doble salida
+   896→   896→        setConfirmState(null)
+   897→   897→        setSearchCode('')
+   898→   898→        setQtyMap({})
+   899→   899→        setLocations([])
+   900→   900→        setProductoDesc('')
+   901→   901→        setProductoUn('')
+   902→   902→      } else {
+   903→   903→        toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
+   904→   904→        setConfirmState(null)
+   905→   905→        setSearchCode('')
+   906→   906→        setQtyMap({})
+   907→   907→        onCreated(movs)
+   908→   908→      }
+   909→   909→    } catch (err: unknown) {
+   910→   910→      if (isInsufficientStockError(err)) {
+   911→   911→        const detail = (err as Record<string, string>).detail || ''
+   912→   912→        toast.error('Stock insuficiente', {
+   913→   913→          description: detail || 'Otro usuario pudo haber modificado el stock mientras tú operabas. Los datos se han actualizado.',
+   914→   914→          duration: 8000,
+   915→   915→        })
+   916→   916→        setConfirmState(null)
+   917→   917→        refreshLocations() // refrescar datos reales
+   918→   918→      } else {
+   919→   919→        const message = extractError(err)
+   920→   920→        toast.error('Error al registrar salida', { description: message })
+   921→   921→      }
+   922→   922→    } finally {
+   923→   923→      setBusy(false)
+   924→   924→    }
+   925→   925→  }
+   926→   926→
+   927→   927→  return (
+   928→   928→    <div className="space-y-4">
+   929→   929→      {/* Búsqueda */}
+   930→   930→      <div className="space-y-1">
+   931→   931→        <Label className="text-sm text-muted-foreground">Buscar (código o descripción)</Label>
+   932→   932→        <CatalogoSearchInput
+   933→   933→          onPick={(item) => setSearchCode(item.codigo)}
+   934→   934→          value={searchCode}
+   935→   935→          onChange={setSearchCode}
+   936→   936→        />
+   937→   937→      </div>
+   938→   938→
+   939→   939→      {/* Producto (solo lectura) */}
+   940→   940→      {productoDesc && (
+   941→   941→        <div className="space-y-1">
+   942→   942→          <Label className="text-sm text-muted-foreground">Producto</Label>
+   943→   943→          <Input
+   944→   944→            value={`${productoUn ? productoUn + ' — ' : ''}${productoDesc}`}
+   945→   945→            readOnly
+   946→   946→            className="h-10 bg-muted/50 cursor-default"
+   947→   947→          />
+   948→   948→        </div>
+   949→   949→      )}
+   950→   950→
+   951→   951→      {/* Badges de metadata */}
+   952→   952→      {searchCode.trim() && (
+   953→   953→        <div className="flex flex-wrap gap-2">
+   954→   954→          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+   955→   955→            Turno: {turno}
+   956→   956→          </Badge>
+   957→   957→          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+   958→   958→            Usuario: {perfil.nombre}
+   959→   959→          </Badge>
+   960→   960→          {!loading && (
+   961→   961→            <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800">
+   962→   962→              Ubicaciones con stock: <span className="font-bold">{locations.length}</span>
+   963→   963→            </Badge>
+   964→   964→          )}
+   965→   965→        </div>
+   966→   966→      )}
+   967→   967→
+   968→   968→      {/* Loading */}
+   969→   969→      {loading && (
+   970→   970→        <div className="flex items-center justify-center py-4">
+   971→   971→          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+   972→   972→          <span className="ml-2 text-sm text-muted-foreground">Buscando...</span>
+   973→   973→        </div>
+   974→   974→      )}
+   975→   975→
+   976→   976→      {/* Barra de selección masiva */}
+   977→   977→      {locations.length > 0 && !loading && (
+   978→   978→        <div className="flex items-center gap-2 flex-wrap">
+   979→   979→          <Button
+   980→   980→            size="sm"
+   981→   981→            variant={allSelected ? 'default' : 'outline'}
+   982→   982→            onClick={toggleSelectAll}
+   983→   983→            className="h-9 text-xs gap-1.5"
+   984→   984→          >
+   985→   985→            <Checkbox checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected} className="h-3.5 w-3.5 pointer-events-none" />
+   986→   986→            {allSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+   987→   987→          </Button>
+   988→   988→          {selected.size > 0 && (
+   989→   989→            <>
+   990→   990→              <Badge variant="secondary" className="text-xs font-medium">
+   991→   991→                {selected.size} de {locations.length} seleccionada{selected.size > 1 ? 's' : ''}
+   992→   992→              </Badge>
+   993→   993→              <Button
+   994→   994→                size="sm"
+   995→   995→                onClick={openMassConfirm}
+   996→   996→                disabled={busy || massBusy}
+   997→   997→                className="h-9 text-xs gap-1.5 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-semibold ml-auto"
+   998→   998→              >
+   999→   999→                <ArrowUpFromLine className="h-3.5 w-3.5" />
+  1000→  1000→                Salida masiva ({selected.size})
+  1001→  1001→              </Button>
+  1002→  1002→            </>
+  1003→  1003→          )}
+  1004→  1004→        </div>
+  1005→  1005→      )}
+  1006→  1006→
+  1007→  1007→      {/* Lista de ubicaciones — Tarjetas en móvil, tabla en desktop */}
+  1008→  1008→      {locations.length > 0 && !loading && (
+  1009→  1009→        <>
+  1010→  1010→          {/* ───── Vista móvil: tarjetas ───── */}
+  1011→  1011→          <div className="md:hidden space-y-3">
+  1012→  1012→            {locations.map((loc) => {
+  1013→  1013→              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+  1014→  1014→              const isSelected = selected.has(key)
+  1015→  1015→              return (
+  1016→  1016→                <div
+  1017→  1017→                  key={key}
+  1018→  1018→                  onClick={() => toggleSelect(key)}
+  1019→  1019→                  className={`rounded-lg border p-3 space-y-2 shadow-sm cursor-pointer transition-all ${
+  1020→  1020→                    isSelected
+  1021→  1021→                      ? 'border-red-400 bg-red-50 dark:bg-red-950/20 ring-2 ring-red-300 dark:ring-red-700'
+  1022→  1022→                      : 'border bg-card'
+  1023→  1023→                  }`}
+  1024→  1024→                >
+  1025→  1025→                  {/* Checkbox + Ubicación */}
+  1026→  1026→                  <div className="flex items-center gap-2">
+  1027→  1027→                    <Checkbox
+  1028→  1028→                      checked={isSelected}
+  1029→  1029→                      className="h-4 w-4 pointer-events-none"
+  1030→  1030→                    />
+  1031→  1031→                    <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+  1032→  1032→                      <MapPin className="h-3.5 w-3.5" />
+  1033→  1033→                      <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
+  1034→  1034→                    </div>
+  1035→  1035→                  </div>
+  1036→  1036→
+  1037→  1037→                  {/* Stock */}
+  1038→  1038→                  <div className="flex items-center justify-between">
+  1039→  1039→                    <span className="text-sm font-semibold">Stock: {loc.stock} {loc.un}</span>
+  1040→  1040→                  </div>
+  1041→  1041→
+  1042→  1042→                  {/* Vencimiento */}
+  1043→  1043→                  <div className="flex items-center gap-2">
+  1044→  1044→                    <span className="text-xs text-muted-foreground shrink-0">Venc.:</span>
+  1045→  1045→                    {loc.fVencimiento ? (
+  1046→  1046→                      <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+  1047→  1047→                        {formatDate(loc.fVencimiento)}
+  1048→  1048→                      </span>
+  1049→  1049→                    ) : (
+  1050→  1050→                      <span className="text-xs text-muted-foreground">—</span>
+  1051→  1051→                    )}
+  1052→  1052→                  </div>
+  1053→  1053→
+  1054→  1054→                  {/* Proveedor */}
+  1055→  1055→                  <div className="flex items-center gap-2">
+  1056→  1056→                    <span className="text-xs text-muted-foreground shrink-0">Prov.:</span>
+  1057→  1057→                    {loc.proveedor ? (
+  1058→  1058→                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+  1059→  1059→                        {loc.proveedor}
+  1060→  1060→                      </Badge>
+  1061→  1061→                    ) : (
+  1062→  1062→                      <span className="text-xs text-muted-foreground">—</span>
+  1063→  1063→                    )}
+  1064→  1064→                  </div>
+  1065→  1065→
+  1066→  1066→                  {/* Cantidad + Acciones */}
+  1067→  1067→                  <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+  1068→  1068→                    <Input
+  1069→  1069→                      type="number"
+  1070→  1070→                      step="any"
+  1071→  1071→                      min="0.001"
+  1072→  1072→                      max={loc.stock}
+  1073→  1073→                      value={qtyMap[key] || ''}
+  1074→  1074→                      onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
+  1075→  1075→                      placeholder="Parcial"
+  1076→  1076→                      className="h-9 text-sm flex-1"
+  1077→  1077→                    />
+  1078→  1078→                    <Button
+  1079→  1079→                      size="sm"
+  1080→  1080→                      onClick={() => handleSalidaParcial(key)}
+  1081→  1081→                      disabled={busy || massBusy}
+  1082→  1082→                      className="h-9 text-xs bg-red-600 hover:bg-red-700 text-white"
+  1083→  1083→                    >
+  1084→  1084→                      Salida
+  1085→  1085→                    </Button>
+  1086→  1086→                    <Button
+  1087→  1087→                      size="sm"
+  1088→  1088→                      variant="outline"
+  1089→  1089→                      onClick={() => handleRetirarTodo(key)}
+  1090→  1090→                      disabled={busy || massBusy}
+  1091→  1091→                      className="h-9 text-xs"
+  1092→  1092→                    >
+  1093→  1093→                      Todo
+  1094→  1094→                    </Button>
+  1095→  1095→                  </div>
+  1096→  1096→                </div>
+  1097→  1097→              )
+  1098→  1098→            })}
+  1099→  1099→          </div>
+  1100→  1100→
+  1101→  1101→          {/* ───── Vista desktop: tabla ───── */}
+  1102→  1102→          <div className="hidden md:block overflow-x-auto">
+  1103→  1103→            <Table className="min-w-[800px]">
+  1104→  1104→              <TableHeader>
+  1105→  1105→                <TableRow>
+  1106→  1106→                  <TableHead className="w-10 text-center">
+  1107→  1107→                    <Checkbox
+  1108→  1108→                      checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected}
+  1109→  1109→                      onCheckedChange={toggleSelectAll}
+  1110→  1110→                      className="h-4 w-4 mx-auto"
+  1111→  1111→                    />
+  1112→  1112→                  </TableHead>
+  1113→  1113→                  <TableHead className="w-16 text-center">Bloque</TableHead>
+  1114→  1114→                  <TableHead className="w-16 text-center">Torre</TableHead>
+  1115→  1115→                  <TableHead className="w-16 text-center">Piso</TableHead>
+  1116→  1116→                  <TableHead className="w-20 text-center">Posición</TableHead>
+  1117→  1117→                  <TableHead className="text-right">Stock</TableHead>
+  1118→  1118→                  <TableHead>F. Vencimiento</TableHead>
+  1119→  1119→                  <TableHead>Proveedor</TableHead>
+  1120→  1120→                  <TableHead className="min-w-[140px]">Cant. salida</TableHead>
+  1121→  1121→                  <TableHead className="min-w-[180px]">Acción</TableHead>
+  1122→  1122→                </TableRow>
+  1123→  1123→              </TableHeader>
+  1124→  1124→              <TableBody>
+  1125→  1125→                {locations.map((loc) => {
+  1126→  1126→                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+  1127→  1127→                  const isSelected = selected.has(key)
+  1128→  1128→                  return (
+  1129→  1129→                    <TableRow
+  1130→  1130→                      key={key}
+  1131→  1131→                      onClick={() => toggleSelect(key)}
+  1132→  1132→                      className={`cursor-pointer transition-colors ${isSelected ? 'bg-red-50 dark:bg-red-950/20' : ''}`}
+  1133→  1133→                    >
+  1134→  1134→                      <TableCell className="text-center">
+  1135→  1135→                        <Checkbox checked={isSelected} className="h-4 w-4 mx-auto pointer-events-none" />
+  1136→  1136→                      </TableCell>
+  1137→  1137→                      <TableCell className="text-center font-medium">{loc.bloque}</TableCell>
+  1138→  1138→                      <TableCell className="text-center font-medium">{loc.torre}</TableCell>
+  1139→  1139→                      <TableCell className="text-center font-medium">{loc.piso}</TableCell>
+  1140→  1140→                      <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
+  1141→  1141→                      <TableCell className="text-right font-bold">{loc.stock}</TableCell>
+  1142→  1142→                      <TableCell>
+  1143→  1143→                        {loc.fVencimiento ? (
+  1144→  1144→                          <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{formatDate(loc.fVencimiento)}</span>
+  1145→  1145→                        ) : (
+  1146→  1146→                          <span className="text-xs text-muted-foreground">—</span>
+  1147→  1147→                        )}
+  1148→  1148→                      </TableCell>
+  1149→  1149→                      <TableCell>
+  1150→  1150→                        {loc.proveedor ? (
+  1151→  1151→                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+  1152→  1152→                            {loc.proveedor}
+  1153→  1153→                          </Badge>
+  1154→  1154→                        ) : (
+  1155→  1155→                          <span className="text-xs text-muted-foreground">—</span>
+  1156→  1156→                        )}
+  1157→  1157→                      </TableCell>
+  1158→  1158→                      <TableCell onClick={(e) => e.stopPropagation()}>
+  1159→  1159→                        <Input
+  1160→  1160→                          type="number"
+  1161→  1161→                          step="any"
+  1162→  1162→                          min="0.001"
+  1163→  1163→                          max={loc.stock}
+  1164→  1164→                          value={qtyMap[key] || ''}
+  1165→  1165→                          onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
+  1166→  1166→                          placeholder="Parcial"
+  1167→  1167→                          className="h-9 text-sm"
+  1168→  1168→                        />
+  1169→  1169→                      </TableCell>
+  1170→  1170→                      <TableCell onClick={(e) => e.stopPropagation()}>
+  1171→  1171→                        <div className="flex gap-2">
+  1172→  1172→                          <Button
+  1173→  1173→                            size="sm"
+  1174→  1174→                            onClick={() => handleSalidaParcial(key)}
+  1175→  1175→                            disabled={busy || massBusy}
+  1176→  1176→                            className="flex-1 h-9 text-xs bg-red-600 hover:bg-red-700 text-white"
+  1177→  1177→                          >
+  1178→  1178→                            Salida
+  1179→  1179→                          </Button>
+  1180→  1180→                          <Button
+  1181→  1181→                            size="sm"
+  1182→  1182→                            variant="outline"
+  1183→  1183→                            onClick={() => handleRetirarTodo(key)}
+  1184→  1184→                            disabled={busy || massBusy}
+  1185→  1185→                            className="flex-1 h-9 text-xs"
+  1186→  1186→                          >
+  1187→  1187→                            Todo
+  1188→  1188→                          </Button>
+  1189→  1189→                        </div>
+  1190→  1190→                      </TableCell>
+  1191→  1191→                    </TableRow>
+  1192→  1192→                  )
+  1193→  1193→                })}
+  1194→  1194→              </TableBody>
+  1195→  1195→            </Table>
+  1196→  1196→          </div>
+  1197→  1197→        </>
+  1198→  1198→      )}
+  1199→  1199→
+  1200→  1200→      {/* Sin stock */}
+  1201→  1201→      {!loading && locations.length === 0 && searchCode.trim() && (
+  1202→  1202→        <div className="flex items-center gap-2 text-muted-foreground py-4 justify-center">
+  1203→  1203→          <PackageSearch className="h-5 w-5" />
+  1204→  1204→          <span className="text-sm">Sin stock para este código</span>
+  1205→  1205→        </div>
+  1206→  1206→      )}
+  1207→  1207→
+  1208→  1208→      {/* Nota inferior */}
+  1209→  1209→      {locations.length > 0 && (
+  1210→  1210→        <p className="text-xs text-muted-foreground text-center">
+  1211→  1211→          Las ubicaciones que lleguen a stock 0 desaparecen automáticamente de esta lista.
+  1212→  1212→        </p>
+  1213→  1213→      )}
+  1214→  1214→
+  1215→  1215→      {/* Diálogo de confirmación Sí/No */}
+  1216→  1216→      <AlertDialog open={!!confirmState} onOpenChange={(open) => { if (!open) setConfirmState(null) }}>
+  1217→  1217→        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+  1218→  1218→          <AlertDialogHeader className="shrink-0">
+  1219→  1219→            <AlertDialogTitle>
+  1220→  1220→              {confirmState?.full ? 'Retirar todo el stock' : 'Confirmar salida'}
+  1221→  1221→            </AlertDialogTitle>
+  1222→  1222→            <AlertDialogDescription asChild>
+  1223→  1223→              <div className="space-y-3 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+  1224→  1224→                <p>¿Estás seguro de registrar esta salida?</p>
+  1225→  1225→                {confirmState && (
+  1226→  1226→                  <div className="rounded-lg border bg-muted/50 p-3 space-y-1.5 text-sm">
+  1227→  1227→                    <div className="flex justify-between">
+  1228→  1228→                      <span className="text-muted-foreground">Producto:</span>
+  1229→  1229→                      <span className="font-medium">{confirmState.loc.codigo} — {confirmState.loc.descripcion}</span>
+  1230→  1230→                    </div>
+  1231→  1231→                    <div className="flex justify-between">
+  1232→  1232→                      <span className="text-muted-foreground">Ubicación:</span>
+  1233→  1233→                      <span className="font-medium">
+  1234→  1234→                        B-{confirmState.loc.bloque} T-{confirmState.loc.torre} P-{confirmState.loc.piso} Pos-{confirmState.loc.posicion}
+  1235→  1235→                      </span>
+  1236→  1236→                    </div>
+  1237→  1237→                    <div className="flex justify-between">
+  1238→  1238→                      <span className="text-muted-foreground">Stock actual:</span>
+  1239→  1239→                      <span className="font-medium">{confirmState.loc.stock} {confirmState.loc.un}</span>
+  1240→  1240→                    </div>
+  1241→  1241→                    <div className="border-t pt-1.5 flex justify-between font-bold">
+  1242→  1242→                      <span className="text-red-600">Cantidad a retirar:</span>
+  1243→  1243→                      <span className="text-red-600">{confirmState.qtyNum} {confirmState.loc.un}</span>
+  1244→  1244→                    </div>
+  1245→  1245→                    <div className="flex justify-between">
+  1246→  1246→                      <span className="text-muted-foreground">Stock después:</span>
+  1247→  1247→                      <span className={`font-medium ${confirmState.loc.stock - confirmState.qtyNum === 0 ? 'text-red-600' : ''}`}>
+  1248→  1248→                        {confirmState.loc.stock - confirmState.qtyNum} {confirmState.loc.un}
+  1249→  1249→                      </span>
+  1250→  1250→                    </div>
+  1251→  1251→                    {confirmState.loc.fVencimiento && (
+  1252→  1252→                      <div className="flex justify-between">
+  1253→  1253→                        <span className="text-muted-foreground">F. Vencimiento:</span>
+  1254→  1254→                        <span className={`font-medium ${isExpired(confirmState.loc.fVencimiento) ? 'text-red-600' : isExpiringSoon(confirmState.loc.fVencimiento) ? 'text-amber-600' : ''}`}>
+  1255→  1255→                          {formatDate(confirmState.loc.fVencimiento)}
+  1256→  1256→                        </span>
+  1257→  1257→                      </div>
+  1258→  1258→                    )}
+  1259→  1259→                    {confirmState.loc.proveedor && (
+  1260→  1260→                      <div className="flex justify-between">
+  1261→  1261→                        <span className="text-muted-foreground">Proveedor:</span>
+  1262→  1262→                        <span className="font-medium">{confirmState.loc.proveedor}</span>
+  1263→  1263→                      </div>
+  1264→  1264→                    )}
+  1265→  1265→                  </div>
+  1266→  1266→                )}
+  1267→  1267→              </div>
+  1268→  1268→            </AlertDialogDescription>
+  1269→  1269→          </AlertDialogHeader>
+  1270→  1270→          <AlertDialogFooter className="shrink-0">
+  1271→  1271→            <AlertDialogCancel>No, cancelar</AlertDialogCancel>
+  1272→  1272→            <Button
+  1273→  1273→              onClick={(e) => { e.preventDefault(); doSalida() }}
+  1274→  1274→              disabled={busy}
+  1275→  1275→              className="bg-red-600 hover:bg-red-700 text-white"
+  1276→  1276→            >
+  1277→  1277→              {busy ? (
+  1278→  1278→                <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Procesando...</>
+  1279→  1279→              ) : (
+  1280→  1280→                'Sí, confirmar'
+  1281→  1281→              )}
+  1282→  1282→            </Button>
+  1283→  1283→          </AlertDialogFooter>
+  1284→  1284→        </AlertDialogContent>
+  1285→  1285→      </AlertDialog>
+  1286→  1286→
+  1287→  1287→      {/* ═══ DIÁLOGO DE CONFIRMACIÓN — Salida Masiva ═══ */}
+  1288→  1288→      <AlertDialog open={massConfirmOpen} onOpenChange={(open) => { if (!open) setMassConfirmOpen(false) }}>
+  1289→  1289→        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+  1290→  1290→          {/* Header con gradiente rojo */}
+  1291→  1291→          <div className="bg-gradient-to-r from-red-600 to-red-700 px-4 sm:px-6 py-5 text-white shrink-0">
+  1292→  1292→            <div className="flex items-center gap-3">
+  1293→  1293→              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+  1294→  1294→                <ArrowUpFromLine className="h-6 w-6 text-white" />
+  1295→  1295→              </div>
+  1296→  1296→              <div>
+  1297→  1297→                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+  1298→  1298→                  Confirmar Salida Masiva
+  1299→  1299→                </AlertDialogTitle>
+  1300→  1300→                <AlertDialogDescription className="text-red-100 text-sm mt-0.5">
+  1301→  1301→                  Se registrará salida en {selected.size} ubicacion{selected.size > 1 ? 'es' : ''}
+  1302→  1302→                </AlertDialogDescription>
+  1303→  1303→              </div>
+  1304→  1304→            </div>
+  1305→  1305→          </div>
+  1306→  1306→
+  1307→  1307→          {/* Contenido scrolleable con resumen */}
+  1308→  1308→          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+  1309→  1309→            {/* Info del producto */}
+  1310→  1310→            <div className="px-4 sm:px-6 pt-4 pb-2">
+  1311→  1311→              <div className="rounded-lg bg-muted/50 p-3 space-y-1 text-sm">
+  1312→  1312→                <div className="flex justify-between">
+  1313→  1313→                  <span className="text-muted-foreground">Código:</span>
+  1314→  1314→                  <span className="font-mono font-bold">{searchCode}</span>
+  1315→  1315→                </div>
+  1316→  1316→                {productoDesc && (
+  1317→  1317→                  <div className="flex justify-between">
+  1318→  1318→                    <span className="text-muted-foreground">Descripción:</span>
+  1319→  1319→                    <span className="font-medium truncate max-w-[200px]">{productoDesc}</span>
+  1320→  1320→                  </div>
+  1321→  1321→                )}
+  1322→  1322→                <div className="flex justify-between">
+  1323→  1323→                  <span className="text-muted-foreground">Turno:</span>
+  1324→  1324→                  <span className="font-medium">{turno}</span>
+  1325→  1325→                </div>
+  1326→  1326→              </div>
+  1327→  1327→            </div>
+  1328→  1328→
+  1329→  1329→            {/* Separador */}
+  1330→  1330→            <div className="px-4 sm:px-6 py-2">
+  1331→  1331→              <div className="flex items-center gap-2">
+  1332→  1332→                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+  1333→  1333→                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Ubicaciones seleccionadas</span>
+  1334→  1334→                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+  1335→  1335→              </div>
+  1336→  1336→            </div>
+  1337→  1337→
+  1338→  1338→            {/* Lista de ubicaciones */}
+  1339→  1339→            <div className="px-4 sm:px-6 pb-4 space-y-2">
+  1340→  1340→              {locations.filter((l) => selected.has(`${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`)).map((loc) => {
+  1341→  1341→                const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+  1342→  1342→                const qtyVal = qtyMap[key] || ''
+  1343→  1343→                const qtyNum = qtyVal ? parseFloat(qtyVal) : loc.stock
+  1344→  1344→                return (
+  1345→  1345→                  <div key={key} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3">
+  1346→  1346→                    <div className="flex items-start gap-3">
+  1347→  1347→                      <div className="w-9 h-9 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+  1348→  1348→                        <MapPin className="h-4 w-4 text-red-600 dark:text-red-400" />
+  1349→  1349→                      </div>
+  1350→  1350→                      <div className="flex-1 min-w-0">
+  1351→  1351→                        <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+  1352→  1352→                          B-{loc.bloque} / T-{loc.torre} / P-{loc.piso} / Pos {loc.posicion}
+  1353→  1353→                        </p>
+  1354→  1354→                        <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+  1355→  1355→                          <span>Stock: <b className="text-slate-700 dark:text-slate-300">{loc.stock} {loc.un}</b></span>
+  1356→  1356→                          <span className="text-red-600 font-semibold">→ Retirar: {isNaN(qtyNum) ? loc.stock : Math.min(qtyNum, loc.stock)} {loc.un}</span>
+  1357→  1357→                          {loc.fVencimiento && <span>Venc: {loc.fVencimiento}</span>}
+  1358→  1358→                          {loc.proveedor && <span>Prov: {loc.proveedor}</span>}
+  1359→  1359→                        </div>
+  1360→  1360→                      </div>
+  1361→  1361→                    </div>
+  1362→  1362→                  </div>
+  1363→  1363→                )
+  1364→  1364→              })}
+  1365→  1365→            </div>
+  1366→  1366→          </div>
+  1367→  1367→
+  1368→  1368→          {/* Botones */}
+  1369→  1369→          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 shrink-0">
+  1370→  1370→            <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium" disabled={massBusy}>
+  1371→  1371→              Cancelar
+  1372→  1372→            </AlertDialogCancel>
+  1373→  1373→            <Button
+  1374→  1374→              onClick={(e) => { e.preventDefault(); doMassSalida() }}
+  1375→  1375→              disabled={massBusy}
+  1376→  1376→              className="flex-1 h-11 rounded-lg text-sm font-bold bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white shadow-md shadow-red-600/20 gap-2"
+  1377→  1377→            >
+  1378→  1378→              {massBusy ? (
+  1379→  1379→                <><Loader2 className="h-4 w-4 animate-spin" /> Procesando...</>
+  1380→  1380→              ) : (
+  1381→  1381→                <>
+  1382→  1382→                  <ArrowUpFromLine className="h-4 w-4" />
+  1383→  1383→                  Confirmar Salida ({selected.size})
+  1384→  1384→                </>
+  1385→  1385→              )}
+  1386→  1386→            </Button>
+  1387→  1387→          </AlertDialogFooter>
+  1388→  1388→        </AlertDialogContent>
+  1389→  1389→      </AlertDialog>
+  1390→  1390→    </div>
+  1391→  1391→  )
+  1392→  1392→}
+  1393→  1393→
+  1394→  1394→/* ═══════════════════════════════════════════
+  1395→  1395→   SALIDA INC FORM — Salida de Insumo No Conforme
+  1396→  1396→   ═══════════════════════════════════════════ */
+  1397→  1397→type LocIncWithKey = StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string }
+  1398→  1398→
+  1399→  1399→function SalidaIncForm({
+  1400→  1400→  turno,
+  1401→  1401→  onCreated,
+  1402→  1402→  perfil,
+  1403→  1403→}: {
+  1404→  1404→  turno: Turno
+  1405→  1405→  onCreated: (movs: Movimiento[]) => void
+  1406→  1406→  perfil: { id: string; nombre: string; correo: string }
+  1407→  1407→}) {
+  1408→  1408→  const [searchCode, setSearchCode] = useState('')
+  1409→  1409→  const [productoDesc, setProductoDesc] = useState('')
+  1410→  1410→  const [productoUn, setProductoUn] = useState('')
+  1411→  1411→  const [locations, setLocations] = useState<LocIncWithKey[]>([])
+  1412→  1412→  const [qtyMap, setQtyMap] = useState<Record<string, string>>({})
+  1413→  1413→  const [busy, setBusy] = useState(false)
+  1414→  1414→  const [loading, setLoading] = useState(false)
+  1415→  1415→  const searchCodeRef = useRef(searchCode)
+  1416→  1416→  searchCodeRef.current = searchCode
+  1417→  1417→
+  1418→  1418→  // ─── Selección múltiple ───
+  1419→  1419→  const [selected, setSelected] = useState<Set<string>>(new Set())
+  1420→  1420→  const [massConfirmOpen, setMassConfirmOpen] = useState(false)
+  1421→  1421→  const [massBusy, setMassBusy] = useState(false)
+  1422→  1422→
+  1423→  1423→  const locationsRef = useRef(locations)
+  1424→  1424→  locationsRef.current = locations
+  1425→  1425→  const qtyMapRef = useRef(qtyMap)
+  1426→  1426→  qtyMapRef.current = qtyMap
+  1427→  1427→  const selectedRef = useRef(selected)
+  1428→  1428→  selectedRef.current = selected
+  1429→  1429→
+  1430→  1430→  useEffect(() => {
+  1431→  1431→    setSelected(new Set())
+  1432→  1432→  }, [searchCode])
+  1433→  1433→
+  1434→  1434→  const allSelected = locations.length > 0 && selected.size === locations.length
+  1435→  1435→
+  1436→  1436→  function toggleSelect(key: string) {
+  1437→  1437→    setSelected((prev) => {
+  1438→  1438→      const next = new Set(prev)
+  1439→  1439→      if (next.has(key)) next.delete(key)
+  1440→  1440→      else next.add(key)
+  1441→  1441→      return next
+  1442→  1442→    })
+  1443→  1443→  }
+  1444→  1444→
+  1445→  1445→  function toggleSelectAll() {
+  1446→  1446→    if (selected.size === locations.length) {
+  1447→  1447→      setSelected(new Set())
+  1448→  1448→    } else {
+  1449→  1449→      setSelected(new Set(locations.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.codigoInc || ''}`)))
+  1450→  1450→    }
+  1451→  1451→  }
+  1452→  1452→
+  1453→  1453→  function openMassConfirm() {
+  1454→  1454→    if (selected.size === 0) {
+  1455→  1455→      toast.error('Selecciona al menos una ubicación')
+  1456→  1456→      return
+  1457→  1457→    }
+  1458→  1458→    setMassConfirmOpen(true)
+  1459→  1459→  }
+  1460→  1460→
+  1461→  1461→  // ─── Refresh: solo movimientos INC ───
+  1462→  1462→  const refreshLocations = useCallback(async () => {
+  1463→  1463→    const code = searchCodeRef.current.trim()
+  1464→  1464→    if (!code) {
+  1465→  1465→      setLocations([])
+  1466→  1466→      setProductoDesc('')
+  1467→  1467→      setProductoUn('')
+  1468→  1468→      setQtyMap({})
+  1469→  1469→      return
+  1470→  1470→    }
+  1471→  1471→    try {
+  1472→  1472→      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string; codigoInc?: string }>
+  1473→  1473→      try {
+  1474→  1474→        const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
+  1475→  1475→        movs = await fetchMovimientosByCodigo(code)
+  1476→  1476→      } catch {
+  1477→  1477→        const cached = await SyncEngine.getCachedMovimientosForStock()
+  1478→  1478→        movs = cached.filter((m) => m.codigo === code.toUpperCase())
+  1479→  1479→      }
+  1480→  1480→      const upperCode = code.toUpperCase()
+  1481→  1481→      const locMap = new Map<string, LocIncWithKey>()
+  1482→  1482→      // SOLO movimientos INC — invertir el filtro de salidas normales
+  1483→  1483→      const relevant = movs.filter((m) => m.codigo === upperCode && !!m.codigoInc)
+  1484→  1484→      let desc = ''
+  1485→  1485→      let un = ''
+  1486→  1486→      for (const m of relevant) {
+  1487→  1487→        if (!desc && m.descripcion) desc = m.descripcion
+  1488→  1488→        if (!un && m.un) un = m.un
+  1489→  1489→        const impact = impactoStock(m.tipo, m.cantidad)
+  1490→  1490→        if (isNaN(impact) || !isFinite(impact)) continue
+  1491→  1491→        // Agrupar por ubicación + codigoInc (f_vencimiento NO participa)
+  1492→  1492→        const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.codigoInc || ''}`
+  1493→  1493→        const current = locMap.get(key)
+  1494→  1494→        if (current) {
+  1495→  1495→          current.stock += impact
+  1496→  1496→          // Rastrear f_vencimiento más próxima
+  1497→  1497→          if (m.fVencimiento) {
+  1498→  1498→            if (!current.fVencimiento || m.fVencimiento < current.fVencimiento) {
+  1499→  1499→              current.fVencimiento = m.fVencimiento
+  1500→  1500→            }
+  1501→  1501→          }
+  1502→  1502→        } else {
+  1503→  1503→          locMap.set(key, {
+  1504→  1504→            bloque: m.bloque,
+  1505→  1505→            torre: m.torre,
+  1506→  1506→            piso: m.piso,
+  1507→  1507→            posicion: m.posicion,
+  1508→  1508→            codigo: m.codigo,
+  1509→  1509→            descripcion: m.descripcion,
+  1510→  1510→            un: m.un,
+  1511→  1511→            stock: impact,
+  1512→  1512→            fVencimiento: m.fVencimiento || undefined,
+  1513→  1513→            proveedor: m.proveedor,
+  1514→  1514→            codigoInc: m.codigoInc,
+  1515→  1515→          })
+  1516→  1516→        }
+  1517→  1517→      }
+  1518→  1518→      const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
+  1519→  1519→      // Ordenar: por bloque, torre, piso, posición
+  1520→  1520→      results.sort((a, b) => {
+  1521→  1521→        const aB = parseInt(a.bloque, 10) || 0
+  1522→  1522→        const bB = parseInt(b.bloque, 10) || 0
+  1523→  1523→        if (aB !== bB) return aB - bB
+  1524→  1524→        const aT = parseInt(a.torre, 10) || 0
+  1525→  1525→        const bT = parseInt(b.torre, 10) || 0
+  1526→  1526→        if (aT !== bT) return aT - bT
+  1527→  1527→        const aP = parseInt(a.piso, 10) || 0
+  1528→  1528→        const bP = parseInt(b.piso, 10) || 0
+  1529→  1529→        if (aP !== bP) return aP - bP
+  1530→  1530→        const aPos = parseInt(a.posicion, 10) || 0
+  1531→  1531→        const bPos = parseInt(b.posicion, 10) || 0
+  1532→  1532→        return aPos - bPos
+  1533→  1533→      })
+  1534→  1534→      const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.codigoInc || ''}`))
+  1535→  1535→      setSelected((prev) => {
+  1536→  1536→        const cleaned = new Set<string>()
+  1537→  1537→        for (const k of prev) {
+  1538→  1538→          if (newKeys.has(k)) cleaned.add(k)
+  1539→  1539→        }
+  1540→  1540→        return cleaned.size === prev.size ? prev : cleaned
+  1541→  1541→      })
+  1542→  1542→      setLocations(results)
+  1543→  1543→      setProductoDesc(desc)
+  1544→  1544→      setProductoUn(un)
+  1545→  1545→    } catch (err) {
+  1546→  1546→      console.error('[SalidaIncForm] refreshLocations error:', err)
+  1547→  1547→      toast.error('Error al buscar stock INC', { description: extractError(err) })
+  1548→  1548→    }
+  1549→  1549→  }, [])
+  1550→  1550→
+  1551→  1551→  useEffect(() => {
+  1552→  1552→    if (!searchCode.trim()) {
+  1553→  1553→      setLocations([])
+  1554→  1554→      setProductoDesc('')
+  1555→  1555→      setProductoUn('')
+  1556→  1556→      setQtyMap({})
+  1557→  1557→      return
+  1558→  1558→    }
+  1559→  1559→    setLoading(true)
+  1560→  1560→    const timer = setTimeout(async () => {
+  1561→  1561→      await refreshLocations()
+  1562→  1562→      setLoading(false)
+  1563→  1563→    }, 300)
+  1564→  1564→    return () => clearTimeout(timer)
+  1565→  1565→  }, [searchCode, refreshLocations])
+  1566→  1566→
+  1567→  1567→  // POLLING cada 8 segundos
+  1568→  1568→  useEffect(() => {
+  1569→  1569→    if (!searchCode.trim()) return
+  1570→  1570→    const interval = setInterval(() => {
+  1571→  1571→      refreshLocations()
+  1572→  1572→    }, 8000)
+  1573→  1573→    return () => clearInterval(interval)
+  1574→  1574→  }, [searchCode, refreshLocations])
+  1575→  1575→
+  1576→  1576→  function makeKey(loc: LocIncWithKey) {
+  1577→  1577→    return `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.codigoInc || ''}`
+  1578→  1578→  }
+  1579→  1579→
+  1580→  1580→  async function handleSalidaParcial(locKey: string) {
+  1581→  1581→    const loc = locations.find((l) => makeKey(l) === locKey)
+  1582→  1582→    if (!loc) return
+  1583→  1583→    const qtyVal = qtyMap[locKey] || ''
+  1584→  1584→    const qtyNum = parseFloat(qtyVal)
+  1585→  1585→    if (isNaN(qtyNum) || qtyNum <= 0) {
+  1586→  1586→      toast.error('Ingresa una cantidad válida para la salida parcial')
+  1587→  1587→      return
+  1588→  1588→    }
+  1589→  1589→    // INC: permitir exceder stock (sin límite)
+  1590→  1590→    setConfirmState({ loc, qtyNum, full: false })
+  1591→  1591→  }
+  1592→  1592→
+  1593→  1593→  function handleRetirarTodo(locKey: string) {
+  1594→  1594→    const loc = locations.find((l) => makeKey(l) === locKey)
+  1595→  1595→    if (!loc) return
+  1596→  1596→    setConfirmState({ loc, qtyNum: loc.stock, full: true })
+  1597→  1597→  }
+  1598→  1598→
+  1599→  1599→  const [confirmState, setConfirmState] = useState<{
+  1600→  1600→    loc: LocIncWithKey
+  1601→  1601→    qtyNum: number
+  1602→  1602→    full: boolean
+  1603→  1603→  } | null>(null)
+  1604→  1604→
+  1605→  1605→  async function doSalida() {
+  1606→  1606→    if (!confirmState) return
+  1607→  1607→    const { loc, qtyNum } = confirmState
+  1608→  1608→    setBusy(true)
+  1609→  1609→    try {
+  1610→  1610→      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+  1611→  1611→        tipo: 'salida',
+  1612→  1612→        bloque: loc.bloque,
+  1613→  1613→        torre: loc.torre,
+  1614→  1614→        piso: loc.piso,
+  1615→  1615→        posicion: loc.posicion,
+  1616→  1616→        codigo: loc.codigo,
+  1617→  1617→        descripcion: loc.descripcion,
+  1618→  1618→        un: loc.un,
+  1619→  1619→        cantidad: qtyNum,
+  1620→  1620→        fVencimiento: loc.fVencimiento ?? '',
+  1621→  1621→        turno,
+  1622→  1622→        usuarioId: perfil.id,
+  1623→  1623→        usuarioNombre: perfil.nombre,
+  1624→  1624→        usuarioCorreo: perfil.correo,
+  1625→  1625→        proveedor: loc.proveedor,
+  1626→  1626→        // PRESERVAR codigoInc para descuente correcto del stock INC
+  1627→  1627→        codigoInc: loc.codigoInc || undefined,
+  1628→  1628→      })
+  1629→  1629→      if (wasOffline) {
+  1630→  1630→        toast.success(`Salida INC de ${qtyNum} ${loc.un} guardada (offline)`, {
+  1631→  1631→          description: 'Se sincronizará al reconectarse. La ubicación se actualizará cuando haya conexión.',
+  1632→  1632→          duration: 5000,
+  1633→  1633→        })
+  1634→  1634→        // OFFLINE: Limpiar UI para evitar doble salida
+  1635→  1635→        setConfirmState(null)
+  1636→  1636→        setSearchCode('')
+  1637→  1637→        setQtyMap({})
+  1638→  1638→        setLocations([])
+  1639→  1639→        setProductoDesc('')
+  1640→  1640→        setProductoUn('')
+  1641→  1641→      } else {
+  1642→  1642→        toast.success(`Salida INC de ${qtyNum} ${loc.un} registrada`)
+  1643→  1643→        setConfirmState(null)
+  1644→  1644→        setSearchCode('')
+  1645→  1645→        setQtyMap({})
+  1646→  1646→        onCreated(movs)
+  1647→  1647→      }
+  1648→  1648→    } catch (err: unknown) {
+  1649→  1649→      const message = extractError(err)
+  1650→  1650→      toast.error('Error al registrar salida INC', { description: message })
+  1651→  1651→    } finally {
+  1652→  1652→      setBusy(false)
+  1653→  1653→    }
+  1654→  1654→  }
+  1655→  1655→
+  1656→  1656→  async function doMassSalida() {
+  1657→  1657→    setMassBusy(true)
+  1658→  1658→    const totalToProcess = selectedRef.current.size
+  1659→  1659→    let totalProcessed = 0
+  1660→  1660→    let totalErrors = 0
+  1661→  1661→    const errorDetails: string[] = []
+  1662→  1662→    try {
+  1663→  1663→      const selectedKeys = Array.from(selectedRef.current)
+  1664→  1664→      const locsSnap = [...locationsRef.current]
+  1665→  1665→      const qtySnap = { ...qtyMapRef.current }
+  1666→  1666→
+  1667→  1667→      for (const key of selectedKeys) {
+  1668→  1668→        const loc = locsSnap.find((l) => makeKey(l) === key)
+  1669→  1669→        if (!loc) { errorDetails.push(`Ubicación ${key} no encontrada`); totalErrors++; continue }
+  1670→  1670→        const qtyVal = qtySnap[key] || ''
+  1671→  1671→        const qtyNum = qtyVal ? parseFloat(qtyVal.trim()) : loc.stock
+  1672→  1672→        if (isNaN(qtyNum) || qtyNum <= 0) { errorDetails.push(`Cantidad inválida en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}`); totalErrors++; continue }
+  1673→  1673→        // INC: usar la cantidad tal cual (sin limitar al stock)
+  1674→  1674→        try {
+  1675→  1675→          await SyncEngine.offlineAwareAddMovimiento({
+  1676→  1676→            tipo: 'salida',
+  1677→  1677→            bloque: loc.bloque, torre: loc.torre, piso: loc.piso, posicion: loc.posicion,
+  1678→  1678→            codigo: loc.codigo, descripcion: loc.descripcion, un: loc.un,
+  1679→  1679→            cantidad: qtyNum,
+  1680→  1680→            fVencimiento: loc.fVencimiento ?? '', turno,
+  1681→  1681→            usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+  1682→  1682→            proveedor: loc.proveedor,
+  1683→  1683→            codigoInc: loc.codigoInc || undefined,
+  1684→  1684→          })
+  1685→  1685→          totalProcessed++
+  1686→  1686→        } catch (err) {
+  1687→  1687→          const msg = extractError(err)
+  1688→  1688→          errorDetails.push(`Error en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}: ${msg}`)
+  1689→  1689→          totalErrors++
+  1690→  1690→        }
+  1691→  1691→      }
+  1692→  1692→      if (totalErrors > 0) {
+  1693→  1693→        const desc = totalProcessed > 0
+  1694→  1694→          ? `${totalProcessed} de ${totalToProcess} correctas:\n${errorDetails.slice(0, 5).join('\n')}${errorDetails.length > 5 ? `\n...y ${errorDetails.length - 5} más` : ''}`
+  1695→  1695→          : `Errores:\n${errorDetails.join('\n')}`
+  1696→  1696→        toast.warning(`Salida INC completada con ${totalErrors} error${totalErrors > 1 ? 'es' : ''}`, { description: desc, duration: 10000 })
+  1697→  1697→      } else {
+  1698→  1698→        toast.success(`Salida INC registrada en ${totalProcessed} ubicacion${totalProcessed > 1 ? 'es' : ''}`)
+  1699→  1699→      }
+  1700→  1700→      setMassConfirmOpen(false)
+  1701→  1701→      setSelected(new Set())
+  1702→  1702→      setQtyMap({})
+  1703→  1703→      await refreshLocations()
+  1704→  1704→      onCreated([])
+  1705→  1705→    } catch (err: unknown) {
+  1706→  1706→      toast.error('Error en salida masiva INC', { description: extractError(err) })
+  1707→  1707→    } finally {
+  1708→  1708→      setMassBusy(false)
+  1709→  1709→    }
+  1710→  1710→  }
+  1711→  1711→
+  1712→  1712→  return (
+  1713→  1713→    <div className="space-y-4">
+  1714→  1714→      {/* Banner INC */}
+  1715→  1715→      <div className="flex items-center gap-2 p-3 rounded-lg border bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800">
+  1716→  1716→        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center flex-shrink-0 shadow-sm">
+  1717→  1717→          <TriangleAlert className="h-4 w-4 text-white" />
+  1718→  1718→        </div>
+  1719→  1719→        <div className="min-w-0">
+  1720→  1720→          <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">
+  1721→  1721→            Salida INC — Insumo No Conforme
+  1722→  1722→          </p>
+  1723→  1723→          <p className="text-xs text-muted-foreground">Busca por código para dar salida a insumos no conformes. La salida puede exceder el stock.</p>
+  1724→  1724→        </div>
+  1725→  1725→      </div>
+  1726→  1726→
+  1727→  1727→      {/* Búsqueda */}
+  1728→  1728→      <div className="space-y-1">
+  1729→  1729→        <Label className="text-sm text-muted-foreground">Buscar INC por código</Label>
+  1730→  1730→        <CatalogoSearchInput
+  1731→  1731→          onPick={(item) => setSearchCode(item.codigo)}
+  1732→  1732→          value={searchCode}
+  1733→  1733→          onChange={setSearchCode}
+  1734→  1734→        />
+  1735→  1735→      </div>
+  1736→  1736→
+  1737→  1737→      {/* Producto (solo lectura) */}
+  1738→  1738→      {productoDesc && (
+  1739→  1739→        <div className="space-y-1">
+  1740→  1740→          <Label className="text-sm text-muted-foreground">Producto</Label>
+  1741→  1741→          <Input
+  1742→  1742→            value={`${productoUn ? productoUn + ' — ' : ''}${productoDesc}`}
+  1743→  1743→            readOnly
+  1744→  1744→            className="h-10 bg-muted/50 cursor-default"
+  1745→  1745→          />
+  1746→  1746→        </div>
+  1747→  1747→      )}
+  1748→  1748→
+  1749→  1749→      {/* Badges de metadata */}
+  1750→  1750→      {searchCode.trim() && (
+  1751→  1751→        <div className="flex flex-wrap gap-2">
+  1752→  1752→          <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800">
+  1753→  1753→            INC
+  1754→  1754→          </Badge>
+  1755→  1755→          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+  1756→  1756→            Turno: {turno}
+  1757→  1757→          </Badge>
+  1758→  1758→          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800">
+  1759→  1759→            Usuario: {perfil.nombre}
+  1760→  1760→          </Badge>
+  1761→  1761→          {!loading && (
+  1762→  1762→            <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800">
+  1763→  1763→              INC con stock: <span className="font-bold">{locations.length}</span>
+  1764→  1764→            </Badge>
+  1765→  1765→          )}
+  1766→  1766→        </div>
+  1767→  1767→      )}
+  1768→  1768→
+  1769→  1769→      {/* Loading */}
+  1770→  1770→      {loading && (
+  1771→  1771→        <div className="flex items-center justify-center py-4">
+  1772→  1772→          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+  1773→  1773→          <span className="ml-2 text-sm text-muted-foreground">Buscando INC...</span>
+  1774→  1774→        </div>
+  1775→  1775→      )}
+  1776→  1776→
+  1777→  1777→      {/* Barra de selección masiva */}
+  1778→  1778→      {locations.length > 0 && !loading && (
+  1779→  1779→        <div className="flex items-center gap-2 flex-wrap">
+  1780→  1780→          <Button
+  1781→  1781→            size="sm"
+  1782→  1782→            variant={allSelected ? 'default' : 'outline'}
+  1783→  1783→            onClick={toggleSelectAll}
+  1784→  1784→            className="h-9 text-xs gap-1.5"
+  1785→  1785→          >
+  1786→  1786→            <Checkbox checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected} className="h-3.5 w-3.5 pointer-events-none" />
+  1787→  1787→            {allSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
+  1788→  1788→          </Button>
+  1789→  1789→          {selected.size > 0 && (
+  1790→  1790→            <>
+  1791→  1791→              <Badge variant="secondary" className="text-xs font-medium">
+  1792→  1792→                {selected.size} de {locations.length} seleccionada{selected.size > 1 ? 's' : ''}
+  1793→  1793→              </Badge>
+  1794→  1794→              <Button
+  1795→  1795→                size="sm"
+  1796→  1796→                onClick={openMassConfirm}
+  1797→  1797→                disabled={busy || massBusy}
+  1798→  1798→                className="h-9 text-xs gap-1.5 bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-700 hover:to-pink-700 text-white font-semibold ml-auto"
+  1799→  1799→              >
+  1800→  1800→                <ArrowUpFromLine className="h-3.5 w-3.5" />
+  1801→  1801→                Salida masiva ({selected.size})
+  1802→  1802→              </Button>
+  1803→  1803→            </>
+  1804→  1804→          )}
+  1805→  1805→        </div>
+  1806→  1806→      )}
+  1807→  1807→
+  1808→  1808→      {/* Lista de ubicaciones */}
+  1809→  1809→      {locations.length > 0 && !loading && (
+  1810→  1810→        <>
+  1811→  1811→          {/* ───── Vista móvil: tarjetas ───── */}
+  1812→  1812→          <div className="md:hidden space-y-3">
+  1813→  1813→            {locations.map((loc) => {
+  1814→  1814→              const key = makeKey(loc)
+  1815→  1815→              const isSelected = selected.has(key)
+  1816→  1816→              return (
+  1817→  1817→                <div
+  1818→  1818→                  key={key}
+  1819→  1819→                  onClick={() => toggleSelect(key)}
+  1820→  1820→                  className={`rounded-lg border p-3 space-y-2 shadow-sm cursor-pointer transition-all ${
+  1821→  1821→                    isSelected
+  1822→  1822→                      ? 'border-rose-400 bg-rose-50 dark:bg-rose-950/20 ring-2 ring-rose-300 dark:ring-rose-700'
+  1823→  1823→                      : 'border bg-card'
+  1824→  1824→                  }`}
+  1825→  1825→                >
+  1826→  1826→                  <div className="flex items-center gap-2">
+  1827→  1827→                    <Checkbox checked={isSelected} className="h-4 w-4 pointer-events-none" />
+  1828→  1828→                    <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+  1829→  1829→                      <MapPin className="h-3.5 w-3.5" />
+  1830→  1830→                      <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
+  1831→  1831→                    </div>
+  1832→  1832→                  </div>
+  1833→  1833→                  <div className="flex items-center justify-between">
+  1834→  1834→                    <span className="text-sm font-semibold text-rose-700 dark:text-rose-300">Stock INC: {loc.stock} {loc.un}</span>
+  1835→  1835→                    {loc.codigoInc && (
+  1836→  1836→                      <Badge className="bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/40 dark:text-rose-300 dark:border-rose-800 text-[10px] font-bold">
+  1837→  1837→                        {loc.codigoInc}
+  1838→  1838→                      </Badge>
+  1839→  1839→                    )}
+  1840→  1840→                  </div>
+  1841→  1841→                  {loc.fVencimiento && (
+  1842→  1842→                    <div className="flex items-center gap-2">
+  1843→  1843→                      <span className="text-xs text-muted-foreground shrink-0">Venc.:</span>
+  1844→  1844→                      <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+  1845→  1845→                        {formatDate(loc.fVencimiento)}
+  1846→  1846→                      </span>
+  1847→  1847→                    </div>
+  1848→  1848→                  )}
+  1849→  1849→                  <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
+  1850→  1850→                    <Input
+  1851→  1851→                      type="number"
+  1852→  1852→                      step="any"
+  1853→  1853→                      min="0.001"
+  1854→  1854→                      value={qtyMap[key] || ''}
+  1855→  1855→                      onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
+  1856→  1856→                      placeholder="Parcial (puede exceder stock)"
+  1857→  1857→                      className="h-9 text-sm flex-1 border-rose-200 dark:border-rose-800 focus-visible:ring-rose-500/30"
+  1858→  1858→                    />
+  1859→  1859→                    <Button
+  1860→  1860→                      size="sm"
+  1861→  1861→                      onClick={() => handleSalidaParcial(key)}
+  1862→  1862→                      disabled={busy || massBusy}
+  1863→  1863→                      className="h-9 text-xs bg-rose-600 hover:bg-rose-700 text-white"
+  1864→  1864→                    >
+  1865→  1865→                      Salida
+  1866→  1866→                    </Button>
+  1867→  1867→                    <Button
+  1868→  1868→                      size="sm"
+  1869→  1869→                      variant="outline"
+  1870→  1870→                      onClick={() => handleRetirarTodo(key)}
+  1871→  1871→                      disabled={busy || massBusy}
+  1872→  1872→                      className="h-9 text-xs border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+  1873→  1873→                    >
+  1874→  1874→                      Todo
+  1875→  1875→                    </Button>
+  1876→  1876→                  </div>
+  1877→  1877→                </div>
+  1878→  1878→              )
+  1879→  1879→            })}
+  1880→  1880→          </div>
+  1881→  1881→
+  1882→  1882→          {/* ───── Vista desktop: tabla ───── */}
+  1883→  1883→          <div className="hidden md:block overflow-x-auto">
+  1884→  1884→            <Table className="min-w-[850px]">
+  1885→  1885→              <TableHeader>
+  1886→  1886→                <TableRow>
+  1887→  1887→                  <TableHead className="w-10 text-center">
+  1888→  1888→                    <Checkbox
+  1889→  1889→                      checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected}
+  1890→  1890→                      onCheckedChange={toggleSelectAll}
+  1891→  1891→                      className="h-4 w-4 mx-auto"
+  1892→  1892→                    />
+  1893→  1893→                  </TableHead>
+  1894→  1894→                  <TableHead className="w-16 text-center">Bloque</TableHead>
+  1895→  1895→                  <TableHead className="w-16 text-center">Torre</TableHead>
+  1896→  1896→                  <TableHead className="w-16 text-center">Piso</TableHead>
+  1897→  1897→                  <TableHead className="w-20 text-center">Posición</TableHead>
+  1898→  1898→                  <TableHead className="text-right">Stock INC</TableHead>
+  1899→  1899→                  <TableHead>Código INC</TableHead>
+  1900→  1900→                  <TableHead>F. Vencimiento</TableHead>
+  1901→  1901→                  <TableHead className="min-w-[140px]">Cant. salida</TableHead>
+  1902→  1902→                  <TableHead className="min-w-[180px]">Acción</TableHead>
+  1903→  1903→                </TableRow>
+  1904→  1904→              </TableHeader>
+  1905→  1905→              <TableBody>
+  1906→  1906→                {locations.map((loc) => {
+  1907→  1907→                  const key = makeKey(loc)
+  1908→  1908→                  const isSelected = selected.has(key)
+  1909→  1909→                  return (
+  1910→  1910→                    <TableRow
+  1911→  1911→                      key={key}
+  1912→  1912→                      onClick={() => toggleSelect(key)}
+  1913→  1913→                      className={`cursor-pointer transition-colors ${isSelected ? 'bg-rose-50 dark:bg-rose-950/20' : ''}`}
+  1914→  1914→                    >
+  1915→  1915→                      <TableCell className="text-center">
+  1916→  1916→                        <Checkbox checked={isSelected} className="h-4 w-4 mx-auto pointer-events-none" />
+  1917→  1917→                      </TableCell>
+  1918→  1918→                      <TableCell className="text-center font-medium">{loc.bloque}</TableCell>
+  1919→  1919→                      <TableCell className="text-center font-medium">{loc.torre}</TableCell>
+  1920→  1920→                      <TableCell className="text-center font-medium">{loc.piso}</TableCell>
+  1921→  1921→                      <TableCell className="text-center font-medium">{loc.posicion}</TableCell>
+  1922→  1922→                      <TableCell className="text-right font-bold text-rose-700 dark:text-rose-300">{loc.stock}</TableCell>
+  1923→  1923→                      <TableCell>
+  1924→  1924→                        {loc.codigoInc ? (
+  1925→  1925→                          <Badge className="bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/40 dark:text-rose-300 dark:border-rose-800 text-[10px] font-bold">
+  1926→  1926→                            {loc.codigoInc}
+  1927→  1927→                          </Badge>
+  1928→  1928→                        ) : (
+  1929→  1929→                          <span className="text-xs text-muted-foreground">—</span>
+  1930→  1930→                        )}
+  1931→  1931→                      </TableCell>
+  1932→  1932→                      <TableCell>
+  1933→  1933→                        {loc.fVencimiento ? (
+  1934→  1934→                          <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{formatDate(loc.fVencimiento)}</span>
+  1935→  1935→                        ) : (
+  1936→  1936→                          <span className="text-xs text-muted-foreground">—</span>
+  1937→  1937→                        )}
+  1938→  1938→                      </TableCell>
+  1939→  1939→                      <TableCell onClick={(e) => e.stopPropagation()}>
+  1940→  1940→                        <Input
+  1941→  1941→                          type="number"
+  1942→  1942→                          step="any"
+  1943→  1943→                          min="0.001"
+  1944→  1944→                          value={qtyMap[key] || ''}
+  1945→  1945→                          onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
+  1946→  1946→                          placeholder="Parcial (puede exceder)"
+  1947→  1947→                          className="h-9 text-sm border-rose-200 dark:border-rose-800 focus-visible:ring-rose-500/30"
+  1948→  1948→                        />
+  1949→  1949→                      </TableCell>
+  1950→  1950→                      <TableCell onClick={(e) => e.stopPropagation()}>
+  1951→  1951→                        <div className="flex gap-2">
+  1952→  1952→                          <Button
+  1953→  1953→                            size="sm"
+  1954→  1954→                            onClick={() => handleSalidaParcial(key)}
+  1955→  1955→                            disabled={busy || massBusy}
+  1956→  1956→                            className="flex-1 h-9 text-xs bg-rose-600 hover:bg-rose-700 text-white"
+  1957→  1957→                          >
+  1958→  1958→                            Salida
+  1959→  1959→                          </Button>
+  1960→  1960→                          <Button
+  1961→  1961→                            size="sm"
+  1962→  1962→                            variant="outline"
+  1963→  1963→                            onClick={() => handleRetirarTodo(key)}
+  1964→  1964→                            disabled={busy || massBusy}
+  1965→  1965→                            className="flex-1 h-9 text-xs border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+  1966→  1966→                          >
+  1967→  1967→                            Todo
+  1968→  1968→                          </Button>
+  1969→  1969→                        </div>
+  1970→  1970→                      </TableCell>
+  1971→  1971→                    </TableRow>
+  1972→  1972→                  )
+  1973→  1973→                })}
+  1974→  1974→              </TableBody>
+  1975→  1975→            </Table>
+  1976→  1976→          </div>
+  1977→  1977→        </>
+  1978→  1978→      )}
+  1979→  1979→
+  1980→  1980→      {/* Sin stock */}
+  1981→  1981→      {!loading && locations.length === 0 && searchCode.trim() && (
+  1982→  1982→        <div className="flex items-center gap-2 text-muted-foreground py-4 justify-center">
+  1983→  1983→          <PackageSearch className="h-5 w-5" />
+  1984→  1984→          <span className="text-sm">Sin stock INC para este código</span>
+  1985→  1985→        </div>
+  1986→  1986→      )}
+  1987→  1987→
+  1988→  1988→      {/* Nota inferior */}
+  1989→  1989→      {locations.length > 0 && (
+  1990→  1990→        <p className="text-xs text-rose-500/70 text-center">
+  1991→  1991→          Las salidas INC pueden exceder el stock disponible. Se usa para correcciones y ajustes de insumos no conformes.
+  1992→  1992→        </p>
+  1993→  1993→      )}
+  1994→  1994→
+  1995→  1995→      {/* Diálogo de confirmación individual */}
+  1996→  1996→      <AlertDialog open={!!confirmState} onOpenChange={(open) => { if (!open) setConfirmState(null) }}>
+  1997→  1997→        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+  1998→  1998→          <AlertDialogHeader className="shrink-0">
+  1999→  1999→            <AlertDialogTitle className="flex items-center gap-2">
+  2000→  2000→              <TriangleAlert className="h-5 w-5 text-rose-500" />
+
+[showing lines 1-2000 of 2002; use offset=2001 with limit to continue reading]

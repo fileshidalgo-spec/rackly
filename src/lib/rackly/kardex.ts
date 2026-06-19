@@ -575,6 +575,35 @@ export type TrasladoInput = {
 async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento[]> {
   console.warn('[trasladarMovimiento] RPC no encontrada, usando insert directo como fallback')
   const codigo = t.codigo.trim().toUpperCase()
+
+  // ── Prevenir traslado a la misma ubicación ──
+  if (t.origen.bloque === t.destino.bloque && t.origen.torre === t.destino.torre 
+      && t.origen.piso === t.destino.piso && t.origen.posicion === t.destino.posicion) {
+    const err = new Error('SAME_ORIGIN_DESTINATION')
+    ;(err as unknown as Record<string, string>).detail = 'El destino no puede ser igual al origen'
+    throw err
+  }
+
+  // ── Validar stock suficiente en origen (solo si NO es INC) ──
+  if (!t.codigoInc) {
+    try {
+      const originStock = await calcularStockUbicacion(
+        codigo, t.origen.bloque, t.origen.torre, t.origen.piso, t.origen.posicion, true // excluir INC
+      )
+      const stockRedondeado = Math.round(originStock * 1000) / 1000
+      if (t.cantidad > stockRedondeado + 0.001) {
+        const err = new Error('INSUFFICIENT_STOCK')
+        ;(err as unknown as Record<string, string>).detail =
+          `Stock en origen = ${stockRedondeado} ${t.un}, cantidad a trasladar = ${t.cantidad} ${t.un}`
+        throw err
+      }
+    } catch (stockErr) {
+      if (stockErr instanceof Error && stockErr.message === 'INSUFFICIENT_STOCK') throw stockErr
+      console.error('[trasladarMovimientoFallback] No se pudo verificar stock, BLOQUEANDO:', stockErr)
+      throw new Error('STOCK_VALIDATION_FAILED|No se pudo verificar el stock en origen. Reintente.')
+    }
+  }
+
   const base = {
     codigo,
     descripcion: t.descripcion,
@@ -586,7 +615,6 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
     usuario_correo: t.usuarioCorreo ?? null,
     proveedor: t.proveedor ? t.proveedor : null,
     codigo_inc: t.codigoInc || null,
-    uuid_sync: t.uuidSync || null,
   }
   const ajuste = (t.cantidadAjuste ?? 0) !== 0
     ? [{
@@ -597,6 +625,7 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
         piso: t.origen.piso,
         posicion: t.origen.posicion,
         cantidad: Math.abs(t.cantidadAjuste!),
+        uuid_sync: t.uuidSync || null, // uuid_sync solo en la primera fila (ajuste o salida)
       }]
     : []
   const { error } = await dataClient.from('movimientos').insert([
@@ -609,6 +638,8 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
       piso: t.origen.piso,
       posicion: t.origen.posicion,
       cantidad: t.cantidad,
+      // uuid_sync: solo en primera fila para evitar violación UNIQUE
+      uuid_sync: ajuste.length === 0 ? (t.uuidSync || null) : null,
     },
     {
       ...base,
@@ -669,6 +700,12 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       // Si la RPC no existe (404 / 42883 / 'Could not find'), usar fallback
       if (code === '42883' || code === 'PGRST202' || msg.includes('Could not find') || msg.includes('does not exist') || msg.includes('404')) {
         return await trasladarMovimientoFallback(t)
+      }
+      // Origen = destino (server guard)
+      if (msg.includes('SAME_ORIGIN_DESTINATION')) {
+        const err = new Error('SAME_ORIGIN_DESTINATION')
+        ;(err as unknown as Record<string, string>).detail = 'El destino no puede ser igual al origen'
+        throw err
       }
       throw error
     }
@@ -813,7 +850,8 @@ export async function eliminarUbicacion(
   torre: string,
   piso: string,
   posicion: string,
-  fVencimiento?: string
+  fVencimiento?: string,
+  codigoInc?: string
 ): Promise<Movimiento[]> {
   const target = codigo.trim().toUpperCase()
   let query = dataClient
@@ -827,6 +865,12 @@ export async function eliminarUbicacion(
   // Si se especifica fVencimiento, filtrar solo ese lote
   if (fVencimiento) {
     query = query.eq('f_vencimiento', fVencimiento)
+  }
+  // Filtrar por codigo_inc para no borrar INC junto con stock normal
+  if (codigoInc) {
+    query = query.eq('codigo_inc', codigoInc)
+  } else {
+    query = query.is('codigo_inc', null)
   }
   const { error } = await query
   if (error) throw error

@@ -137,6 +137,12 @@ BEGIN
   -- Normalizar código
   v_codigo_clean := UPPER(TRIM(p_codigo));
 
+  -- Prevenir traslado a la misma ubicación
+  IF p_orig_bloque = p_dest_bloque AND p_orig_torre = p_dest_torre 
+     AND p_orig_piso = p_dest_piso AND p_orig_pos = p_dest_pos THEN
+    RAISE EXCEPTION 'SAME_ORIGIN_DESTINATION|El destino no puede ser igual al origen';
+  END IF;
+
   -- Lock en orden alfabético para prevenir deadlocks
   v_orig_key := p_orig_bloque || '/' || p_orig_torre || '/' || p_orig_piso || '/' || p_orig_pos || '/' || v_codigo_clean;
   v_dest_key := p_dest_bloque || '/' || p_dest_torre || '/' || p_dest_piso || '/' || p_dest_pos || '/' || v_codigo_clean;

@@ -399,13 +399,23 @@ class SyncEngineSingleton {
         // Si ya hubo 2 reintentos, asumir que la RPC no existe y marcar como error permanente
         // para que el usuario sepa que debe ejecutar el SQL en Supabase.
         const isValidationFailed = errMsg.includes('STOCK_VALIDATION_FAILED')
-
+        // SAME_ORIGIN_DESTINATION: traslado a la misma ubicación — error permanente (no reintentable)
+        const isSameOrigin = errMsg.includes('SAME_ORIGIN_DESTINATION')
 
         if (isDuplicate) {
           // Ya existe en el servidor (idempotencia) — eliminar de cola
           await removePendingMovement(mov.id)
           synced++
           console.log(`[SyncEngine] ✓ Duplicado (ya sincronizado): ${mov.uuidSync}`)
+        } else if (isSameOrigin) {
+          // Traslado a la misma ubicación — error de datos, no reintentable
+          await updatePendingMovement(mov.id, {
+            status: 'error',
+            retries: mov.retries + 1,
+            lastError: 'MISMA_UBICACION|El destino no puede ser igual al origen. Elimine este movimiento pendiente.',
+          })
+          errors++
+          console.error(`[SyncEngine] ✗ Traslado a misma ubicación: ${mov.uuidSync}`)
         } else if (isConflict) {
           // Conflicto de stock — marcar para resolución del usuario
           await updatePendingMovement(mov.id, {

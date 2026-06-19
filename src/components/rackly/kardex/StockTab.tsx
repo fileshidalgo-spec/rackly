@@ -66,9 +66,19 @@ function CrossSectionPiso({
     setPisoSearchedCode(selectedCodigo)
     setPisoError(false)
 
+    // Timeout de 8 segundos para evitar loading infinito
+    const timeout = setTimeout(() => {
+      if (!cancelled) {
+        console.warn('[CrossSectionPiso] timeout: no se pudo obtener stock de Piso')
+        setPisoLoading(false)
+        setPisoError(true)
+      }
+    }, 8000)
+
     stockPisoGlobal()
       .then((allPiso) => {
         if (cancelled) return
+        clearTimeout(timeout)
         const code = selectedCodigo.toUpperCase().trim()
         const filtered = allPiso.filter(item =>
           item.bloque_codigo.toUpperCase().trim() === code
@@ -86,12 +96,13 @@ function CrossSectionPiso({
       .catch((err) => {
         console.error('[CrossSectionPiso] error:', err)
         if (!cancelled) {
+          clearTimeout(timeout)
           setPisoLoading(false)
           setPisoError(true)
         }
       })
 
-    return () => { cancelled = true }
+    return () => { cancelled = true; clearTimeout(timeout) }
   }, [selectedCodigo, pisoSearchedCode, setPisoStock, setPisoLoading, setPisoSearchedCode])
 
   // Aplicar filtro INC

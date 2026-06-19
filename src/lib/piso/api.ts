@@ -1488,6 +1488,7 @@ export type StockPisoItem = {
  * y resuelve la ubicación (sector, columna, subcolumna, posicion).
  */
 export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
+  try {
   // 1. Fetch ALL detalles with movement type
   const { data: detData, error: detErr } = await dataClient
     .from('piso_movimiento_detalles')
@@ -1672,6 +1673,10 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
       if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
       return a.ubicacion.localeCompare(b.ubicacion)
     })
+  } catch (err) {
+    console.error('[stockPisoGlobal] Error consultando stock de Piso:', err)
+    return []
+  }
 }
 
 // ═══════════════════════════════════════════════════════════

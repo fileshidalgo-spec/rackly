@@ -161,8 +161,11 @@ export function TrasladoTab() {
 
   async function handleConfirm() {
     if (!origin) return
+    // Comparar ubicación real (bloque, torre, piso, posicion), ignorando fVencimiento y codigoInc.
+    // selectedOrigin tiene formato "bloque-torre-piso-pos||fVenc||inc", destKey solo "bloque-torre-piso-pos".
+    const originKey = (selectedOrigin || '').split('||')[0]
     const destKey = `${destBloque}-${destTorre}-${destPiso || '1'}-${destPos}`
-    if (selectedOrigin === destKey || selectedOrigin === `${destKey}||`) {
+    if (originKey === destKey) {
       toast.error('El destino no puede ser igual al origen')
       return
     }

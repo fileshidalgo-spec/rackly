@@ -353,11 +353,12 @@ export function StockTab() {
     torre: string,
     piso: string,
     posicion: string,
-    fVencimiento?: string
+    fVencimiento?: string,
+    codigoInc?: string
   ) {
     if (!confirm('¿Eliminar los movimientos de este lote en esta ubicación?')) return
     try {
-      const next = await eliminarUbicacion(selectedCodigo, bloque, torre, piso, posicion, fVencimiento)
+      const next = await eliminarUbicacion(selectedCodigo, bloque, torre, piso, posicion, fVencimiento, codigoInc)
       setMovs(next)
       toast.success('Ubicación eliminada')
     } catch (err: unknown) {
@@ -602,7 +603,7 @@ export function StockTab() {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                        onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento)}
+                        onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento, s.codigoInc)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -699,7 +700,7 @@ export function StockTab() {
                           variant="ghost"
                           size="icon"
                           className="text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento)}
+                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento, s.codigoInc)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

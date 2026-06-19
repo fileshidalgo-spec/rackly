@@ -1,6 +1,6 @@
 'use client'
 
-import { dataClient } from '@/lib/supabase/client'
+import { dataClient, supabase } from '@/lib/supabase/client'
 
 /** Limpia el prefijo del sector del código de subcolumna.
  *  BD guarda "BA1" (prefijo "B" + letra "A" + idx "1"), queremos solo "A1" */
@@ -1685,55 +1685,124 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
  * busca primero el bloque_id y luego solo los detalles de ese bloque.
  */
 export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[]> {
+  const code = codigo.trim().toUpperCase()
+  console.log('[stockPisoPorCodigo] Iniciando búsqueda para código:', code)
+
   try {
-    const code = codigo.trim().toUpperCase()
-
-    // 1. Buscar bloque_id que tenga este código
-    // Puede ser un bloque real (piso_bloques.codigo) o virtual (cat_CODIGO / manual_CODIGO)
-    const realBloqueIds: string[] = []
-    const virtualBloqueIds: string[] = [`cat_${code}`, `manual_${code}`]
-
-    // Buscar en piso_bloques
-    const { data: bloqData, error: bloqErr } = await dataClient
-      .from('piso_bloques')
-      .select('id')
-      .ilike('codigo', code)
-    if (!bloqErr && bloqData) {
-      for (const b of bloqData) realBloqueIds.push((b as { id: string }).id)
+    // ─── Helper: ejecutar query con fallback dataClient → supabase ───
+    const queryBloques = async (queryFn: (client: any) => any) => {
+      // Intentar con dataClient (service role) primero
+      try {
+        const result = await queryFn(dataClient)
+        if (result.error) {
+          console.warn('[stockPisoPorCodigo] dataClient error:', result.error.message)
+        }
+        return result
+      } catch (err) {
+        console.warn('[stockPisoPorCodigo] dataClient falló, intentando supabase:', err)
+      }
+      // Fallback a supabase (anon)
+      try {
+        return await queryFn(supabase)
+      } catch (err2) {
+        console.error('[stockPisoPorCodigo] supabase también falló:', err2)
+        return { data: null, error: err2 }
+      }
     }
 
-    // 2. Buscar detalles — separar query para UUIDs y strings virtuales
-    //    porque .in() falla si la columna es UUID y se le pasa strings como 'cat_CODE'
+    // ─── 1. Buscar bloque_id en piso_bloques por código ───
+    // Intentar múltiples estrategias de búsqueda
+    const realBloqueIds: string[] = []
+
+    // Estrategia A: coincidencia exacta (case insensitive)
+    const { data: exactMatch, error: errExact } = await queryBloques((client: any) =>
+      client.from('piso_bloques').select('id, codigo').ilike('codigo', code)
+    )
+    if (!errExact && exactMatch) {
+      for (const b of (exactMatch as { id: string; codigo: string }[])) {
+        realBloqueIds.push(b.id)
+        console.log('[stockPisoPorCodigo] Bloque encontrado (exact):', b.id, b.codigo)
+      }
+    }
+
+    // Estrategia B: si no encontró con exact, buscar que contenga el código
+    if (realBloqueIds.length === 0) {
+      const { data: containsMatch, error: errContains } = await queryBloques((client: any) =>
+        client.from('piso_bloques').select('id, codigo').ilike('codigo', `%${code}%`)
+      )
+      if (!errContains && containsMatch) {
+        for (const b of (containsMatch as { id: string; codigo: string }[])) {
+          // Solo incluir si el código del bloque empieza con lo que buscamos
+          // (evitar falsos positivos como "1223" cuando buscamos "122")
+          const bloqCode = (b.codigo || '').trim().toUpperCase()
+          if (bloqCode === code || bloqCode.startsWith(code + ' ') || bloqCode.startsWith(code + '-')) {
+            realBloqueIds.push(b.id)
+            console.log('[stockPisoPorCodigo] Bloque encontrado (contains):', b.id, b.codigo)
+          }
+        }
+      }
+    }
+
+    // Estrategia C: buscar en catalogo de racks (por si el artículo existe en racks pero no en piso_bloques)
+    // Esto permite mostrar "existe en Racks pero no en Piso"
+    let hasCatalogMatch = false
+    if (realBloqueIds.length === 0) {
+      try {
+        const { data: catData } = await supabase.from('catalogo').select('codigo').ilike('codigo', code).limit(1)
+        if (catData && catData.length > 0) {
+          hasCatalogMatch = true
+          console.log('[stockPisoPorCodigo] Código existe en catálogo racks pero no en piso_bloques')
+        }
+      } catch { /* ignore */ }
+    }
+
+    console.log('[stockPisoPorCodigo] Total bloque IDs encontrados:', realBloqueIds.length)
+
+    // ─── 2. Buscar detalles de movimiento para esos bloques ───
     type RawDet = {
       bloque_id: string; nivel_id: string; cantidad: unknown
       fecha_vencimiento?: string | null; movimiento_id: string
       piso_movimientos: { tipo: string; codigo_inc?: string | null } | null | { tipo: string; codigo_inc?: string | null }[]
     }
-    const rawDets: RawDet[] = []
     const selectFields = 'bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)'
+    const rawDets: RawDet[] = []
 
-    // 2a. Query para bloque IDs reales (UUIDs)
-    if (realBloqueIds.length > 0) {
-      const { data, error } = await dataClient
-        .from('piso_movimiento_detalles')
-        .select(selectFields)
-        .in('bloque_id', realBloqueIds)
-      if (error) console.error('[stockPisoPorCodigo] error real IDs:', error)
-      else rawDets.push(...((data ?? []) as RawDet[]))
+    if (realBloqueIds.length === 0) {
+      console.log('[stockPisoPorCodigo] No se encontraron bloques para', code, '- cat match:', hasCatalogMatch)
+      // Estrategia D: quizá bloque_id en detalles NO es UUID sino el código de artículo directamente
+      // Intentar buscar como texto
+      try {
+        const { data: textMatch, error: textErr } = await queryBloques((client: any) =>
+          client.from('piso_movimiento_detalles')
+            .select(selectFields)
+            .ilike('bloque_id', `%${code}%`)
+            .limit(200)
+        )
+        if (!textErr && textMatch && (textMatch as RawDet[]).length > 0) {
+          console.log('[stockPisoPorCodigo] Estrategia D: bloque_id como texto encontró', (textMatch as RawDet[]).length, 'registros')
+          rawDets.push(...((textMatch as RawDet[])))
+        }
+      } catch (textQueryErr) {
+        console.warn('[stockPisoPorCodigo] Estrategia D falló:', textQueryErr)
+      }
+      if (rawDets.length === 0) return []
+    } else {
+      // Query para bloque IDs reales (UUIDs)
+      const { data: detData, error: detErr } = await queryBloques((client: any) =>
+        client.from('piso_movimiento_detalles').select(selectFields).in('bloque_id', realBloqueIds)
+      )
+      if (!detErr && detData) {
+        rawDets.push(...((detData as RawDet[])))
+      }
+      if (detErr) console.error('[stockPisoPorCodigo] error buscando detalles:', detErr)
     }
 
-    // 2b. Query para bloque IDs virtuales (strings como cat_CODE, manual_CODE)
-    if (virtualBloqueIds.length > 0) {
-      const orParts = virtualBloqueIds.map(id => `bloque_id.eq.${id}`).join(',')
-      const { data, error } = await dataClient
-        .from('piso_movimiento_detalles')
-        .select(selectFields)
-        .or(orParts)
-      if (error) console.error('[stockPisoPorCodigo] error virtual IDs:', error)
-      else rawDets.push(...((data ?? []) as RawDet[]))
-    }
+    console.log('[stockPisoPorCodigo] Detalles encontrados:', rawDets.length)
 
-    if (rawDets.length === 0) return []
+    if (rawDets.length === 0) {
+      console.log('[stockPisoPorCodigo] Bloques existen pero no tienen movimientos')
+      return []
+    }
 
     // 3. FEFO calculation (same as stockPisoGlobal but only for this code's blocks)
     const isIngresoType = (tipo: string) =>
@@ -1805,15 +1874,15 @@ export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[
     const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
     const realIds = [...new Set(fefoResults.map(r => r.bloque_id))].filter(id => !id.startsWith('cat_') && !id.startsWith('manual_'))
     if (realIds.length > 0) {
-      const { data: bData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
-      for (const b of (bData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
+      const bResult = await queryBloques((client: any) => client.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds))
+      for (const b of ((bResult.data ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]))
         bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
     }
     const catIds = [...new Set(fefoResults.map(r => r.bloque_id))].filter(id => id.startsWith('cat_'))
     if (catIds.length > 0) {
       const codes = catIds.map(id => id.replace('cat_', ''))
-      const { data: cData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
-      for (const c of (cData ?? []) as { codigo: string; descripcion: string; un: string }[])
+      const cResult = await queryBloques((client: any) => client.from('catalogo').select('codigo, descripcion, un').in('codigo', codes))
+      for (const c of ((cResult.data ?? []) as { codigo: string; descripcion: string; un: string }[]))
         bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
     }
     for (const id of [...new Set(fefoResults.map(r => r.bloque_id))]) {
@@ -1825,33 +1894,33 @@ export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[
     const nivelIds = [...new Set(fefoResults.map(r => r.nivel_id))]
     const locMap = new Map<string, { ubicacion: string; sector_nombre: string }>()
     if (nivelIds.length > 0) {
-      const { data: nivData } = await dataClient.from('piso_niveles').select('id, posicion_id').in('id', nivelIds)
+      const nivResult = await queryBloques((client: any) => client.from('piso_niveles').select('id, posicion_id').in('id', nivelIds))
       const nivToPos = new Map<string, string>()
-      for (const n of (nivData ?? []) as { id: string; posicion_id: string }[]) nivToPos.set(n.id, n.posicion_id)
+      for (const n of ((nivResult.data ?? []) as { id: string; posicion_id: string }[])) nivToPos.set(n.id, n.posicion_id)
 
       const posIds = [...nivToPos.values()]
       if (posIds.length > 0) {
-        const { data: posData } = await dataClient.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds)
+        const posResult = await queryBloques((client: any) => client.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds))
         const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
-        for (const p of (posData ?? []) as { id: string; numero: number; subcolumna_id: string }[])
+        for (const p of ((posResult.data ?? []) as { id: string; numero: number; subcolumna_id: string }[]))
           posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id })
         const subIds = [...new Set([...posMap.values()].map(p => p.subcolumna_id))]
         if (subIds.length > 0) {
-          const { data: subData } = await dataClient.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds)
+          const subResult = await queryBloques((client: any) => client.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds))
           const subMap = new Map<string, { codigo: string; columna_id: string }>()
-          for (const s of (subData ?? []) as { id: string; codigo: string; columna_id: string }[])
+          for (const s of ((subResult.data ?? []) as { id: string; codigo: string; columna_id: string }[]))
             subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id })
           const colIds = [...new Set([...subMap.values()].map(s => s.columna_id))]
           if (colIds.length > 0) {
-            const { data: colData } = await dataClient.from('piso_columnas').select('id, letra, sector_id').in('id', colIds)
+            const colResult = await queryBloques((client: any) => client.from('piso_columnas').select('id, letra, sector_id').in('id', colIds))
             const colMap = new Map<string, { letra: string; sector_id: string }>()
-            for (const c of (colData ?? []) as { id: string; letra: string; sector_id: string }[])
+            for (const c of ((colResult.data ?? []) as { id: string; letra: string; sector_id: string }[]))
               colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id })
             const secIds = [...new Set([...colMap.values()].map(c => c.sector_id))]
             if (secIds.length > 0) {
-              const { data: secData } = await dataClient.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', secIds)
+              const secResult = await queryBloques((client: any) => client.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', secIds))
               const secMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
-              for (const s of (secData ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[]) secMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
+              for (const s of ((secResult.data ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[])) secMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
               for (const [nivId, posId] of nivToPos) {
                 const pos = posMap.get(posId)
                 if (!pos) continue

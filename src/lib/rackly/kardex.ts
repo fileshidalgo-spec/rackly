@@ -303,38 +303,14 @@ export async function addMovimiento(
       p_uuid_sync: uuidSync || null,
       p_codigo_inc: m.codigoInc || null,
     })
-    // Stock insuficiente es un error controlado
+    // Stock insuficiente es un error controlado — NUNCA bypassear la decisión del RPC.
+    // El RPC tiene advisory lock y calcula stock de forma atómica; es la fuente de verdad.
     if (error) {
       const msg = error.message || ''
       const code = (error as unknown as Record<string, string>).code || ''
       if (msg.includes('INSUFFICIENT_STOCK')) {
         const parts = msg.split('|')
         const rpcDetail = parts.length > 1 ? parts[1] : 'Stock insuficiente para esta operación'
-
-        // El RPC valida stock por ubicacion completa, pero puede diferir del display
-        // (el display agrupa por lote, el RPC puede incluir/excluir INC diferente).
-        // Verificar con el MISMO calculo que usa el display (stockEnUbicacion).
-        if (m.tipo === 'salida') {
-          try {
-            // Stock real = movimientos en la ubicacion para ese codigo, EXCLUYENDO INC.
-            // f_vencimiento es solo para FEFO, NO para calcular stock.
-            const stockReal = await calcularStockUbicacion(
-              m.codigo, m.bloque, m.torre, m.piso, m.posicion, true // excluir INC
-            )
-            const stockRedondeado = Math.round(stockReal * 1000) / 1000
-            console.log(`[addMovimiento] RPC rechazó salida. Stock real (excluyendo INC): ${stockRedondeado}, solicitada: ${m.cantidad}`)
-            if (m.cantidad <= stockRedondeado + 0.001) {
-              // El stock real SI es suficiente → el RPC tiene un calculo diferente
-              // (el RPC puede incluir INC o filtrar por f_vencimiento)
-              console.log(`[addMovimiento] Stock real confirma ${stockRedondeado} >= ${m.cantidad}, usando fallback directo`)
-              return await addMovimientoFallback(m, uuidSync, true) // skipValidation
-            }
-          } catch (verifyErr) {
-            console.warn('[addMovimiento] No se pudo verificar stock real:', verifyErr)
-          }
-        }
-
-        // La verificacion tambien fallo — mostrar error con detalle del RPC
         const err = new Error('INSUFFICIENT_STOCK')
         ;(err as unknown as Record<string, string>).detail = rpcDetail
         throw err
@@ -616,6 +592,8 @@ export type TrasladoInput = {
   codigoInc?: string
   /** Cantidad de ajuste en origen. Positivo = ingreso (qty > stock), Negativo = salida (qty < stock) */
   cantidadAjuste?: number
+  /** UUID de idempotencia para reintentos offline y prevención de duplicados */
+  uuidSync?: string
 }
 
 /** Fallback: insert directo para traslado cuando la RPC no existe en Supabase */
@@ -633,6 +611,7 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
     usuario_correo: t.usuarioCorreo ?? null,
     proveedor: t.proveedor ? t.proveedor : null,
     codigo_inc: t.codigoInc || null,
+    uuid_sync: t.uuidSync || null,
   }
   const ajuste = (t.cantidadAjuste ?? 0) !== 0
     ? [{
@@ -699,28 +678,14 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       p_cantidad_ajuste: t.cantidadAjuste ?? 0,
       p_codigo_inc: t.codigoInc || null,
     })
-    // Stock insuficiente en origen
+    // Stock insuficiente en origen — NUNCA bypassear la decisión del RPC.
+    // El RPC tiene advisory locks en origen Y destino; es la fuente de verdad.
     if (error) {
       const msg = error.message || ''
       const code = (error as unknown as Record<string, string>).code || ''
       if (msg.includes('INSUFFICIENT_STOCK')) {
         const parts = msg.split('|')
         const rpcDetail = parts.length > 1 ? parts[1] : 'Stock insuficiente en origen para este traslado'
-
-        // Verificar con el stock real (excluyendo INC)
-        try {
-          const stockReal = await calcularStockUbicacion(
-            t.codigo, t.origen.bloque, t.origen.torre, t.origen.piso, t.origen.posicion, true // excluir INC
-          )
-          const stockRedondeado = Math.round(stockReal * 1000) / 1000
-          if (t.cantidad <= stockRedondeado + 0.001) {
-            console.log(`[trasladarMovimiento] RPC rechazó pero stock real confirma ${stockRedondeado} >= ${t.cantidad}, usando fallback`)
-            return await trasladarMovimientoFallback(t)
-          }
-        } catch (verifyErr) {
-          console.warn('[trasladarMovimiento] No se pudo verificar stock real:', verifyErr)
-        }
-
         const err = new Error('INSUFFICIENT_STOCK')
         ;(err as unknown as Record<string, string>).detail = rpcDetail
         throw err

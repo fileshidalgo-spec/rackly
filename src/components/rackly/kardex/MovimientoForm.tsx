@@ -230,6 +230,8 @@ function IngresoForm({
         usuarioNombre: perfil.nombre,
         usuarioCorreo: perfil.correo,
         proveedor: stockItem.proveedor,
+        // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
+        codigoInc: stockItem.codigoInc || undefined,
       })
       if (wasOffline) {
         toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
@@ -660,6 +662,8 @@ function SalidaForm({
             fVencimiento: loc.fVencimiento ?? '', turno,
             usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
             proveedor: loc.proveedor,
+            // PRESERVAR codigoInc para consistencia (aunque SalidaForm excluye INC)
+            codigoInc: loc.codigoInc || undefined,
           })
           totalProcessed++
         } catch (err) {
@@ -880,6 +884,8 @@ function SalidaForm({
         usuarioNombre: perfil.nombre,
         usuarioCorreo: perfil.correo,
         proveedor: loc.proveedor,
+        // PRESERVAR codigoInc para consistencia (aunque SalidaForm excluye INC)
+        codigoInc: loc.codigoInc || undefined,
       })
       if (wasOffline) {
         toast.success(`Salida de ${qtyNum} ${loc.un} guardada (offline)`, {

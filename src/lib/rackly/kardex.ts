@@ -189,8 +189,10 @@ async function addMovimientoFallback(
     } catch (stockErr) {
       // Si es error de stock insuficiente, propagarlo
       if (stockErr instanceof Error && stockErr.message === 'INSUFFICIENT_STOCK') throw stockErr
-      // Si falla la consulta de stock, permitir la inserción (fallback del fallback)
-      console.warn('[addMovimientoFallback] No se pudo verificar stock, permitiendo inserción:', stockErr)
+      // Si falla la consulta de stock, NO permitir la inserción sin validar.
+      // Esto previene salidas con stock negativo cuando la red es inestable.
+      console.error('[addMovimientoFallback] No se pudo verificar stock, BLOQUEANDO inserción:', stockErr)
+      throw new Error('STOCK_VALIDATION_FAILED|No se pudo verificar el stock. Reintente.')
     }
   }
 
@@ -249,40 +251,13 @@ export async function addMovimiento(
     }
   }
 
-  // ── INC: usar insert directo porque la RPC no incluye codigo_inc ──
-  // Los movimientos INC son siempre tipo 'ingreso' (no necesitan validación de stock).
-  // La RPC registrar_movimiento_kardex no tiene el parámetro p_codigo_inc, así que
-  // Supabase lo ignora silenciosamente y el campo queda NULL.
-  if (m.codigoInc) {
-    console.log('[addMovimiento] INC detectado, usando insert directo para preservar codigo_inc')
-    const { error } = await dataClient.from('movimientos').insert({
-      tipo: m.tipo,
-      bloque: m.bloque,
-      torre: m.torre,
-      piso: m.piso,
-      posicion: m.posicion,
-      codigo: m.codigo.trim().toUpperCase(),
-      descripcion: m.descripcion,
-      un: m.un,
-      cantidad: m.cantidad,
-      f_vencimiento: m.fVencimiento || null,
-      turno: m.turno,
-      usuario_id: m.usuarioId,
-      usuario_nombre: m.usuarioNombre ?? null,
-      usuario_correo: m.usuarioCorreo ?? null,
-      proveedor: m.proveedor ? m.proveedor : null,
-      uuid_sync: uuidSync || null,
-      codigo_inc: m.codigoInc,
-    })
-    if (error) throw error
-    try {
-      return await fetchMovimientos()
-    } catch {
-      return []
-    }
-  }
+  // NOTA: Los movimientos INC ahora pasan por la RPC como cualquier otro movimiento.
+  // La RPC registrar_movimiento_kardex ya tiene p_codigo_inc (migration 20260611).
+  // Esto garantiza advisory lock y validación atómica para TODOS los movimientos.
 
-  // Usar RPC atómica con advisory lock para evitar race conditions
+  // Usar RPC atómica con advisory lock para evitar race conditions.
+  // La RPC maneja TODOS los tipos de movimiento incluyendo INC.
+  // INC items son tipo 'ingreso' así que no pasan validación de stock negativo.
   try {
     const { data, error } = await dataClient.rpc('registrar_movimiento_kardex', {
       p_tipo: m.tipo,
@@ -677,6 +652,7 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       p_proveedor: t.proveedor ? t.proveedor : null,
       p_cantidad_ajuste: t.cantidadAjuste ?? 0,
       p_codigo_inc: t.codigoInc || null,
+      p_uuid_sync: t.uuidSync || null,
     })
     // Stock insuficiente en origen — NUNCA bypassear la decisión del RPC.
     // El RPC tiene advisory locks en origen Y destino; es la fuente de verdad.

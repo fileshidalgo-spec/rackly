@@ -342,7 +342,7 @@ class SyncEngineSingleton {
         await this.refreshCounts()
 
         if (mov.tipo === 'traslado' && mov.destBloque) {
-          // Traslado
+          // Traslado — pasar uuidSync para idempotencia
           await trasladarMovimiento(
             {
               codigo: mov.codigo,
@@ -359,6 +359,7 @@ class SyncEngineSingleton {
               proveedor: mov.proveedor,
               cantidadAjuste: mov.cantidadAjuste,
               codigoInc: mov.codigo_inc || undefined,
+              uuidSync: mov.uuidSync,
             }
           )
         } else {
@@ -621,7 +622,8 @@ class SyncEngineSingleton {
 
     if (shouldTryOnline) {
       try {
-        const movs = await trasladarMovimiento(t)
+        // Pasar uuidSync para idempotencia del traslado
+        const movs = await trasladarMovimiento({ ...t, uuidSync: syncId })
         return { movs, wasOffline: false }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : ''

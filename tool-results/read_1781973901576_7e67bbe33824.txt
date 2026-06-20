@@ -1,0 +1,943 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect } from 'react'
+     4→import { useAuth } from '@/hooks/useAuth'
+     5→import { isSupabaseConfigured, getMissingConfigMessage } from '@/lib/supabase/client'
+     6→import {
+     7→  signIn,
+     8→  signUp,
+     9→  signOut,
+    10→  resetPassword,
+    11→  cambiarPasswordPropia,
+    12→  type Perfil,
+    13→} from '@/lib/rackly/auth'
+    14→import { supabase, dataClient } from '@/lib/supabase/client'
+    15→import { Button } from '@/components/ui/button'
+    16→import { Input } from '@/components/ui/input'
+    17→import { Label } from '@/components/ui/label'
+    18→import {
+    19→  Card,
+    20→  CardContent,
+    21→  CardDescription,
+    22→  CardHeader,
+    23→  CardTitle,
+    24→} from '@/components/ui/card'
+    25→import {
+    26→  Tabs,
+    27→  TabsContent,
+    28→  TabsList,
+    29→  TabsTrigger,
+    30→} from '@/components/ui/tabs'
+    31→import {
+    32→  Warehouse,
+    33→  Clock,
+    34→  RefreshCw,
+    35→  KeyRound,
+    36→  Loader2,
+    37→  Eye,
+    38→  EyeOff,
+    39→  ArrowLeft,
+    40→  Mail,
+    41→} from 'lucide-react'
+    42→import { toast } from 'sonner'
+    43→
+    44→/* ─── Utilidades de validación ─── */
+    45→const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    46→const MAX_EMAIL_LENGTH = 254 // RFC 5321
+    47→const MAX_NOMBRE_LENGTH = 200
+    48→
+    49→function validarEmail(email: string): string | null {
+    50→  if (!email.trim()) return 'Ingresa tu correo electrónico'
+    51→  if (email.length > MAX_EMAIL_LENGTH) return 'El correo es demasiado largo (máx. 254 caracteres)'
+    52→  if (!EMAIL_REGEX.test(email)) return 'El formato del correo no es válido (ej: usuario@empresa.com)'
+    53→  return null
+    54→}
+    55→
+    56→function esErrorRateLimit(message: string): boolean {
+    57→  const lower = message.toLowerCase()
+    58→  return lower.includes('rate limit') ||
+    59→    lower.includes('too many') ||
+    60→    lower.includes('throttl') ||
+    61→    lower.includes('seguridad') ||
+    62→    lower.includes('espera') ||
+    63→    lower.includes('intenta')
+    64→}
+    65→
+    66→function esErrorCorreoExistente(message: string): boolean {
+    67→  const lower = message.toLowerCase()
+    68→  return lower.includes('already registered') ||
+    69→    lower.includes('already been registered') ||
+    70→    lower.includes('user already exists') ||
+    71→    lower.includes('user_already_exists') ||
+    72→    lower.includes('identity already exists') ||
+    73→    lower.includes('identity_already_exists') ||
+    74→    lower.includes('to use a different email')
+    75→}
+    76→
+    77→/**
+    78→ * Verifica si el correo ya está registrado EN SUPABASE AUTH.
+    79→ * Usa la Admin API para listar usuarios por email, que es más confiable
+    80→ * que consultar solo la tabla profiles (que puede tener registros huérfanos).
+    81→ */
+    82→const SUPABASE_URL_ADMIN = process.env.NEXT_PUBLIC_SUPABASE_URL!
+    83→const SERVICE_ROLE_KEY_ADMIN = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
+    84→
+    85→async function correoExisteEnAuth(email: string): Promise<boolean> {
+    86→  if (!SERVICE_ROLE_KEY_ADMIN) return false
+    87→  const lower = email.trim().toLowerCase()
+    88→  try {
+    89→    const res = await fetch(
+    90→      `${SUPABASE_URL_ADMIN}/auth/v1/admin/users?email=${encodeURIComponent(lower)}`,
+    91→      {
+    92→        headers: {
+    93→          'apikey': SERVICE_ROLE_KEY_ADMIN,
+    94→          'Authorization': `Bearer ${SERVICE_ROLE_KEY_ADMIN}`,
+    95→        },
+    96→      }
+    97→    )
+    98→    if (!res.ok) return false
+    99→    const adminData = await res.json()
+   100→    // Verificar que el email retornado coincida exactamente (la API a veces retorna otros usuarios)
+   101→    const exactMatch = (adminData.users ?? []).some(
+   102→      (u: { email: string }) => u.email?.toLowerCase() === lower
+   103→    )
+   104→    return exactMatch
+   105→  } catch {
+   106→    return false
+   107→  }
+   108→}
+   109→
+   110→/**
+   111→ * Verifica si el correo tiene un perfil huérfano (existe en profiles
+   112→ * pero NO en Supabase Auth). Si es así, elimina el perfil para que el
+   113→ * usuario pueda registrarse normalmente.
+   114→ */
+   115→async function limpiarPerfilHuerfano(email: string): Promise<boolean> {
+   116→  const lower = email.trim().toLowerCase()
+   117→  try {
+   118→    const { data: perfil } = await dataClient
+   119→      .from('profiles')
+   120→      .select('id')
+   121→      .eq('correo', lower)
+   122→      .maybeSingle()
+   123→    if (!perfil) return false
+   124→
+   125→    // Verificar si existe en Auth
+   126→    const existeEnAuth = await correoExisteEnAuth(lower)
+   127→    if (!existeEnAuth) {
+   128→      // Perfil huérfano: eliminarlo para permitir registro limpio
+   129→      console.log('[RACKLY] Limpiando perfil huérfano para:', lower)
+   130→      await dataClient.from('user_roles').delete().eq('user_id', perfil.id)
+   131→      await dataClient.from('profiles').delete().eq('id', perfil.id)
+   132→      return true
+   133→    }
+   134→    return false
+   135→  } catch {
+   136→    return false
+   137→  }
+   138→}
+   139→
+   140→/**
+   141→ * Verifica si el correo ya está registrado (en Auth o en profiles).
+   142→ * Prioriza la verificación en Auth (la fuente de verdad para login).
+   143→ */
+   144→async function correoYaExiste(email: string): Promise<boolean> {
+   145→  const lower = email.trim().toLowerCase()
+   146→  try {
+   147→    // Primero verificar si existe en Supabase Auth
+   148→    const existeAuth = await correoExisteEnAuth(lower)
+   149→    if (existeAuth) return true
+   150→
+   151→    // Si no existe en Auth pero sí en profiles, es un perfil huérfano
+   152→    const { data } = await dataClient
+   153→      .from('profiles')
+   154→      .select('id')
+   155→      .eq('correo', lower)
+   156→      .maybeSingle()
+   157→    if (data) {
+   158→      // Limpiar el perfil huérfano silenciosamente
+   159→      console.log('[RACKLY] Correo con perfil huérfano detectado, limpiando:', lower)
+   160→      await dataClient.from('user_roles').delete().eq('user_id', data.id)
+   161→      await dataClient.from('profiles').delete().eq('id', data.id)
+   162→      // No bloquear el registro — se acaba de limpiar
+   163→      return false
+   164→    }
+   165→
+   166→    return false
+   167→  } catch {
+   168→    // Si falla la consulta, permitir el registro (dejar que Supabase decida)
+   169→    return false
+   170→  }
+   171→}
+   172→
+   173→/* ─── Componente auxiliar: campo contraseña con toggle de visibilidad ─── */
+   174→function PasswordInput({
+   175→  id,
+   176→  value,
+   177→  onChange,
+   178→  placeholder,
+   179→  autoComplete,
+   180→  className,
+   181→}: {
+   182→  id: string
+   183→  value: string
+   184→  onChange: (v: string) => void
+   185→  placeholder?: string
+   186→  autoComplete?: string
+   187→  className?: string
+   188→}) {
+   189→  const [visible, setVisible] = useState(false)
+   190→  return (
+   191→    <div className="relative">
+   192→      <Input
+   193→        id={id}
+   194→        type={visible ? 'text' : 'password'}
+   195→        value={value}
+   196→        onChange={(e) => onChange(e.target.value)}
+   197→        placeholder={placeholder}
+   198→        autoComplete={autoComplete}
+   199→        className={`pr-10 ${className ?? ''}`}
+   200→      />
+   201→      <button
+   202→        type="button"
+   203→        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+   204→        onClick={() => setVisible((v) => !v)}
+   205→        tabIndex={-1}
+   206→        aria-label={visible ? 'Ocultar contraseña' : 'Ver contraseña'}
+   207→      >
+   208→        {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+   209→      </button>
+   210→    </div>
+   211→  )
+   212→}
+   213→
+   214→/* ─── AuthGate principal ─── */
+   215→export function AuthGate({ children }: { children: React.ReactNode }) {
+   216→  const { perfil, loading, refresh, passwordRecovery, clearPasswordRecovery } =
+   217→    useAuth()
+   218→
+   219→  // Si Supabase no está configurado, mostrar error claro en lugar de pantalla en blanco
+   220→  if (!isSupabaseConfigured()) {
+   221→    const msg = getMissingConfigMessage()
+   222→    return (
+   223→      <main className="flex min-h-screen items-center justify-center bg-background p-6">
+   224→        <div className="max-w-md w-full bg-red-50 border border-red-200 rounded-2xl p-8 text-center space-y-4">
+   225→          <div className="w-16 h-16 mx-auto bg-red-100 rounded-full flex items-center justify-center">
+   226→            <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+   227→              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+   228→            </svg>
+   229→          </div>
+   230→          <h2 className="text-xl font-bold text-red-800">Configuración incompleta</h2>
+   231→          <p className="text-sm text-red-600">
+   232→            Las variables de entorno de Supabase no están configuradas en el build.
+   233→          </p>
+   234→          {msg && (
+   235→            <pre className="text-xs text-left bg-red-100 rounded-lg p-3 overflow-auto text-red-800 font-mono whitespace-pre-wrap">
+   236→              {msg}
+   237→            </pre>
+   238→          )}
+   239→          <p className="text-xs text-red-500">
+   240→            Ve a Cloudflare Pages → Settings → Environment variables y agrega las variables faltantes. Luego haz un nuevo deploy.
+   241→          </p>
+   242→        </div>
+   243→      </main>
+   244→    )
+   245→  }
+   246→
+   247→  if (loading) {
+   248→    return (
+   249→      <main className="flex min-h-screen items-center justify-center bg-background">
+   250→        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+   251→      </main>
+   252→    )
+   253→  }
+   254→
+   255→  // Si viene del link de recuperación de contraseña, mostrar formulario
+   256→  if (passwordRecovery) {
+   257→    return <SetNewPasswordScreen onDone={async () => { clearPasswordRecovery(); return await refresh() }} />
+   258→  }
+   259→
+   260→  if (!perfil) return <LoginScreen onSuccess={refresh} />
+   261→
+   262→  if (!perfil.aprobado)
+   263→    return <PendingApprovalScreen nombre={perfil.nombre} onRefresh={refresh} />
+   264→
+   265→  if (perfil.mustChangePassword)
+   266→    return <ForceChangePasswordScreen onDone={refresh} />
+   267→
+   268→  return <>{children}</>
+   269→}
+   270→
+   271→/* ─── Pantalla: establecer nueva contraseña (tras click en link de email) ─── */
+   272→function SetNewPasswordScreen({
+   273→  onDone,
+   274→}: {
+   275→  onDone: () => Promise<Perfil | null>
+   276→}) {
+   277→  const [password, setPassword] = useState('')
+   278→  const [confirm, setConfirm] = useState('')
+   279→  const [busy, setBusy] = useState(false)
+   280→
+   281→  async function handleSubmit(e: React.FormEvent) {
+   282→    e.preventDefault()
+   283→    if (password.length < 6) {
+   284→      toast.error('La contraseña debe tener al menos 6 caracteres')
+   285→      return
+   286→    }
+   287→    if (password !== confirm) {
+   288→      toast.error('Las contraseñas no coinciden')
+   289→      return
+   290→    }
+   291→    setBusy(true)
+   292→    try {
+   293→      // Primero intentar con updateUser (funciona con tokens del hash de la URL)
+   294→      const { error } = await supabase.auth.updateUser({ password })
+   295→      if (error) throw error
+   296→      // Si hay sesión, también actualizar el flag en profiles
+   297→      try {
+   298→        const { data: u } = await supabase.auth.getUser()
+   299→        if (u?.user) {
+   300→          await supabase
+   301→            .from('profiles')
+   302→            .update({ must_change_password: false })
+   303→            .eq('id', u.user.id)
+   304→        }
+   305→      } catch {
+   306→        // no crítico
+   307→      }
+   308→      // Limpiar el hash de la URL
+   309→      window.location.hash = ''
+   310→      toast.success('Contraseña actualizada correctamente')
+   311→      try { await signOut() } catch { /* ok */ }
+   312→      await onDone()
+   313→    } catch (err: unknown) {
+   314→      const message = err instanceof Error ? err.message : 'Error desconocido'
+   315→      if (message.toLowerCase().includes('expired') || message.toLowerCase().includes('invalid')) {
+   316→        toast.error('Enlace expirado', {
+   317→          description: 'El enlace de recuperación ha expirado. Solicita uno nuevo desde "¿Olvidaste tu contraseña?".',
+   318→        })
+   319→      } else {
+   320→        toast.error('No se pudo actualizar la contraseña', {
+   321→          description: message,
+   322→        })
+   323→      }
+   324→    } finally {
+   325→      setBusy(false)
+   326→    }
+   327→  }
+   328→
+   329→  return (
+   330→    <main className="flex min-h-screen items-center justify-center bg-background p-4">
+   331→      <Card className="w-full max-w-md">
+   332→        <CardHeader className="text-center">
+   333→          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+   334→            <KeyRound className="h-6 w-6 text-primary" />
+   335→          </div>
+   336→          <CardTitle>Nueva contraseña</CardTitle>
+   337→          <CardDescription>
+   338→            Ingresa tu nueva contraseña. Debe tener al menos 6 caracteres.
+   339→          </CardDescription>
+   340→        </CardHeader>
+   341→        <CardContent>
+   342→          <form onSubmit={handleSubmit} className="space-y-4">
+   343→            <div className="space-y-2">
+   344→              <Label htmlFor="rp-pass">Nueva contraseña</Label>
+   345→              <PasswordInput
+   346→                id="rp-pass"
+   347→                value={password}
+   348→                onChange={setPassword}
+   349→                autoComplete="new-password"
+   350→              />
+   351→            </div>
+   352→            <div className="space-y-2">
+   353→              <Label htmlFor="rp-pass2">Confirmar contraseña</Label>
+   354→              <PasswordInput
+   355→                id="rp-pass2"
+   356→                value={confirm}
+   357→                onChange={setConfirm}
+   358→                autoComplete="new-password"
+   359→              />
+   360→            </div>
+   361→            <Button type="submit" className="w-full" disabled={busy}>
+   362→              {busy ? 'Guardando…' : 'Guardar y continuar'}
+   363→            </Button>
+   364→          </form>
+   365→        </CardContent>
+   366→      </Card>
+   367→    </main>
+   368→  )
+   369→}
+   370→
+   371→/* ─── Pantalla: forzar cambio de contraseña ─── */
+   372→function ForceChangePasswordScreen({
+   373→  onDone,
+   374→}: {
+   375→  onDone: () => Promise<Perfil | null>
+   376→}) {
+   377→  const [password, setPassword] = useState('')
+   378→  const [confirm, setConfirm] = useState('')
+   379→  const [busy, setBusy] = useState(false)
+   380→
+   381→  async function handleSubmit(e: React.FormEvent) {
+   382→    e.preventDefault()
+   383→    if (password.length < 6) {
+   384→      toast.error('La contraseña debe tener al menos 6 caracteres')
+   385→      return
+   386→    }
+   387→    if (password !== confirm) {
+   388→      toast.error('Las contraseñas no coinciden')
+   389→      return
+   390→    }
+   391→    setBusy(true)
+   392→    try {
+   393→      await cambiarPasswordPropia(password)
+   394→      toast.success('Contraseña actualizada')
+   395→      await onDone()
+   396→    } catch (err: unknown) {
+   397→      const message = err instanceof Error ? err.message : 'Error desconocido'
+   398→      toast.error('No se pudo actualizar', { description: message })
+   399→    } finally {
+   400→      setBusy(false)
+   401→    }
+   402→  }
+   403→
+   404→  return (
+   405→    <main className="flex min-h-screen items-center justify-center bg-background p-4">
+   406→      <Card className="w-full max-w-md">
+   407→        <CardHeader className="text-center">
+   408→          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+   409→            <KeyRound className="h-6 w-6 text-primary" />
+   410→          </div>
+   411→          <CardTitle>Debes cambiar tu contraseña</CardTitle>
+   412→          <CardDescription>
+   413→            El administrador requiere que definas una nueva contraseña antes de
+   414→            continuar.
+   415→          </CardDescription>
+   416→        </CardHeader>
+   417→        <CardContent>
+   418→          <form onSubmit={handleSubmit} className="space-y-4">
+   419→            <div className="space-y-2">
+   420→              <Label htmlFor="fc-pass">Nueva contraseña</Label>
+   421→              <PasswordInput
+   422→                id="fc-pass"
+   423→                value={password}
+   424→                onChange={setPassword}
+   425→                autoComplete="new-password"
+   426→              />
+   427→            </div>
+   428→            <div className="space-y-2">
+   429→              <Label htmlFor="fc-pass2">Confirmar contraseña</Label>
+   430→              <PasswordInput
+   431→                id="fc-pass2"
+   432→                value={confirm}
+   433→                onChange={setConfirm}
+   434→                autoComplete="new-password"
+   435→              />
+   436→            </div>
+   437→            <Button type="submit" className="w-full" disabled={busy}>
+   438→              {busy ? 'Guardando…' : 'Guardar y continuar'}
+   439→            </Button>
+   440→            <Button
+   441→              type="button"
+   442→              variant="ghost"
+   443→              className="w-full"
+   444→              onClick={async () => {
+   445→                try { await signOut() } catch { /* ok */ }
+   446→                await onDone()
+   447→              }}
+   448→            >
+   449→              Cerrar sesión
+   450→            </Button>
+   451→          </form>
+   452→        </CardContent>
+   453→      </Card>
+   454→    </main>
+   455→  )
+   456→}
+   457→
+   458→/* ─── Pantalla: cuenta pendiente de aprobación ─── */
+   459→function PendingApprovalScreen({
+   460→  nombre,
+   461→  onRefresh,
+   462→}: {
+   463→  nombre: string
+   464→  onRefresh: () => Promise<Perfil | null>
+   465→}) {
+   466→  const [busy, setBusy] = useState(false)
+   467→  return (
+   468→    <main className="flex min-h-screen items-center justify-center bg-background p-4">
+   469→      <Card className="w-full max-w-md">
+   470→        <CardHeader className="text-center">
+   471→          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+   472→            <Clock className="h-6 w-6 text-primary" />
+   473→          </div>
+   474→          <CardTitle>Cuenta pendiente de aprobación</CardTitle>
+   475→          <CardDescription>
+   476→            Hola {nombre}, tu cuenta fue creada correctamente. Un administrador
+   477→            debe aprobar tu acceso antes de que puedas usar la aplicación.
+   478→          </CardDescription>
+   479→        </CardHeader>
+   480→        <CardContent className="space-y-3">
+   481→          <Button
+   482→            className="w-full gap-2"
+   483→            variant="outline"
+   484→            disabled={busy}
+   485→            onClick={async () => {
+   486→              setBusy(true)
+   487→              try {
+   488→                await onRefresh()
+   489→                toast.info('Estado actualizado')
+   490→              } finally {
+   491→                setBusy(false)
+   492→              }
+   493→            }}
+   494→          >
+   495→            <RefreshCw className="h-4 w-4" />
+   496→            Verificar estado
+   497→          </Button>
+   498→          <Button
+   499→            className="w-full"
+   500→            variant="ghost"
+   501→            onClick={async () => {
+   502→              await signOut()
+   503→              await onRefresh()
+   504→            }}
+   505→          >
+   506→            Cerrar sesión
+   507→          </Button>
+   508→        </CardContent>
+   509→      </Card>
+   510→    </main>
+   511→  )
+   512→}
+   513→
+   514→/* ─── Pantalla de recuperar contraseña (solicitar email) ─── */
+   515→function ForgotPasswordScreen({
+   516→  onBack,
+   517→}: {
+   518→  onBack: () => void
+   519→}) {
+   520→  const [correo, setCorreo] = useState('')
+   521→  const [busy, setBusy] = useState(false)
+   522→  const [sent, setSent] = useState(false)
+   523→
+   524→  async function handleSubmit(e: React.FormEvent) {
+   525→    e.preventDefault()
+   526→    if (!correo.trim()) {
+   527→      toast.error('Ingresa tu correo electrónico')
+   528→      return
+   529→    }
+   530→    setBusy(true)
+   531→    try {
+   532→      await resetPassword(correo.trim().toLowerCase())
+   533→      setSent(true)
+   534→      toast.success('Correo enviado', {
+   535→        description:
+   536→          'Revisa tu bandeja de entrada y haz clic en el enlace para crear tu nueva contraseña.',
+   537→      })
+   538→    } catch (err: unknown) {
+   539→      const message = err instanceof Error ? err.message : 'Error desconocido'
+   540→      if (esErrorRateLimit(message)) {
+   541→        toast.error('Demasiados intentos', {
+   542→          description: 'Por seguridad, espera 60 segundos antes de solicitar otro enlace.',
+   543→          duration: 8000,
+   544→        })
+   545→      } else {
+   546→        toast.error('No se pudo enviar el correo', { description: message })
+   547→      }
+   548→    } finally {
+   549→      setBusy(false)
+   550→    }
+   551→  }
+   552→
+   553→  if (sent) {
+   554→    return (
+   555→      <main className="flex min-h-screen items-center justify-center bg-background p-4">
+   556→        <Card className="w-full max-w-md">
+   557→          <CardHeader className="text-center">
+   558→            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+   559→              <Mail className="h-6 w-6 text-primary" />
+   560→            </div>
+   561→            <CardTitle>Revisa tu correo</CardTitle>
+   562→            <CardDescription>
+   563→              Enviamos un enlace a <strong>{correo}</strong> para que crees tu
+   564→              nueva contraseña. Revisa también la carpeta de spam o correo no
+   565→              deseado.
+   566→            </CardDescription>
+   567→          </CardHeader>
+   568→          <CardContent className="space-y-3">
+   569→            <Button
+   570→              type="button"
+   571→              variant="outline"
+   572→              className="w-full gap-2"
+   573→              onClick={() => {
+   574→                setSent(false)
+   575→                setCorreo('')
+   576→              }}
+   577→            >
+   578→              Enviar de nuevo
+   579→            </Button>
+   580→            <Button
+   581→              type="button"
+   582→              className="w-full gap-2"
+   583→              onClick={onBack}
+   584→            >
+   585→              <ArrowLeft className="h-4 w-4" />
+   586→              Volver al inicio de sesión
+   587→            </Button>
+   588→          </CardContent>
+   589→        </Card>
+   590→      </main>
+   591→    )
+   592→  }
+   593→
+   594→  return (
+   595→    <main className="flex min-h-screen items-center justify-center bg-background p-4">
+   596→      <Card className="w-full max-w-md">
+   597→        <CardHeader className="text-center">
+   598→          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+   599→            <KeyRound className="h-6 w-6 text-primary" />
+   600→          </div>
+   601→          <CardTitle>Recuperar contraseña</CardTitle>
+   602→          <CardDescription>
+   603→            Ingresa tu correo electrónico y te enviaremos un enlace para crear
+   604→            una nueva contraseña.
+   605→          </CardDescription>
+   606→        </CardHeader>
+   607→        <CardContent>
+   608→          <form onSubmit={handleSubmit} className="space-y-4">
+   609→            <div className="space-y-2">
+   610→              <Label htmlFor="fp-correo">Correo electrónico</Label>
+   611→              <Input
+   612→                id="fp-correo"
+   613→                type="email"
+   614→                value={correo}
+   615→                onChange={(e) => setCorreo(e.target.value)}
+   616→                placeholder="usuario@empresa.com"
+   617→                autoComplete="email"
+   618→              />
+   619→            </div>
+   620→            <Button type="submit" className="w-full" disabled={busy}>
+   621→              {busy ? 'Enviando…' : 'Enviar enlace de recuperación'}
+   622→            </Button>
+   623→            <Button
+   624→              type="button"
+   625→              variant="ghost"
+   626→              className="w-full gap-2"
+   627→              onClick={onBack}
+   628→            >
+   629→              <ArrowLeft className="h-4 w-4" />
+   630→              Volver al inicio de sesión
+   631→            </Button>
+   632→          </form>
+   633→        </CardContent>
+   634→      </Card>
+   635→    </main>
+   636→  )
+   637→}
+   638→
+   639→/* ─── Pantalla de login / registro ─── */
+   640→function LoginScreen({
+   641→  onSuccess,
+   642→}: {
+   643→  onSuccess: () => Promise<Perfil | null>
+   644→}) {
+   645→  const [view, setView] = useState<'auth' | 'forgot'>('auth')
+   646→  const [tab, setTab] = useState<'login' | 'signup'>('login')
+   647→  const [correo, setCorreo] = useState('')
+   648→  const [password, setPassword] = useState('')
+   649→  const [nombre, setNombre] = useState('')
+   650→  const [busy, setBusy] = useState(false)
+   651→  const [cooldown, setCooldown] = useState(0)
+   652→  const [attempts, setAttempts] = useState(0)
+   653→
+   654→  // Cooldown proactivo: tras cada error, un delay creciente antes del siguiente intento
+   655→  const COOLDOWN_AFTER_ERROR = 3  // 3s tras primer error, 6s tras segundo, etc.
+   656→  const MAX_COOLDOWN = 30
+   657→
+   658→  async function handleLogin(e: React.FormEvent) {
+   659→    e.preventDefault()
+   660→    if (!correo.trim() || !password) {
+   661→      toast.error('Ingresa correo y contraseña')
+   662→      return
+   663→    }
+   664→    const emailError = validarEmail(correo)
+   665→    if (emailError) {
+   666→      toast.error(emailError)
+   667→      return
+   668→    }
+   669→    if (cooldown > 0) {
+   670→      toast.error(`Espera ${cooldown} segundos antes de intentar de nuevo`)
+   671→      return
+   672→    }
+   673→    setBusy(true)
+   674→    try {
+   675→      await signIn(correo.trim().toLowerCase(), password)
+   676→      const perfil = await onSuccess()
+   677→      if (perfil) {
+   678→        toast.success('Sesión iniciada')
+   679→      } else {
+   680→        toast.error('No se pudo cargar tu perfil', {
+   681→          description: 'Intenta de nuevo o contacta al administrador.',
+   682→        })
+   683→      }
+   684→    } catch (err: unknown) {
+   685→      const message = err instanceof Error ? err.message : 'Error desconocido'
+   686→      const newAttempts = attempts + 1
+   687→      setAttempts(newAttempts)
+   688→      if (esErrorRateLimit(message)) {
+   689→        toast.error('Demasiados intentos', {
+   690→          description: 'Por seguridad, espera 60 segundos antes de intentar de nuevo.',
+   691→          duration: 8000,
+   692→        })
+   693→        setCooldown(60)
+   694→      } else {
+   695→        toast.error('Error al iniciar sesión', { description: message })
+   696→        // Cooldown proactivo: delay creciente tras cada error para no saturar Supabase
+   697→        const cd = Math.min(COOLDOWN_AFTER_ERROR * newAttempts, MAX_COOLDOWN)
+   698→        if (cd > 0) setCooldown(cd)
+   699→      }
+   700→    } finally {
+   701→      setBusy(false)
+   702→    }
+   703→  }
+   704→
+   705→  async function handleSignup(e: React.FormEvent) {
+   706→    e.preventDefault()
+   707→    if (!nombre.trim()) {
+   708→      toast.error('Ingresa tu nombre completo')
+   709→      return
+   710→    }
+   711→    if (nombre.trim().length > MAX_NOMBRE_LENGTH) {
+   712→      toast.error('El nombre es demasiado largo (máx. 200 caracteres)')
+   713→      return
+   714→    }
+   715→    const emailError = validarEmail(correo)
+   716→    if (emailError) {
+   717→      toast.error(emailError)
+   718→      return
+   719→    }
+   720→    if (password.length < 6) {
+   721→      toast.error('La contraseña debe tener al menos 6 caracteres')
+   722→      return
+   723→    }
+   724→    if (cooldown > 0) {
+   725→      toast.error(`Espera ${cooldown} segundos antes de intentar de nuevo`)
+   726→      return
+   727→    }
+   728→    setBusy(true)
+   729→    try {
+   730→      // Pre-verificar si el correo ya existe para no quemar intentos del rate limit
+   731→      if (await correoYaExiste(correo)) {
+   732→        toast.info('Esta cuenta ya existe', {
+   733→          description:
+   734→            'Inicia sesión con ese correo; si aún no accedes, un administrador debe aprobarla.',
+   735→        })
+   736→        setTab('login')
+   737→        return
+   738→      }
+   739→      const data = await signUp(
+   740→        correo.trim().toLowerCase(),
+   741→        password,
+   742→        nombre.trim()
+   743→      )
+   744→      if (data.session) {
+   745→        await onSuccess()
+   746→        toast.success('Cuenta creada', {
+   747→          description: 'Un administrador debe aprobar tu acceso.',
+   748→        })
+   749→      } else {
+   750→        toast.success('Cuenta creada', {
+   751→          description:
+   752→            'Revisa tu correo para confirmar y luego inicia sesión.',
+   753→        })
+   754→        setTab('login')
+   755→      }
+   756→    } catch (err: unknown) {
+   757→      const message =
+   758→        err instanceof Error ? err.message : 'Error desconocido'
+   759→      if (esErrorCorreoExistente(message)) {
+   760→        // Verificar si es un perfil huérfano (existe en Auth pero no en profiles)
+   761→        // o si es realmente una cuenta existente
+   762→        const correoLower = correo.trim().toLowerCase()
+   763→        const { data: perfil } = await dataClient
+   764→          .from('profiles')
+   765→          .select('id')
+   766→          .eq('correo', correoLower)
+   767→          .maybeSingle()
+   768→
+   769→        if (!perfil) {
+   770→          // Existe en Auth pero no tiene perfil — intentar crear el perfil
+   771→          toast.info('Activando tu cuenta...', {
+   772→            description: 'Tu correo ya estaba registrado. Creando tu perfil.',
+   773→          })
+   774→          try {
+   775→            const { data: signInData } = await supabase.auth.signInWithPassword({
+   776→              email: correoLower,
+   777→              password,
+   778→            })
+   779→            if (signInData.session) {
+   780→              await onSuccess()
+   781→              toast.success('Cuenta activada', {
+   782→                description: 'Un administrador debe aprobar tu acceso.',
+   783→              })
+   784→            } else {
+   785→              toast.error('Contraseña incorrecta', {
+   786→                description:
+   787→                  'Tu correo ya está registrado pero la contraseña no coincide. Usa "Olvidaste tu contraseña" para restablecerla.',
+   788→              })
+   789→            }
+   790→          } catch {
+   791→            toast.error('No se pudo activar la cuenta', {
+   792→              description:
+   793→                'Tu correo ya está registrado. Si no recuerdas tu contraseña, usa "Olvidaste tu contraseña".',
+   794→            })
+   795→          }
+   796→        } else {
+   797→          toast.info('Esta cuenta ya existe', {
+   798→            description:
+   799→              'Inicia sesión con ese correo; si aún no accedes, un administrador debe aprobarla.',
+   800→          })
+   801→          setTab('login')
+   802→        }
+   803→      } else if (esErrorRateLimit(message)) {
+   804→        toast.error('Demasiados intentos de registro', {
+   805→          description: 'Por seguridad, espera 60 segundos antes de crear otra cuenta o intentar de nuevo.',
+   806→          duration: 8000,
+   807→        })
+   808→        setCooldown(60)
+   809→      } else {
+   810→        toast.error('No se pudo crear la cuenta', { description: message })
+   811→        // Cooldown proactivo tras error de registro
+   812→        const newAttempts = attempts + 1
+   813→        setAttempts(newAttempts)
+   814→        const cd = Math.min(COOLDOWN_AFTER_ERROR * newAttempts, MAX_COOLDOWN)
+   815→        if (cd > 0) setCooldown(cd)
+   816→      }
+   817→    } finally {
+   818→      setBusy(false)
+   819→    }
+   820→  }
+   821→
+   822→  // Cooldown para prevenir intentos repetidos
+   823→  // Resetear contador de intentos cuando el cooldown termina
+   824→  useEffect(() => {
+   825→    if (cooldown <= 0) {
+   826→      setAttempts(0)
+   827→      return
+   828→    }
+   829→    const timer = setTimeout(() => setCooldown(c => c - 1), 1000)
+   830→    return () => clearTimeout(timer)
+   831→  }, [cooldown])
+   832→
+   833→  // Vista de recuperar contraseña
+   834→  if (view === 'forgot') {
+   835→    return <ForgotPasswordScreen onBack={() => setView('auth')} />
+   836→  }
+   837→
+   838→  return (
+   839→    <main className="flex min-h-screen items-center justify-center bg-background p-4">
+   840→      <Card className="w-full max-w-md">
+   841→        <CardHeader className="text-center">
+   842→          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+   843→            <Warehouse className="h-6 w-6 text-primary" />
+   844→          </div>
+   845→          <CardTitle className="text-2xl">RACKLY</CardTitle>
+   846→          <CardDescription>
+   847→            Sistema de Gestión de Almacenes
+   848→          </CardDescription>
+   849→        </CardHeader>
+   850→        <CardContent>
+   851→          <Tabs
+   852→            value={tab}
+   853→            onValueChange={(v) => setTab(v as 'login' | 'signup')}
+   854→            className="w-full"
+   855→          >
+   856→            <TabsList className="grid w-full grid-cols-2">
+   857→              <TabsTrigger value="login">Iniciar sesión</TabsTrigger>
+   858→              <TabsTrigger value="signup">Registrarse</TabsTrigger>
+   859→            </TabsList>
+   860→
+   861→            <TabsContent value="login" className="mt-4">
+   862→              <form onSubmit={handleLogin} className="space-y-4">
+   863→                <div className="space-y-2">
+   864→                  <Label htmlFor="login-correo">Correo</Label>
+   865→                  <Input
+   866→                    id="login-correo"
+   867→                    type="email"
+   868→                    value={correo}
+   869→                    onChange={(e) => setCorreo(e.target.value)}
+   870→                    placeholder="usuario@empresa.com"
+   871→                    autoComplete="email"
+   872→                  />
+   873→                </div>
+   874→                <div className="space-y-2">
+   875→                  <Label htmlFor="login-pass">Contraseña</Label>
+   876→                  <PasswordInput
+   877→                    id="login-pass"
+   878→                    value={password}
+   879→                    onChange={setPassword}
+   880→                    placeholder="Tu contraseña"
+   881→                    autoComplete="current-password"
+   882→                  />
+   883→                </div>
+   884→                <Button type="submit" className="w-full" disabled={busy || cooldown > 0}>
+   885→                  {cooldown > 0 ? `Espera ${cooldown}s` : busy ? 'Ingresando…' : 'Ingresar'}
+   886→                </Button>
+   887→                {/* Link de recuperar contraseña */}
+   888→                <div className="text-center">
+   889→                  <button
+   890→                    type="button"
+   891→                    className="text-sm text-primary hover:underline"
+   892→                    onClick={() => setView('forgot')}
+   893→                  >
+   894→                    ¿Olvidaste tu contraseña?
+   895→                  </button>
+   896→                </div>
+   897→              </form>
+   898→            </TabsContent>
+   899→
+   900→            <TabsContent value="signup" className="mt-4">
+   901→              <form onSubmit={handleSignup} className="space-y-4">
+   902→                <div className="space-y-2">
+   903→                  <Label htmlFor="su-nombre">Nombre completo</Label>
+   904→                  <Input
+   905→                    id="su-nombre"
+   906→                    value={nombre}
+   907→                    onChange={(e) => setNombre(e.target.value)}
+   908→                    placeholder="Nombre y apellido"
+   909→                  />
+   910→                </div>
+   911→                <div className="space-y-2">
+   912→                  <Label htmlFor="su-correo">Correo</Label>
+   913→                  <Input
+   914→                    id="su-correo"
+   915→                    type="email"
+   916→                    value={correo}
+   917→                    onChange={(e) => setCorreo(e.target.value)}
+   918→                    placeholder="usuario@empresa.com"
+   919→                    autoComplete="email"
+   920→                  />
+   921→                </div>
+   922→                <div className="space-y-2">
+   923→                  <Label htmlFor="su-pass">Contraseña (mín. 6 caracteres)</Label>
+   924→                  <PasswordInput
+   925→                    id="su-pass"
+   926→                    value={password}
+   927→                    onChange={setPassword}
+   928→                    placeholder="Mínimo 6 caracteres"
+   929→                    autoComplete="new-password"
+   930→                  />
+   931→                </div>
+   932→                <Button type="submit" className="w-full" disabled={busy || cooldown > 0}>
+   933→                  {cooldown > 0 ? `Espera ${cooldown}s` : busy ? 'Creando…' : 'Crear cuenta'}
+   934→                </Button>
+   935→              </form>
+   936→            </TabsContent>
+   937→          </Tabs>
+   938→        </CardContent>
+   939→      </Card>
+   940→    </main>
+   941→  )
+   942→}
+   943→

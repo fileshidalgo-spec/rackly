@@ -67,3 +67,27 @@ Stage Summary:
 - 7 fixes across 5 files: OcupacionTab.tsx, ErrorBoundary.tsx, constants.ts, auth.ts, piso/api.ts
 - TypeScript compilation passes with zero errors
 - No behavioral changes beyond the loading indicator addition (M.4) and the timeout value change (M.7)
+---
+Task ID: 3
+Agent: Main Agent
+Task: Decouple Kardex Racks/Piso + fix Stock vs Ocupacion discrepancy
+
+Work Log:
+- Analyzed all cross-dependencies between Kardex Racks and Kardex Piso
+- Found 2 cross-sections: PisoStockTab→buscarStockRacksPorCodigo and StockTab→CrossSectionPiso(stockPisoPorCodigo)
+- Confirmed both are read-only informational, no functional impact if removed
+- Identified root cause of Stock vs Ocupacion discrepancy: StockTab includes INC movements in base calculation, OcupacionTab excludes them
+- Removed CrossSectionPiso component and all related state/imports from StockTab.tsx
+- Removed buscarStockRacksPorCodigo call, all Racks cross-lookup state/imports from PisoStockTab.tsx
+- Fixed StockTab stockData useMemo: exclude INC movements from base calc (consistent with OcupacionTab)
+- Removed codigoInc from stock key (no longer partitions stock by INC status)
+- TypeScript check: 0 errors
+- Next.js build: successful (static export)
+- Pushed to GitHub (main branch)
+
+Stage Summary:
+- Kardex Racks and Kardex Piso are now fully decoupled, sharing only catalogo table
+- Stock tab now matches Ocupacion tab numbers for non-INC items
+- INC items only show when filter is set to "Solo INC"
+- Deploy pending via Cloudflare Pages auto-deploy from GitHub
+---

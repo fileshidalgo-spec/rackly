@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, memo, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Calendar, CalendarOff, ChevronLeft, ChevronRight, X } from 'lucide-react'
 
@@ -94,7 +94,11 @@ type CalendarState = {
   view: CalView
 }
 
-const FechaVencimientoField = memo(function FechaVencimientoField({
+// NOTA: Se quitó React.memo porque causaba stale closures:
+// el memo solo comparaba value/disabled/variant y NO onChange/onToggleSin,
+// por lo que el componente se quedaba con un onChange viejo que referenciaba
+// estado obsoleto, causando que seleccionar fecha borrara los demás campos.
+const FechaVencimientoField = function FechaVencimientoField({
   value,
   disabled,
   variant,
@@ -484,12 +488,6 @@ const FechaVencimientoField = memo(function FechaVencimientoField({
       )}
     </div>
   )
-}, (prev, next) => {
-  return (
-    prev.value === next.value &&
-    prev.disabled === next.disabled &&
-    prev.variant === next.variant
-  )
-})
+}
 
 export default FechaVencimientoField

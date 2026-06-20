@@ -2,26 +2,33 @@
 # Headers para Cloudflare Pages
 # Evitar que el navegador o CDN sirvan versiones cacheadas
 # del HTML y los archivos JS/CSS principales.
-#
-# Los archivos con hash en el nombre (e.g. main-abc123.js)
-# se cachéan normalmente porque el hash cambia en cada deploy.
 # ──────────────────────────────────────────────────────
 
-# HTML — nunca cachear en navegador, revalidar siempre con el origin
+# Punto de entrada raíz — JAMÁS cachear (es la ruta más importante)
+/
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
+  Surrogate-Control: no-store
+
+# HTML — nunca cachear
 /*.html
   Cache-Control: no-cache, no-store, must-revalidate
   Pragma: no-cache
   Expires: 0
+  Surrogate-Control: no-store
 
-# index.html en raíz (principal punto de entrada)
+# index.html explícitamente
 /index.html
   Cache-Control: no-cache, no-store, must-revalidate
   Pragma: no-cache
   Expires: 0
+  Surrogate-Control: no-store
 
 # Archivos JS y CSS con hash — cachear 1 año (son inmutables por hash)
 /_next/static/*
   Cache-Control: public, max-age=31536000, immutable
 
 # Todos los demás assets estáticos (imágenes, fuentes, etc.)
+/*
   Cache-Control: public, max-age=86400

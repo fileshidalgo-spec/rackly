@@ -1213,7 +1213,7 @@ export async function registrarTrasladoPosicion(
 
   // Insertar detalles de salida
   if (detallesSalida.length > 0) {
-    await dataClient.from('piso_movimiento_detalles').insert(
+    const { error: salDetErr } = await dataClient.from('piso_movimiento_detalles').insert(
       detallesSalida.map((d) => ({
         movimiento_id: (salData as { id: string }).id,
         nivel_id: d.nivel_id,
@@ -1222,11 +1222,12 @@ export async function registrarTrasladoPosicion(
         ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
       }))
     )
+    if (salDetErr) throw salDetErr
   }
 
   // Insertar detalles de ingreso
   if (detallesIngreso.length > 0) {
-    await dataClient.from('piso_movimiento_detalles').insert(
+    const { error: ingDetErr } = await dataClient.from('piso_movimiento_detalles').insert(
       detallesIngreso.map((d) => ({
         movimiento_id: (ingData as { id: string }).id,
         nivel_id: d.nivel_id,
@@ -1235,6 +1236,7 @@ export async function registrarTrasladoPosicion(
         ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
       }))
     )
+    if (ingDetErr) throw ingDetErr
   }
 }
 

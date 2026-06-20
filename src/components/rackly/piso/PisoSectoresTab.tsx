@@ -164,6 +164,9 @@ export function PisoSectoresTab() {
 
   // Ingreso state
   const [ingRows, setIngRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
+  // Key que se incrementa al abrir ingreso para forzar remount de FechaVencimientoField
+  // (evita que conserve displayValue del ingreso anterior)
+  const [ingresoKey, setIngresoKey] = useState(0)
 
   // Salida state
   const [salItems, setSalItems] = useState<SalItem[]>([])
@@ -186,6 +189,8 @@ export function PisoSectoresTab() {
 
   // Devolucion state
   const [devRows, setDevRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
+  // Key para forzar remount de campos de fecha en devolucion
+  const [devKey, setDevKey] = useState(0)
 
   // Historial state
   type HistorialItem = {
@@ -536,6 +541,7 @@ export function PisoSectoresTab() {
 
   function openIngreso() {
     setIngRows([{ ...EMPTY_ROW }])
+    setIngresoKey(k => k + 1) // forzar remount de campos de fecha
     // No resetear nivel — mantener el que el usuario seleccionó
     setMode('ingreso')
   }
@@ -607,6 +613,7 @@ export function PisoSectoresTab() {
 
   function openDevolucion() {
     setDevRows([{ ...EMPTY_ROW }])
+    setDevKey(k => k + 1) // forzar remount de campos de fecha
     setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
     setMode('devolucion')
   }
@@ -2127,7 +2134,7 @@ export function PisoSectoresTab() {
                   )}
                   <p className="text-xs font-bold text-slate-300">Escribe el codigo y se autocompletara:</p>
                   {ingRows.map((row, i) => (
-                    <div key={i} className="rounded-xl border border-emerald-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-emerald-500/40">
+                    <div key={`${ingresoKey}-${i}`} className="rounded-xl border border-emerald-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-emerald-500/40">
                       <div className="grid grid-cols-12 gap-2 items-end">
                         {/* Card number badge */}
                         <div className="col-span-1 flex items-center justify-center">
@@ -2551,7 +2558,7 @@ export function PisoSectoresTab() {
                   </div>
                   <p className="text-xs font-bold text-slate-300">Escribe el codigo y se autocompletara:</p>
                   {devRows.map((row, i) => (
-                    <div key={i} className="rounded-xl border border-amber-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-amber-500/40">
+                    <div key={`${devKey}-${i}`} className="rounded-xl border border-amber-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-amber-500/40">
                       <div className="grid grid-cols-12 gap-2 items-end">
                         {/* Card number badge */}
                         <div className="col-span-1 flex items-center justify-center">

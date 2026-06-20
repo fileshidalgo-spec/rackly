@@ -112,3 +112,21 @@ Stage Summary:
 - Solution: Replaced FEFO split with aggregate-per-position approach matching OcupacionTab exactly. FEFO dates now informational only.
 - Key change: stockData now calculates net stock by (position, code) identically to calcularOcupacion, then filters by selected code
 - Deployed via git push to main (Cloudflare Pages auto-build)
+---
+Task ID: 2
+Agent: main
+Task: Implement server-side stock calculation without 15K row limit
+
+Work Log:
+- Added fetchOcupacionServerSide() in kardex.ts — queries movimientos with only needed columns, excludes INC, groups by (position, code) client-side from smaller dataset
+- Added fetchStockPorCodigoServerSide(codigo, soloInc) — queries movimientos filtered by specific code, groups by position, tracks FEFO dates
+- Both functions return null on failure to signal caller to use fallback
+- Updated StockTab: added useEffect that calls fetchStockPorCodigoServerSide when selectedCodigo changes, falls back to client-side stockData if server-side fails. Uses displayStock = serverStock ?? stock for rendering
+- Updated OcupacionTab: inverted refreshData order — now tries server-side first, falls back to fetchMovimientos+calcularOcupacion (15K limit), then to RPC legacy
+- Build successful, pushed to main
+
+Stage Summary:
+- Both tabs now have 3-tier fallback: server-side (no limit) → client-side (15K limit) → RPC legacy
+- No existing functionality broken — all changes are additive with graceful fallback
+- StockTab calculates server-side per-code (efficient: only downloads that code's movements)
+- OcupacionTab calculates server-side for all positions (downloads all movements but with fewer columns)

@@ -1,7 +1,7 @@
 'use client'
 
 import { dataClient } from '@/lib/supabase/client'
-import { PAGE_SIZE, MAX_ITERATIONS, MOVIMIENTOS_ENTRADA, TURNO_DIA, TURNO_NOCHE } from './constants'
+import { PAGE_SIZE, MAX_ITERATIONS, FETCH_MOV_MAX_PAGES, MOVIMIENTOS_ENTRADA, TURNO_DIA, TURNO_NOCHE } from './constants'
 import { impactoStock } from '@/lib/utils'
 
 export type Turno = typeof TURNO_DIA | typeof TURNO_NOCHE
@@ -74,7 +74,7 @@ export async function fetchMovimientos(): Promise<Movimiento[]> {
   const all: Record<string, unknown>[] = []
   let from = 0
   let iterations = 0
-  while (iterations < MAX_ITERATIONS) {
+  while (iterations < FETCH_MOV_MAX_PAGES) {
     iterations++
     const to = from + PAGE_SIZE - 1
     const { data, error } = await dataClient
@@ -495,8 +495,9 @@ export async function stockEnUbicacion(
   }
 }
 
-/** Consulta dedicada: ubicaciones que tienen INC con stock > 0 */
-export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]>> {
+/** Consulta dedicada: ubicaciones que tienen INC con stock > 0.
+ *  Retorna un Map que puede estar marcado con `_error: true` si la consulta falló. */
+export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> & { _error?: boolean }> {
   try {
     const allRows: Record<string, unknown>[] = []
     let from = 0
@@ -508,7 +509,12 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]>>
         .not('codigo_inc', 'is', null)
         .neq('codigo_inc', '')
         .range(from, from + BATCH - 1)
-      if (error) return new Map()
+      if (error) {
+        console.error('[fetchIncPorUbicacion] Error en paginación INC:', error.message)
+        const errMap = new Map<string, IncEnCelda[]>() as Map<string, IncEnCelda[]> & { _error?: boolean }
+        errMap._error = true
+        return errMap
+      }
       const rows = data ?? []
       allRows.push(...rows)
       if (rows.length < BATCH) break
@@ -541,8 +547,9 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]>>
     return result
   } catch (err) {
     console.error('[fetchIncPorUbicacion] Error consultando INC:', err)
-    // Retornar Map vacío — el UI mostrará stock INC vacío, lo cual es seguro
-    return new Map<string, IncEnCelda[]>()
+    const errMap = new Map<string, IncEnCelda[]>() as Map<string, IncEnCelda[]> & { _error?: boolean }
+    errMap._error = true
+    return errMap
   }
 }
 

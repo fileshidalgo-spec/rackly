@@ -3,11 +3,119 @@
 import { dataClient } from '@/lib/supabase/client'
 import { QUERY_TIMEOUT_MS } from '@/lib/rackly/constants'
 
+/** Genera un UUID v4 simple (no requiere crypto.randomUUID que no está en todos los browsers) */
+function generateUuidSync(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+  })
+}
+
+/** Elimina cabeceras huérfanas (sin detalles) para un set de IDs.
+ *  Usado como rollback cuando la inserción de detalles falla. */
+async function rollbackCabeceras(ids: string[], tag: string): Promise<void> {
+  for (const id of ids) {
+    await dataClient.from('piso_movimientos').delete().eq('id', id).catch((rbErr) => {
+      console.error(`[${tag}] rollback de cabecera ${id} falló:`, rbErr)
+    })
+  }
+}
+
+/** Elimina detalles huérfanos para un set de movimiento_ids.
+ *  Usado como rollback cuando la segunda parte de un traslado falla. */
+async function rollbackDetalles(movIds: string[], tag: string): Promise<void> {
+  for (const movId of movIds) {
+    await dataClient.from('piso_movimiento_detalles').delete().eq('movimiento_id', movId).catch((rbErr) => {
+      console.error(`[${tag}] rollback de detalles ${movId} falló:`, rbErr)
+    })
+  }
+}
+
 /** Limpia el prefijo del sector del código de subcolumna.
  *  BD guarda "BA1" (prefijo "B" + letra "A" + idx "1"), queremos solo "A1" */
 function cleanSubcolCode(codigo: string, columnaLetra: string): string {
   const idx = codigo.indexOf(columnaLetra)
   return idx >= 0 ? codigo.substring(idx) : codigo
+}
+
+// ═══ Lógica FEFO genérica (deduplicada de stockDetallePosicion, stockDetalleNivel, stockPisoGlobal) ═══
+
+type FefoInputEntry = {
+  bloque_id: string
+  tipo: string
+  cantidad: number
+  fecha_vencimiento: string
+  extra?: Record<string, string>
+}
+
+type FefoResult = {
+  bloque_id: string
+  cantidad: number
+  fecha_vencimiento: string
+  extra?: Record<string, string>
+}
+
+/** Calcula FEFO (First Expired First Out) a partir de un pool de detalles.
+ *  Agrupa ingresos por (bloque_id, fecha_vencimiento), suma salidas por bloque_id,
+ *  descuenta salidas del pool ordenado por fecha, y retorna los lotes restantes.
+ *  Si se pasa `groupKeyFn`, agrupa por esa clave en vez de solo `bloque_id`. */
+function calcularFEFO(
+  entries: FefoInputEntry[],
+  groupKeyFn?: (e: FefoInputEntry) => string
+): FefoResult[] {
+  const isIngresoType = (tipo: string) =>
+    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+
+  const getKey = groupKeyFn ?? ((e: FefoInputEntry) => e.bloque_id)
+
+  // Pool de lotes por ingreso (agrupado por clave)
+  const ingresoPools = new Map<string, Map<string, { qty: number; extra?: Record<string, string> }>>()
+  for (const e of entries) {
+    if (!isIngresoType(e.tipo) || e.cantidad <= 0) continue
+    const key = getKey(e)
+    const pool = ingresoPools.get(key) ?? new Map()
+    const existing = pool.get(e.fecha_vencimiento)
+    if (existing) {
+      existing.qty += e.cantidad
+      // Merge extra fields (e.g., codigo_inc)
+      if (e.extra && !existing.extra) existing.extra = { ...e.extra }
+    } else {
+      pool.set(e.fecha_vencimiento, { qty: e.cantidad, extra: e.extra ? { ...e.extra } : undefined })
+    }
+    ingresoPools.set(key, pool)
+  }
+
+  // Sumar salidas por clave
+  const salidasPorKey = new Map<string, number>()
+  for (const e of entries) {
+    if (isIngresoType(e.tipo) || e.cantidad <= 0) continue
+    const key = getKey(e)
+    salidasPorKey.set(key, (salidasPorKey.get(key) ?? 0) + e.cantidad)
+  }
+
+  // FEFO: descontar salidas del pool
+  const results: FefoResult[] = []
+  for (const [key, pool] of ingresoPools) {
+    const sortedLots = [...pool.entries()].sort(([a], [b]) => {
+      if (!a && b) return 1
+      if (a && !b) return -1
+      return a.localeCompare(b)
+    })
+    const totalSalida = salidasPorKey.get(key) ?? 0
+    let pendiente = totalSalida
+    for (const [fecha, lot] of sortedLots) {
+      if (pendiente <= 0) {
+        results.push({ bloque_id: entries.find(e => getKey(e) === key)?.bloque_id ?? key, cantidad: lot.qty, fecha_vencimiento: fecha, extra: lot.extra })
+      } else if (lot.qty <= pendiente) {
+        pendiente -= lot.qty
+      } else {
+        results.push({ bloque_id: entries.find(e => getKey(e) === key)?.bloque_id ?? key, cantidad: lot.qty - pendiente, fecha_vencimiento: fecha, extra: lot.extra })
+        pendiente = 0
+      }
+    }
+  }
+
+  return results.filter(r => r.cantidad > 0)
 }
 
 export type Sector = {
@@ -343,14 +451,55 @@ export async function listarMovimientos(
 
   if (all.length === 0) return []
 
-  // Filtrar por bloqueId a nivel de cabeceras (post-query)
+  // ── Filtro por bloqueId (post-query) ──
   if (bloqueId && filterNivelIds) {
     const filterSet = new Set(filterNivelIds)
     all = all.filter(m => filterSet.has(m.id))
   }
 
-  // Filtrar por columna: obtener movimiento_ids cuyos detalles tengan niveles
-  // en posiciones que pertenezcan a la columna solicitada
+  // ── Filtro por sectorId (sin columnaId): resolver columnas → subcolumnas → posiciones → niveles → detalles ──
+  if (sectorId && !columnaId && !bloqueId) {
+    const { data: colData } = await dataClient
+      .from('piso_columnas')
+      .select('id')
+      .eq('sector_id', sectorId)
+    if (!colData || colData.length === 0) return []
+    const colIds = (colData as { id: string }[]).map(c => c.id)
+
+    const { data: subData } = await dataClient
+      .from('piso_subcolumnas')
+      .select('id')
+      .in('columna_id', colIds)
+    if (!subData || subData.length === 0) return []
+    const subIds = new Set((subData as { id: string }[]).map(s => s.id))
+
+    const { data: posData } = await dataClient
+      .from('piso_posiciones')
+      .select('id')
+      .in('subcolumna_id', [...subIds])
+    if (!posData || posData.length === 0) return []
+    const posIds = new Set((posData as { id: string }[]).map(p => p.id))
+
+    const { data: nivData } = await dataClient
+      .from('piso_niveles')
+      .select('id')
+      .in('posicion_id', [...posIds])
+    if (!nivData || nivData.length === 0) return []
+    const nivIds = (nivData as { id: string }[]).map(n => n.id)
+
+    const { data: detFilter } = await dataClient
+      .from('piso_movimiento_detalles')
+      .select('movimiento_id')
+      .in('nivel_id', nivIds)
+    if (detFilter && detFilter.length > 0) {
+      const validMovIds = new Set((detFilter as { movimiento_id: string }[]).map(d => d.movimiento_id))
+      all = all.filter(m => validMovIds.has(m.id))
+    } else {
+      all = []
+    }
+  }
+
+  // ── Filtro por columnaId: validar pertenencia a sector + resolver posiciones ──
   if (columnaId) {
     // Verificar que columnaId pertenece al sector (si se proporcionó sectorId)
     if (sectorId) {
@@ -362,23 +511,22 @@ export async function listarMovimientos(
       if (!colCheck || colCheck.length === 0) return []
     }
     // Obtener posiciones de esta columna → niveles → detalles → movimientos
+    const { data: subData } = await dataClient
+      .from('piso_subcolumnas')
+      .select('id')
+      .eq('columna_id', columnaId)
+    const subIdsOfCol = new Set<string>()
+    if (subData) {
+      for (const s of subData as { id: string }[]) subIdsOfCol.add(s.id)
+    }
+    if (subIdsOfCol.size === 0) { return [] }
     const { data: posData } = await dataClient
       .from('piso_posiciones')
-      .select('id, subcolumna_id')
-    const subIdsOfCol = new Set<string>()
+      .select('id')
+      .in('subcolumna_id', [...subIdsOfCol])
     const posIdsOfCol = new Set<string>()
     if (posData) {
-      // Obtener subcolumnas de la columna
-      const { data: subData } = await dataClient
-        .from('piso_subcolumnas')
-        .select('id')
-        .eq('columna_id', columnaId)
-      if (subData) {
-        for (const s of subData as { id: string }[]) subIdsOfCol.add(s.id)
-      }
-      for (const p of posData as { id: string; subcolumna_id: string }[]) {
-        if (subIdsOfCol.has(p.subcolumna_id)) posIdsOfCol.add(p.id)
-      }
+      for (const p of posData as { id: string }[]) posIdsOfCol.add(p.id)
     }
     if (posIdsOfCol.size > 0) {
       const { data: nivData } = await dataClient
@@ -386,11 +534,11 @@ export async function listarMovimientos(
         .select('id')
         .in('posicion_id', [...posIdsOfCol])
       if (nivData && nivData.length > 0) {
-        const nivIds = new Set((nivData as { id: string }[]).map(n => n.id))
+        const nivIds = (nivData as { id: string }[]).map(n => n.id)
         const { data: detFilter } = await dataClient
           .from('piso_movimiento_detalles')
           .select('movimiento_id')
-          .in('nivel_id', [...nivIds])
+          .in('nivel_id', nivIds)
         if (detFilter && detFilter.length > 0) {
           const validMovIds = new Set((detFilter as { movimiento_id: string }[]).map(d => d.movimiento_id))
           all = all.filter(m => validMovIds.has(m.id))
@@ -1125,6 +1273,8 @@ export async function stockDetalleNivel(
 /**
  * Registra un ingreso directo a una posición (sin pasar por el RPC completo).
  * Permite múltiples bloques en una sola posición.
+ * Incluye uuid_sync para idempotencia: si ya existe una cabecera con el mismo
+ * uuid_sync, la operación se considera exitosa (no duplica).
  * Si los detalles fallan, hace rollback de la cabecera.
  */
 export async function registrarIngresoPosicion(
@@ -1135,6 +1285,16 @@ export async function registrarIngresoPosicion(
   detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[],
   opts?: { posicion_id?: string; codigo_inc?: string }
 ): Promise<void> {
+  const uuidSync = generateUuidSync()
+
+  // Idempotencia: verificar si ya existe una cabecera con este uuid_sync
+  const { data: existing } = await dataClient
+    .from('piso_movimientos')
+    .select('id')
+    .eq('uuid_sync', uuidSync)
+    .maybeSingle()
+  if (existing) return // Ya registrado, operación idempotente
+
   // Crear cabecera
   const insertPayload: Record<string, unknown> = {
     tipo: 'ingreso',
@@ -1142,6 +1302,7 @@ export async function registrarIngresoPosicion(
     usuario_id: usuarioId,
     usuario_nombre: usuarioNombre,
     usuario_correo: usuarioCorreo,
+    uuid_sync: uuidSync,
   }
   if (opts?.posicion_id) insertPayload.posicion_id = opts.posicion_id
   if (opts?.codigo_inc) insertPayload.codigo_inc = opts.codigo_inc
@@ -1169,9 +1330,7 @@ export async function registrarIngresoPosicion(
     if (detErr) {
       // Rollback: eliminar cabecera huérfana
       console.error('[registrarIngresoPosicion] Error insertando detalles, haciendo rollback:', detErr.message)
-      await dataClient.from('piso_movimientos').delete().eq('id', movimientoId).catch((rbErr) => {
-        console.error('[registrarIngresoPosicion] Error en rollback:', rbErr)
-      })
+      await rollbackCabeceras([movimientoId], 'registrarIngresoPosicion')
       throw detErr
     }
   }
@@ -1179,6 +1338,7 @@ export async function registrarIngresoPosicion(
 
 /**
  * Registra una salida de stock de una posición.
+ * Incluye uuid_sync para idempotencia.
  * Si los detalles fallan, hace rollback de la cabecera.
  */
 export async function registrarSalidaPosicion(
@@ -1188,9 +1348,19 @@ export async function registrarSalidaPosicion(
   usuarioCorreo: string,
   detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
 ): Promise<void> {
+  const uuidSync = generateUuidSync()
+
+  // Idempotencia
+  const { data: existing } = await dataClient
+    .from('piso_movimientos')
+    .select('id')
+    .eq('uuid_sync', uuidSync)
+    .maybeSingle()
+  if (existing) return
+
   const { data: movData, error: movErr } = await dataClient
     .from('piso_movimientos')
-    .insert({ tipo: 'salida', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+    .insert({ tipo: 'salida', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo, uuid_sync: uuidSync })
     .select('id')
     .single()
   if (movErr) throw movErr
@@ -1208,11 +1378,8 @@ export async function registrarSalidaPosicion(
       .from('piso_movimiento_detalles')
       .insert(detRows)
     if (detErr) {
-      // Rollback: eliminar cabecera huérfana
       console.error('[registrarSalidaPosicion] Error insertando detalles, haciendo rollback:', detErr.message)
-      await dataClient.from('piso_movimientos').delete().eq('id', movimientoId).catch((rbErr) => {
-        console.error('[registrarSalidaPosicion] Error en rollback:', rbErr)
-      })
+      await rollbackCabeceras([movimientoId], 'registrarSalidaPosicion')
       throw detErr
     }
   }
@@ -1221,6 +1388,7 @@ export async function registrarSalidaPosicion(
 /**
  * Registra una devolución de stock a una posición.
  * Funciona como un ingreso pero con tipo 'devolucion'.
+ * Incluye uuid_sync para idempotencia.
  * Si los detalles fallan, hace rollback de la cabecera.
  */
 export async function registrarDevolucionPosicion(
@@ -1230,9 +1398,19 @@ export async function registrarDevolucionPosicion(
   usuarioCorreo: string,
   detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
 ): Promise<void> {
+  const uuidSync = generateUuidSync()
+
+  // Idempotencia
+  const { data: existing } = await dataClient
+    .from('piso_movimientos')
+    .select('id')
+    .eq('uuid_sync', uuidSync)
+    .maybeSingle()
+  if (existing) return
+
   const { data: movData, error: movErr } = await dataClient
     .from('piso_movimientos')
-    .insert({ tipo: 'devolucion', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+    .insert({ tipo: 'devolucion', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo, uuid_sync: uuidSync })
     .select('id')
     .single()
   if (movErr) throw movErr
@@ -1250,11 +1428,8 @@ export async function registrarDevolucionPosicion(
       .from('piso_movimiento_detalles')
       .insert(detRows)
     if (detErr) {
-      // Rollback: eliminar cabecera huérfana
       console.error('[registrarDevolucionPosicion] Error insertando detalles, haciendo rollback:', detErr.message)
-      await dataClient.from('piso_movimientos').delete().eq('id', movimientoId).catch((rbErr) => {
-        console.error('[registrarDevolucionPosicion] Error en rollback:', rbErr)
-      })
+      await rollbackCabeceras([movimientoId], 'registrarDevolucionPosicion')
       throw detErr
     }
   }
@@ -1263,7 +1438,8 @@ export async function registrarDevolucionPosicion(
 /**
  * Registra un traslado entre posiciones del mismo sector.
  * Crea una salida en el origen y un ingreso en el destino.
- * Si la segunda operación falla, intenta deshacer la primera (rollback manual).
+ * Ambas cabeceras comparten un uuid_sync para detectar traslados parciales.
+ * Si cualquier paso falla, hace rollback completo.
  */
 export async function registrarTrasladoPosicion(
   turno: string,
@@ -1273,27 +1449,42 @@ export async function registrarTrasladoPosicion(
   detallesSalida: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[],
   detallesIngreso: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
 ): Promise<void> {
+  const uuidSync = generateUuidSync()
+
+  // Idempotencia: si ya existen 2 movimientos con este uuid_sync, ya fue procesado
+  const { data: existingMovs, error: checkErr } = await dataClient
+    .from('piso_movimientos')
+    .select('id')
+    .eq('uuid_sync', uuidSync)
+  if (checkErr) throw checkErr
+  if (existingMovs && existingMovs.length >= 2) return // Traslado ya registrado
+
+  // Si hay exactamente 1 movimiento, es un traslado parcial — limpiar y reintentar
+  if (existingMovs && existingMovs.length === 1) {
+    console.warn('[registrarTrasladoPosicion] Traslado parcial detectado, limpiando:', uuidSync)
+    const partialId = (existingMovs[0] as { id: string }).id
+    await rollbackDetalles([partialId], 'registrarTrasladoPosicion-partial')
+    await rollbackCabeceras([partialId], 'registrarTrasladoPosicion-partial')
+  }
+
   // Crear movimiento de salida (origen)
   const { data: salData, error: salErr } = await dataClient
     .from('piso_movimientos')
-    .insert({ tipo: 'salida', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+    .insert({ tipo: 'salida', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo, uuid_sync: uuidSync })
     .select('id')
     .single()
   if (salErr) throw salErr
   const salId = (salData as { id: string }).id
 
-  // Crear movimiento de ingreso (destino) con tipo 'ingreso'
+  // Crear movimiento de ingreso (destino)
   const { data: ingData, error: ingErr } = await dataClient
     .from('piso_movimientos')
-    .insert({ tipo: 'ingreso', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
+    .insert({ tipo: 'ingreso', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo, uuid_sync: uuidSync })
     .select('id')
     .single()
   if (ingErr) {
-    // Rollback: eliminar la salida que ya se creó
     console.error('[registrarTrasladoPosicion] Error creando ingreso, haciendo rollback de salida:', ingErr.message)
-    await dataClient.from('piso_movimientos').delete().eq('id', salId).catch((rbErr) => {
-      console.error('[registrarTrasladoPosicion] Error en rollback de salida:', rbErr)
-    })
+    await rollbackCabeceras([salId], 'registrarTrasladoPosicion')
     throw ingErr
   }
   const ingId = (ingData as { id: string }).id
@@ -1310,16 +1501,9 @@ export async function registrarTrasladoPosicion(
       }))
     )
     if (salDetErr) {
-      // Rollback: eliminar ambos movimientos
-      console.error('[registrarTrasladoPosicion] Error en detalles salida, haciendo rollback completo:', salDetErr.message)
-      await Promise.all([
-        dataClient.from('piso_movimientos').delete().eq('id', salId).catch((rbErr) => {
-          console.error('[registrarTrasladoPosicion] rollback salId failed:', rbErr)
-        }),
-        dataClient.from('piso_movimientos').delete().eq('id', ingId).catch((rbErr) => {
-          console.error('[registrarTrasladoPosicion] rollback ingId failed:', rbErr)
-        }),
-      ])
+      console.error('[registrarTrasladoPosicion] Error en detalles salida, rollback completo:', salDetErr.message)
+      await rollbackDetalles([salId, ingId], 'registrarTrasladoPosicion')
+      await rollbackCabeceras([salId, ingId], 'registrarTrasladoPosicion')
       throw salDetErr
     }
   }
@@ -1336,22 +1520,9 @@ export async function registrarTrasladoPosicion(
       }))
     )
     if (ingDetErr) {
-      // Rollback: limpiar todo
-      console.error('[registrarTrasladoPosicion] Error en detalles ingreso, haciendo rollback completo:', ingDetErr.message)
-      await Promise.all([
-        dataClient.from('piso_movimiento_detalles').delete().eq('movimiento_id', salId).catch((rbErr) => {
-          console.error('[registrarTrasladoPosicion] rollback detSalId failed:', rbErr)
-        }),
-        dataClient.from('piso_movimiento_detalles').delete().eq('movimiento_id', ingId).catch((rbErr) => {
-          console.error('[registrarTrasladoPosicion] rollback detIngId failed:', rbErr)
-        }),
-        dataClient.from('piso_movimientos').delete().eq('id', salId).catch((rbErr) => {
-          console.error('[registrarTrasladoPosicion] rollback movSalId failed:', rbErr)
-        }),
-        dataClient.from('piso_movimientos').delete().eq('id', ingId).catch((rbErr) => {
-          console.error('[registrarTrasladoPosicion] rollback movIngId failed:', rbErr)
-        }),
-      ])
+      console.error('[registrarTrasladoPosicion] Error en detalles ingreso, rollback completo:', ingDetErr.message)
+      await rollbackDetalles([salId, ingId], 'registrarTrasladoPosicion')
+      await rollbackCabeceras([salId, ingId], 'registrarTrasladoPosicion')
       throw ingDetErr
     }
   }
@@ -1514,7 +1685,9 @@ export async function listarBloquesParaSelect(): Promise<{ id: string; codigo: s
 
 /**
  * Busca un bloque por código exacto. Busca en piso_bloques primero, luego en catalogo.
- * Si lo encuentra en catalogo pero no en piso_bloques, lo crea automáticamente.
+ * Si lo encuentra en catalogo pero no en piso_bloques, lo crea automáticamente
+ * (es legítimo: el producto existe en el sistema de Racks).
+ * Si no se encuentra en ninguna tabla, retorna null (no auto-crea para evitar bloques basura).
  */
 export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: string; codigo: string; descripcion: string; unidad: string } | null> {
   const target = codigo.trim().toUpperCase()
@@ -1534,7 +1707,7 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
     }
   } catch (err) { console.error('[Piso] Error en búsqueda piso_bloques:', err) }
 
-  // 2. Buscar en catalogo (Racks)
+  // 2. Buscar en catalogo (Racks) — si existe, auto-crear en piso_bloques
   try {
     const { data, error } = await dataClient
       .from('catalogo')
@@ -1544,7 +1717,7 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
     if (error) console.error('[Piso] Error buscando en catalogo:', error.message)
     if (data && data.length > 0) {
       const c = data[0] as { codigo: string; descripcion: string; un: string }
-      // Auto-crear en piso_bloques para futuro uso
+      // Auto-crear en piso_bloques para futuro uso (producto legítimo del catálogo)
       try {
         const { data: inserted } = await dataClient
           .from('piso_bloques')
@@ -1564,25 +1737,7 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
     }
   } catch (err) { console.error('[Piso] Error en búsqueda catalogo:', err) }
 
-  // 3. No encontrado en ninguna tabla — auto-crear en piso_bloques con info mínima
-  try {
-    console.log('[Piso] Bloque no encontrado en ninguna tabla, auto-creando:', target)
-    const { data: inserted, error: insertErr } = await dataClient
-      .from('piso_bloques')
-      .insert({ codigo: target, descripcion: '', unidad: 'KG' })
-      .select('id')
-      .single()
-    if (!insertErr && inserted) {
-      return {
-        id: (inserted as { id: string }).id,
-        codigo: target,
-        descripcion: '',
-        unidad: 'KG',
-      }
-    }
-    console.warn('[Piso] Auto-crear piso_bloques falló:', insertErr)
-  } catch (err) { console.warn('[Piso] Error auto-creando bloque:', err) }
-
+  // 3. No encontrado en ninguna tabla — retornar null (no auto-crear bloques basura)
   return null
 }
 
@@ -1606,11 +1761,25 @@ export type StockPisoItem = {
  */
 export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
   try {
-  // 1. Fetch ALL detalles with movement type
-  const { data: detData, error: detErr } = await dataClient
-    .from('piso_movimiento_detalles')
-    .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)')
-  if (detErr) throw detErr
+  // 1. Fetch detalles with movement type — paginated to avoid unbounded growth
+  const DET_PAGE_SIZE = 2000
+  const DET_MAX_PAGES = 20  // máx 40,000 detalles (suficiente para la escala actual)
+  let allDetData: Record<string, unknown>[] = []
+  let detFrom = 0
+  let detPages = 0
+  while (detPages++ < DET_MAX_PAGES) {
+    const detTo = detFrom + DET_PAGE_SIZE - 1
+    const { data: pageData, error: detErr } = await dataClient
+      .from('piso_movimiento_detalles')
+      .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)')
+      .range(detFrom, detTo)
+    if (detErr) throw detErr
+    const rows = pageData ?? []
+    allDetData.push(...rows)
+    if (rows.length < DET_PAGE_SIZE) break
+    detFrom += DET_PAGE_SIZE
+  }
+  if (allDetData.length === 0) return []
 
   // 2. Group by (bloque_id, nivel_id)
   const isIngresoType = (tipo: string) =>
@@ -1629,7 +1798,7 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
     movimiento_id: string
     piso_movimientos: { tipo: string; codigo_inc?: string | null } | null | { tipo: string; codigo_inc?: string | null }[]
   }
-  const rawDets = (detData ?? []) as RawDet[]
+  const rawDets = allDetData as RawDet[]
 
   const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[]>()
   for (const d of rawDets) {

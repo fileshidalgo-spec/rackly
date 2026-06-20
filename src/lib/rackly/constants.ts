@@ -50,7 +50,9 @@ export const POLLING_OCUPACION = 10000    // ms — refresco de ocupación
 export const MAX_ITERATIONS = 100         // Guard para bucles de paginación
 
 // ── Timeouts ──────────────────────────────────────────
-export const QUERY_TIMEOUT_MS = 8000      // Timeout para queries de stock por código
+// Timeout para queries de stock por código.
+// 15 s permite tolerar conexiones lentas o queries complejas (agregaciones, joins).
+export const QUERY_TIMEOUT_MS = 15000
 
 // ── Seguridad ───────────────────────────────────────────
 export const PASSWORD_MIN_LENGTH = 6

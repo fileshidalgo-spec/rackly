@@ -69,9 +69,9 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="text-sm text-slate-400">
               La aplicación encontró un problema. Puedes intentar recargar la página para continuar.
             </p>
-            {this.state.error && (
-              <p className="text-xs text-red-400/80 font-mono bg-red-500/5 rounded-lg p-3 overflow-auto max-h-24">
-                {this.state.error.message}
+            {this.state.error?.message && (
+              <p className="text-sm text-muted-foreground mt-2">
+                Ha ocurrido un error inesperado. Por favor recarga la página.
               </p>
             )}
             <div className="flex gap-3 justify-center pt-2">

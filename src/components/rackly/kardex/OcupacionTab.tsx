@@ -122,6 +122,7 @@ export function OcupacionTab() {
   const [bloqueFilter, setBloqueFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState<{ bloque: string; torre: string; piso: string; posicion: string; stock: StockEnUbicacion[] } | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [detailMode, setDetailMode] = useState<DetailMode>('view')
   const [busyExport, setBusyExport] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
@@ -278,10 +279,12 @@ export function OcupacionTab() {
 
   // ── Handlers ──
   async function handleCellClick(b: string, t: string, p: string, pos: string) {
+    setDetailLoading(true)
     try {
       setDetail({ bloque: b, torre: t, piso: p, posicion: pos, stock: await stockEnUbicacion(b, t, p, pos) })
       setDetailMode('view')
     } catch { toast.error('Error al cargar detalle') }
+    finally { setDetailLoading(false) }
   }
 
   function openIngreso(tipo?: 'ingreso' | 'devolucion') {
@@ -322,7 +325,7 @@ export function OcupacionTab() {
         .order('f_modificacion', { ascending: false })
         .range(offset, offset + 5)
       if (error) throw error
-      const items: HistorialItem[] = (data ?? []).map((r: any) => ({
+      const items: HistorialItem[] = (data ?? []).map((r: Record<string, unknown>) => ({
         id: r.id,
         tipo: r.tipo,
         fecha: r.f_modificacion,
@@ -833,7 +836,9 @@ export function OcupacionTab() {
           {detail && (<>
             {/* ═══════ MODO: VISTA ═══════ */}
             {isView && (
-              detail.stock.length > 0 ? (
+              <>
+              {detailLoading && <div className="flex items-center justify-center py-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin mr-2" />Cargando...</div>}
+              {!detailLoading && (detail.stock.length > 0 ? (
                 <>
                   {(() => {
                     const multiples = codigosConMultiplesLotes(detail.stock)
@@ -969,8 +974,8 @@ export function OcupacionTab() {
                 </div>
               )
             )}
-
-            {/* ═══════ MODO: INC (Ingreso INC) ═══════ */}
+            </>
+            )}
             {isInc && (
               <div className="space-y-3">
                 <div className="rounded-lg border border-rose-500/25 bg-rose-950/10 p-3 space-y-1.5">

@@ -385,7 +385,7 @@ export function OcupacionTab() {
       })
       toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
+    } catch (err: unknown) { toast.error('Error', { description: extractError(err) }) } finally { setActionBusy(false) }
   }
 
   function openInc() {
@@ -408,7 +408,7 @@ export function OcupacionTab() {
       })
       toast.success('INC registrado')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
+    } catch (err: unknown) { toast.error('Error', { description: extractError(err) }) } finally { setActionBusy(false) }
   }
 
   function handleIncCatalogoPick(item: { codigo: string; descripcion: string; un: string }) {
@@ -596,7 +596,7 @@ export function OcupacionTab() {
       }
       const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Ocupación'); XLSX.writeFile(wb, `RACKLY_Ocupacion_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
-    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusyExport(false) }
+    } catch (err: unknown) { toast.error('Error exportando', { description: extractError(err) }) } finally { setBusyExport(false) }
   }
 
   if (loading) {

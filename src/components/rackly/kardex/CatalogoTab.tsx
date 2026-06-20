@@ -12,7 +12,7 @@ import {
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
 import { useAuth } from '@/hooks/useAuth'
-import { supabase } from '@/lib/supabase/client'
+import { dataClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -158,7 +158,7 @@ export function CatalogoTab() {
     }
     setFormBusy(true)
     try {
-      const { data: sbmData } = await supabase
+      const { data: sbmData } = await dataClient
         .from('catalogo')
         .select('stock_big_magic')
         .eq('codigo', formCodigo.trim().toUpperCase())
@@ -168,7 +168,7 @@ export function CatalogoTab() {
 
       if (editItem) {
         // Update
-        const { error } = await supabase
+        const { error } = await dataClient
           .from('catalogo')
           .update({
             codigo: formCodigo.trim().toUpperCase(),
@@ -182,7 +182,7 @@ export function CatalogoTab() {
         toast.success('Ítem actualizado')
       } else {
         // Insert
-        const { error } = await supabase
+        const { error } = await dataClient
           .from('catalogo')
           .upsert({
             codigo: formCodigo.trim().toUpperCase(),
@@ -217,7 +217,7 @@ export function CatalogoTab() {
     if (!deleteTarget) return
     setFormBusy(true)
     try {
-      const { error } = await supabase
+      const { error } = await dataClient
         .from('catalogo')
         .delete()
         .eq('codigo', deleteTarget)

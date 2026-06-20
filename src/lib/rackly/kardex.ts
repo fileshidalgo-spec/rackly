@@ -219,22 +219,26 @@ async function addMovimientoFallback(
   try {
     return await fetchMovimientos()
   } catch {
-    return []
+    console.warn('[addMovimientoFallback] Insert exitoso pero fetchMovimientos() falló.')
+    return null as unknown as Movimiento[]
   }
 }
 
 /** Chequeo de idempotencia: verificar si un movimiento con este uuid_sync ya existe */
 async function checkExistingByUuidSync(uuidSync: string): Promise<boolean> {
-  const { data, error } = await dataClient
-    .from('movimientos')
-    .select('id')
-    .eq('uuid_sync', uuidSync)
-    .limit(1)
-  if (error) {
-    console.warn('[checkExistingByUuidSync] Error consultando:', error.message)
-    return false // Si falla la consulta, seguir con el insert normal
+  try {
+    const { data, error } = await dataClient
+      .from('movimientos')
+      .select('id')
+      .eq('uuid_sync', uuidSync)
+      .limit(1)
+    if (error) throw error
+    return (data ?? []).length > 0
+  } catch (err) {
+    console.error('[checkExistingByUuidSync] Error consultando uuid_sync:', err)
+    // Si falla la consulta, NO asumir que no existe — lanzar para que el caller decida
+    throw new Error('IDEMPOTENCY_CHECK_FAILED|No se pudo verificar si el movimiento ya existe. Reintente.')
   }
-  return (data ?? []).length > 0
 }
 
 export async function addMovimiento(
@@ -245,9 +249,9 @@ export async function addMovimiento(
   if (uuidSync) {
     const exists = await checkExistingByUuidSync(uuidSync)
     if (exists) {
-      console.log('[addMovimiento] Movimiento ya existe (uuid_sync):', uuidSync, '— saltando insert.')
+      console.warn('[addMovimiento] Movimiento ya existe (uuid_sync), saltando insert:', uuidSync)
       // Ya existe: refrescar y retornar como si hubiera sido exitoso
-      try { return await fetchMovimientos() } catch { return [] }
+      return await fetchMovimientos()
     }
   }
 
@@ -298,12 +302,13 @@ export async function addMovimiento(
     }
     // RPC exitosa: el movimiento ya fue registrado en la DB.
     // Intentar refrescar la lista de movimientos, pero si falla (timeout, red)
-    // NO propagar el error — el movimiento ya está guardado.
+    // NO propagar el error — el movimiento ya está guardado. Retornar null
+    // para que el caller pueda distinguir "se guardó pero no se refrescó".
     try {
       return await fetchMovimientos()
     } catch {
       console.warn('[addMovimiento] RPC exitosa pero fetchMovimientos() falló. Movimiento ya registrado.')
-      return []
+      return null as unknown as Movimiento[]
     }
   } catch (err: unknown) {
     // Si la RPC no existe aún (SQL no ejecutado), fallback al insert directo
@@ -482,7 +487,8 @@ export async function stockEnUbicacion(
         proveedor: (r.proveedor as string) ?? '',
         codigoInc: (r.codigo_inc as string) ?? undefined,
       }))
-    } catch {
+    } catch (err) {
+      console.error('[stockEnUbicacion] Tanto cálculo directo como RPC fallback fallaron:', err)
       return []
     }
   }
@@ -532,7 +538,10 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]>>
       if (items.length > 0) result.set(key, items)
     }
     return result
-  } catch { return new Map() }
+  } catch (err) {
+    console.error('[fetchIncPorUbicacion] Error consultando INC:', err)
+    return new Map()
+  }
 }
 
 export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
@@ -655,7 +664,8 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
   try {
     return await fetchMovimientos()
   } catch {
-    return []
+    console.warn('[trasladarMovimientoFallback] Insert exitoso pero fetchMovimientos() falló.')
+    return null as unknown as Movimiento[]
   }
 }
 
@@ -709,12 +719,13 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       }
       throw error
     }
-    // RPC exitosa: refrescar movimientos, pero no fallar si fetchMovimientos falla
+    // RPC exitosa: refrescar movimientos, pero no fallar si fetchMovimientos falla.
+    // Retornar null para que el caller distinga "se guardó pero no se refrescó".
     try {
       return await fetchMovimientos()
     } catch {
       console.warn('[trasladarMovimiento] RPC exitosa pero fetchMovimientos() falló. Traslado ya registrado.')
-      return []
+      return null as unknown as Movimiento[]
     }
   } catch (err: unknown) {
     // Fallback si la RPC no existe aún

@@ -1,6 +1,7 @@
 'use client'
 
-import { dataClient, supabase } from '@/lib/supabase/client'
+import { dataClient } from '@/lib/supabase/client'
+import { QUERY_TIMEOUT_MS } from '@/lib/rackly/constants'
 
 /** Limpia el prefijo del sector del código de subcolumna.
  *  BD guarda "BA1" (prefijo "B" + letra "A" + idx "1"), queremos solo "A1" */
@@ -1072,6 +1073,7 @@ export async function stockDetalleNivel(
 /**
  * Registra un ingreso directo a una posición (sin pasar por el RPC completo).
  * Permite múltiples bloques en una sola posición.
+ * Si los detalles fallan, hace rollback de la cabecera.
  */
 export async function registrarIngresoPosicion(
   turno: string,
@@ -1112,12 +1114,18 @@ export async function registrarIngresoPosicion(
     const { error: detErr } = await dataClient
       .from('piso_movimiento_detalles')
       .insert(detRows)
-    if (detErr) throw detErr
+    if (detErr) {
+      // Rollback: eliminar cabecera huérfana
+      console.error('[registrarIngresoPosicion] Error insertando detalles, haciendo rollback:', detErr.message)
+      await dataClient.from('piso_movimientos').delete().eq('id', movimientoId).catch(() => {})
+      throw detErr
+    }
   }
 }
 
 /**
  * Registra una salida de stock de una posición.
+ * Si los detalles fallan, hace rollback de la cabecera.
  */
 export async function registrarSalidaPosicion(
   turno: string,
@@ -1145,13 +1153,19 @@ export async function registrarSalidaPosicion(
     const { error: detErr } = await dataClient
       .from('piso_movimiento_detalles')
       .insert(detRows)
-    if (detErr) throw detErr
+    if (detErr) {
+      // Rollback: eliminar cabecera huérfana
+      console.error('[registrarSalidaPosicion] Error insertando detalles, haciendo rollback:', detErr.message)
+      await dataClient.from('piso_movimientos').delete().eq('id', movimientoId).catch(() => {})
+      throw detErr
+    }
   }
 }
 
 /**
  * Registra una devolución de stock a una posición.
  * Funciona como un ingreso pero con tipo 'devolucion'.
+ * Si los detalles fallan, hace rollback de la cabecera.
  */
 export async function registrarDevolucionPosicion(
   turno: string,
@@ -1179,13 +1193,19 @@ export async function registrarDevolucionPosicion(
     const { error: detErr } = await dataClient
       .from('piso_movimiento_detalles')
       .insert(detRows)
-    if (detErr) throw detErr
+    if (detErr) {
+      // Rollback: eliminar cabecera huérfana
+      console.error('[registrarDevolucionPosicion] Error insertando detalles, haciendo rollback:', detErr.message)
+      await dataClient.from('piso_movimientos').delete().eq('id', movimientoId).catch(() => {})
+      throw detErr
+    }
   }
 }
 
 /**
  * Registra un traslado entre posiciones del mismo sector.
  * Crea una salida en el origen y un ingreso en el destino.
+ * Si la segunda operación falla, intenta deshacer la primera (rollback manual).
  */
 export async function registrarTrasladoPosicion(
   turno: string,
@@ -1202,6 +1222,7 @@ export async function registrarTrasladoPosicion(
     .select('id')
     .single()
   if (salErr) throw salErr
+  const salId = (salData as { id: string }).id
 
   // Crear movimiento de ingreso (destino) con tipo 'ingreso'
   const { data: ingData, error: ingErr } = await dataClient
@@ -1209,34 +1230,58 @@ export async function registrarTrasladoPosicion(
     .insert({ tipo: 'ingreso', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo })
     .select('id')
     .single()
-  if (ingErr) throw ingErr
+  if (ingErr) {
+    // Rollback: eliminar la salida que ya se creó
+    console.error('[registrarTrasladoPosicion] Error creando ingreso, haciendo rollback de salida:', ingErr.message)
+    await dataClient.from('piso_movimientos').delete().eq('id', salId).catch(() => {})
+    throw ingErr
+  }
+  const ingId = (ingData as { id: string }).id
 
   // Insertar detalles de salida
   if (detallesSalida.length > 0) {
     const { error: salDetErr } = await dataClient.from('piso_movimiento_detalles').insert(
       detallesSalida.map((d) => ({
-        movimiento_id: (salData as { id: string }).id,
+        movimiento_id: salId,
         nivel_id: d.nivel_id,
         bloque_id: d.bloque_id,
         cantidad: d.cantidad,
         ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
       }))
     )
-    if (salDetErr) throw salDetErr
+    if (salDetErr) {
+      // Rollback: eliminar ambos movimientos
+      console.error('[registrarTrasladoPosicion] Error en detalles salida, haciendo rollback completo:', salDetErr.message)
+      await Promise.all([
+        dataClient.from('piso_movimientos').delete().eq('id', salId).catch(() => {}),
+        dataClient.from('piso_movimientos').delete().eq('id', ingId).catch(() => {}),
+      ])
+      throw salDetErr
+    }
   }
 
   // Insertar detalles de ingreso
   if (detallesIngreso.length > 0) {
     const { error: ingDetErr } = await dataClient.from('piso_movimiento_detalles').insert(
       detallesIngreso.map((d) => ({
-        movimiento_id: (ingData as { id: string }).id,
+        movimiento_id: ingId,
         nivel_id: d.nivel_id,
         bloque_id: d.bloque_id,
         cantidad: d.cantidad,
         ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
       }))
     )
-    if (ingDetErr) throw ingDetErr
+    if (ingDetErr) {
+      // Rollback: limpiar todo
+      console.error('[registrarTrasladoPosicion] Error en detalles ingreso, haciendo rollback completo:', ingDetErr.message)
+      await Promise.all([
+        dataClient.from('piso_movimiento_detalles').delete().eq('movimiento_id', salId).catch(() => {}),
+        dataClient.from('piso_movimiento_detalles').delete().eq('movimiento_id', ingId).catch(() => {}),
+        dataClient.from('piso_movimientos').delete().eq('id', salId).catch(() => {}),
+        dataClient.from('piso_movimientos').delete().eq('id', ingId).catch(() => {}),
+      ])
+      throw ingDetErr
+    }
   }
 }
 
@@ -1683,16 +1728,15 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
 
 /**
  * Busca stock en Piso para UN código específico.
- * Usa supabase (anon) directamente con JOINs profundos para resolver
+ * Usa dataClient (service role) con JOINs profundos para resolver
  * toda la cadena de ubicación en una sola query, evitando la cadena
  * de 6-7 queries secuenciales que causaba loading infinito.
  */
 export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[]> {
   const code = codigo.trim().toUpperCase()
-  console.log('[stockPisoPorCodigo] Buscando código:', code)
 
   // ─── TIMEOUT: seguridad contra hang ───
-  const TIMEOUT_MS = 8000
+  const TIMEOUT_MS = QUERY_TIMEOUT_MS
   const result = await Promise.race([
     _stockPisoPorCodigoImpl(code),
     new Promise<StockPisoItem[]>((resolve) =>
@@ -1708,7 +1752,7 @@ export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[
 async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
   try {
     // ─── 1. Buscar bloque por código ───
-    const { data: bloques, error: errB } = await supabase
+    const { data: bloques, error: errB } = await dataClient
       .from('piso_bloques')
       .select('id, codigo, descripcion, unidad')
       .ilike('codigo', code)
@@ -1716,14 +1760,11 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
       console.warn('[stockPisoPorCodigo] Error buscando bloques:', errB.message)
       return []
     }
-    if (!bloques || bloques.length === 0) {
-      console.log('[stockPisoPorCodigo] Sin bloques para:', code)
-      return []
-    }
+    if (!bloques || bloques.length === 0) return []
 
-    const bloqueIds = bloques.map((b: any) => b.id)
+    const bloqueIds = bloques.map((b: { id: string }) => b.id)
     const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
-    for (const b of bloques as any[]) {
+    for (const b of bloques as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
       bloqueInfoMap.set(b.id, {
         codigo: b.codigo ?? '',
         descripcion: b.descripcion ?? '',
@@ -1733,7 +1774,7 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
 
     // ─── 2. Detalles de movimiento con JOIN profundo: movimiento + nivel → posicion → subcolumna → columna → sector ───
     // Una sola query que resuelve toda la cadena de ubicación
-    const { data: detalles, error: errD } = await supabase
+    const { data: detalles, error: errD } = await dataClient
       .from('piso_movimiento_detalles')
       .select(`
         bloque_id,
@@ -1767,10 +1808,7 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
       console.warn('[stockPisoPorCodigo] Error detalles:', errD.message)
       return []
     }
-    if (!detalles || detalles.length === 0) {
-      console.log('[stockPisoPorCodigo] Sin movimientos para los bloques')
-      return []
-    }
+    if (!detalles || detalles.length === 0) return []
 
     // ─── 3. FEFO calculation ───
     type DetRow = {
@@ -1778,35 +1816,16 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
       nivel_id: string
       cantidad: unknown
       fecha_vencimiento?: string | null
-      piso_movimientos: any
-      piso_niveles: {
-        posicion_id: string
-        piso_posiciones: {
-          numero: number
-          subcolumna_id: string
-          piso_subcolumnas: {
-            codigo: string
-            columna_id: string
-            piso_columnas: {
-              letra: string
-              sector_id: string
-              piso_sectores: {
-                nombre: string
-                n_columnas: number
-                n_subcolumnas: number
-              }
-            }
-          }
-        }
-      }
+      piso_movimientos: { tipo: string; codigo_inc: string | null } | null | { tipo: string; codigo_inc: string | null }[]
+      piso_niveles: PisoNivelLoc
     }
 
-    const getTipo = (pm: any): string => {
+    const getTipo = (pm: { tipo?: string } | { tipo?: string }[] | null): string => {
       if (!pm) return ''
       if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo ?? '' : ''
       return pm.tipo ?? ''
     }
-    const getCodigoInc = (pm: any): string => {
+    const getCodigoInc = (pm: { codigo_inc?: string | null } | { codigo_inc?: string | null }[] | null): string => {
       if (!pm) return ''
       if (Array.isArray(pm)) return pm.length > 0 ? pm[0].codigo_inc || '' : ''
       return pm.codigo_inc || ''
@@ -1902,7 +1921,6 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
       }
     }
 
-    console.log('[stockPisoPorCodigo] Resultados:', results.length)
     return results.sort((a, b) => {
       if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
       if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
@@ -1915,8 +1933,30 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
   }
 }
 
+/** Tipo para la cadena de JOINs deep en piso_niveles */
+type PisoNivelLoc = {
+  posicion_id: string
+  piso_posiciones: {
+    numero: number
+    subcolumna_id: string
+    piso_subcolumnas: {
+      codigo: string
+      columna_id: string
+      piso_columnas: {
+        letra: string
+        sector_id: string
+        piso_sectores: {
+          nombre: string
+          n_columnas: number
+          n_subcolumnas: number
+        }
+      }
+    }
+  }
+}
+
 /** Construye string de ubicación legible a partir de la cadena de JOINs */
-function buildUbicacion(loc: any): string {
+function buildUbicacion(loc: PisoNivelLoc): string {
   if (!loc?.piso_posiciones) return ''
   const pos = loc.piso_posiciones
   const sub = pos.piso_subcolumnas

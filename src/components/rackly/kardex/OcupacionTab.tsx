@@ -42,6 +42,7 @@ import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, Building2, Layers,
   BoxSelect, Activity, ArrowRightLeft, RotateCcw, X, AlertTriangle, CheckCircle2,
   Package, CalendarOff, CalendarClock, Flame, Clock, Plus, RotateCw as RotateCwIcon,
+  Info,
 } from 'lucide-react'
 
 // Calcula días restantes hasta vencimiento (negativo si ya venció)
@@ -163,6 +164,7 @@ export function OcupacionTab() {
   const [trDestPiso, setTrDestPiso] = useState('')
   const [trDestPos, setTrDestPos] = useState('')
   const [trCantidad, setTrCantidad] = useState('')
+  const [trCorregirDiferencia, setTrCorregirDiferencia] = useState(false)
 
   // ── INC state ──
   const [incCodigo, setIncCodigo] = useState('')
@@ -252,7 +254,7 @@ export function OcupacionTab() {
   const trExcede = trItem ? trQtyNum > trItem.stock : false
   const trFalta = trItem ? trQtyNum > 0 && trQtyNum < trItem.stock : false
   const trDiferencia = trItem ? trQtyNum - trItem.stock : 0
-  const trTieneAjuste = trExcede || trFalta
+  const trTieneAjuste = trExcede || (trFalta && trCorregirDiferencia)
 
   // ── Ingreso: proveedor visible? ──
   const showProveedor = ingDescripcion ? requiereProveedor(ingDescripcion) : false
@@ -284,6 +286,7 @@ export function OcupacionTab() {
     if (!detail?.stock[idx]) return
     setTrIdx(idx); setTrCantidad(String(detail.stock[idx].stock))
     setTrDestBloque(''); setTrDestTorre(''); setTrDestPiso(''); setTrDestPos('')
+    setTrCorregirDiferencia(false)
     setDetailMode('transferir')
   }
 
@@ -477,6 +480,12 @@ export function OcupacionTab() {
       toast.success(wasTrOffline ? 'Traslado guardado (offline)' : 'Traslado registrado', {
         ...(wasTrOffline ? { description: 'Se sincronizará al reconectarse', duration: 5000 } : {}),
       })
+      if (!wasTrOffline && trFalta && trCorregirDiferencia) {
+        toast.info(`Salida de ajuste: -${Math.abs(trDiferencia)} ${trItem.un} en origen`, { duration: 6000 })
+      }
+      if (!wasTrOffline && trExcede) {
+        toast.info(`Ajuste automático: +${Math.abs(trDiferencia)} ${trItem.un} ingreso en origen`, { duration: 6000 })
+      }
       if (mountedRef.current && !wasTrOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
@@ -1180,24 +1189,50 @@ export function OcupacionTab() {
                 </div>
 
                 {/* Ajuste automático */}
-                {trTieneAjuste && (
-                  <div className={`rounded-lg border p-2.5 space-y-1.5 ${trExcede ? 'border-amber-500/30 bg-amber-500/5' : 'border-sky-500/30 bg-sky-500/5'}`}>
+                {trExcede && (
+                  <div className={`rounded-lg border p-2.5 space-y-1.5 border-amber-500/30 bg-amber-500/5`}>
                     <div className="flex items-center gap-1.5">
-                      <AlertTriangle className={`w-3.5 h-3.5 ${trExcede ? 'text-amber-400' : 'text-sky-400'}`} />
-                      <span className={`text-[10px] font-bold ${trExcede ? 'text-amber-400' : 'text-sky-400'}`}>
-                        {trExcede ? 'Ajuste positivo' : 'Ajuste negativo'}
-                      </span>
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                      <span className="text-[10px] font-bold text-amber-400">Ajuste positivo</span>
                     </div>
                     <p className="text-[10px] text-slate-400">
-                      {trExcede
-                        ? `Se registrará un ingreso de ${Math.abs(trDiferencia)} ${trItem.un} en origen para cubrir la diferencia.`
-                        : `Se registrará una salida de ${Math.abs(trDiferencia)} ${trItem.un} en origen para corregir el excedente.`}
+                      Se registrará un ingreso de {Math.abs(trDiferencia)} {trItem?.un} en origen para cubrir la diferencia.
                     </p>
                     <div className="flex gap-2 text-[10px]">
-                      <span className="text-slate-500">Origen: {trItem.stock} → {trQtyNum} {trItem.un}</span>
-                      <span className={`${trExcede ? 'text-amber-400' : 'text-sky-400'}`}>[{trDiferencia > 0 ? '+' : ''}{Math.abs(trDiferencia)} ajuste]</span>
+                      <span className="text-slate-500">Origen: {trItem.stock} → {trQtyNum} {trItem?.un}</span>
+                      <span className="text-amber-400">[+{Math.abs(trDiferencia)} ajuste]</span>
                     </div>
-                    <p className="text-[10px] text-slate-500">Destino: +{trQtyNum} {trItem.un}</p>
+                    <p className="text-[10px] text-slate-500">Destino: +{trQtyNum} {trItem?.un}</p>
+                  </div>
+                )}
+                {trFalta && (
+                  <div className={`rounded-lg border p-2.5 space-y-1.5 border-sky-500/30 bg-sky-500/5`}>
+                    <div className="flex items-center gap-1.5">
+                      <Info className="w-3.5 h-3.5 text-sky-400" />
+                      <span className="text-[10px] font-bold text-sky-400">Traslado parcial</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      La posición de origen quedará con un <strong>saldo de {Math.abs(trDiferencia)} {trItem?.un}</strong>.
+                    </p>
+                    <p className="text-[10px] text-slate-400">
+                      ¿Qué deseas hacer con la diferencia?
+                    </p>
+                    <div className="space-y-1.5 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setTrCorregirDiferencia(false)}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-[10px] transition-all border ${!trCorregirDiferencia ? 'border-sky-500/40 bg-sky-500/10 text-sky-300' : 'border-slate-600/30 bg-slate-700/30 text-slate-500 hover:bg-slate-700/50'}`}
+                      >
+                        Dejar saldo de {Math.abs(trDiferencia)} {trItem?.un} en origen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTrCorregirDiferencia(true)}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-[10px] transition-all border ${trCorregirDiferencia ? 'border-sky-500/40 bg-sky-500/10 text-sky-300' : 'border-slate-600/30 bg-slate-700/30 text-slate-500 hover:bg-slate-700/50'}`}
+                      >
+                        Registrar salida de ajuste ({Math.abs(trDiferencia)} {trItem?.un}) — origen quedará en 0
+                      </button>
+                    </div>
                   </div>
                 )}
 

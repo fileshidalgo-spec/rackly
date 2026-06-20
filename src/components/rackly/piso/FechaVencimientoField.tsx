@@ -145,7 +145,11 @@ const FechaVencimientoField = function FechaVencimientoField({
     let left = 0
     if (inputContainerRef.current) {
       const rect = inputContainerRef.current.getBoundingClientRect()
-      top = rect.bottom + 4
+      // Abrir hacia ARRIBA del campo de fecha para mejor visibilidad
+      // El calendario mide ~290px de alto (vista días) o ~340px (vista meses)
+      top = rect.top - 300
+      // Si no hay espacio arriba, abrir hacia abajo
+      if (top < 8) top = rect.bottom + 4
       left = Math.max(8, Math.min(rect.left, window.innerWidth - 260))
     }
 

@@ -26,7 +26,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { toast } from 'sonner'
-import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle, MapPin, Loader2 } from 'lucide-react'
+import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
 export function StockTab() {

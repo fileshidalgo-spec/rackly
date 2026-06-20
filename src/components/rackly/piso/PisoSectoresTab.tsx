@@ -915,6 +915,13 @@ export function PisoSectoresTab() {
     const filteredItems = salNivelTab === 'all' ? salItems : salItemsByNivel
     const validRows = filteredItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para salir'); return }
+    // Validar que las cantidades no excedan el stock actual
+    for (const r of validRows) {
+      if (parseFloat(r.cantidad) > r.stockActual) {
+        toast.error(`Cantidad excede stock para ${r.bloque_codigo}: max ${r.stockActual} ${r.bloque_unidad}`)
+        return
+      }
+    }
     // Determinar nivel_id para la salida
     const nivelId = salNivelTab === 'all' ? selectedNivelId : salNivelTab
     if (!nivelId) { toast.error('No hay nivel seleccionado'); return }
@@ -1045,7 +1052,8 @@ export function PisoSectoresTab() {
         return
       }
     } catch {
-      // Si falla la verificación, continuar con el traslado
+      // Si falla la verificación, avisar pero permitir continuar
+      toast.warning('No se pudo verificar si el destino está ocupado. Verifica manualmente antes de continuar.', { duration: 5000 })
     }
     // Destino vacío — ejecutar directamente
     await ejecutarTrasladoPiso()

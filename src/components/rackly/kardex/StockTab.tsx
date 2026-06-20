@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   type Movimiento,
   eliminarUbicacion,
-  fetchStockPorCodigoServerSide,
+  fetchStockPorCodigoRPC,
 } from '@/lib/rackly/kardex'
 // Decoupled: Kardex Racks ya no consulta stock de Kardex Piso
 import {
@@ -221,7 +221,7 @@ export function StockTab() {
     const isInc = stockFilter === 'inc'
 
     setServerLoading(true)
-    fetchStockPorCodigoServerSide(code, isInc)
+    fetchStockPorCodigoRPC(code, isInc)
       .then((rows) => {
         if (!mountedRef.current) return
         setServerLoading(false)

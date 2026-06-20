@@ -553,6 +553,35 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
   }
 }
 
+// ═══ Ocupación y Stock por RPC (PostgreSQL calcula, sin límite de filas) ═══
+
+/** Ocupación v2: usa el RPC que calcula en PostgreSQL (sin límite).
+ *  Fallback: retorna null para que el caller use client-side. */
+export async function fetchOcupacionCeldasV2(): Promise<OcupacionCelda[] | null> {
+  try {
+    const { data, error } = await dataClient.rpc('ocupacion_celdas_v2')
+    if (error) {
+      console.warn('[fetchOcupacionCeldasV2] RPC no disponible o error:', error.message)
+      return null
+    }
+    return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+      bloque: String(r.bloque ?? ''),
+      torre: String(r.torre ?? ''),
+      piso: String(r.piso ?? ''),
+      posicion: String(r.posicion ?? ''),
+      stock: Number(r.stock ?? 0),
+      codigos: Array.isArray(r.codigos) ? (r.codigos as string[]).map(String) : [],
+      lotes: Array.isArray(r.codigos) ? (r.codigos as string[]).length : Number(r.lotes ?? 0),
+      tieneInc: false,
+      incItems: [],
+    }))
+  } catch (err) {
+    console.warn('[fetchOcupacionCeldasV2] Falló:', err)
+    return null
+  }
+}
+
+/** Ocupación v1: RPC legacy (ya existente, sin codigos array) */
 export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
   const { data, error } = await dataClient.rpc('ocupacion_celdas')
   if (error) throw error
@@ -569,177 +598,35 @@ export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
   }))
 }
 
-// ═══ Server-side: Ocupación por posición+código (sin límite de filas) ═══
-
-type OcupacionRawRow = {
-  bloque: string; torre: string; piso: string; posicion: string
-  codigo: string; stock: number
-  descripcion: string | null; un: string | null; proveedor: string | null
-}
-
-/**
- * Calcula ocupación server-side usando GROUP BY en Supabase.
- * Retorna filas agrupadas por (posición, código) con stock neto > 0.
- * Sin límite de filas — Supabase procesa todo en la DB.
- * Fallback: si falla, retorna null para que el caller use el método client-side.
- */
-export async function fetchOcupacionServerSide(): Promise<OcupacionRawRow[] | null> {
-  try {
-    // Consulta paginada: selecciona solo columnas necesarias, excluye INC
-    const all: Record<string, unknown>[] = []
-    let from = 0
-    let iterations = 0
-    while (iterations < FETCH_MOV_MAX_PAGES) {
-      iterations++
-      const to = from + PAGE_SIZE - 1
-      const { data, error } = await dataClient
-        .from('movimientos')
-        .select('bloque, torre, piso, posicion, codigo, descripcion, un, proveedor, tipo, cantidad')
-        .is('codigo_inc', null)
-        .order('bloque')
-        .range(from, to)
-      if (error) {
-        console.warn('[fetchOcupacionServerSide] Error en consulta:', error.message)
-        return null
-      }
-      const rows = data ?? []
-      all.push(...rows)
-      if (rows.length < PAGE_SIZE) break
-      from += PAGE_SIZE
-    }
-
-    // Agrupar en el cliente (mucha menos data que fetchMovimientos completo
-    // porque seleccionamos solo columnas necesarias)
-    const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
-    const posCodeMap = new Map<string, { stock: number; desc: string; un: string; prov: string }>()
-
-    for (const r of all) {
-      const posKey = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
-      const code = (r.codigo as string).trim().toUpperCase()
-      const key = `${posKey}||${code}`
-      let entry = posCodeMap.get(key)
-      if (!entry) {
-        entry = { stock: 0, desc: (r.descripcion as string) || '', un: (r.un as string) || '', prov: (r.proveedor as string) || '' }
-        posCodeMap.set(key, entry)
-      }
-      const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad)) || 0
-      entry.stock += isIngreso(r.tipo as string) ? qty : -qty
-      if (!entry.desc && r.descripcion) entry.desc = r.descripcion as string
-      if (!entry.un && r.un) entry.un = r.un as string
-      if (!entry.prov && r.proveedor) entry.prov = r.proveedor as string
-    }
-
-    const results: OcupacionRawRow[] = []
-    for (const [key, entry] of posCodeMap) {
-      if (entry.stock <= 0) continue
-      const [posKey, codigo] = key.split('||')
-      const [bloque, torre, piso, posicion] = posKey.split('-')
-      results.push({ bloque, torre, piso, posicion, codigo, stock: Math.round(entry.stock * 1000) / 1000, descripcion: entry.desc, un: entry.un, proveedor: entry.prov || null })
-    }
-    return results
-  } catch (err) {
-    console.warn('[fetchOcupacionServerSide] Falló, caller debe usar fallback:', err)
-    return null
-  }
-}
-
-// ═══ Server-side: Stock por código específico (sin límite de filas) ═══
-
-type StockPorCodigoRow = {
-  bloque: string; torre: string; piso: string; posicion: string
-  stock: number; descripcion: string | null; un: string | null
-  proveedor: string | null; fVencimiento: string | null
-  codigoInc: string | null
-}
-
-/**
- * Calcula stock server-side para un código específico.
- * Retorna filas agrupadas por posición con stock neto > 0.
- * Sin límite de filas — la DB filtra por código ANTES de calcular.
- * Fallback: retorna null para que el caller use el método client-side.
- */
-export async function fetchStockPorCodigoServerSide(
+/** Stock por código: RPC que calcula en PostgreSQL (sin límite).
+ *  Fallback: retorna null para que el caller use client-side. */
+export async function fetchStockPorCodigoRPC(
   codigo: string,
   soloInc: boolean = false
-): Promise<StockPorCodigoRow[] | null> {
+): Promise<{ bloque: string; torre: string; piso: string; posicion: string; stock: number; descripcion: string | null; un: string | null; proveedor: string | null; fVencimiento: string | null; codigoInc?: string }[] | null> {
   try {
-    const target = codigo.trim().toUpperCase()
-    const all: Record<string, unknown>[] = []
-    let from = 0
-    let iterations = 0
-    while (iterations < FETCH_MOV_MAX_PAGES) {
-      iterations++
-      const to = from + PAGE_SIZE - 1
-
-      let query = dataClient
-        .from('movimientos')
-        .select('bloque, torre, piso, posicion, codigo, descripcion, un, proveedor, tipo, cantidad, f_vencimiento, codigo_inc')
-        .eq('codigo', target)
-
-      if (soloInc) {
-        query = query.not('codigo_inc', 'is', null).neq('codigo_inc', '')
-      } else {
-        query = query.is('codigo_inc', null)
-      }
-
-      const { data, error } = await query.order('bloque').range(from, to)
-      if (error) {
-        console.warn('[fetchStockPorCodigoServerSide] Error en consulta:', error.message)
-        return null
-      }
-      const rows = data ?? []
-      all.push(...rows)
-      if (rows.length < PAGE_SIZE) break
-      from += PAGE_SIZE
+    const { data, error } = await dataClient.rpc('stock_por_codigo_kardex', {
+      p_codigo: codigo.trim().toUpperCase(),
+      p_solo_inc: soloInc,
+    })
+    if (error) {
+      console.warn('[fetchStockPorCodigoRPC] RPC no disponible o error:', error.message)
+      return null
     }
-
-    // Agrupar por posición (sin importar vencimiento para el cálculo)
-    const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
-    const posMap = new Map<string, { stock: number; desc: string; un: string; prov: string; fvMap: Map<string, number> }>()
-
-    for (const r of all) {
-      const posKey = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
-      let entry = posMap.get(posKey)
-      if (!entry) {
-        entry = { stock: 0, desc: (r.descripcion as string) || '', un: (r.un as string) || '', prov: (r.proveedor as string) || '', fvMap: new Map() }
-        posMap.set(posKey, entry)
-      }
-      const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad)) || 0
-      entry.stock += isIngreso(r.tipo as string) ? qty : -qty
-      if (!entry.desc && r.descripcion) entry.desc = r.descripcion as string
-      if (!entry.un && r.un) entry.un = r.un as string
-      if (!entry.prov && r.proveedor) entry.prov = r.proveedor as string
-
-      // Rastrear fechas para FEFO info
-      const fv = r.f_vencimiento as string
-      if (fv && isIngreso(r.tipo as string)) {
-        entry.fvMap.set(fv, (entry.fvMap.get(fv) ?? 0) + qty)
-      }
-    }
-
-    const results: StockPorCodigoRow[] = []
-    for (const [posKey, entry] of posMap) {
-      if (entry.stock <= 0) continue
-      const [bloque, torre, piso, posicion] = posKey.split('-')
-
-      // Fecha más próxima (FEFO)
-      let fVencimiento: string | null = null
-      if (entry.fvMap.size > 0) {
-        const sorted = [...entry.fvMap.keys()].sort()
-        fVencimiento = sorted[0]
-      }
-
-      results.push({
-        bloque, torre, piso, posicion,
-        stock: Math.round(entry.stock * 1000) / 1000,
-        descripcion: entry.desc || null, un: entry.un || null,
-        proveedor: entry.prov || null, fVencimiento,
-        codigoInc: soloInc ? target : null,
-      })
-    }
-    return results
+    return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+      bloque: String(r.bloque ?? ''),
+      torre: String(r.torre ?? ''),
+      piso: String(r.piso ?? ''),
+      posicion: String(r.posicion ?? ''),
+      stock: Number(r.stock ?? 0),
+      descripcion: (r.descripcion as string) ?? null,
+      un: (r.un as string) ?? null,
+      proveedor: (r.proveedor as string) ?? null,
+      fVencimiento: (r.f_vencimiento as string) ?? null,
+      codigoInc: soloInc ? codigo.trim().toUpperCase() : undefined,
+    }))
   } catch (err) {
-    console.warn('[fetchStockPorCodigoServerSide] Falló, caller debe usar fallback:', err)
+    console.warn('[fetchStockPorCodigoRPC] Falló:', err)
     return null
   }
 }

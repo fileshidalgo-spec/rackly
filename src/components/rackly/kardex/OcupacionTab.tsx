@@ -37,12 +37,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogCancel,
+  AlertDialogFooter,
+} from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, Building2, Layers,
   BoxSelect, Activity, ArrowRightLeft, RotateCcw, X, AlertTriangle, CheckCircle2,
   Package, CalendarOff, CalendarClock, Flame, Clock, Plus, RotateCw as RotateCwIcon,
   Info,
+  TriangleAlert,
+  MapPin,
+  Warehouse,
 } from 'lucide-react'
 
 // Calcula días restantes hasta vencimiento (negativo si ya venció)
@@ -165,6 +176,13 @@ export function OcupacionTab() {
   const [trDestPos, setTrDestPos] = useState('')
   const [trCantidad, setTrCantidad] = useState('')
   const [trCorregirDiferencia, setTrCorregirDiferencia] = useState(false)
+
+  // ── Destino ocupado alerta (transferir) ──
+  const [trDestAlertOpen, setTrDestAlertOpen] = useState(false)
+  const [trDestStock, setTrDestStock] = useState<StockEnUbicacion[]>([])
+  const [trSalidaBusy, setTrSalidaBusy] = useState<string | null>(null)
+  const [trSalidaCant, setTrSalidaCant] = useState<Record<string, string>>({})
+  const [trSalidaTotalFlags, setTrSalidaTotalFlags] = useState<Record<string, boolean>>({})
 
   // ── INC state ──
   const [incCodigo, setIncCodigo] = useState('')
@@ -450,6 +468,98 @@ export function OcupacionTab() {
     } finally { setActionBusy(false) }
   }
 
+  // Dar salida a un producto desde el alerta de destino ocupado (OcupacionTab)
+  async function handleTrSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
+    if (!perfil) return
+    const itemKey = `${stockItem.codigo}-${stockItem.fVencimiento || ''}`
+    const isTotal = trSalidaTotalFlags[itemKey] === true
+    const cantStr = trSalidaCant[itemKey] || ''
+    const cantNum = isTotal ? stockItem.stock : parseFloat(cantStr)
+    if (isNaN(cantNum) || cantNum <= 0) { toast.error('Cantidad inválida'); return }
+    if (cantNum > stockItem.stock) { toast.error(`Máximo: ${stockItem.stock} ${stockItem.un}`); return }
+    setTrSalidaBusy(itemKey)
+    try {
+      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+        tipo: 'salida',
+        bloque: trDestBloque,
+        torre: trDestTorre,
+        piso: trDestPiso,
+        posicion: trDestPos,
+        codigo: stockItem.codigo,
+        descripcion: stockItem.descripcion,
+        un: stockItem.un,
+        cantidad: cantNum,
+        fVencimiento: stockItem.fVencimiento ?? '',
+        turno: calcularTurno(),
+        usuarioId: perfil.id,
+        usuarioNombre: perfil.nombre,
+        usuarioCorreo: perfil.correo,
+        proveedor: stockItem.proveedor,
+        codigoInc: stockItem.codigoInc || undefined,
+      })
+      if (wasOffline) {
+        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
+          description: 'Se sincronizará al reconectarse', duration: 5000,
+        })
+      } else {
+        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
+      }
+      if (!wasOffline) {
+        // Refrescar stock del destino
+        const updated = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)
+        setTrDestStock(updated)
+        await refreshDetail()
+        refreshData()
+      }
+    } catch (err: unknown) {
+      if (isInsufficientStockError(err)) {
+        toast.error('Stock insuficiente', {
+          description: 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 6000,
+        })
+      } else {
+        toast.error('Error al dar salida', { description: extractError(err) })
+      }
+    } finally {
+      setTrSalidaBusy(null)
+    }
+  }
+
+  // Ejecutar el traslado (se llama desde la alerta o directamente si destino vacío)
+  async function ejecutarTraslado() {
+    if (!detail || !perfil || !trItem) return
+    const qty = parseFloat(trCantidad)
+    setActionBusy(true)
+    try {
+      const input: TrasladoInput = {
+        codigo: trItem.codigo, descripcion: trItem.descripcion, un: trItem.un, cantidad: qty,
+        origen: { bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion },
+        destino: { bloque: trDestBloque, torre: trDestTorre, piso: trDestPiso, posicion: trDestPos },
+        turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+        fVencimiento: trItem.fVencimiento ?? '',
+        cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
+        codigoInc: trItem.codigoInc || undefined,
+      }
+      const { wasOffline: wasTrOffline } = await SyncEngine.offlineAwareTraslado(input)
+      toast.success(wasTrOffline ? 'Traslado guardado (offline)' : 'Traslado registrado', {
+        ...(wasTrOffline ? { description: 'Se sincronizará al reconectarse', duration: 5000 } : {}),
+      })
+      if (!wasTrOffline && trFalta && trCorregirDiferencia) {
+        toast.info(`Salida de ajuste: -${Math.abs(trDiferencia)} ${trItem.un} en origen`, { duration: 6000 })
+      }
+      if (!wasTrOffline && trExcede) {
+        toast.info(`Ajuste automático: +${Math.abs(trDiferencia)} ${trItem.un} ingreso en origen`, { duration: 6000 })
+      }
+      setTrDestAlertOpen(false)
+      if (mountedRef.current && !wasTrOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+    } catch (err: unknown) {
+      if (isInsufficientStockError(err)) {
+        const d = (err as Record<string, string>).detail || ''
+        toast.error('Stock insuficiente en origen', { description: d || 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 8000 })
+        refreshDetail(); refreshData()
+      } else { toast.error('Error al trasladar', { description: extractError(err) }) }
+    } finally { setActionBusy(false) }
+  }
+
   async function doTransferir() {
     if (!detail || !perfil || !trItem) return
     if (!trDestBloque || !trDestTorre || !trDestPiso || !trDestPos) { toast.error('Completa destino'); return }
@@ -463,36 +573,18 @@ export function OcupacionTab() {
       // Check destination occupancy
       const destStock = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)
       if (destStock.length > 0) {
-        toast.error(`Destino ocupado con ${destStock.length} artículo(s). Vacía primero el destino.`)
-        setActionBusy(false); return
+        // Mostrar alerta con opción de dar salida en vez de bloquear
+        setTrDestStock(destStock)
+        setTrSalidaCant({})
+        setTrSalidaTotalFlags({})
+        setTrDestAlertOpen(true)
+        setActionBusy(false)
+        return
       }
-      const input: TrasladoInput = {
-        codigo: trItem.codigo, descripcion: trItem.descripcion, un: trItem.un, cantidad: qty,
-        origen: { bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion },
-        destino: { bloque: trDestBloque, torre: trDestTorre, piso: trDestPiso, posicion: trDestPos },
-        turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
-        fVencimiento: trItem.fVencimiento ?? '',
-        cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
-        // Preservar codigoInc para que el traslado mueva el INC correctamente
-        codigoInc: trItem.codigoInc || undefined,
-      }
-      const { wasOffline: wasTrOffline } = await SyncEngine.offlineAwareTraslado(input)
-      toast.success(wasTrOffline ? 'Traslado guardado (offline)' : 'Traslado registrado', {
-        ...(wasTrOffline ? { description: 'Se sincronizará al reconectarse', duration: 5000 } : {}),
-      })
-      if (!wasTrOffline && trFalta && trCorregirDiferencia) {
-        toast.info(`Salida de ajuste: -${Math.abs(trDiferencia)} ${trItem.un} en origen`, { duration: 6000 })
-      }
-      if (!wasTrOffline && trExcede) {
-        toast.info(`Ajuste automático: +${Math.abs(trDiferencia)} ${trItem.un} ingreso en origen`, { duration: 6000 })
-      }
-      if (mountedRef.current && !wasTrOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+      // Destino vacío — ejecutar traslado directamente
+      await ejecutarTraslado()
     } catch (err: unknown) {
-      if (isInsufficientStockError(err)) {
-        const detail = (err as Record<string, string>).detail || ''
-        toast.error('Stock insuficiente en origen', { description: detail || 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 8000 })
-        refreshDetail(); refreshData()
-      } else { toast.error('Error al trasladar', { description: extractError(err) }) }
+      toast.error('Error al verificar destino', { description: extractError(err) })
     } finally { setActionBusy(false) }
   }
 
@@ -1366,6 +1458,177 @@ export function OcupacionTab() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ═══ DESTINO OCUPADO ALERTA (Transferir) ═══ */}
+      <AlertDialog open={trDestAlertOpen} onOpenChange={setTrDestAlertOpen}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className={`px-4 sm:px-6 py-5 text-white shrink-0 ${
+            trDestStock.length > 0
+              ? 'bg-gradient-to-r from-orange-500 via-red-500 to-red-600'
+              : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+                {trDestStock.length > 0 ? (
+                  <TriangleAlert className="h-6 w-6 text-white" />
+                ) : (
+                  <ArrowRightLeft className="h-6 w-6 text-white" />
+                )}
+              </div>
+              <div>
+                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+                  {trDestStock.length > 0 ? 'Destino Ocupado' : 'Confirmar Traslado'}
+                </AlertDialogTitle>
+                <AlertDialogDescription className={`text-sm mt-0.5 ${
+                  trDestStock.length > 0 ? 'text-orange-100' : 'text-blue-100'
+                }`}>
+                  {trDestStock.length > 0
+                    ? 'El destino ya tiene stock. Puedes dar salida a los productos antes de trasladar o confirmar de todas formas.'
+                    : 'El destino está vacío. Puedes proceder con el traslado.'}
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+          <AlertDialogDescription className="sr-only">
+            Alerta de destino ocupado para traslado
+          </AlertDialogDescription>
+
+          {/* Contenido scrolleable */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            {/* Ruta */}
+            <div className="px-4 sm:px-6 pt-4 pb-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Ruta del traslado</p>
+              <div className="flex items-center gap-2 text-sm bg-slate-50 dark:bg-slate-900 rounded-lg px-3 py-2.5">
+                <MapPin className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                <span className="font-mono font-medium text-slate-700 dark:text-slate-300 truncate min-w-0">
+                  B-{detail?.bloque} T-{detail?.torre} P-{detail?.piso} Pos-{detail?.posicion}
+                  <span className="mx-2 text-indigo-500 font-bold">→</span>
+                  B-{trDestBloque} T-{trDestTorre} P-{trDestPiso} Pos-{trDestPos}
+                </span>
+              </div>
+            </div>
+
+            {/* Producto a trasladar */}
+            <div className="px-4 sm:px-6 pb-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Producto a trasladar</p>
+              <div className="rounded-xl border-2 border-dashed border-blue-300 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/20 p-3 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-mono font-bold text-sm text-blue-800 dark:text-blue-300">{trItem?.codigo}</span>
+                    <span className="text-[10px] text-blue-700/60 dark:text-blue-400/60 bg-blue-100 dark:bg-blue-900/40 px-1.5 py-0.5 rounded">{trItem?.un || '—'}</span>
+                  </div>
+                  <span className="font-bold text-blue-700 dark:text-blue-300">{trCantidad} {trItem?.un}</span>
+                </div>
+                {trItem?.descripcion && (
+                  <p className="text-xs text-blue-700/70 dark:text-blue-400/70 truncate">{trItem.descripcion}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Productos existentes en destino */}
+            {trDestStock.length > 0 && (
+              <div className="px-4 sm:px-6 pb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">Stock actual en destino</span>
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-300 dark:via-slate-600 to-transparent" />
+                </div>
+                <div className="space-y-2">
+                  {trDestStock.map((s, i) => {
+                    const itemKey = `${s.codigo}-${s.fVencimiento || ''}`
+                    const isTotal = trSalidaTotalFlags[itemKey] === true
+                    return (
+                      <div key={`${s.codigo}-${i}`} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3">
+                        <div className="flex items-start gap-3">
+                          <div className="w-9 h-9 rounded-lg bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <Package className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono font-semibold text-sm text-slate-800 dark:text-slate-200">{s.codigo}</span>
+                              <span className="text-[10px] text-muted-foreground bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{s.un}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate mt-0.5">{s.descripcion}</p>
+                            <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
+                              <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{s.stock} {s.un}</span>
+                              {s.fVencimiento && <span>Venc: {s.fVencimiento}</span>}
+                              {s.proveedor && <span>Prov: {s.proveedor}</span>}
+                            </div>
+                            {/* Salida parcial/total */}
+                            <div className="mt-2 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setTrSalidaTotalFlags(prev => ({ ...prev, [itemKey]: true }))}
+                                className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-all border ${
+                                  isTotal
+                                    ? 'border-red-400 bg-red-50 text-red-700 dark:bg-red-950/40 dark:border-red-600 dark:text-red-300'
+                                    : 'border-slate-200 text-slate-500 dark:border-slate-700 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+                                }`}
+                              >
+                                Total ({s.stock})
+                              </button>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.001"
+                                max={s.stock}
+                                placeholder="Parcial"
+                                value={isTotal ? String(s.stock) : (trSalidaCant[itemKey] || '')}
+                                onChange={e => {
+                                  setTrSalidaCant(prev => ({ ...prev, [itemKey]: e.target.value }))
+                                  setTrSalidaTotalFlags(prev => ({ ...prev, [itemKey]: false }))
+                                }}
+                                disabled={isTotal || trSalidaBusy === itemKey}
+                                className="w-20 h-7 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md px-2 disabled:opacity-50"
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleTrSalidaDesdeAlerta(s)}
+                                disabled={trSalidaBusy === itemKey}
+                                className="h-7 px-2.5 text-[10px] font-semibold border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 hover:border-red-300 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300 dark:hover:border-red-700 flex-shrink-0 gap-1"
+                              >
+                                {trSalidaBusy === itemKey ? (
+                                  <><Loader2 className="h-3 w-3 animate-spin" /> ...</>
+                                ) : (
+                                  <><ArrowUpFromLine className="h-3 w-3" /> Dar Salida</>
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-2 italic">
+                  Selecciona "Total" o ingresa cantidad parcial y presiona "Dar Salida" para retirar productos del destino.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Botones */}
+          <AlertDialogFooter className="px-4 sm:px-6 pb-6 pt-3 border-t border-slate-100 dark:border-slate-800 gap-2 sm:gap-2 shrink-0">
+            <AlertDialogCancel className="flex-1 h-11 rounded-lg text-sm font-medium border-slate-300 dark:border-slate-600">
+              Cancelar
+            </AlertDialogCancel>
+            <Button
+              onClick={(e) => { e.preventDefault(); setTrDestAlertOpen(false); ejecutarTraslado() }}
+              disabled={actionBusy}
+              className="flex-1 h-11 rounded-lg text-sm font-bold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-600/20 gap-2"
+            >
+              {actionBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowRightLeft className="h-4 w-4" />
+              )}
+              {trDestStock.length > 0 ? 'Trasladar de todas formas' : 'Confirmar Traslado'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

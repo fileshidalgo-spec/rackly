@@ -84,6 +84,8 @@ export function TrasladoTab() {
   const [confirm, setConfirm] = useState(false)
   const [destinoOcupado, setDestinoOcupado] = useState<StockEnUbicacion[]>([])
   const [salidaBusy, setSalidaBusy] = useState<string | null>(null)
+  const [salidaParcialCant, setSalidaParcialCant] = useState<Record<string, string>>({})
+  const [salidaParcialTotal, setSalidaParcialTotal] = useState<Record<string, boolean>>({})
   const [corregirDiferencia, setCorregirDiferencia] = useState(false)
 
   const [movs, setMovs] = useState<Movimiento[]>([])
@@ -183,10 +185,16 @@ export function TrasladoTab() {
     setConfirm(true)
   }
 
-  // Dar salida a un producto desde el alerta de destino ocupado
+  // Dar salida a un producto desde el alerta de destino ocupado (soporta parcial/total)
   async function handleSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
     if (!perfil) return
-    setSalidaBusy(stockItem.codigo)
+    const itemKey = `${stockItem.codigo}-${stockItem.fVencimiento || ''}`
+    const isTotal = salidaParcialTotal[itemKey] === true
+    const cantStr = salidaParcialCant[itemKey] || ''
+    const cantNum = isTotal ? stockItem.stock : parseFloat(cantStr)
+    if (isNaN(cantNum) || cantNum <= 0) { toast.error('Cantidad inválida'); return }
+    if (cantNum > stockItem.stock) { toast.error(`Máximo: ${stockItem.stock} ${stockItem.un}`); return }
+    setSalidaBusy(itemKey)
     try {
       const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
         tipo: 'salida',
@@ -197,23 +205,22 @@ export function TrasladoTab() {
         codigo: stockItem.codigo,
         descripcion: stockItem.descripcion,
         un: stockItem.un,
-        cantidad: stockItem.stock,
+        cantidad: cantNum,
         fVencimiento: stockItem.fVencimiento ?? '',
         turno: calcularTurno(),
         usuarioId: perfil.id,
         usuarioNombre: perfil.nombre,
         usuarioCorreo: perfil.correo,
         proveedor: stockItem.proveedor,
-        // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
         codigoInc: stockItem.codigoInc || undefined,
       })
       if (wasOffline) {
-        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
+        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
           description: 'Se sincronizará al reconectarse',
           duration: 5000,
         })
       } else {
-        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
+        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
       }
       if (!wasOffline) {
         setMovs(await fetchMovimientos())
@@ -1011,26 +1018,60 @@ export function TrasladoTab() {
                             {s.fVencimiento && <span>Venc: {s.fVencimiento}</span>}
                             {s.proveedor && <span>Prov: {s.proveedor}</span>}
                           </div>
+                          {/* Salida parcial/total */}
+                          <div className="mt-2 flex items-center gap-2">
+                            {(() => {
+                              const itemKey = `${s.codigo}-${s.fVencimiento || ''}`
+                              const isTotal = salidaParcialTotal[itemKey] === true
+                              return <>
+                                <button
+                                  type="button"
+                                  onClick={() => setSalidaParcialTotal(prev => ({ ...prev, [itemKey]: true }))}
+                                  className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-all border ${
+                                    isTotal
+                                      ? 'border-red-400 bg-red-50 text-red-700 dark:bg-red-950/40 dark:border-red-600 dark:text-red-300'
+                                      : 'border-slate-200 text-slate-500 dark:border-slate-700 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
+                                  }`}
+                                >
+                                  Total ({s.stock})
+                                </button>
+                                <input
+                                  type="number"
+                                  step="any"
+                                  min="0.001"
+                                  max={s.stock}
+                                  placeholder="Parcial"
+                                  value={isTotal ? String(s.stock) : (salidaParcialCant[itemKey] || '')}
+                                  onChange={e => {
+                                    setSalidaParcialCant(prev => ({ ...prev, [itemKey]: e.target.value }))
+                                    setSalidaParcialTotal(prev => ({ ...prev, [itemKey]: false }))
+                                  }}
+                                  disabled={isTotal || salidaBusy === itemKey}
+                                  className="w-20 h-7 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md px-2 disabled:opacity-50"
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleSalidaDesdeAlerta(s)}
+                                  disabled={salidaBusy === itemKey}
+                                  className="h-7 px-2.5 text-[10px] font-semibold border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 hover:border-red-300 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300 dark:hover:border-red-700 flex-shrink-0 gap-1"
+                                >
+                                  {salidaBusy === itemKey ? (
+                                    <><Loader2 className="h-3 w-3 animate-spin" /> ...</>
+                                  ) : (
+                                    <><ArrowUpFromLine className="h-3 w-3" /> Dar Salida</>
+                                  )}
+                                </Button>
+                              </>
+                            })()}
+                          </div>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleSalidaDesdeAlerta(s)}
-                          disabled={salidaBusy === s.codigo}
-                          className="h-9 px-3 text-xs font-semibold border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 hover:border-red-300 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300 dark:hover:border-red-700 flex-shrink-0 gap-1.5 self-center"
-                        >
-                          {salidaBusy === s.codigo ? (
-                            <><Loader2 className="h-3 w-3 animate-spin" /> Procesando...</>
-                          ) : (
-                            <><ArrowUpFromLine className="h-3 w-3" /> Dar Salida</>
-                          )}
-                        </Button>
                       </div>
                     </div>
                   ))}
                 </div>
                 <p className="text-[10px] text-muted-foreground mt-2 italic">
-                  Presiona "Dar Salida" para retirar productos que ya no están físicamente en esta ubicación.
+                  Selecciona "Total" o ingresa cantidad parcial y presiona "Dar Salida" para retirar productos del destino.
                 </p>
               </div>
             )}

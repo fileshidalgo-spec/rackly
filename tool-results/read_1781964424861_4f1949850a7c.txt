@@ -1,0 +1,1372 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+     4→import {
+     5→  fetchOcupacionCeldas,
+     6→  fetchMovimientos,
+     7→  fetchIncPorUbicacion,
+     8→  stockEnUbicacion,
+     9→  type Movimiento,
+    10→  type StockEnUbicacion,
+    11→  type OcupacionCelda,
+    12→  addMovimiento,
+    13→  trasladarMovimiento,
+    14→  type TrasladoInput,
+    15→} from '@/lib/rackly/kardex'
+    16→import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
+    17→import { SyncEngine } from '@/lib/rackly/sync-engine'
+    18→import { supabase, dataClient } from '@/lib/supabase/client'
+    19→import { calcularTurno } from '@/lib/rackly/turno'
+    20→import { useAuth } from '@/hooks/useAuth'
+    21→import { requiereProveedor, extractError, isInsufficientStockError } from '@/lib/utils'
+    22→import { PROVEEDORES_FILM } from '@/lib/rackly/constants'
+    23→import { CatalogoSearchInput } from './CatalogoSearchInput'
+    24→import {
+    25→  Select,
+    26→  SelectContent,
+    27→  SelectItem,
+    28→  SelectTrigger,
+    29→  SelectValue,
+    30→} from '@/components/ui/select'
+    31→import { Button } from '@/components/ui/button'
+    32→import { Input } from '@/components/ui/input'
+    33→import { Label } from '@/components/ui/label'
+    34→import {
+    35→  Dialog,
+    36→  DialogContent,
+    37→  DialogHeader,
+    38→  DialogTitle,
+    39→} from '@/components/ui/dialog'
+    40→import { toast } from 'sonner'
+    41→import {
+    42→  Download, Loader2, ArrowDownToLine, ArrowUpFromLine, Building2, Layers,
+    43→  BoxSelect, Activity, ArrowRightLeft, RotateCcw, X, AlertTriangle, CheckCircle2,
+    44→  Package, CalendarOff, CalendarClock, Flame, Clock, Plus, RotateCw as RotateCwIcon,
+    45→  Info,
+    46→} from 'lucide-react'
+    47→
+    48→// Calcula días restantes hasta vencimiento (negativo si ya venció)
+    49→function diasParaVencer(fVencimiento: string | undefined): number | null {
+    50→  if (!fVencimiento) return null
+    51→  const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
+    52→  const venc = new Date(fVencimiento + 'T00:00:00')
+    53→  return Math.ceil((venc.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24))
+    54→}
+    55→
+    56→// Detecta códigos duplicados (mismo artículo con distintas fechas de vencimiento)
+    57→function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
+    58→  const counts = new Map<string, number>()
+    59→  for (const s of stock) {
+    60→    counts.set(s.codigo, (counts.get(s.codigo) ?? 0) + 1)
+    61→  }
+    62→  const multiples = new Set<string>()
+    63→  for (const [code, count] of counts) {
+    64→    if (count > 1) multiples.add(code)
+    65→  }
+    66→  return multiples
+    67→}
+    68→
+    69→// Calcula ocupación desde movimientos — stock POR CÓDIGO (no por lote).
+    70→// f_vencimiento es SOLO para FEFO (ordenamiento), NO para particionar stock.
+    71→// IMPORTANTE: Los movimientos INC se EXCLUYEN del stock normal.
+    72→// La detección INC se hace por separado con fetchIncPorUbicacion().
+    73→function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
+    74→  // Mapa: ubicacion_key → (codigo → stock)
+    75→  const cellMap = new Map<string, Map<string, number>>()
+    76→  for (const m of movs) {
+    77→    // EXCLUIR movimientos INC del cálculo de ocupación normal
+    78→    if (m.codigoInc) continue
+    79→    const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+    80→    const code = m.codigo.trim().toUpperCase()
+    81→    let codeMap = cellMap.get(key)
+    82→    if (!codeMap) { codeMap = new Map(); cellMap.set(key, codeMap) }
+    83→    const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+    84→    const current = codeMap.get(code) ?? 0
+    85→    codeMap.set(code, current + delta)
+    86→  }
+    87→  // Construir resultado: solo celdas con stock total > 0
+    88→  const result: OcupacionCelda[] = []
+    89→  for (const [key, codeMap] of cellMap) {
+    90→    let totalStock = 0
+    91→    const codigos = new Set<string>()
+    92→    for (const [code, stock] of codeMap) {
+    93→      if (stock > 0) {
+    94→        totalStock += stock
+    95→        codigos.add(code)
+    96→      }
+    97→    }
+    98→    if (totalStock > 0) {
+    99→      const [bloque, torre, piso, posicion] = key.split('-')
+   100→      // lotes = número de códigos distintos (ya no se cuenta por f_vencimiento)
+   101→      result.push({ bloque, torre, piso, posicion, stock: totalStock, codigos: Array.from(codigos), lotes: codigos.size, tieneInc: false, incItems: [] })
+   102→    }
+   103→  }
+   104→  return result
+   105→}
+   106→
+   107→type DetailMode = 'view' | 'ingreso' | 'salida' | 'transferir' | 'inc'
+   108→
+   109→export function OcupacionTab() {
+   110→  const { perfil } = useAuth()
+   111→  const [ocupacion, setOcupacion] = useState<OcupacionCelda[]>([])
+   112→  const [bloqueFilter, setBloqueFilter] = useState<string>('all')
+   113→  const [loading, setLoading] = useState(true)
+   114→  const [detail, setDetail] = useState<{ bloque: string; torre: string; piso: string; posicion: string; stock: StockEnUbicacion[] } | null>(null)
+   115→  const [detailMode, setDetailMode] = useState<DetailMode>('view')
+   116→  const [busyExport, setBusyExport] = useState(false)
+   117→  const [actionBusy, setActionBusy] = useState(false)
+   118→  const mountedRef = useRef(true)
+   119→
+   120→  // ── Ingreso state ──
+   121→  const [ingTipo, setIngTipo] = useState<'ingreso' | 'devolucion'>('ingreso')
+   122→  const [ingCodigo, setIngCodigo] = useState('')
+   123→  const [ingDescripcion, setIngDescripcion] = useState('')
+   124→  const [ingUn, setIngUn] = useState('')
+   125→  const [ingCantidad, setIngCantidad] = useState('')
+   126→  const [ingFVenc, setIngFVenc] = useState('')
+   127→  const [ingSinFecha, setIngSinFecha] = useState(false)
+   128→  const [ingProveedor, setIngProveedor] = useState('')
+   129→
+   130→  // ── Salida state ──
+   131→  const [salidaIdx, setSalidaIdx] = useState(0)
+   132→  const [salidaCantidad, setSalidaCantidad] = useState('')
+   133→  const [salidaTotal, setSalidaTotal] = useState(false)
+   134→
+   135→// ── Historial state ──
+   136→  type HistorialItem = {
+   137→    id: string
+   138→    tipo: string
+   139→    fecha: string
+   140→    turno: string
+   141→    usuario_nombre: string | null
+   142→    codigo: string
+   143→    descripcion: string
+   144→    un: string
+   145→    cantidad: number
+   146→    f_vencimiento: string | null
+   147→    codigo_inc: string
+   148→  }
+   149→  const [historialOpen, setHistorialOpen] = useState(false)
+   150→  const [historialData, setHistorialData] = useState<HistorialItem[]>([])
+   151→  const [historialOffset, setHistorialOffset] = useState(0)
+   152→  const [historialLoading, setHistorialLoading] = useState(false)
+   153→  const [historialHasMore, setHistorialHasMore] = useState(false)
+   154→
+   155→  // Codigos actuales en stock (para deteccion de rotacion en historial) — calculado una vez
+   156→  const historialCurrentCodigos = useMemo(() =>
+   157→    new Set(detail?.stock.map(s => s.codigo) ?? []),
+   158→  [detail])
+   159→
+   160→  // ── Transferir state ──
+   161→  const [trIdx, setTrIdx] = useState(0)
+   162→  const [trDestBloque, setTrDestBloque] = useState('')
+   163→  const [trDestTorre, setTrDestTorre] = useState('')
+   164→  const [trDestPiso, setTrDestPiso] = useState('')
+   165→  const [trDestPos, setTrDestPos] = useState('')
+   166→  const [trCantidad, setTrCantidad] = useState('')
+   167→  const [trCorregirDiferencia, setTrCorregirDiferencia] = useState(false)
+   168→
+   169→  // ── INC state ──
+   170→  const [incCodigo, setIncCodigo] = useState('')
+   171→  const [incDescripcion, setIncDescripcion] = useState('')
+   172→  const [incUn, setIncUn] = useState('')
+   173→  const [incCantidad, setIncCantidad] = useState('')
+   174→  const [incCodigoInc, setIncCodigoInc] = useState('')
+   175→
+   176→  // ── Data refresh ──
+   177→  // Primario: calcularOcupacion + consulta INC dedicada (paralelo)
+   178→  // Fallback: RPC 'ocupacion_celdas' (server-side)
+   179→  const refreshData = useCallback(async () => {
+   180→    try {
+   181→      // Consulta paralela: movimientos generales + INC dedicado
+   182→      const [movs, incMap] = await Promise.all([fetchMovimientos(), fetchIncPorUbicacion()])
+   183→      if (!mountedRef.current) return
+   184→      const celdas = calcularOcupacion(movs)
+   185→      // Crear mapa de celdas existentes para merge rápido
+   186→      const celdaMap = new Map<string, OcupacionCelda>()
+   187→      for (const cell of celdas) {
+   188→        celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
+   189→      }
+   190→      // Merge INC dedicado: agregar datos INC a celdas existentes O crear celdas nuevas si solo tienen INC
+   191→      for (const [key, incItems] of incMap) {
+   192→        const existing = celdaMap.get(key)
+   193→        if (existing) {
+   194→          existing.tieneInc = true
+   195→          existing.incItems = incItems
+   196→        } else {
+   197→          // Celda que SOLO tiene INC (sin stock normal)
+   198→          const [bloque, torre, piso, posicion] = key.split('-')
+   199→          celdaMap.set(key, {
+   200→            bloque, torre, piso, posicion,
+   201→            stock: 0, // Stock normal = 0, solo INC
+   202→            codigos: incItems.map(i => i.codigo),
+   203→            lotes: incItems.length,
+   204→            tieneInc: true,
+   205→            incItems,
+   206→          })
+   207→        }
+   208→      }
+   209→      setOcupacion(Array.from(celdaMap.values()))
+   210→    } catch {
+   211→      // Fallback al RPC si falla la carga de movimientos
+   212→      try {
+   213→        const celdas = await fetchOcupacionCeldas()
+   214→        if (mountedRef.current) setOcupacion(celdas)
+   215→      } catch (err: unknown) {
+   216→        const msg = err instanceof Error ? err.message : 'Error'
+   217→        if (mountedRef.current) toast.error('Error al cargar ocupación', { description: msg })
+   218→      }
+   219→    }
+   220→  }, [])
+   221→
+   222→  const refreshDetail = useCallback(async () => {
+   223→    if (!detail) return
+   224→    try {
+   225→      const stock = await stockEnUbicacion(detail.bloque, detail.torre, detail.piso, detail.posicion)
+   226→      if (mountedRef.current) setDetail({ ...detail, stock })
+   227→    } catch { /* ok */ }
+   228→  }, [detail])
+   229→
+   230→  useEffect(() => { mountedRef.current = true; setLoading(true); refreshData().finally(() => { if (mountedRef.current) setLoading(false) }); return () => { mountedRef.current = false } }, [refreshData])
+   231→  useEffect(() => { const i = setInterval(() => refreshData(), 10000); return () => clearInterval(i) }, [refreshData])
+   232→  useEffect(() => {
+   233→    let ch: ReturnType<typeof supabase.channel> | null = null
+   234→    try { ch = supabase.channel('ocupacion-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'movimientos' }, () => refreshData()).subscribe() } catch { /* ok */ }
+   235→    return () => { if (ch) try { supabase.removeChannel(ch) } catch { /* ok */ } }
+   236→  }, [refreshData])
+   237→
+   238→  // ── Derived stats ──
+   239→  const totalPosBloque = (b: string) => torresDeBloque(b).length * PISOS.length * posicionesDeBloque(b).length
+   240→  const filtered = bloqueFilter === 'all' ? ocupacion : ocupacion.filter(o => o.bloque === bloqueFilter)
+   241→  const occupied = filtered.filter(o => o.stock > 0).length
+   242→  const multiArt = filtered.filter(o => o.stock > 0 && o.codigos.length > 1).length
+   243→  const multiLote = filtered.filter(o => o.stock > 0 && o.codigos.length === 1 && o.lotes > 1).length
+   244→  const singleArt = occupied - multiArt - multiLote
+   245→  const total = bloqueFilter === 'all' ? totalCeldas() : totalPosBloque(bloqueFilter)
+   246→  const empty = total - occupied
+   247→  const pct = total > 0 ? Math.round((occupied / total) * 100) : 0
+   248→
+   249→  // ── Transferir: derived ──
+   250→  const trTorres = trDestBloque ? torresDeBloque(trDestBloque) : []
+   251→  const trPositions = trDestBloque ? posicionesDeBloque(trDestBloque) : []
+   252→  const trItem = detail?.stock[trIdx] ?? null
+   253→  const trQtyNum = parseFloat(trCantidad) || 0
+   254→  const trExcede = trItem ? trQtyNum > trItem.stock : false
+   255→  const trFalta = trItem ? trQtyNum > 0 && trQtyNum < trItem.stock : false
+   256→  const trDiferencia = trItem ? trQtyNum - trItem.stock : 0
+   257→  const trTieneAjuste = trExcede || (trFalta && trCorregirDiferencia)
+   258→
+   259→  // ── Ingreso: proveedor visible? ──
+   260→  const showProveedor = ingDescripcion ? requiereProveedor(ingDescripcion) : false
+   261→
+   262→  // ── Handlers ──
+   263→  async function handleCellClick(b: string, t: string, p: string, pos: string) {
+   264→    try {
+   265→      setDetail({ bloque: b, torre: t, piso: p, posicion: pos, stock: await stockEnUbicacion(b, t, p, pos) })
+   266→      setDetailMode('view')
+   267→    } catch { toast.error('Error al cargar detalle') }
+   268→  }
+   269→
+   270→  function openIngreso(tipo?: 'ingreso' | 'devolucion') {
+   271→    setIngTipo(tipo ?? 'ingreso')
+   272→    setIngCodigo(''); setIngDescripcion(''); setIngUn('')
+   273→    setIngCantidad(''); setIngFVenc('')
+   274→    setIngSinFecha(false); setIngProveedor('')
+   275→    setDetailMode('ingreso')
+   276→  }
+   277→
+   278→  function openSalida(idx: number, total: boolean) {
+   279→    if (!detail?.stock[idx]) return
+   280→    setSalidaIdx(idx); setSalidaTotal(total)
+   281→    setSalidaCantidad(total ? String(detail.stock[idx].stock) : '')
+   282→    setDetailMode('salida')
+   283→  }
+   284→
+   285→  function openTransferir(idx: number) {
+   286→    if (!detail?.stock[idx]) return
+   287→    setTrIdx(idx); setTrCantidad(String(detail.stock[idx].stock))
+   288→    setTrDestBloque(''); setTrDestTorre(''); setTrDestPiso(''); setTrDestPos('')
+   289→    setTrCorregirDiferencia(false)
+   290→    setDetailMode('transferir')
+   291→  }
+   292→
+   293→  // ── Historial ──
+   294→  const loadHistorial = useCallback(async (offset = 0, append = false) => {
+   295→    if (!detail) return
+   296→    setHistorialLoading(true)
+   297→    try {
+   298→      const { data, error } = await dataClient
+   299→        .from('movimientos')
+   300→        .select('id, tipo, turno, f_modificacion, usuario_nombre, codigo, descripcion, un, cantidad, f_vencimiento, codigo_inc')
+   301→        .eq('bloque', detail.bloque)
+   302→        .eq('torre', detail.torre)
+   303→        .eq('piso', detail.piso)
+   304→        .eq('posicion', detail.posicion)
+   305→        .order('f_modificacion', { ascending: false })
+   306→        .range(offset, offset + 5)
+   307→      if (error) throw error
+   308→      const items: HistorialItem[] = (data ?? []).map((r: any) => ({
+   309→        id: r.id,
+   310→        tipo: r.tipo,
+   311→        fecha: r.f_modificacion,
+   312→        turno: r.turno ?? '',
+   313→        usuario_nombre: r.usuario_nombre,
+   314→        codigo: r.codigo,
+   315→        descripcion: r.descripcion || '',
+   316→        un: r.un,
+   317→        cantidad: r.cantidad,
+   318→        f_vencimiento: r.f_vencimiento || '',
+   319→        codigo_inc: r.codigo_inc || '',
+   320→      }))
+   321→      setHistorialHasMore(items.length > 5)
+   322→      const trimmed = items.slice(0, 5)
+   323→      if (append) {
+   324→        setHistorialData(prev => [...prev, ...trimmed])
+   325→      } else {
+   326→        setHistorialData(trimmed)
+   327→      }
+   328→      setHistorialOffset(offset + 5)
+   329→    } catch (err) {
+   330→      console.error('[Ocupacion] Error cargando historial:', err)
+   331→      toast.error('Error al cargar historial')
+   332→    } finally {
+   333→      setHistorialLoading(false)
+   334→    }
+   335→  }, [detail])
+   336→
+   337→  function openHistorial() {
+   338→    setHistorialOffset(0)
+   339→    setHistorialData([])
+   340→    setHistorialOpen(true)
+   341→    loadHistorial(0, false)
+   342→  }
+   343→
+   344→  /** Called when a catalog item is selected from the search input */
+   345→  function handleCatalogoPick(item: { codigo: string; descripcion: string; un: string }) {
+   346→    setIngCodigo(item.codigo)
+   347→    setIngDescripcion(item.descripcion)
+   348→    setIngUn(item.un)
+   349→    // Reset proveedor if new description doesn't require it
+   350→    if (!requiereProveedor(item.descripcion)) {
+   351→      setIngProveedor('')
+   352→    }
+   353→  }
+   354→
+   355→  async function doIngreso() {
+   356→    if (!detail || !perfil) return
+   357→    if (!ingCodigo.trim() || !ingCantidad) { toast.error('Completa código y cantidad'); return }
+   358→    const q = parseFloat(ingCantidad); if (isNaN(q) || q <= 0) { toast.error('Cantidad inválida'); return }
+   359→    if (showProveedor && !ingProveedor) { toast.error('Selecciona un proveedor para este artículo'); return }
+   360→    setActionBusy(true)
+   361→    try {
+   362→      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+   363→        tipo: ingTipo, bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
+   364→        codigo: ingCodigo.trim().toUpperCase(), descripcion: ingDescripcion, un: ingUn, cantidad: q,
+   365→        fVencimiento: ingSinFecha ? '' : ingFVenc,
+   366→        turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+   367→        proveedor: showProveedor ? ingProveedor : undefined,
+   368→      })
+   369→      if (wasOffline) {
+   370→        toast.success(ingTipo === 'ingreso' ? 'Ingreso guardado (offline)' : 'Devolución guardada (offline)', {
+   371→          description: 'Se sincronizará al reconectarse', duration: 5000,
+   372→        })
+   373→      } else {
+   374→        toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
+   375→      }
+   376→      if (mountedRef.current && !wasOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+   377→    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
+   378→  }
+   379→
+   380→  function openInc() {
+   381→    setIncCodigo(''); setIncDescripcion(''); setIncUn('')
+   382→    setIncCantidad(''); setIncCodigoInc('')
+   383→    setDetailMode('inc')
+   384→  }
+   385→
+   386→  async function doIngresoINC() {
+   387→    if (!detail || !perfil) return
+   388→    if (!incCodigo.trim() || !incCantidad || !incCodigoInc.trim()) { toast.error('Completa código, cantidad y código INC'); return }
+   389→    const q = parseFloat(incCantidad); if (isNaN(q) || q <= 0) { toast.error('Cantidad inválida'); return }
+   390→    setActionBusy(true)
+   391→    try {
+   392→      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+   393→        tipo: 'ingreso', bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
+   394→        codigo: incCodigo.trim().toUpperCase(), descripcion: incDescripcion, un: incUn, cantidad: q,
+   395→        fVencimiento: '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+   396→        codigoInc: incCodigoInc.trim(),
+   397→      })
+   398→      if (wasOffline) {
+   399→        toast.success('INC guardado (offline)', { description: 'Se sincronizará al reconectarse', duration: 5000 })
+   400→      } else {
+   401→        toast.success('INC registrado')
+   402→      }
+   403→      if (mountedRef.current && !wasOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+   404→    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
+   405→  }
+   406→
+   407→  function handleIncCatalogoPick(item: { codigo: string; descripcion: string; un: string }) {
+   408→    setIncCodigo(item.codigo)
+   409→    setIncDescripcion(item.descripcion)
+   410→    setIncUn(item.un)
+   411→  }
+   412→
+   413→  async function doSalida() {
+   414→    if (!detail || !perfil) return
+   415→    const item = detail.stock[salidaIdx]
+   416→    if (!item) return
+   417→    const qty = parseFloat(salidaCantidad)
+   418→    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
+   419→    // Las salidas normales NO pueden exceder stock. Las salidas INC sí permiten exceder (autoajuste).
+   420→    // La validacion debe usar el stock TOTAL del codigo en esta ubicacion (igual que la RPC
+   421→    // registrar_movimiento_kardex), NO el stock por lote individual. La UI agrupa por lote
+   422→    // (f_vencimiento) pero la RPC suma TODOS los movimientos del codigo sin distinguir lotes.
+   423→    if (!item.codigoInc) {
+   424→      const totalStockForCodigo = detail.stock
+   425→        .filter(s => s.codigo === item.codigo)
+   426→        .reduce((sum, s) => sum + s.stock, 0)
+   427→      if (qty > totalStockForCodigo) { toast.error(`Stock insuficiente. Stock total disponible: ${totalStockForCodigo} ${item.un}`); return }
+   428→    }
+   429→    setActionBusy(true)
+   430→    try {
+   431→      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+   432→        tipo: 'salida', bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
+   433→        codigo: item.codigo, descripcion: item.descripcion, un: item.un, cantidad: qty,
+   434→        fVencimiento: item.fVencimiento ?? '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+   435→        // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
+   436→        codigoInc: item.codigoInc || undefined,
+   437→      })
+   438→      if (wasOffline) {
+   439→        toast.success(`Salida de ${qty} ${item.un} (offline)`, { description: 'Se sincronizará al reconectarse', duration: 5000 })
+   440→      } else {
+   441→        toast.success('Salida registrada')
+   442→      }
+   443→      if (mountedRef.current && !wasOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+   444→    } catch (err: unknown) {
+   445→      if (isInsufficientStockError(err)) {
+   446→        const detail = (err as Record<string, string>).detail || ''
+   447→        toast.error('Stock insuficiente', { description: detail || 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 8000 })
+   448→        refreshDetail(); refreshData()
+   449→      } else { toast.error('Error al registrar salida', { description: extractError(err) }) }
+   450→    } finally { setActionBusy(false) }
+   451→  }
+   452→
+   453→  async function doTransferir() {
+   454→    if (!detail || !perfil || !trItem) return
+   455→    if (!trDestBloque || !trDestTorre || !trDestPiso || !trDestPos) { toast.error('Completa destino'); return }
+   456→    const qty = parseFloat(trCantidad)
+   457→    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
+   458→    const origKey = `${detail.bloque}-${detail.torre}-${detail.piso}-${detail.posicion}`
+   459→    const destKey = `${trDestBloque}-${trDestTorre}-${trDestPiso}-${trDestPos}`
+   460→    if (origKey === destKey) { toast.error('Origen y destino no pueden ser iguales'); return }
+   461→    setActionBusy(true)
+   462→    try {
+   463→      // Check destination occupancy
+   464→      const destStock = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)
+   465→      if (destStock.length > 0) {
+   466→        toast.error(`Destino ocupado con ${destStock.length} artículo(s). Vacía primero el destino.`)
+   467→        setActionBusy(false); return
+   468→      }
+   469→      const input: TrasladoInput = {
+   470→        codigo: trItem.codigo, descripcion: trItem.descripcion, un: trItem.un, cantidad: qty,
+   471→        origen: { bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion },
+   472→        destino: { bloque: trDestBloque, torre: trDestTorre, piso: trDestPiso, posicion: trDestPos },
+   473→        turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+   474→        fVencimiento: trItem.fVencimiento ?? '',
+   475→        cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
+   476→        // Preservar codigoInc para que el traslado mueva el INC correctamente
+   477→        codigoInc: trItem.codigoInc || undefined,
+   478→      }
+   479→      const { wasOffline: wasTrOffline } = await SyncEngine.offlineAwareTraslado(input)
+   480→      toast.success(wasTrOffline ? 'Traslado guardado (offline)' : 'Traslado registrado', {
+   481→        ...(wasTrOffline ? { description: 'Se sincronizará al reconectarse', duration: 5000 } : {}),
+   482→      })
+   483→      if (!wasTrOffline && trFalta && trCorregirDiferencia) {
+   484→        toast.info(`Salida de ajuste: -${Math.abs(trDiferencia)} ${trItem.un} en origen`, { duration: 6000 })
+   485→      }
+   486→      if (!wasTrOffline && trExcede) {
+   487→        toast.info(`Ajuste automático: +${Math.abs(trDiferencia)} ${trItem.un} ingreso en origen`, { duration: 6000 })
+   488→      }
+   489→      if (mountedRef.current && !wasTrOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+   490→    } catch (err: unknown) {
+   491→      if (isInsufficientStockError(err)) {
+   492→        const detail = (err as Record<string, string>).detail || ''
+   493→        toast.error('Stock insuficiente en origen', { description: detail || 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 8000 })
+   494→        refreshDetail(); refreshData()
+   495→      } else { toast.error('Error al trasladar', { description: extractError(err) }) }
+   496→    } finally { setActionBusy(false) }
+   497→  }
+   498→
+   499→  async function handleExport() {
+   500→    setBusyExport(true)
+   501→    try {
+   502→      const XLSX = await import('xlsx')
+   503→      // Generar TODAS las posiciones (ocupadas + vacías)
+   504→      const bloques = bloqueFilter === 'all' ? BLOQUES : [bloqueFilter]
+   505→      const data: Record<string, string | number>[] = []
+   506→      for (const b of bloques) {
+   507→        for (const t of torresDeBloque(b)) {
+   508→          for (const p of PISOS) {
+   509→            for (const pos of posicionesDeBloque(b)) {
+   510→              const cell = ocupacion.find(o => o.bloque === b && o.torre === t && o.piso === p && o.posicion === pos)
+   511→              const isOcc = cell && cell.stock > 0
+   512→              const incCount = cell?.incItems?.length ?? 0
+   513→              const incCodes = cell?.incItems?.map(i => `${i.codigoInc} (${i.cantidad})`).join(', ') ?? ''
+   514→              data.push({
+   515→                Bloque: b,
+   516→                Torre: t,
+   517→                Piso: p,
+   518→                Posición: pos,
+   519→                Stock: isOcc ? cell.stock : 0,
+   520→                Códigos: isOcc ? cell.codigos.join(', ') : '',
+   521→                Artículos: isOcc ? cell.codigos.length : 0,
+   522→                Estado: isOcc ? (cell!.codigos.length > 1 ? 'Mixto' : cell!.lotes > 1 ? 'Multi-lote' : 'Ocupado') : (incCount > 0 ? 'Solo INC' : 'Vacío'),
+   523→                Lotes: isOcc ? cell!.lotes : 0,
+   524→                'INC': incCount > 0 ? `${incCount} item(s): ${incCodes}` : '',
+   525→              })
+   526→            }
+   527→          }
+   528→        }
+   529→      }
+   530→      const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
+   531→      XLSX.utils.book_append_sheet(wb, ws, 'Ocupación'); XLSX.writeFile(wb, `RACKLY_Ocupacion_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
+   532→    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusyExport(false) }
+   533→  }
+   534→
+   535→  if (loading) {
+   536→    return (
+   537→      <div className="flex items-center justify-center py-16">
+   538→        <div className="flex flex-col items-center gap-3">
+   539→          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 animate-pulse" />
+   540→          <p className="text-sm text-slate-400 animate-pulse">Cargando ocupación...</p>
+   541→        </div>
+   542→      </div>
+   543→    )
+   544→  }
+   545→
+   546→  const dashBloques = BLOQUES.map(b => {
+   547→    const bt = totalPosBloque(b), bo = ocupacion.filter(o => o.bloque === b && o.stock > 0).length
+   548→    const bm = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length > 1).length
+   549→    const bl = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length === 1 && o.lotes > 1).length
+   550→    return { bloque: b, total: bt, occupied: bo, multi: bm, multiLote: bl, empty: bt - bo, pct: bt > 0 ? Math.round((bo / bt) * 100) : 0 }
+   551→  })
+   552→
+   553→  const isView = detailMode === 'view'
+   554→  const isInc = detailMode === 'inc'
+   555→  const salItem = detail?.stock[salidaIdx]
+   556→
+   557→  return (
+   558→    <div className="space-y-5">
+   559→      {/* ═══ DASHBOARD ═══ */}
+   560→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   561→        <div className="rounded-xl border border-slate-600/40 bg-gradient-to-br from-slate-800 to-slate-900 p-4 shadow-md">
+   562→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center"><BoxSelect className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-sky-400/80 uppercase tracking-widest">Total</p></div>
+   563→          <p className="text-2xl font-bold text-slate-100">{total.toLocaleString()}</p>
+   564→          <p className="text-[10px] text-slate-500 mt-0.5">{bloqueFilter === 'all' ? 'Todos los bloques' : `Bloque ${bloqueFilter}`}</p>
+   565→        </div>
+   566→        <div className="rounded-xl border border-blue-600/30 bg-gradient-to-br from-blue-950/40 to-slate-900 p-4 shadow-md">
+   567→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center"><Layers className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-blue-400/80 uppercase tracking-widest">Ocupadas</p></div>
+   568→          <p className="text-2xl font-bold text-blue-300">{occupied}</p>
+   569→          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiLote} multi-lote · {multiArt} mixtas</p>
+   570→        </div>
+   571→        <div className="rounded-xl border border-emerald-600/30 bg-gradient-to-br from-emerald-950/40 to-slate-900 p-4 shadow-md">
+   572→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>
+   573→          <p className="text-2xl font-bold text-emerald-300">{empty.toLocaleString()}</p>
+   574→          <p className="text-[10px] text-sky-600/60 mt-0.5">Disponibles</p>
+   575→        </div>
+   576→        <div className="rounded-xl border border-violet-600/30 bg-gradient-to-br from-violet-950/40 to-slate-900 p-4 shadow-md">
+   577→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center"><Building2 className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-violet-400/80 uppercase tracking-widest">Ocupación</p></div>
+   578→          <p className="text-2xl font-bold text-violet-300">{pct}<span className="text-base">%</span></p>
+   579→          <div className="mt-2 h-1.5 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(pct, 100)}%`, background: pct > 80 ? 'linear-gradient(90deg,#ef4444,#f97316)' : pct > 50 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#0ea5e9,#3b82f6)' }} /></div>
+   580→        </div>
+   581→      </div>
+   582→
+   583→      {/* ═══ RESUMEN POR BLOQUE ═══ */}
+   584→      <div className="rounded-xl border border-slate-600/30 bg-slate-800/60 shadow-md overflow-hidden">
+   585→        <div className="px-4 py-2.5 border-b border-slate-600/30 flex items-center gap-2"><div className="w-1 h-3.5 rounded-full bg-gradient-to-b from-sky-400 to-blue-500" /><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Resumen por bloque</p></div>
+   586→        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-px bg-slate-700/20">
+   587→          {dashBloques.map(db => (
+   588→            <button key={db.bloque} className="bg-slate-800/60 p-2 text-center space-y-1 transition-colors hover:bg-slate-700/60" onClick={() => setBloqueFilter(bloqueFilter === db.bloque ? 'all' : db.bloque)}>
+   589→              <div className={`w-7 h-7 rounded-lg mx-auto flex items-center justify-center text-xs font-bold transition-all ${bloqueFilter === db.bloque ? 'bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-md scale-105' : 'bg-slate-700 text-slate-400'}`}>{db.bloque}</div>
+   590→              <p className="text-[9px] text-slate-500">{db.total} pos</p>
+   591→              <div className="flex justify-center gap-1"><span className="text-[9px] font-bold text-blue-400">{db.occupied}</span><span className="text-[9px] text-slate-600">/</span><span className="text-[9px] font-bold text-emerald-400">{db.empty}</span></div>
+   592→              {db.multiLote > 0 && <span className="text-[8px] font-semibold text-yellow-400 bg-yellow-400/10 px-1 py-px rounded">{db.multiLote} lote</span>}
+   593→              {db.multi > 0 && <span className="text-[8px] font-semibold text-amber-400 bg-amber-400/10 px-1 py-px rounded">{db.multi} mix</span>}
+   594→              <div className="h-1 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-500" style={{ width: `${db.pct}%` }} /></div>
+   595→            </button>
+   596→          ))}
+   597→        </div>
+   598→      </div>
+   599→
+   600→      {/* ═══ FILTROS Y LEYENDA ═══ */}
+   601→      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+   602→        <Select value={bloqueFilter} onValueChange={setBloqueFilter}>
+   603→          <SelectTrigger className="w-40 bg-slate-800/60 border-slate-600/40 text-slate-300 text-xs"><SelectValue placeholder="Filtrar bloque" /></SelectTrigger>
+   604→          <SelectContent className="bg-slate-800 border-slate-600/40"><SelectItem value="all" className="text-slate-300 focus:bg-slate-700">Todos</SelectItem>{BLOQUES.map(b => <SelectItem key={b} value={b} className="text-slate-300 focus:bg-slate-700">Bloque {b}</SelectItem>)}</SelectContent>
+   605→        </Select>
+   606→        <div className="flex items-center gap-4 text-[10px] text-slate-400 flex-wrap">
+   607→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600" /><span>Ocupado</span></div>
+   608→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600 relative"><span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full" /></div><span>Multi-lote</span></div>
+   609→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-amber-400 to-orange-500" /><span>Multi-art.</span></div>
+   610→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-rose-400 to-pink-600" /><span>INC</span></div>
+   611→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-emerald-400 to-green-600" /><span>Vacío</span></div>
+   612→        </div>
+   613→      </div>
+   614→
+   615→      {/* ═══ GRID DE BLOQUES ═══ */}
+   616→      <div className="space-y-6">
+   617→        {BLOQUES.filter(b => bloqueFilter === 'all' || b === bloqueFilter).map(bloque => {
+   618→          const torres = torresDeBloque(bloque)
+   619→          const posiciones = posicionesDeBloque(bloque)
+   620→          const bTotal = totalPosBloque(bloque)
+   621→          const bOcup = ocupacion.filter(o => o.bloque === bloque && o.stock > 0).length
+   622→          const bEmpty = bTotal - bOcup
+   623→          const bPct = bTotal > 0 ? Math.round((bOcup / bTotal) * 100) : 0
+   624→          return (
+   625→            <div key={bloque} className="rounded-xl border border-slate-600/30 bg-gradient-to-b from-slate-800/80 to-slate-900/80 shadow-lg overflow-hidden">
+   626→              <div className="px-4 py-3 border-b border-slate-600/25 bg-gradient-to-r from-slate-800/60 to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+   627→                <div className="flex items-center gap-2.5">
+   628→                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow">{bloque}</div>
+   629→                  <div><p className="text-xs font-bold text-slate-200">Bloque {bloque}</p><p className="text-[10px] text-slate-500">{torres.length} torre(s) · {posiciones.length} pos/torre</p></div>
+   630→                </div>
+   631→                <div className="flex items-center gap-2">
+   632→                  <div className="w-20 h-1.5 rounded-full bg-slate-700/50 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-700" style={{ width: `${bPct}%` }} /></div>
+   633→                  <span className="text-xs font-bold text-sky-400">{bPct}%</span>
+   634→                  <span className="text-[10px] text-slate-500">({bOcup}/{bTotal})</span>
+   635→                </div>
+   636→              </div>
+   637→              <div className="p-3 sm:p-4">
+   638→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+   639→                  {torres.map(torre => {
+   640→                    const tTotal = PISOS.length * posiciones.length
+   641→                    const tOcup = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.stock > 0).length
+   642→                    const tInc = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.tieneInc).length
+   643→                    const halfLen = Math.ceil(posiciones.length / 2)
+   644→                    const posA = posiciones.slice(0, halfLen)
+   645→                    const posB = posiciones.slice(halfLen)
+   646→                    return (
+   647→                      <div key={torre}>
+   648→                        <div className="flex items-center justify-between px-3 py-1.5 mb-2">
+   649→                          <div className="flex items-center gap-1.5"><div className="w-1.5 h-4 rounded-sm bg-gradient-to-b from-sky-400 to-blue-500" /><span className="text-[11px] font-bold text-slate-300">Torre {torre}</span></div>
+   650→                          <div className="flex items-center gap-1"><span className="text-[10px] font-bold text-blue-400">{tOcup}</span><span className="text-[10px] text-slate-600">/</span><span className="text-[10px] font-bold text-emerald-400">{tTotal}</span></div>
+   651→                        </div>
+   652→                        <div className="space-y-1">
+   653→                          {PISOS.map(piso => {
+   654→                            const pisoOcup = posiciones.filter(pos => { const c = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos); return c && (c.stock > 0 || (c.tieneInc && c.incItems.length > 0)) }).length
+   655→                            return (
+   656→                              <div key={piso} className="rounded-lg border border-slate-600/15 bg-slate-900/40 overflow-hidden">
+   657→                                <div className="flex items-center justify-center gap-2 py-1.5 px-2 bg-slate-800/50 border-b border-slate-700/15">
+   658→                                  <div className={`w-1.5 h-1.5 rounded-full ${pisoOcup > 0 ? 'bg-blue-400' : 'bg-slate-600'}`} />
+   659→                                  <span className="text-[10px] font-bold text-slate-300 tracking-wide">PISO {piso}</span>
+   660→                                  {pisoOcup > 0 && <span className="text-[9px] font-bold text-blue-400 bg-blue-400/10 px-1.5 py-px rounded-full">{pisoOcup}</span>}
+   661→                                  <div className="flex-1 h-px bg-slate-700/20" />
+   662→                                  <span className="text-[8px] text-slate-600">{posA.length}+{posB.length}</span>
+   663→                                </div>
+   664→                                <div className="flex px-1.5 pt-1.5 gap-[2px]">
+   665→                                  {posA.map(pos => {
+   666→                                    const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
+   667→                                    const isOcc = cell && cell.stock > 0
+   668→                                    const isOnlyInc = !isOcc && cell && cell.tieneInc && cell.incItems.length > 0
+   669→                                    const isInc = cell && cell.tieneInc && cell.incItems.length > 0
+   670→                                    const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
+   671→                                    const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
+   672→                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+   673→                                    if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
+   674→                                    else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
+   675→                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+   676→                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
+   677→                                    let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
+   678→                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
+   679→                                    else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+   680→                                    else { title += ' · Vacío' }
+   681→                                    const firstInc = isInc ? cell!.incItems[0] : null
+   682→                                    return (
+   683→                                      <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
+   684→                                        {pos}
+   685→                                        {isInc && firstInc && (
+   686→                                          <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
+   687→                                            {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}
+   688→                                            {cell!.incItems.length > 1 && <span className="text-[5px] text-rose-200/60 ml-px">+{cell!.incItems.length - 1}</span>}
+   689→                                          </span>
+   690→                                        )}
+   691→                                        {isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}
+   692→                                        {isInc && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-rose-200 rounded-full ring-1 ring-rose-400" />}
+   693→                                      </button>
+   694→                                    )
+   695→                                  })}
+   696→                                </div>
+   697→                                <div className="flex px-1.5 pt-[2px] pb-1.5 gap-[2px]">
+   698→                                  {posB.map(pos => {
+   699→                                    const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
+   700→                                    const isOcc = cell && cell.stock > 0
+   701→                                    const isOnlyInc = !isOcc && cell && cell.tieneInc && cell.incItems.length > 0
+   702→                                    const isInc = cell && cell.tieneInc && cell.incItems.length > 0
+   703→                                    const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
+   704→                                    const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
+   705→                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+   706→                                    if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
+   707→                                    else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
+   708→                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+   709→                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
+   710→                                    let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
+   711→                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
+   712→                                    else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+   713→                                    else { title += ' · Vacío' }
+   714→                                    const firstInc = isInc ? cell!.incItems[0] : null
+   715→                                    return (
+   716→                                      <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
+   717→                                        {pos}
+   718→                                        {isInc && firstInc && (
+   719→                                          <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
+   720→                                            {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}
+   721→                                            {cell!.incItems.length > 1 && <span className="text-[5px] text-rose-200/60 ml-px">+{cell!.incItems.length - 1}</span>}
+   722→                                          </span>
+   723→                                        )}
+   724→                                        {isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}
+   725→                                        {isInc && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-rose-200 rounded-full ring-1 ring-rose-400" />}
+   726→                                      </button>
+   727→                                    )
+   728→                                  })}
+   729→                                </div>
+   730→                              </div>
+   731→                            )
+   732→                          })}
+   733→                        </div>
+   734→                      </div>
+   735→                    )
+   736→                  })}
+   737→                </div>
+   738→              </div>
+   739→            </div>
+   740→          )
+   741→        })}
+   742→      </div>
+   743→
+   744→      {/* Exportar */}
+   745→      <div className="flex justify-end">
+   746→        <Button onClick={handleExport} disabled={busyExport} variant="outline" size="sm" className="gap-1.5 border-slate-600/40 bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-sky-400 text-xs">
+   747→          {busyExport ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Exportar
+   748→        </Button>
+   749→      </div>
+   750→
+   751→      {/* ═══════════════════════════════════════════════════════════════════
+   752→          DIÁLOGO PRINCIPAL — Vista, Ingreso, Salida, Transferir
+   753→          Todo dentro de la misma ventana emergente
+   754→          ═══════════════════════════════════════════════════════════════════ */}
+   755→      <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setDetailMode('view') } }}>
+   756→        <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-xl bg-slate-800 border-slate-600/40 shadow-xl max-h-[90vh] overflow-y-auto overscroll-contain">
+   757→          <DialogHeader>
+   758→            <DialogTitle className="bg-gradient-to-r from-sky-400 to-blue-500 bg-clip-text text-transparent font-bold text-sm">
+   759→              B{detail?.bloque} · T{detail?.torre} · P{detail?.piso} · Pos {detail?.posicion}
+   760→              {!isView && <span className="text-slate-400 font-normal text-xs ml-2">
+   761→                — {detailMode === 'inc' ? 'Registro INC' : detailMode === 'ingreso' ? (ingTipo === 'ingreso' ? 'Ingreso' : 'Devolución') : detailMode === 'salida' ? 'Salida' : 'Transferir'}
+   762→              </span>}
+   763→            </DialogTitle>
+   764→          </DialogHeader>
+   765→
+   766→          {detail && (<>
+   767→            {/* ═══════ MODO: VISTA ═══════ */}
+   768→            {isView && (
+   769→              detail.stock.length > 0 ? (
+   770→                <>
+   771→                  {(() => {
+   772→                    const multiples = codigosConMultiplesLotes(detail.stock)
+   773→                    const stockDisponible = detail.stock.filter(s => !s.codigoInc)
+   774→                    const stockInc = detail.stock.filter(s => !!s.codigoInc)
+   775→                    return (
+   776→                      <div className="space-y-3">
+   777→                        {/* ── Stock Disponible ── */}
+   778→                        <div>
+   779→                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+   780→                            <Package className="w-3 h-3 text-emerald-400" /> Disponible ({stockDisponible.length})
+   781→                          </p>
+   782→                          <div className="space-y-2">
+   783→                            {stockDisponible.map((s, i) => {
+   784→                          const dias = diasParaVencer(s.fVencimiento)
+   785→                          const esLoteMultiple = multiples.has(s.codigo)
+   786→                          // Clase de color según urgencia de vencimiento
+   787→                          let vencBadge = ''
+   788→                          if (dias !== null) {
+   789→                            if (dias < 0) { vencBadge = 'bg-red-500/15 border-red-500/25 text-red-400' }
+   790→                            else if (dias <= 15) { vencBadge = 'bg-orange-500/15 border-orange-500/25 text-orange-400' }
+   791→                            else if (dias <= 30) { vencBadge = 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' }
+   792→                            else { vencBadge = 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' }
+   793→                          }
+   794→                          return (
+   795→                            <div key={`${s.codigo}-${s.fVencimiento || 'sin-fecha'}`} className={`rounded-lg border overflow-hidden ${esLoteMultiple ? 'border-sky-500/25 bg-gradient-to-r from-sky-950/20 to-slate-700/20' : 'border-slate-600/30 bg-slate-700/20'}`}>
+   796→                              <div className="p-3 space-y-1.5">
+   797→                                {/* Encabezado: código + badges */}
+   798→                                <div className="flex items-start justify-between gap-2">
+   799→                                  <div className="min-w-0 flex-1">
+   800→                                    <div className="flex items-center gap-2 flex-wrap">
+   801→                                      <span className="font-mono text-sky-400 font-bold text-xs">{s.codigo}</span>
+   802→                                      {s.proveedor && <span className="text-[8px] font-semibold text-purple-400 bg-purple-400/10 px-1.5 py-px rounded">{s.proveedor}</span>}
+   803→                                      {/* Badge FEFO: indica que hay múltiples lotes del mismo artículo */}
+   804→                                      {esLoteMultiple && (
+   805→                                        <span className="flex items-center gap-0.5 text-[8px] font-bold text-sky-300 bg-sky-400/15 border border-sky-400/20 px-1.5 py-px rounded">
+   806→                                          <CalendarClock className="w-2.5 h-2.5" /> FEFO #{i + 1}
+   807→                                        </span>
+   808→                                      )}
+   809→                                    </div>
+   810→                                    <p className={`text-xs mt-0.5 truncate ${s.descripcion ? 'text-slate-300' : 'text-slate-500 italic'}`}>{s.descripcion || 'Sin descripción'}</p>
+   811→                                    {/* Fecha de vencimiento con badge de urgencia */}
+   812→                                    <div className="flex items-center gap-2 mt-1 text-[10px] flex-wrap">
+   813→                                      {s.fVencimiento && (
+   814→                                        <span className={`flex items-center gap-1 px-1.5 py-px rounded border ${vencBadge || 'border-slate-600/20 text-slate-500'}`}>
+   815→                                          {dias !== null && dias < 0 && <Flame className="w-2.5 h-2.5" />}
+   816→                                          Venc: {s.fVencimiento}
+   817→                                          {dias !== null && (
+   818→                                            <span className="font-semibold">({dias < 0 ? `${Math.abs(dias)}d vencido` : `${dias}d`})</span>
+   819→                                          )}
+   820→                                        </span>
+   821→                                      )}
+   822→                                      {!s.fVencimiento && <span className="italic text-slate-500">Sin fecha de vencimiento</span>}
+   823→                                      {s.usuarioPrimerNombre && <span className="text-slate-500">Ing: {s.usuarioPrimerNombre}</span>}
+   824→                                    </div>
+   825→                                  </div>
+   826→                                  <div className="text-right flex-shrink-0">
+   827→                                    <p className="font-bold text-emerald-400 text-sm">{s.stock}</p>
+   828→                                    <p className="text-[10px] text-slate-500">{s.un}</p>
+   829→                                  </div>
+   830→                                </div>
+   831→                                {/* Botones de acción */}
+   832→                                <div className="flex items-center gap-1 pt-1">
+   833→                                  <button onClick={() => openSalida(i, true)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Salida total</button>
+   834→                                  <button onClick={() => openSalida(i, false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
+   835→                                  <button onClick={() => openTransferir(i)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
+   836→                                  <button onClick={() => openHistorial()} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-colors text-[10px] font-medium border border-violet-500/15"><Clock className="w-3 h-3" /> Historial</button>
+   837→                                </div>
+   838→                              </div>
+   839→                            </div>
+   840→                          )
+   841→                        })}
+   842→                        {stockDisponible.length === 0 && (
+   843→                          <p className="text-slate-500 text-xs italic py-2">Sin stock disponible.</p>
+   844→                        )}
+   845→                      </div>
+   846→                        </div>
+   847→
+   848→                        {/* ── Stock INC (Insumo No Conforme) ── */}
+   849→                        {stockInc.length > 0 && (
+   850→                          <div>
+   851→                            <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+   852→                              <AlertTriangle className="w-3 h-3 text-rose-400" /> INC — Insumo No Conforme ({stockInc.length})
+   853→                            </p>
+   854→                            <div className="space-y-2">
+   855→                              {stockInc.map((s, i) => (
+   856→                                <div key={`inc-${s.codigo}-${s.fVencimiento || 'sin-fecha'}`} className="rounded-lg border overflow-hidden border-rose-500/25 bg-gradient-to-r from-rose-950/20 to-slate-700/20">
+   857→                                  <div className="p-3 space-y-1.5">
+   858→                                    <div className="flex items-start justify-between gap-2">
+   859→                                      <div className="min-w-0 flex-1">
+   860→                                        <div className="flex items-center gap-2 flex-wrap">
+   861→                                          <span className="font-mono text-rose-400 font-bold text-xs">{s.codigo}</span>
+   862→                                          {s.codigoInc && <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 border border-rose-400/20 px-1.5 py-px rounded">{s.codigoInc}</span>}
+   863→                                        </div>
+   864→                                        <p className={`text-xs mt-0.5 truncate ${s.descripcion ? 'text-slate-300' : 'text-slate-500 italic'}`}>{s.descripcion || 'Sin descripción'}</p>
+   865→                                      </div>
+   866→                                      <div className="text-right flex-shrink-0">
+   867→                                        <p className="font-bold text-rose-300 text-sm">{s.stock}</p>
+   868→                                        <p className="text-[10px] text-slate-500">{s.un}</p>
+   869→                                      </div>
+   870→                                    </div>
+   871→                                    <div className="flex items-center gap-1 pt-1">
+   872→                                      <button onClick={() => openSalida(detail.stock.indexOf(s), true)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Todo</button>
+   873→                                      <button onClick={() => openSalida(detail.stock.indexOf(s), false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
+   874→                                      <button onClick={() => openTransferir(detail.stock.indexOf(s))} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
+   875→                                    </div>
+   876→                                  </div>
+   877→                                </div>
+   878→                              ))}
+   879→                            </div>
+   880→                          </div>
+   881→                        )}
+   882→                      </div>
+   883→                    )
+   884→                  })()}
+   885→                  {/* Botones principales */}
+   886→                  <div className="flex gap-2 pt-1">
+   887→                    <Button onClick={() => openIngreso('ingreso')} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white text-xs"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+   888→                    <Button onClick={() => openInc()} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs"><AlertTriangle className="h-3.5 w-3.5" /> INC</Button>
+   889→                  </div>
+   890→                </>
+   891→              ) : (
+   892→                /* Ubicación vacía */
+   893→                <div className="space-y-3 py-2">
+   894→                  <div className="flex flex-col items-center gap-2 py-4">
+   895→                    <BoxSelect className="w-8 h-8 text-slate-600" />
+   896→                    <p className="text-slate-500 text-sm">Ubicación vacía</p>
+   897→                  </div>
+   898→                  <div className="grid grid-cols-2 gap-2">
+   899→                    <Button onClick={() => openIngreso('ingreso')} size="sm" className="gap-1.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white text-xs"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+   900→                    <Button onClick={() => openInc()} size="sm" className="gap-1.5 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs"><AlertTriangle className="h-3.5 w-3.5" /> INC</Button>
+   901→                  </div>
+   902→                </div>
+   903→              )
+   904→            )}
+   905→
+   906→            {/* ═══════ MODO: INC (Ingreso INC) ═══════ */}
+   907→            {isInc && (
+   908→              <div className="space-y-3">
+   909→                <div className="rounded-lg border border-rose-500/25 bg-rose-950/10 p-3 space-y-1.5">
+   910→                  <div className="flex items-center gap-2">
+   911→                    <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+   912→                    <div>
+   913→                      <p className="text-xs font-bold text-rose-400">Registro INC — Insumo No Conforme</p>
+   914→                      <p className="text-[10px] text-slate-400">Producto que no cumple con especificaciones de calidad</p>
+   915→                    </div>
+   916→                  </div>
+   917→                </div>
+   918→                <p className="text-[10px] text-slate-500">Ubicación: <span className="text-sky-400 font-mono">B{detail.bloque} T{detail.torre} P{detail.piso} Pos {detail.posicion}</span></p>
+   919→
+   920→                {/* Búsqueda de artículo */}
+   921→                <div className="space-y-1">
+   922→                  <Label className="text-[10px] text-slate-400">Buscar artículo (código o descripción) *</Label>
+   923→                  <CatalogoSearchInput
+   924→                    onPick={handleIncCatalogoPick}
+   925→                    value={incCodigo}
+   926→                    onChange={(val) => setIncCodigo(val)}
+   927→                  />
+   928→                </div>
+   929→
+   930→                {/* Descripción y UN */}
+   931→                <div className="grid grid-cols-2 gap-2">
+   932→                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">Descripción</Label><Input value={incDescripcion} onChange={e => setIncDescripcion(e.target.value)} placeholder="Auto o manual" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+   933→                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">UN</Label><Input value={incUn} onChange={e => setIncUn(e.target.value)} placeholder="Auto o manual" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+   934→                </div>
+   935→
+   936→                {/* Cantidad */}
+   937→                <div className="grid grid-cols-2 gap-2">
+   938→                  <div className="space-y-1">
+   939→                    <Label className="text-[10px] text-slate-400">Cantidad *</Label>
+   940→                    <Input type="number" step="any" min="0.001" value={incCantidad} onChange={e => setIncCantidad(e.target.value)} placeholder="0" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" />
+   941→                  </div>
+   942→                  <div className="space-y-1">
+   943→                    <Label className="text-[10px] text-slate-400">Código INC *</Label>
+   944→                    <Input value={incCodigoInc} onChange={e => setIncCodigoInc(e.target.value)} placeholder="Ej: INC026-120" className="h-8 bg-slate-700/50 border-rose-600/40 text-rose-300 text-xs placeholder:text-rose-500/40 focus:border-rose-400/60" />
+   945→                  </div>
+   946→                </div>
+   947→
+   948→                {/* Botones */}
+   949→                <div className="flex gap-2">
+   950→                  <button onClick={() => setDetailMode('view')} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold border border-slate-600/40 text-slate-400 hover:bg-slate-700/40 hover:text-slate-200 transition-colors">← Cancelar</button>
+   951→                  <Button onClick={() => doIngresoINC()} disabled={actionBusy} className="flex-1 gap-1.5 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs">
+   952→                    {actionBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+   953→                    <AlertTriangle className="h-3.5 w-3.5" /> Registrar INC
+   954→                  </Button>
+   955→                </div>
+   956→              </div>
+   957→            )}
+   958→
+   959→            {/* ═══════ MODO: INGRESO / DEVOLUCIÓN ═══════ */}
+   960→            {detailMode === 'ingreso' && (
+   961→              <div className="space-y-3">
+   962→                {/* Alerta posición ocupada */}
+   963→                {detail.stock.length > 0 && (
+   964→                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-1.5">
+   965→                    <div className="flex items-center gap-2">
+   966→                      <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+   967→                      <span className="text-xs font-bold text-amber-400">Posición ocupada</span>
+   968→                    </div>
+   969→                    <p className="text-[10px] text-slate-400">Esta ubicación ya tiene {detail.stock.length} artículo(s). Se agregará el nuevo producto en la misma posición.</p>
+   970→                    <div className="space-y-1 mt-1">
+   971→                      {detail.stock.map((s, i) => (
+   972→                        <div key={i} className="flex items-center gap-2 text-[10px] bg-slate-800/40 rounded px-2 py-1">
+   973→                          <Package className="w-3 h-3 text-slate-500 flex-shrink-0" />
+   974→                          <span className="font-mono text-sky-400 font-medium">{s.codigo}</span>
+   975→                          <span className="text-slate-500 truncate flex-1">{s.descripcion || ''}</span>
+   976→                          <span className="text-emerald-400 font-bold flex-shrink-0">{s.stock} {s.un}</span>
+   977→                        </div>
+   978→                      ))}
+   979→                    </div>
+   980→                  </div>
+   981→                )}
+   982→
+   983→                {/* Toggle tipo */}
+   984→                <div className="flex gap-1 p-1 rounded-lg bg-slate-700/40">
+   985→                  <button onClick={() => setIngTipo('ingreso')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1 ${ingTipo === 'ingreso' ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}><ArrowDownToLine className="w-3.5 h-3.5" /> Ingreso</button>
+   986→                  <button onClick={() => setIngTipo('devolucion')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1 ${ingTipo === 'devolucion' ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}><RotateCcw className="w-3.5 h-3.5" /> Devolución</button>
+   987→                </div>
+   988→                <p className="text-[10px] text-slate-500">Ubicación: <span className="text-sky-400 font-mono">B{detail.bloque} T{detail.torre} P{detail.piso} Pos {detail.posicion}</span></p>
+   989→
+   990→                {/* Búsqueda de artículo por código o descripción */}
+   991→                <div className="space-y-1">
+   992→                  <Label className="text-[10px] text-slate-400">Buscar artículo (código o descripción) *</Label>
+   993→                  <CatalogoSearchInput
+   994→                    onPick={handleCatalogoPick}
+   995→                    value={ingCodigo}
+   996→                    onChange={(val) => {
+   997→                      setIngCodigo(val)
+   998→                      // If user clears or types manually, don't auto-clear descripcion/un
+   999→                      // They might be editing manually
+  1000→                    }}
+  1001→                  />
+  1002→                </div>
+  1003→
+  1004→                {/* Descripción y UN (auto-llenados, pero editables) */}
+  1005→                <div className="grid grid-cols-2 gap-2">
+  1006→                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">Descripción</Label><Input value={ingDescripcion} onChange={e => setIngDescripcion(e.target.value)} placeholder="Auto o manual" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+  1007→                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">UN</Label><Input value={ingUn} onChange={e => setIngUn(e.target.value)} placeholder="KG" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+  1008→                </div>
+  1009→
+  1010→                {/* Cantidad */}
+  1011→                <div className="space-y-1"><Label className="text-[10px] text-slate-400">Cantidad *</Label><Input type="number" step="any" min="0.001" value={ingCantidad} onChange={e => setIngCantidad(e.target.value)} placeholder="0" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+  1012→
+  1013→                {/* Fecha de vencimiento + botón Sin Fecha */}
+  1014→                <div className="space-y-1.5">
+  1015→                  <Label className="text-[10px] text-slate-400">Fecha de vencimiento</Label>
+  1016→                  <div className="flex gap-2">
+  1017→                    <Input
+  1018→                      type="date"
+  1019→                      value={ingSinFecha ? '' : ingFVenc}
+  1020→                      onChange={e => { setIngFVenc(e.target.value); if (e.target.value) setIngSinFecha(false) }}
+  1021→                      disabled={ingSinFecha}
+  1022→                      className="flex-1 h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50 disabled:opacity-40 [color-scheme:dark]"
+  1023→                    />
+  1024→                    <button
+  1025→                      type="button"
+  1026→                      onClick={() => { setIngSinFecha(!ingSinFecha); if (!ingSinFecha) setIngFVenc('') }}
+  1027→                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all border flex-shrink-0 ${
+  1028→                        ingSinFecha
+  1029→                          ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+  1030→                          : 'bg-slate-700/30 border-slate-600/30 text-slate-400 hover:text-slate-300 hover:border-slate-500/40'
+  1031→                      }`}
+  1032→                    >
+  1033→                      <CalendarOff className="w-3.5 h-3.5" />
+  1034→                      {ingSinFecha ? 'Sin fecha' : 'Sin fecha'}
+  1035→                    </button>
+  1036→                  </div>
+  1037→                  {ingSinFecha && <p className="text-[10px] text-purple-400/80 italic">El artículo no tiene fecha de vencimiento</p>}
+  1038→                </div>
+  1039→
+  1040→                {/* Proveedor — solo si es LÁMINA o STRETCH (excepto ETIQUETA LAMINA) */}
+  1041→                {showProveedor && (
+  1042→                  <div className="space-y-1">
+  1043→                    <Label className="text-[10px] text-purple-400 font-semibold">Proveedor *</Label>
+  1044→                    <Select value={ingProveedor} onValueChange={setIngProveedor}>
+  1045→                      <SelectTrigger className="h-8 bg-slate-700/50 border-purple-500/30 text-slate-200 text-xs">
+  1046→                        <SelectValue placeholder="Seleccionar proveedor..." />
+  1047→                      </SelectTrigger>
+  1048→                      <SelectContent className="bg-slate-800 border-slate-600/40">
+  1049→                        {PROVEEDORES_FILM.map((p) => (
+  1050→                          <SelectItem key={p} value={p} className="text-slate-300 focus:bg-slate-700">{p}</SelectItem>
+  1051→                        ))}
+  1052→                      </SelectContent>
+  1053→                    </Select>
+  1054→                  </div>
+  1055→                )}
+  1056→
+  1057→                <div className="flex gap-2 pt-1">
+  1058→                  <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>
+  1059→                  <Button onClick={doIngreso} disabled={actionBusy} size="sm" className={`flex-1 gap-1.5 text-white text-xs ${ingTipo === 'ingreso' ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700' : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700'}`}>{actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : ingTipo === 'ingreso' ? <><ArrowDownToLine className="h-3.5 w-3.5" /> Registrar</> : <><RotateCcw className="h-3.5 w-3.5" /> Registrar</>}</Button>
+  1060→                </div>
+  1061→              </div>
+  1062→            )}
+  1063→
+  1064→            {/* ═══════ MODO: SALIDA ═══════ */}
+  1065→            {detailMode === 'salida' && salItem && (
+  1066→              <div className="space-y-3">
+  1067→                {/* Selector de artículo si hay múltiples */}
+  1068→                {detail.stock.length > 1 && (
+  1069→                  <div className="rounded-lg border border-slate-600/20 bg-slate-700/20 p-2">
+  1070→                    <p className="text-[10px] text-slate-400 mb-1.5 font-medium">Selecciona el artículo a dar salida:</p>
+  1071→                    <div className="space-y-1">
+  1072→                      {detail.stock.map((s, i) => (
+  1073→                        <button key={i} onClick={() => { setSalidaIdx(i); setSalidaCantidad(salidaTotal ? String(s.stock) : ''); }}
+  1074→                          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${i === salidaIdx ? 'bg-red-500/15 border border-red-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>
+  1075→                          <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0" style={{ borderColor: i === salidaIdx ? '#f87171' : '#475569', backgroundColor: i === salidaIdx ? '#ef4444' : 'transparent' }}>
+  1076→                            {i === salidaIdx && <div className="w-2 h-2 rounded-full bg-white" />}
+  1077→                          </div>
+  1078→                          <div className="flex-1 min-w-0">
+  1079→                            <div className="flex items-center gap-2">
+  1080→                              <span className={`font-mono font-bold text-xs ${s.codigoInc ? 'text-rose-400' : 'text-sky-400'}`}>{s.codigo}</span>
+  1081→                              {s.codigoInc && <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 border border-rose-400/20 px-1.5 py-px rounded">INC</span>}
+  1082→                              {s.proveedor && <span className="text-[8px] font-semibold text-purple-400 bg-purple-400/10 px-1.5 py-px rounded">{s.proveedor}</span>}
+  1083→                            </div>
+  1084→                            {s.descripcion && <p className="text-[10px] text-slate-400 truncate">{s.descripcion}</p>}
+  1085→                          </div>
+  1086→                          <span className={`font-bold text-xs flex-shrink-0 ${s.codigoInc ? 'text-rose-300' : 'text-emerald-400'}`}>{s.stock} <span className="text-slate-500 font-normal">{s.un}</span></span>
+  1087→                        </button>
+  1088→                      ))}
+  1089→                    </div>
+  1090→                  </div>
+  1091→                )}
+  1092→
+  1093→                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 space-y-1.5">
+  1094→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Producto:</span><span className="text-slate-200 font-mono">{salItem.codigo}</span></div>
+  1095→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Descripción:</span><span className="text-slate-300 truncate ml-2">{salItem.descripcion || '—'}</span></div>
+  1096→                  {salItem.proveedor && <div className="flex justify-between text-xs"><span className="text-slate-400">Proveedor:</span><span className="text-purple-400 font-medium">{salItem.proveedor}</span></div>}
+  1097→                  {salItem.codigoInc && (
+  1098→                  <div className="rounded-lg border border-rose-500/25 bg-rose-500/5 p-2 flex items-center gap-2">
+  1099→                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+  1100→                    <span className="text-[10px] text-rose-300 font-medium">INC — {salItem.codigoInc} — La salida puede exceder el stock</span>
+  1101→                  </div>
+  1102→                )}
+  1103→                {salItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className={salItem.fVencimiento < new Date().toISOString().slice(0, 10) ? 'text-red-400 font-semibold' : 'text-slate-300'}>{salItem.fVencimiento}</span></div>}
+  1104→                  {!salItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+  1105→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Stock actual:</span><span className={`font-bold ${salItem.codigoInc ? 'text-rose-300' : 'text-emerald-400'}`}>{salItem.stock} {salItem.un}</span></div>
+  1106→                </div>
+  1107→                <div className="space-y-1">
+  1108→                  <Label className="text-[10px] text-slate-400">
+  1109→                    {salidaTotal ? 'Salida total' : 'Cantidad a salir'} *
+  1110→                    {!salidaTotal && !salItem.codigoInc && <span className="text-slate-600 ml-1">(máx: {salItem.stock})</span>}
+  1111→                  </Label>
+  1112→                  <Input type="number" step="any" min="0.001" max={salItem.codigoInc ? undefined : salItem.stock} value={salidaCantidad}
+  1113→                    onChange={e => setSalidaCantidad(e.target.value)}
+  1114→                    disabled={salidaTotal}
+  1115→                    className={`h-8 bg-slate-700/50 text-slate-200 text-xs disabled:opacity-50 ${salItem.codigoInc ? 'border-rose-500/30 focus:border-rose-400/50' : 'border-slate-600/40 focus:border-red-500/50'}`} />
+  1116→                </div>
+  1117→                {!salidaTotal && (
+  1118→                  <p className="text-[10px] text-slate-500">Saldrán {salidaCantidad || '0'} de {salItem.stock} {salItem.un} — quedarán {Math.max(0, salItem.stock - (parseFloat(salidaCantidad) || 0))} {salItem.un}</p>
+  1119→                )}
+  1120→                <div className="flex gap-2 pt-1">
+  1121→                  <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>
+  1122→                  <Button onClick={doSalida} disabled={actionBusy} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-red-500 to-red-600 text-white text-xs">
+  1123→                    {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><ArrowUpFromLine className="h-3.5 w-3.5" /> Confirmar salida</>}
+  1124→                  </Button>
+  1125→                </div>
+  1126→              </div>
+  1127→            )}
+  1128→
+  1129→            {/* ═══════ MODO: TRANSFERIR ═══════ */}
+  1130→            {detailMode === 'transferir' && trItem && (
+  1131→              <div className="space-y-3">
+  1132→                {/* Info del producto */}
+  1133→                <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-1.5">
+  1134→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Producto:</span><span className="text-slate-200 font-mono">{trItem.codigo}</span></div>
+  1135→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Descripción:</span><span className="text-slate-300">{trItem.descripcion || '—'}</span></div>
+  1136→                  {trItem.proveedor && <div className="flex justify-between text-xs"><span className="text-slate-400">Proveedor:</span><span className="text-purple-400 font-medium">{trItem.proveedor}</span></div>}
+  1137→                  {trItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className={trItem.fVencimiento < new Date().toISOString().slice(0, 10) ? 'text-red-400 font-semibold' : 'text-slate-300'}>{trItem.fVencimiento}</span></div>}
+  1138→                  {!trItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+  1139→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Stock origen:</span><span className="text-emerald-400 font-bold">{trItem.stock} {trItem.un}</span></div>
+  1140→                </div>
+  1141→
+  1142→                {/* Origen */}
+  1143→                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Origen</p>
+  1144→                <div className="rounded-lg border border-slate-600/20 bg-slate-700/30 px-3 py-2 text-xs text-slate-300 font-mono">
+  1145→                  B{detail.bloque} · T{detail.torre} · P{detail.piso} · Pos {detail.posicion}
+  1146→                </div>
+  1147→
+  1148→                {/* Flecha */}
+  1149→                <div className="flex justify-center"><ArrowRightLeft className="w-4 h-4 text-sky-400" /></div>
+  1150→
+  1151→                {/* Destino */}
+  1152→                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Destino</p>
+  1153→                <div className="grid grid-cols-4 gap-2">
+  1154→                  <div className="space-y-1">
+  1155→                    <Label className="text-[10px] text-slate-500">Bloque</Label>
+  1156→                    <Select value={trDestBloque} onValueChange={v => { setTrDestBloque(v); setTrDestTorre(''); setTrDestPos('') }}>
+  1157→                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+  1158→                      <SelectContent className="bg-slate-800 border-slate-600/40">{BLOQUES.map(b => <SelectItem key={b} value={b} className="text-slate-300 focus:bg-slate-700">{b}</SelectItem>)}</SelectContent>
+  1159→                    </Select>
+  1160→                  </div>
+  1161→                  <div className="space-y-1">
+  1162→                    <Label className="text-[10px] text-slate-500">Torre</Label>
+  1163→                    <Select value={trDestTorre} onValueChange={setTrDestTorre} disabled={!trDestBloque}>
+  1164→                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+  1165→                      <SelectContent className="bg-slate-800 border-slate-600/40">{trTorres.map(t => <SelectItem key={t} value={t} className="text-slate-300 focus:bg-slate-700">{t}</SelectItem>)}</SelectContent>
+  1166→                    </Select>
+  1167→                  </div>
+  1168→                  <div className="space-y-1">
+  1169→                    <Label className="text-[10px] text-slate-500">Piso</Label>
+  1170→                    <Select value={trDestPiso} onValueChange={setTrDestPiso} disabled={!trDestBloque}>
+  1171→                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+  1172→                      <SelectContent className="bg-slate-800 border-slate-600/40">{PISOS.map(p => <SelectItem key={p} value={p} className="text-slate-300 focus:bg-slate-700">{p}</SelectItem>)}</SelectContent>
+  1173→                    </Select>
+  1174→                  </div>
+  1175→                  <div className="space-y-1">
+  1176→                    <Label className="text-[10px] text-slate-500">Pos</Label>
+  1177→                    <Select value={trDestPos} onValueChange={setTrDestPos} disabled={!trDestBloque}>
+  1178→                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+  1179→                      <SelectContent className="bg-slate-800 border-slate-600/40">{trPositions.map(p => <SelectItem key={p} value={p} className="text-slate-300 focus:bg-slate-700">{p}</SelectItem>)}</SelectContent>
+  1180→                    </Select>
+  1181→                  </div>
+  1182→                </div>
+  1183→
+  1184→                {/* Cantidad */}
+  1185→                <div className="space-y-1">
+  1186→                  <Label className="text-[10px] text-slate-400">Cantidad a transferir *</Label>
+  1187→                  <Input type="number" step="any" min="0.001" value={trCantidad} onChange={e => setTrCantidad(e.target.value)}
+  1188→                    className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" />
+  1189→                </div>
+  1190→
+  1191→                {/* Ajuste automático */}
+  1192→                {trExcede && (
+  1193→                  <div className={`rounded-lg border p-2.5 space-y-1.5 border-amber-500/30 bg-amber-500/5`}>
+  1194→                    <div className="flex items-center gap-1.5">
+  1195→                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+  1196→                      <span className="text-[10px] font-bold text-amber-400">Ajuste positivo</span>
+  1197→                    </div>
+  1198→                    <p className="text-[10px] text-slate-400">
+  1199→                      Se registrará un ingreso de {Math.abs(trDiferencia)} {trItem?.un} en origen para cubrir la diferencia.
+  1200→                    </p>
+  1201→                    <div className="flex gap-2 text-[10px]">
+  1202→                      <span className="text-slate-500">Origen: {trItem.stock} → {trQtyNum} {trItem?.un}</span>
+  1203→                      <span className="text-amber-400">[+{Math.abs(trDiferencia)} ajuste]</span>
+  1204→                    </div>
+  1205→                    <p className="text-[10px] text-slate-500">Destino: +{trQtyNum} {trItem?.un}</p>
+  1206→                  </div>
+  1207→                )}
+  1208→                {trFalta && (
+  1209→                  <div className={`rounded-lg border p-2.5 space-y-1.5 border-sky-500/30 bg-sky-500/5`}>
+  1210→                    <div className="flex items-center gap-1.5">
+  1211→                      <Info className="w-3.5 h-3.5 text-sky-400" />
+  1212→                      <span className="text-[10px] font-bold text-sky-400">Traslado parcial</span>
+  1213→                    </div>
+  1214→                    <p className="text-[10px] text-slate-400">
+  1215→                      La posición de origen quedará con un <strong>saldo de {Math.abs(trDiferencia)} {trItem?.un}</strong>.
+  1216→                    </p>
+  1217→                    <p className="text-[10px] text-slate-400">
+  1218→                      ¿Qué deseas hacer con la diferencia?
+  1219→                    </p>
+  1220→                    <div className="space-y-1.5 mt-1">
+  1221→                      <button
+  1222→                        type="button"
+  1223→                        onClick={() => setTrCorregirDiferencia(false)}
+  1224→                        className={`w-full text-left px-3 py-2 rounded-lg text-[10px] transition-all border ${!trCorregirDiferencia ? 'border-sky-500/40 bg-sky-500/10 text-sky-300' : 'border-slate-600/30 bg-slate-700/30 text-slate-500 hover:bg-slate-700/50'}`}
+  1225→                      >
+  1226→                        Dejar saldo de {Math.abs(trDiferencia)} {trItem?.un} en origen
+  1227→                      </button>
+  1228→                      <button
+  1229→                        type="button"
+  1230→                        onClick={() => setTrCorregirDiferencia(true)}
+  1231→                        className={`w-full text-left px-3 py-2 rounded-lg text-[10px] transition-all border ${trCorregirDiferencia ? 'border-sky-500/40 bg-sky-500/10 text-sky-300' : 'border-slate-600/30 bg-slate-700/30 text-slate-500 hover:bg-slate-700/50'}`}
+  1232→                      >
+  1233→                        Registrar salida de ajuste ({Math.abs(trDiferencia)} {trItem?.un}) — origen quedará en 0
+  1234→                      </button>
+  1235→                    </div>
+  1236→                  </div>
+  1237→                )}
+  1238→
+  1239→                {/* Múltiples artículos - selector */}
+  1240→                {detail.stock.length > 1 && (
+  1241→                  <div className="rounded-lg border border-slate-600/20 bg-slate-700/20 p-2">
+  1242→                    <p className="text-[10px] text-slate-400 mb-1.5">Esta posición tiene {detail.stock.length} artículos. Se está transfiriendo:</p>
+  1243→                    <div className="space-y-1">
+  1244→                      {detail.stock.map((s, i) => (
+  1245→                        <button key={i} onClick={() => { setTrIdx(i); setTrCantidad(String(s.stock)) }}
+  1246→                          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${i === trIdx ? 'bg-blue-500/15 border border-blue-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>
+  1247→                          <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0" style={{ borderColor: i === trIdx ? '#60a5fa' : '#475569', backgroundColor: i === trIdx ? '#3b82f6' : 'transparent' }}>
+  1248→                            {i === trIdx && <div className="w-2 h-2 rounded-full bg-white" />}
+  1249→                          </div>
+  1250→                          <div className="flex-1 min-w-0">
+  1251→                            <div className="flex items-center gap-2">
+  1252→                              <span className="font-mono font-bold text-xs text-sky-400">{s.codigo}</span>
+  1253→                              {s.proveedor && <span className="text-[8px] font-semibold text-purple-400 bg-purple-400/10 px-1 py-px rounded">{s.proveedor}</span>}
+  1254→                            </div>
+  1255→                            {s.descripcion && <p className="text-[10px] text-slate-400 truncate">{s.descripcion}</p>}
+  1256→                          </div>
+  1257→                          <span className="font-bold text-emerald-400 text-xs flex-shrink-0">{s.stock} <span className="text-slate-500 font-normal">{s.un}</span></span>
+  1258→                        </button>
+  1259→                      ))}
+  1260→                    </div>
+  1261→                  </div>
+  1262→                )}
+  1263→
+  1264→                <div className="flex gap-2 pt-1">
+  1265→                  <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>
+  1266→                  <Button onClick={doTransferir} disabled={actionBusy || !trDestBloque || !trDestTorre || !trDestPiso || !trDestPos || trQtyNum <= 0} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-sky-500 to-blue-600 text-white text-xs">
+  1267→                    {actionBusy ? <Loader2 className="h-3.5 h-3.5 animate-spin" /> : <><CheckCircle2 className="h-3.5 w-3.5" /> Confirmar traslado</>}
+  1268→                  </Button>
+  1269→                </div>
+  1270→              </div>
+  1271→            )}
+  1272→          </>)}
+  1273→        </DialogContent>
+  1274→      </Dialog>
+  1275→
+  1276→      {/* ═══ HISTORIAL DIALOG ═══ */}
+  1277→      <Dialog open={historialOpen} onOpenChange={(open) => { if (!open) setHistorialOpen(false) }}>
+  1278→        <DialogContent className="sm:max-w-lg max-w-[calc(100vw-1rem)] bg-slate-800 border-violet-500/20 shadow-xl max-h-[80vh] flex flex-col overflow-hidden overscroll-contain">
+  1279→          <DialogHeader className="px-5 pt-5 pb-3 shrink-0">
+  1280→            <DialogTitle className="flex items-center gap-2.5 text-sm text-white">
+  1281→              <div className="w-7 h-7 rounded-lg bg-violet-500/15 flex items-center justify-center border border-violet-500/20">
+  1282→                <Clock className="h-3.5 w-3.5 text-violet-400" />
+  1283→              </div>
+  1284→              <div>
+  1285→                <span className="font-bold">Historial</span>
+  1286→                {detail && (
+  1287→                  <span className="text-slate-400 font-normal text-xs ml-2">
+  1288→                    — B{detail.bloque} · T{detail.torre} · P{detail.piso} · Pos {detail.posicion}
+  1289→                  </span>
+  1290→                )}
+  1291→              </div>
+  1292→            </DialogTitle>
+  1293→          </DialogHeader>
+  1294→
+  1295→          <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
+  1296→            {historialLoading && historialData.length === 0 ? (
+  1297→              <div className="flex items-center justify-center py-12">
+  1298→                <Loader2 className="h-5 w-5 animate-spin text-violet-400" />
+  1299→              </div>
+  1300→            ) : historialData.length === 0 ? (
+  1301→              <div className="text-center py-10">
+  1302→                <Clock className="h-8 w-8 text-slate-700 mx-auto mb-2" />
+  1303→                <p className="text-slate-500 text-xs">Sin movimientos registrados</p>
+  1304→              </div>
+  1305→            ) : (
+  1306→              <div className="relative pl-5">
+  1307→                <div className="absolute left-[7px] top-2 bottom-2 w-[2px] bg-gradient-to-b from-violet-500/30 to-slate-700/20 rounded-full" />
+  1308→                {historialData.map((item) => {
+  1309→                  const esInc = !!item.codigo_inc
+  1310→                  const esIngreso = !esInc && (item.tipo === 'ingreso' || item.tipo === 'stock_inicial')
+  1311→                  const esSalida = item.tipo === 'salida'
+  1312→                  const esTraslado = item.tipo === 'traslado'
+  1313→                  const esDevolucion = item.tipo === 'devolucion'
+  1314→                  const dotColor = esIngreso ? 'border-emerald-500 bg-emerald-500/20' : esSalida ? 'border-red-500 bg-red-500/20' : esTraslado ? 'border-blue-500 bg-blue-500/20' : esDevolucion ? 'border-amber-500 bg-amber-500/20' : esInc ? 'border-rose-500 bg-rose-500/20' : 'border-slate-500 bg-slate-500/20'
+  1315→                  const badgeClass = esIngreso ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : esSalida ? 'bg-red-500/10 text-red-400 border-red-500/20' : esTraslado ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : esDevolucion ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : esInc ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-slate-500/10 text-slate-400 border-slate-500/20'
+  1316→                  const tipoLabel = esIngreso ? (item.tipo === 'stock_inicial' ? 'Stock Inicial' : 'Ingreso') : esSalida ? 'Salida' : esTraslado ? 'Traslado' : esDevolucion ? 'Devolucion' : esInc ? 'INC' : item.tipo
+  1317→                  const fechaStr = item.fecha ? new Date(item.fecha).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+  1318→                  const iniciales = item.usuario_nombre ? item.usuario_nombre.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) : '??'
+  1319→                  const esPositivo = esIngreso || esDevolucion || esInc
+  1320→                  const esRotacion = !historialCurrentCodigos.has(item.codigo)
+  1321→
+  1322→                  return (
+  1323→                    <div key={item.id} className="relative pb-4 last:pb-0">
+  1324→                      <div className={`absolute left-[-17px] top-1.5 w-3 h-3 rounded-full border-2 ${dotColor}`} />
+  1325→                      <div className="rounded-lg border border-slate-600/30 bg-slate-700/30 p-3 hover:border-slate-500/40 transition-colors">
+  1326→                        <div className="flex items-center justify-between mb-1.5">
+  1327→                          <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md border ${badgeClass}`}>{tipoLabel}</span>
+  1328→                          <span className="text-[9px] text-slate-500">{fechaStr}</span>
+  1329→                        </div>
+  1330→                        <div className="flex items-center gap-1.5 mb-1">
+  1331→                          <div className="w-5 h-5 rounded-full bg-violet-500/20 flex items-center justify-center text-[7px] font-bold text-violet-300 border border-violet-500/20 flex-shrink-0">
+  1332→                            {iniciales}
+  1333→                          </div>
+  1334→                          <span className="text-[10px] font-semibold text-slate-200">{item.usuario_nombre || 'Usuario desconocido'}</span>
+  1335→                        </div>
+  1336→                        <div className="text-[10px] text-slate-400 leading-relaxed">
+  1337→                          <span className="font-mono text-sky-300 font-semibold">{item.codigo}</span>
+  1338→                          {item.descripcion && <span className="ml-1.5 text-slate-300">{item.descripcion}</span>}
+  1339→                          <div className="mt-0.5">
+  1340→                            Cantidad: <span className={`font-bold font-mono ${esPositivo ? 'text-emerald-400' : 'text-red-400'}`}>{esPositivo ? '+' : '-'}{Math.abs(item.cantidad).toFixed(2)} {item.un}</span>
+  1341→                            {item.f_vencimiento && <span className="text-slate-500 ml-1.5">· Venc: {item.f_vencimiento}</span>}
+  1342→                          </div>
+  1343→                          {esRotacion && (
+  1344→                            <span className="inline-flex items-center gap-1 mt-1 text-[8px] font-semibold text-violet-400 bg-violet-500/10 border border-violet-500/15 px-1.5 py-0.5 rounded-md">
+  1345→                              <RotateCwIcon className="w-2.5 h-2.5" /> Rotacion de producto
+  1346→                            </span>
+  1347→                          )}
+  1348→                        </div>
+  1349→                      </div>
+  1350→                    </div>
+  1351→                  )
+  1352→                })}
+  1353→
+  1354→                {historialHasMore && (
+  1355→                  <button
+  1356→                    onClick={() => loadHistorial(historialOffset, true)}
+  1357→                    disabled={historialLoading}
+  1358→                    className="w-full flex items-center justify-center gap-1.5 mt-3 py-2 rounded-lg border border-dashed border-violet-500/25 bg-violet-500/[0.03] text-violet-400 text-[10px] font-semibold hover:bg-violet-500/[0.07] hover:border-violet-500/40 transition-colors disabled:opacity-50"
+  1359→                  >
+  1360→                    {historialLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+  1361→                    Cargar mas movimientos
+  1362→                  </button>
+  1363→                )}
+  1364→              </div>
+  1365→            )}
+  1366→          </div>
+  1367→        </DialogContent>
+  1368→      </Dialog>
+  1369→    </div>
+  1370→  )
+  1371→}
+  1372→

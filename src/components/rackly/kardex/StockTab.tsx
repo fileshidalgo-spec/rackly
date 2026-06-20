@@ -5,7 +5,7 @@ import {
   type Movimiento,
   eliminarUbicacion,
 } from '@/lib/rackly/kardex'
-import { stockPisoPorCodigo, type StockPisoItem } from '@/lib/piso/api'
+// Decoupled: Kardex Racks ya no consulta stock de Kardex Piso
 import {
   findCatalogoByCodigo,
   fetchCatalogo,
@@ -26,188 +26,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { toast } from 'sonner'
-import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle, Layers3, MapPin, Loader2 } from 'lucide-react'
+import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle, MapPin, Loader2 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
-
-// ═══ Sub-componente: Sección cruzada Kardex Piso ═══
-function CrossSectionPiso({
-  selectedCodigo,
-  stockFilter,
-  pisoStock,
-  setPisoStock,
-  pisoLoading,
-  setPisoLoading,
-  pisoSearchedCode,
-  setPisoSearchedCode,
-}: {
-  selectedCodigo: string
-  stockFilter: string
-  pisoStock: StockPisoItem[]
-  setPisoStock: (v: StockPisoItem[]) => void
-  pisoLoading: boolean
-  setPisoLoading: (v: boolean) => void
-  pisoSearchedCode: string
-  setPisoSearchedCode: (v: string) => void
-}) {
-  // Buscar stock en Piso cuando se selecciona un código en Racks
-  const [pisoError, setPisoError] = useState(false)
-
-  useEffect(() => {
-    if (!selectedCodigo) {
-      setPisoStock([])
-      setPisoSearchedCode('')
-      setPisoError(false)
-      return
-    }
-    if (selectedCodigo === pisoSearchedCode) return
-
-    let cancelled = false
-    setPisoLoading(true)
-    setPisoSearchedCode(selectedCodigo)
-    setPisoError(false)
-
-    // Timeout de 8 segundos para evitar loading infinito
-    const timeout = setTimeout(() => {
-      if (!cancelled) {
-        console.warn('[CrossSectionPiso] timeout: no se pudo obtener stock de Piso')
-        setPisoLoading(false)
-        setPisoError(true)
-      }
-    }, 8000)
-
-    stockPisoPorCodigo(selectedCodigo)
-      .then((filtered) => {
-        if (cancelled) return
-        clearTimeout(timeout)
-        console.log('[CrossSectionPiso] buscando:', selectedCodigo.toUpperCase().trim(), 'encontrados:', filtered.length)
-        setPisoStock(filtered)
-        setPisoLoading(false)
-      })
-      .catch((err) => {
-        console.error('[CrossSectionPiso] error:', err)
-        if (!cancelled) {
-          clearTimeout(timeout)
-          setPisoLoading(false)
-          setPisoError(true)
-        }
-      })
-
-    return () => { cancelled = true; clearTimeout(timeout) }
-  }, [selectedCodigo, pisoSearchedCode, setPisoStock, setPisoLoading, setPisoSearchedCode])
-
-  // Aplicar filtro INC
-  const filtered = pisoStock.filter((i) => {
-    if (stockFilter === 'inc') return !!i.codigo_inc
-    if (stockFilter === 'disponibles') return !i.codigo_inc
-    return true
-  })
-
-  const totalPiso = filtered.reduce((sum, i) => sum + i.cantidad, 0)
-
-  // Siempre mostrar la sección cuando hay un código seleccionado (loading, resultados, o vacío)
-  if (!selectedCodigo) return null
-
-  return (
-      <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-50 dark:bg-amber-950/20 overflow-hidden">
-        <div className="px-4 py-3 bg-amber-100/50 dark:bg-amber-900/20 border-b border-amber-500/20 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-amber-500/20 flex items-center justify-center">
-              <Layers3 className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-amber-700 dark:text-amber-300">Tambien en Kardex Piso</p>
-              <p className="text-[10px] text-amber-500/70">Stock en piso para este articulo</p>
-            </div>
-          </div>
-          {pisoLoading ? (
-            <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-          ) : (
-            <Badge variant="outline" className="text-xs px-2.5 py-0.5 border-amber-500/40 text-amber-700 dark:text-amber-300">
-              Total: <span className="font-bold ml-1">{totalPiso}</span>
-            </Badge>
-          )}
-        </div>
-
-        {pisoError ? (
-          <div className="px-4 py-4 text-center text-amber-600/60 text-xs">
-            Error al buscar en Kardex Piso. Intenta de nuevo.
-          </div>
-        ) : pisoLoading ? (
-          <div className="px-4 py-6 text-center text-amber-500/60 text-xs">
-            <Loader2 className="h-4 w-4 animate-spin inline mr-1.5" />
-            Buscando en Kardex Piso...
-          </div>
-        ) : filtered.length > 0 ? (
-          <div className="hidden sm:block overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-amber-50/50 dark:bg-amber-900/10 hover:bg-amber-900/10">
-                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase">Ubicacion</TableHead>
-                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase hidden lg:table-cell">Sector</TableHead>
-                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase hidden sm:table-cell">Descripcion</TableHead>
-                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase">UN</TableHead>
-                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase">Vencimiento</TableHead>
-                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase text-right">Cantidad</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((r, i) => (
-                  <TableRow key={i} className="border-amber-500/10 hover:bg-amber-50/50 dark:hover:bg-amber-900/10">
-                    <TableCell className="text-xs text-amber-800 dark:text-amber-200 whitespace-nowrap font-medium">{r.ubicacion}</TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-slate-500">{r.sector_nombre || '—'}</TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs text-slate-500 max-w-[200px] truncate">{r.bloque_descripcion}</TableCell>
-                    <TableCell className="text-xs text-slate-600 dark:text-slate-400">{r.bloque_unidad}</TableCell>
-                    <TableCell>
-                      {r.fecha_vencimiento ? (
-                        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${(() => {
-                          const hoy = new Date(new Date().toDateString())
-                          const fVen = new Date(r.fecha_vencimiento + 'T00:00:00')
-                          const diff = (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
-                          return diff < 0
-                            ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
-                            : diff <= 15
-                              ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
-                              : diff <= 30
-                                ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
-                                : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
-                        })()}`}>
-                          {r.fecha_vencimiento}
-                        </Badge>
-                      ) : <span className="text-xs text-slate-500">—</span>}
-                    </TableCell>
-                    <TableCell className="text-right text-xs font-bold text-amber-800 dark:text-amber-200">{r.cantidad}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        ) : null}
-
-        {/* Mobile cards */}
-        {filtered.length > 0 && (
-          <div className="sm:hidden divide-y divide-amber-500/10">
-            {filtered.map((r, i) => (
-              <div key={i} className="px-4 py-2.5 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-[10px]">
-                  <MapPin className="h-3 w-3 text-amber-500" />
-                  <span className="font-medium text-amber-800 dark:text-amber-200">{r.ubicacion}</span>
-                  {r.sector_nombre && (
-                    <span className="text-amber-500/60">{r.sector_nombre}</span>
-                  )}
-                </div>
-                <span className="text-xs font-bold text-amber-800 dark:text-amber-200">{r.cantidad} {r.bloque_unidad}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        {!pisoLoading && !pisoError && filtered.length === 0 && (
-          <div className="px-4 py-4 text-center text-amber-600/50 text-xs">
-            Sin stock en Kardex Piso para este codigo
-          </div>
-        )}
-      </div>
-    )
-}
 
 export function StockTab() {
   const { perfil } = useAuth()
@@ -215,10 +35,6 @@ export function StockTab() {
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [query, setQuery] = useState('')
   const [selectedCodigo, setSelectedCodigo] = useState('')
-  // Stock cruzado: Piso
-  const [pisoStock, setPisoStock] = useState<StockPisoItem[]>([])
-  const [pisoLoading, setPisoLoading] = useState(false)
-  const [pisoSearchedCode, setPisoSearchedCode] = useState('')
   const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>('todos')
   const [stock, setStock] = useState<
     {
@@ -288,9 +104,18 @@ export function StockTab() {
         codigoInc?: string
       }
     >()
-    const relevant = movs.filter((m) => m.codigo === code)
+    // FIX: Excluir movimientos INC del cálculo base para consistencia con OcupaciónTab
+    // Los movimientos INC se manejan por separado y solo se muestran cuando el filtro es "Solo INC"
+    const isIncMode = stockFilter === 'inc'
+    const relevant = movs.filter((m) => {
+      if (m.codigo !== code) return false
+      // En modo INC, solo procesar movimientos INC
+      if (isIncMode) return !!m.codigoInc
+      // En modo normal o disponibles, excluir movimientos INC
+      return !m.codigoInc
+    })
     for (const m of relevant) {
-      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
+      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
       const current = locMap.get(key)
       if (current) {
         current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
@@ -309,12 +134,7 @@ export function StockTab() {
         })
       }
     }
-    return Array.from(locMap.values()).filter((l) => {
-      if (l.stock <= 0) return false
-      if (stockFilter === 'inc') return !!l.codigoInc
-      if (stockFilter === 'disponibles') return !l.codigoInc
-      return true
-    })
+    return Array.from(locMap.values()).filter((l) => l.stock > 0)
       .sort((a, b) => {
         // FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
         const aHasDate = !!a.fVencimiento
@@ -766,17 +586,6 @@ export function StockTab() {
         </div>
       )}
 
-      {/* ═══ SECCIÓN CRUZADA: También en Kardex Piso ═══ */}
-      <CrossSectionPiso
-        selectedCodigo={selectedCodigo}
-        stockFilter={stockFilter}
-        pisoStock={pisoStock}
-        setPisoStock={setPisoStock}
-        pisoLoading={pisoLoading}
-        setPisoLoading={setPisoLoading}
-        pisoSearchedCode={pisoSearchedCode}
-        setPisoSearchedCode={setPisoSearchedCode}
-      />
     </div>
   )
 }

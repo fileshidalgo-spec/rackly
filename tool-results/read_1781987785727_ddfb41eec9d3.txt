@@ -1,0 +1,783 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useState, useEffect, useMemo } from 'react'
+     4→     4→import {
+     5→     5→  type Movimiento,
+     6→     6→  eliminarUbicacion,
+     7→     7→} from '@/lib/rackly/kardex'
+     8→     8→import { stockPisoPorCodigo, type StockPisoItem } from '@/lib/piso/api'
+     9→     9→import {
+    10→    10→  findCatalogoByCodigo,
+    11→    11→  fetchCatalogo,
+    12→    12→  isCatalogoLoaded,
+    13→    13→  searchCatalogo,
+    14→    14→  type CatalogoItem,
+    15→    15→} from '@/lib/rackly/catalogo'
+    16→    16→import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+    17→    17→import { Input } from '@/components/ui/input'
+    18→    18→import { Button } from '@/components/ui/button'
+    19→    19→import { Badge } from '@/components/ui/badge'
+    20→    20→import {
+    21→    21→  Table,
+    22→    22→  TableBody,
+    23→    23→  TableCell,
+    24→    24→  TableHead,
+    25→    25→  TableHeader,
+    26→    26→  TableRow,
+    27→    27→} from '@/components/ui/table'
+    28→    28→import { toast } from 'sonner'
+    29→    29→import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle, Layers3, MapPin, Loader2 } from 'lucide-react'
+    30→    30→import { useAuth } from '@/hooks/useAuth'
+    31→    31→
+    32→    32→// ═══ Sub-componente: Sección cruzada Kardex Piso ═══
+    33→    33→function CrossSectionPiso({
+    34→    34→  selectedCodigo,
+    35→    35→  stockFilter,
+    36→    36→  pisoStock,
+    37→    37→  setPisoStock,
+    38→    38→  pisoLoading,
+    39→    39→  setPisoLoading,
+    40→    40→  pisoSearchedCode,
+    41→    41→  setPisoSearchedCode,
+    42→    42→}: {
+    43→    43→  selectedCodigo: string
+    44→    44→  stockFilter: string
+    45→    45→  pisoStock: StockPisoItem[]
+    46→    46→  setPisoStock: (v: StockPisoItem[]) => void
+    47→    47→  pisoLoading: boolean
+    48→    48→  setPisoLoading: (v: boolean) => void
+    49→    49→  pisoSearchedCode: string
+    50→    50→  setPisoSearchedCode: (v: string) => void
+    51→    51→}) {
+    52→    52→  // Buscar stock en Piso cuando se selecciona un código en Racks
+    53→    53→  const [pisoError, setPisoError] = useState(false)
+    54→    54→
+    55→    55→  useEffect(() => {
+    56→    56→    if (!selectedCodigo) {
+    57→    57→      setPisoStock([])
+    58→    58→      setPisoSearchedCode('')
+    59→    59→      setPisoError(false)
+    60→    60→      return
+    61→    61→    }
+    62→    62→    if (selectedCodigo === pisoSearchedCode) return
+    63→    63→
+    64→    64→    let cancelled = false
+    65→    65→    setPisoLoading(true)
+    66→    66→    setPisoSearchedCode(selectedCodigo)
+    67→    67→    setPisoError(false)
+    68→    68→
+    69→    69→    // Timeout de 8 segundos para evitar loading infinito
+    70→    70→    const timeout = setTimeout(() => {
+    71→    71→      if (!cancelled) {
+    72→    72→        console.warn('[CrossSectionPiso] timeout: no se pudo obtener stock de Piso')
+    73→    73→        setPisoLoading(false)
+    74→    74→        setPisoError(true)
+    75→    75→      }
+    76→    76→    }, 8000)
+    77→    77→
+    78→    78→    stockPisoPorCodigo(selectedCodigo)
+    79→    79→      .then((filtered) => {
+    80→    80→        if (cancelled) return
+    81→    81→        clearTimeout(timeout)
+    82→    82→        console.log('[CrossSectionPiso] buscando:', selectedCodigo.toUpperCase().trim(), 'encontrados:', filtered.length)
+    83→    83→        setPisoStock(filtered)
+    84→    84→        setPisoLoading(false)
+    85→    85→      })
+    86→    86→      .catch((err) => {
+    87→    87→        console.error('[CrossSectionPiso] error:', err)
+    88→    88→        if (!cancelled) {
+    89→    89→          clearTimeout(timeout)
+    90→    90→          setPisoLoading(false)
+    91→    91→          setPisoError(true)
+    92→    92→        }
+    93→    93→      })
+    94→    94→
+    95→    95→    return () => { cancelled = true; clearTimeout(timeout) }
+    96→    96→  }, [selectedCodigo, pisoSearchedCode, setPisoStock, setPisoLoading, setPisoSearchedCode])
+    97→    97→
+    98→    98→  // Aplicar filtro INC
+    99→    99→  const filtered = pisoStock.filter((i) => {
+   100→   100→    if (stockFilter === 'inc') return !!i.codigo_inc
+   101→   101→    if (stockFilter === 'disponibles') return !i.codigo_inc
+   102→   102→    return true
+   103→   103→  })
+   104→   104→
+   105→   105→  const totalPiso = filtered.reduce((sum, i) => sum + i.cantidad, 0)
+   106→   106→
+   107→   107→  // Siempre mostrar la sección cuando hay un código seleccionado (loading, resultados, o vacío)
+   108→   108→  if (!selectedCodigo) return null
+   109→   109→
+   110→   110→  return (
+   111→   111→      <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-50 dark:bg-amber-950/20 overflow-hidden">
+   112→   112→        <div className="px-4 py-3 bg-amber-100/50 dark:bg-amber-900/20 border-b border-amber-500/20 flex items-center justify-between">
+   113→   113→          <div className="flex items-center gap-2">
+   114→   114→            <div className="w-7 h-7 rounded-lg bg-amber-500/20 flex items-center justify-center">
+   115→   115→              <Layers3 className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+   116→   116→            </div>
+   117→   117→            <div>
+   118→   118→              <p className="text-xs font-bold text-amber-700 dark:text-amber-300">Tambien en Kardex Piso</p>
+   119→   119→              <p className="text-[10px] text-amber-500/70">Stock en piso para este articulo</p>
+   120→   120→            </div>
+   121→   121→          </div>
+   122→   122→          {pisoLoading ? (
+   123→   123→            <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+   124→   124→          ) : (
+   125→   125→            <Badge variant="outline" className="text-xs px-2.5 py-0.5 border-amber-500/40 text-amber-700 dark:text-amber-300">
+   126→   126→              Total: <span className="font-bold ml-1">{totalPiso}</span>
+   127→   127→            </Badge>
+   128→   128→          )}
+   129→   129→        </div>
+   130→   130→
+   131→   131→        {pisoError ? (
+   132→   132→          <div className="px-4 py-4 text-center text-amber-600/60 text-xs">
+   133→   133→            Error al buscar en Kardex Piso. Intenta de nuevo.
+   134→   134→          </div>
+   135→   135→        ) : pisoLoading ? (
+   136→   136→          <div className="px-4 py-6 text-center text-amber-500/60 text-xs">
+   137→   137→            <Loader2 className="h-4 w-4 animate-spin inline mr-1.5" />
+   138→   138→            Buscando en Kardex Piso...
+   139→   139→          </div>
+   140→   140→        ) : filtered.length > 0 ? (
+   141→   141→          <div className="hidden sm:block overflow-x-auto">
+   142→   142→            <Table>
+   143→   143→              <TableHeader>
+   144→   144→                <TableRow className="bg-amber-50/50 dark:bg-amber-900/10 hover:bg-amber-900/10">
+   145→   145→                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase">Ubicacion</TableHead>
+   146→   146→                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase hidden lg:table-cell">Sector</TableHead>
+   147→   147→                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase hidden sm:table-cell">Descripcion</TableHead>
+   148→   148→                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase">UN</TableHead>
+   149→   149→                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase">Vencimiento</TableHead>
+   150→   150→                  <TableHead className="text-[10px] font-semibold text-amber-600/80 dark:text-amber-400/80 uppercase text-right">Cantidad</TableHead>
+   151→   151→                </TableRow>
+   152→   152→              </TableHeader>
+   153→   153→              <TableBody>
+   154→   154→                {filtered.map((r, i) => (
+   155→   155→                  <TableRow key={i} className="border-amber-500/10 hover:bg-amber-50/50 dark:hover:bg-amber-900/10">
+   156→   156→                    <TableCell className="text-xs text-amber-800 dark:text-amber-200 whitespace-nowrap font-medium">{r.ubicacion}</TableCell>
+   157→   157→                    <TableCell className="hidden lg:table-cell text-xs text-slate-500">{r.sector_nombre || '—'}</TableCell>
+   158→   158→                    <TableCell className="hidden sm:table-cell text-xs text-slate-500 max-w-[200px] truncate">{r.bloque_descripcion}</TableCell>
+   159→   159→                    <TableCell className="text-xs text-slate-600 dark:text-slate-400">{r.bloque_unidad}</TableCell>
+   160→   160→                    <TableCell>
+   161→   161→                      {r.fecha_vencimiento ? (
+   162→   162→                        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${(() => {
+   163→   163→                          const hoy = new Date(new Date().toDateString())
+   164→   164→                          const fVen = new Date(r.fecha_vencimiento + 'T00:00:00')
+   165→   165→                          const diff = (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
+   166→   166→                          return diff < 0
+   167→   167→                            ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+   168→   168→                            : diff <= 15
+   169→   169→                              ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
+   170→   170→                              : diff <= 30
+   171→   171→                                ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+   172→   172→                                : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
+   173→   173→                        })()}`}>
+   174→   174→                          {r.fecha_vencimiento}
+   175→   175→                        </Badge>
+   176→   176→                      ) : <span className="text-xs text-slate-500">—</span>}
+   177→   177→                    </TableCell>
+   178→   178→                    <TableCell className="text-right text-xs font-bold text-amber-800 dark:text-amber-200">{r.cantidad}</TableCell>
+   179→   179→                  </TableRow>
+   180→   180→                ))}
+   181→   181→              </TableBody>
+   182→   182→            </Table>
+   183→   183→          </div>
+   184→   184→        ) : null}
+   185→   185→
+   186→   186→        {/* Mobile cards */}
+   187→   187→        {filtered.length > 0 && (
+   188→   188→          <div className="sm:hidden divide-y divide-amber-500/10">
+   189→   189→            {filtered.map((r, i) => (
+   190→   190→              <div key={i} className="px-4 py-2.5 flex items-center justify-between">
+   191→   191→                <div className="flex items-center gap-2 text-[10px]">
+   192→   192→                  <MapPin className="h-3 w-3 text-amber-500" />
+   193→   193→                  <span className="font-medium text-amber-800 dark:text-amber-200">{r.ubicacion}</span>
+   194→   194→                  {r.sector_nombre && (
+   195→   195→                    <span className="text-amber-500/60">{r.sector_nombre}</span>
+   196→   196→                  )}
+   197→   197→                </div>
+   198→   198→                <span className="text-xs font-bold text-amber-800 dark:text-amber-200">{r.cantidad} {r.bloque_unidad}</span>
+   199→   199→              </div>
+   200→   200→            ))}
+   201→   201→          </div>
+   202→   202→        )}
+   203→   203→        {!pisoLoading && !pisoError && filtered.length === 0 && (
+   204→   204→          <div className="px-4 py-4 text-center text-amber-600/50 text-xs">
+   205→   205→            Sin stock en Kardex Piso para este codigo
+   206→   206→          </div>
+   207→   207→        )}
+   208→   208→      </div>
+   209→   209→    )
+   210→   210→}
+   211→   211→
+   212→   212→export function StockTab() {
+   213→   213→  const { perfil } = useAuth()
+   214→   214→  const esAdmin = perfil?.rol === 'admin'
+   215→   215→  const [movs, setMovs] = useState<Movimiento[]>([])
+   216→   216→  const [query, setQuery] = useState('')
+   217→   217→  const [selectedCodigo, setSelectedCodigo] = useState('')
+   218→   218→  // Stock cruzado: Piso
+   219→   219→  const [pisoStock, setPisoStock] = useState<StockPisoItem[]>([])
+   220→   220→  const [pisoLoading, setPisoLoading] = useState(false)
+   221→   221→  const [pisoSearchedCode, setPisoSearchedCode] = useState('')
+   222→   222→  const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>('todos')
+   223→   223→  const [stock, setStock] = useState<
+   224→   224→    {
+   225→   225→      bloque: string
+   226→   226→      torre: string
+   227→   227→      piso: string
+   228→   228→      posicion: string
+   229→   229→      stock: number
+   230→   230→      descripcion: string
+   231→   231→      un: string
+   232→   232→      proveedor?: string
+   233→   233→      fVencimiento: string
+   234→   234→      codigoInc?: string
+   235→   235→    }[]
+   236→   236→  >([])
+   237→   237→
+   238→   238→  useMovimientosRealtime(setMovs)
+   239→   239→
+   240→   240→  // Catálogo para búsqueda y lookup
+   241→   241→  const [catalogoResults, setCatalogoResults] = useState<CatalogoItem[]>([])
+   242→   242→  const [catalogoLoaded, setCatalogoLoaded] = useState(false)
+   243→   243→
+   244→   244→  // Cargar catálogo al montar
+   245→   245→  useEffect(() => {
+   246→   246→    async function load() {
+   247→   247→      if (!isCatalogoLoaded()) {
+   248→   248→        await fetchCatalogo().catch(() => {})
+   249→   249→      }
+   250→   250→      setCatalogoLoaded(true)
+   251→   251→    }
+   252→   252→    load()
+   253→   253→  }, [])
+   254→   254→
+   255→   255→  // Buscar sugerencias del catálogo cuando el usuario escribe
+   256→   256→  useEffect(() => {
+   257→   257→    if (!catalogoLoaded || !query.trim()) {
+   258→   258→      setCatalogoResults([])
+   259→   259→      return
+   260→   260→    }
+   261→   261→    if (!isCatalogoLoaded()) return
+   262→   262→    const results = searchCatalogo(query.trim(), 8)
+   263→   263→    setCatalogoResults(results)
+   264→   264→  }, [query, catalogoLoaded])
+   265→   265→
+   266→   266→  // Datos del artículo seleccionado del catálogo
+   267→   267→  const selectedItem = useMemo(() => {
+   268→   268→    if (!selectedCodigo) return null
+   269→   269→    return findCatalogoByCodigo(selectedCodigo)
+   270→   270→  }, [selectedCodigo])
+   271→   271→
+   272→   272→  // Calcular stock por ubicación para el código seleccionado
+   273→   273→  const stockData = useMemo(() => {
+   274→   274→    if (!selectedCodigo || movs.length === 0) return []
+   275→   275→    const code = selectedCodigo.trim().toUpperCase()
+   276→   276→    const locMap = new Map<
+   277→   277→      string,
+   278→   278→      {
+   279→   279→        bloque: string
+   280→   280→        torre: string
+   281→   281→        piso: string
+   282→   282→        posicion: string
+   283→   283→        stock: number
+   284→   284→        descripcion: string
+   285→   285→        un: string
+   286→   286→        proveedor?: string
+   287→   287→        fVencimiento: string
+   288→   288→        codigoInc?: string
+   289→   289→      }
+   290→   290→    >()
+   291→   291→    const relevant = movs.filter((m) => m.codigo === code)
+   292→   292→    for (const m of relevant) {
+   293→   293→      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
+   294→   294→      const current = locMap.get(key)
+   295→   295→      if (current) {
+   296→   296→        current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+   297→   297→      } else {
+   298→   298→        locMap.set(key, {
+   299→   299→          bloque: m.bloque,
+   300→   300→          torre: m.torre,
+   301→   301→          piso: m.piso,
+   302→   302→          posicion: m.posicion,
+   303→   303→          stock: ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad,
+   304→   304→          descripcion: m.descripcion,
+   305→   305→          un: m.un,
+   306→   306→          proveedor: m.proveedor || undefined,
+   307→   307→          fVencimiento: m.fVencimiento || '',
+   308→   308→          codigoInc: m.codigoInc || undefined,
+   309→   309→        })
+   310→   310→      }
+   311→   311→    }
+   312→   312→    return Array.from(locMap.values()).filter((l) => {
+   313→   313→      if (l.stock <= 0) return false
+   314→   314→      if (stockFilter === 'inc') return !!l.codigoInc
+   315→   315→      if (stockFilter === 'disponibles') return !l.codigoInc
+   316→   316→      return true
+   317→   317→    })
+   318→   318→      .sort((a, b) => {
+   319→   319→        // FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
+   320→   320→        const aHasDate = !!a.fVencimiento
+   321→   321→        const bHasDate = !!b.fVencimiento
+   322→   322→        if (aHasDate && bHasDate) return a.fVencimiento.localeCompare(b.fVencimiento)
+   323→   323→        if (aHasDate && !bHasDate) return -1
+   324→   324→        if (!aHasDate && bHasDate) return 1
+   325→   325→        // Ambos sin fecha: ordenar por bloque, torre, piso, posición
+   326→   326→        const aB = parseInt(a.bloque, 10) || 0
+   327→   327→        const bB = parseInt(b.bloque, 10) || 0
+   328→   328→        if (aB !== bB) return aB - bB
+   329→   329→        const aT = parseInt(a.torre, 10) || 0
+   330→   330→        const bT = parseInt(b.torre, 10) || 0
+   331→   331→        if (aT !== bT) return aT - bT
+   332→   332→        const aP = parseInt(a.piso, 10) || 0
+   333→   333→        const bP = parseInt(b.piso, 10) || 0
+   334→   334→        if (aP !== bP) return aP - bP
+   335→   335→        const aPos = parseInt(a.posicion, 10) || 0
+   336→   336→        const bPos = parseInt(b.posicion, 10) || 0
+   337→   337→        return aPos - bPos
+   338→   338→      })
+   339→   339→  }, [selectedCodigo, movs, stockFilter])
+   340→   340→
+   341→   341→  useEffect(() => {
+   342→   342→    setStock(stockData)
+   343→   343→  }, [stockData])
+   344→   344→
+   345→   345→  // Manejar selección de un código
+   346→   346→  function selectCodigo(codigo: string) {
+   347→   347→    setSelectedCodigo(codigo.toUpperCase())
+   348→   348→    setQuery(codigo.toUpperCase())
+   349→   349→    setCatalogoResults([])
+   350→   350→  }
+   351→   351→
+   352→   352→  async function handleDelete(
+   353→   353→    bloque: string,
+   354→   354→    torre: string,
+   355→   355→    piso: string,
+   356→   356→    posicion: string,
+   357→   357→    fVencimiento?: string,
+   358→   358→    codigoInc?: string
+   359→   359→  ) {
+   360→   360→    if (!confirm('¿Eliminar los movimientos de este lote en esta ubicación?')) return
+   361→   361→    try {
+   362→   362→      const next = await eliminarUbicacion(selectedCodigo, bloque, torre, piso, posicion, fVencimiento, codigoInc)
+   363→   363→      setMovs(next)
+   364→   364→      toast.success('Ubicación eliminada')
+   365→   365→    } catch (err: unknown) {
+   366→   366→      const message = err instanceof Error ? err.message : 'Error'
+   367→   367→      toast.error('No se pudo eliminar', { description: message })
+   368→   368→    }
+   369→   369→  }
+   370→   370→
+   371→   371→  // Badge color según días para vencer
+   372→   372→  function getBadgeClass(fVencimiento: string) {
+   373→   373→    const hoy = new Date(new Date().toDateString())
+   374→   374→    const fVen = fVencimiento ? new Date(fVencimiento + 'T00:00:00') : null
+   375→   375→    const diffDias = fVen ? (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24) : null
+   376→   376→    const vencido = diffDias !== null && diffDias < 0
+   377→   377→    const naranja = !vencido && diffDias !== null && diffDias <= 15
+   378→   378→    const azul = !vencido && !naranja && diffDias !== null && diffDias <= 30
+   379→   379→
+   380→   380→    return vencido
+   381→   381→      ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+   382→   382→      : naranja
+   383→   383→      ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
+   384→   384→      : azul
+   385→   385→      ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+   386→   386→      : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
+   387→   387→  }
+   388→   388→
+   389→   389→  // ── Sin código seleccionado: buscar por código o descripción ──
+   390→   390→  if (!selectedCodigo) {
+   391→   391→    return (
+   392→   392→      <div className="space-y-4">
+   393→   393→        {/* Barra de búsqueda */}
+   394→   394→        <div className="relative">
+   395→   395→          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   396→   396→          <Input
+   397→   397→            value={query}
+   398→   398→            onChange={(e) => {
+   399→   399→              setQuery(e.target.value)
+   400→   400→              // Si el usuario escribió un código exacto, seleccionarlo directo
+   401→   401→              const val = e.target.value.trim().toUpperCase()
+   402→   402→              if (isCatalogoLoaded() && findCatalogoByCodigo(val)) {
+   403→   403→                // No seleccionar automáticamente, dejar que el usuario elija
+   404→   404→              }
+   405→   405→            }}
+   406→   406→            onKeyDown={(e) => {
+   407→   407→              if (e.key === 'Enter' && query.trim()) {
+   408→   408→                // Buscar el primer resultado y seleccionarlo
+   409→   409→                if (catalogoResults.length > 0) {
+   410→   410→                  selectCodigo(catalogoResults[0].codigo)
+   411→   411→                } else {
+   412→   412→                  // Si no hay resultados en catálogo, buscar de todas formas
+   413→   413→                  selectCodigo(query.trim())
+   414→   414→                }
+   415→   415→              }
+   416→   416→              if (e.key === 'Escape') {
+   417→   417→                setQuery('')
+   418→   418→                setCatalogoResults([])
+   419→   419→              }
+   420→   420→            }}
+   421→   421→            placeholder="Buscar por código o descripción..."
+   422→   422→            className="pl-9"
+   423→   423→          />
+   424→   424→          {query && (
+   425→   425→            <button
+   426→   426→              type="button"
+   427→   427→              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+   428→   428→              onClick={() => { setQuery(''); setCatalogoResults([]) }}
+   429→   429→            >
+   430→   430→              ✕
+   431→   431→            </button>
+   432→   432→          )}
+   433→   433→        </div>
+   434→   434→
+   435→   435→        {/* Sugerencias del catálogo */}
+   436→   436→        {catalogoResults.length > 0 && (
+   437→   437→          <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
+   438→   438→            <div className="px-3 py-2 border-b bg-muted/30">
+   439→   439→              <p className="text-xs font-medium text-muted-foreground">
+   440→   440→                {catalogoResults.length} resultado{catalogoResults.length > 1 ? 's' : ''} en el catálogo
+   441→   441→              </p>
+   442→   442→            </div>
+   443→   443→            {catalogoResults.map((item) => (
+   444→   444→              <button
+   445→   445→                key={item.codigo}
+   446→   446→                type="button"
+   447→   447→                className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-accent/50 transition-colors text-left border-b last:border-b-0"
+   448→   448→                onClick={() => selectCodigo(item.codigo)}
+   449→   449→              >
+   450→   450→                <div className="min-w-0 flex-1">
+   451→   451→                  <div className="flex items-center gap-2">
+   452→   452→                    <span className="font-mono font-semibold text-sm">{item.codigo}</span>
+   453→   453→                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">{item.un}</Badge>
+   454→   454→                  </div>
+   455→   455→                  <p className="text-xs text-muted-foreground truncate mt-0.5">{item.descripcion}</p>
+   456→   456→                </div>
+   457→   457→                <div className="text-right shrink-0">
+   458→   458→                  {item.stock_big_magic > 0 && (
+   459→   459→                    <div className="flex items-center gap-1">
+   460→   460→                      <span className="text-[10px] text-amber-600 dark:text-amber-400">BM</span>
+   461→   461→                      <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{item.stock_big_magic}</span>
+   462→   462→                    </div>
+   463→   463→                  )}
+   464→   464→                </div>
+   465→   465→                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+   466→   466→              </button>
+   467→   467→            ))}
+   468→   468→          </div>
+   469→   469→        )}
+   470→   470→
+   471→   471→        {/* Sin búsqueda activa */}
+   472→   472→        {!query && (
+   473→   473→          <p className="text-muted-foreground text-center py-8">
+   474→   474→            Escribe un código o descripción para buscar stock.
+   475→   475→          </p>
+   476→   476→        )}
+   477→   477→
+   478→   478→        {/* Búsqueda sin resultados */}
+   479→   479→        {query.trim() && catalogoResults.length === 0 && catalogoLoaded && (
+   480→   480→          <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
+   481→   481→            <PackageSearch className="h-5 w-5" />
+   482→   482→            <span>No se encontró &quot;{query}&quot; en el catálogo.</span>
+   483→   483→          </div>
+   484→   484→        )}
+   485→   485→      </div>
+   486→   486→    )
+   487→   487→  }
+   488→   488→
+   489→   489→  // ── Con código seleccionado: mostrar stock por ubicación o info de Big Magic ──
+   490→   490→  return (
+   491→   491→    <div className="space-y-4">
+   492→   492→      {/* Barra de búsqueda con código seleccionado */}
+   493→   493→      <div className="relative">
+   494→   494→        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   495→   495→        <Input
+   496→   496→          value={query}
+   497→   497→          onChange={(e) => {
+   498→   498→            setQuery(e.target.value)
+   499→   499→            setSelectedCodigo('')
+   500→   500→          }}
+   501→   501→          onKeyDown={(e) => {
+   502→   502→            if (e.key === 'Escape') {
+   503→   503→              setSelectedCodigo('')
+   504→   504→              setQuery('')
+   505→   505→            }
+   506→   506→          }}
+   507→   507→          placeholder="Buscar por código o descripción..."
+   508→   508→          className="pl-9"
+   509→   509→        />
+   510→   510→        <button
+   511→   511→          type="button"
+   512→   512→          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded border hover:border-foreground/30 transition-colors"
+   513→   513→          onClick={() => { setSelectedCodigo(''); setQuery('') }}
+   514→   514→        >
+   515→   515→          × Cambiar
+   516→   516→        </button>
+   517→   517→      </div>
+   518→   518→
+   519→   519→      {/* Info del artículo seleccionado */}
+   520→   520→      {selectedItem && (
+   521→   521→        <div className="rounded-lg border bg-card p-3 space-y-2">
+   522→   522→          <div className="flex items-center gap-2">
+   523→   523→            <span className="font-mono font-bold text-sm">{selectedItem.codigo}</span>
+   524→   524→            <Badge variant="outline" className="text-xs">{selectedItem.un}</Badge>
+   525→   525→          </div>
+   526→   526→          <p className="text-sm">{selectedItem.descripcion}</p>
+   527→   527→        </div>
+   528→   528→      )}
+   529→   529→
+   530→   530→      {/* Card de Stock Big Magic */}
+   531→   531→      {selectedItem && (
+   532→   532→        <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+   533→   533→          <div className="flex items-center gap-2">
+   534→   534→            <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+   535→   535→              <span className="text-amber-600 dark:text-amber-400 font-bold text-xs">BM</span>
+   536→   536→            </div>
+   537→   537→            <div>
+   538→   538→              <p className="text-xs text-amber-600/80 dark:text-amber-400/80 font-medium">Stock Big Magic</p>
+   539→   539→              <p className="text-xs text-muted-foreground">Stock disponible en sistema Big Magic</p>
+   540→   540→            </div>
+   541→   541→          </div>
+   542→   542→          <div className="text-right">
+   543→   543→            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{selectedItem.stock_big_magic}</p>
+   544→   544→          </div>
+   545→   545→        </div>
+   546→   546→      )}
+   547→   547→
+   548→   548→      {/* ── INC Filter buttons (always visible when a code is selected) ── */}
+   549→   549→      <div className="flex items-center justify-between">
+   550→   550→        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+   551→   551→          <Warehouse className="h-3.5 w-3.5" />
+   552→   552→          {stock.length > 0 ? 'Stock por ubicación en RACKLY' : 'Sin stock en ubicaciones de RACKLY'}
+   553→   553→        </p>
+   554→   554→      </div>
+   555→   555→      <div className="flex gap-2">
+   556→   556→        {([['todos', 'Todos'], ['disponibles', 'Disponibles'], ['inc', 'Solo INC']] as const).map(([key, label]) => (
+   557→   557→          <button
+   558→   558→            key={key}
+   559→   559→            type="button"
+   560→   560→            onClick={() => setStockFilter(key)}
+   561→   561→            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+   562→   562→              stockFilter === key
+   563→   563→                ? key === 'inc'
+   564→   564→                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+   565→   565→                  : key === 'disponibles'
+   566→   566→                    ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+   567→   567→                    : 'bg-sky-500/20 border-sky-500/50 text-sky-300'
+   568→   568→                : 'bg-slate-700/30 border-slate-600/30 text-slate-500 hover:text-slate-400'
+   569→   569→            }`}
+   570→   570→          >
+   571→   571→            {key === 'inc' && <AlertTriangle className="w-3 h-3" />}
+   572→   572→            {label}
+   573→   573→          </button>
+   574→   574→        ))}
+   575→   575→      </div>
+   576→   576→
+   577→   577→      {/* Stock por ubicación */}
+   578→   578→      {stock.length > 0 ? (
+   579→   579→        <>
+   580→   580→        <div className="space-y-3">
+   581→   581→
+   582→   582→          {/* ── Mobile: Card layout ── */}
+   583→   583→          <div className="md:hidden space-y-2">
+   584→   584→            {stock.map((s, i) => (
+   585→   585→              <div key={i} className="rounded-lg border bg-card p-3 space-y-2">
+   586→   586→                <div className="flex items-center justify-between gap-2">
+   587→   587→                  <div className="flex items-center gap-1.5 text-xs font-semibold">
+   588→   588→                    <span className="text-muted-foreground">Bloq</span>
+   589→   589→                    <span className="font-mono">{s.bloque}</span>
+   590→   590→                    <span className="text-muted-foreground mx-0.5">|</span>
+   591→   591→                    <span className="text-muted-foreground">Tor</span>
+   592→   592→                    <span className="font-mono">{s.torre}</span>
+   593→   593→                    <span className="text-muted-foreground mx-0.5">|</span>
+   594→   594→                    <span className="text-muted-foreground">Pis</span>
+   595→   595→                    <span className="font-mono">{s.piso}</span>
+   596→   596→                    <span className="text-muted-foreground mx-0.5">|</span>
+   597→   597→                    <span className="text-muted-foreground">Pos</span>
+   598→   598→                    <span className="font-mono">{s.posicion}</span>
+   599→   599→                  </div>
+   600→   600→                  <div className="flex items-center gap-2">
+   601→   601→                    <Badge variant="default" className="text-sm">{s.stock}</Badge>
+   602→   602→                    {esAdmin && (
+   603→   603→                      <Button
+   604→   604→                        variant="ghost"
+   605→   605→                        size="icon"
+   606→   606→                        className="h-7 w-7 text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+   607→   607→                        onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento, s.codigoInc)}
+   608→   608→                      >
+   609→   609→                        <Trash2 className="h-3.5 w-3.5" />
+   610→   610→                      </Button>
+   611→   611→                    )}
+   612→   612→                  </div>
+   613→   613→                </div>
+   614→   614→                <p className="text-xs text-muted-foreground leading-tight">{s.descripcion}</p>
+   615→   615→                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+   616→   616→                  <span><span className="text-muted-foreground">UN: </span>{s.un}</span>
+   617→   617→                  {s.proveedor ? (
+   618→   618→                    <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 text-[10px] px-1.5 py-0 font-semibold">
+   619→   619→                      {s.proveedor}
+   620→   620→                    </Badge>
+   621→   621→                  ) : (
+   622→   622→                    <span className="text-muted-foreground">Prov: —</span>
+   623→   623→                  )}
+   624→   624→                  {s.fVencimiento ? (
+   625→   625→                    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${getBadgeClass(s.fVencimiento)}`}>
+   626→   626→                      {s.fVencimiento}
+   627→   627→                    </Badge>
+   628→   628→                  ) : (
+   629→   629→                    <span className="text-muted-foreground">Venc: —</span>
+   630→   630→                  )}
+   631→   631→                  {s.codigoInc && (
+   632→   632→                    <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 text-[10px] px-1.5 py-0 font-semibold">
+   633→   633→                      <AlertTriangle className="w-3 h-3 mr-0.5" /> {s.codigoInc}
+   634→   634→                    </Badge>
+   635→   635→                  )}
+   636→   636→                </div>
+   637→   637→              </div>
+   638→   638→            ))}
+   639→   639→          </div>
+   640→   640→
+   641→   641→          {/* ── Desktop: Table layout ── */}
+   642→   642→          <div className="hidden md:block overflow-x-auto">
+   643→   643→            <Table>
+   644→   644→              <TableHeader>
+   645→   645→                <TableRow>
+   646→   646→                  <TableHead>Bloque</TableHead>
+   647→   647→                  <TableHead>Torre</TableHead>
+   648→   648→                  <TableHead>Piso</TableHead>
+   649→   649→                  <TableHead>Posición</TableHead>
+   650→   650→                  <TableHead>Descripción</TableHead>
+   651→   651→                  <TableHead>UN</TableHead>
+   652→   652→                  <TableHead>Proveedor</TableHead>
+   653→   653→                  <TableHead>Vencimiento</TableHead>
+   654→   654→                  <TableHead>INC</TableHead>
+   655→   655→                  <TableHead className="text-right">Stock</TableHead>
+   656→   656→                  {esAdmin && <TableHead className="w-12"></TableHead>}
+   657→   657→                </TableRow>
+   658→   658→              </TableHeader>
+   659→   659→              <TableBody>
+   660→   660→                {stock.map((s, i) => (
+   661→   661→                  <TableRow key={i}>
+   662→   662→                    <TableCell className="font-mono font-medium whitespace-nowrap">{s.bloque}</TableCell>
+   663→   663→                    <TableCell className="whitespace-nowrap">{s.torre}</TableCell>
+   664→   664→                    <TableCell className="font-medium whitespace-nowrap">{s.piso}</TableCell>
+   665→   665→                    <TableCell className="whitespace-nowrap">{s.posicion}</TableCell>
+   666→   666→                    <TableCell className="max-w-[200px] truncate">{s.descripcion}</TableCell>
+   667→   667→                    <TableCell className="whitespace-nowrap">{s.un}</TableCell>
+   668→   668→                    <TableCell>
+   669→   669→                      {s.proveedor ? (
+   670→   670→                        <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+   671→   671→                          {s.proveedor}
+   672→   672→                        </Badge>
+   673→   673→                      ) : (
+   674→   674→                        <span className="text-xs text-muted-foreground">—</span>
+   675→   675→                      )}
+   676→   676→                    </TableCell>
+   677→   677→                    <TableCell>
+   678→   678→                      {s.fVencimiento ? (
+   679→   679→                        <Badge variant="outline" className={`font-semibold ${getBadgeClass(s.fVencimiento)}`}>
+   680→   680→                          {s.fVencimiento}
+   681→   681→                        </Badge>
+   682→   682→                      ) : (
+   683→   683→                        <span className="text-xs text-muted-foreground">—</span>
+   684→   684→                      )}
+   685→   685→                    </TableCell>
+   686→   686→                    <TableCell>
+   687→   687→                      {s.codigoInc ? (
+   688→   688→                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 font-semibold text-xs">
+   689→   689→                          <AlertTriangle className="w-3 h-3 mr-0.5" /> {s.codigoInc}
+   690→   690→                        </Badge>
+   691→   691→                      ) : (
+   692→   692→                        <span className="text-xs text-muted-foreground">—</span>
+   693→   693→                      )}
+   694→   694→                    </TableCell>
+   695→   695→                    <TableCell className="text-right font-medium">
+   696→   696→                      <Badge variant="default">{s.stock}</Badge>
+   697→   697→                    </TableCell>
+   698→   698→                    {esAdmin && (
+   699→   699→                      <TableCell>
+   700→   700→                        <Button
+   701→   701→                          variant="ghost"
+   702→   702→                          size="icon"
+   703→   703→                          className="text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+   704→   704→                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento, s.codigoInc)}
+   705→   705→                        >
+   706→   706→                          <Trash2 className="h-4 w-4" />
+   707→   707→                        </Button>
+   708→   708→                      </TableCell>
+   709→   709→                    )}
+   710→   710→                  </TableRow>
+   711→   711→                ))}
+   712→   712→              </TableBody>
+   713→   713→            </Table>
+   714→   714→          </div>
+   715→   715→
+   716→   716→          {/* Total sum */}
+   717→   717→          <div className="flex justify-end">
+   718→   718→            <Badge variant="outline" className="text-sm px-3 py-1">
+   719→   719→              Total stock: <span className="font-bold ml-1">{stock.reduce((sum, s) => sum + s.stock, 0)}</span>
+   720→   720→            </Badge>
+   721→   721→          </div>
+   722→   722→        </div>
+   723→   723→
+   724→   724→        </>
+   725→   725→      ) : (
+   726→   726→        /* Sin stock en ubicaciones — mostrar info del catálogo + Big Magic */
+   727→   727→        <div className="space-y-3">
+   728→   728→
+   729→   729→          {selectedItem ? (
+   730→   730→            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800/50 dark:to-slate-800 p-4">
+   731→   731→              <div className="flex items-center gap-2 mb-3">
+   732→   732→                <div className="w-8 h-8 rounded-lg bg-slate-500/10 flex items-center justify-center">
+   733→   733→                  <PackageSearch className="h-4 w-4 text-slate-500" />
+   734→   734→                </div>
+   735→   735→                <p className="text-sm font-medium">Datos del artículo</p>
+   736→   736→              </div>
+   737→   737→              <div className="grid grid-cols-2 gap-3">
+   738→   738→                <div>
+   739→   739→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Código</p>
+   740→   740→                  <p className="font-mono font-bold">{selectedItem.codigo}</p>
+   741→   741→                </div>
+   742→   742→                <div>
+   743→   743→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">UN</p>
+   744→   744→                  <p className="font-bold">{selectedItem.un}</p>
+   745→   745→                </div>
+   746→   746→                <div className="col-span-2">
+   747→   747→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Descripción</p>
+   748→   748→                  <p className="text-sm">{selectedItem.descripcion}</p>
+   749→   749→                </div>
+   750→   750→                <div>
+   751→   751→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Stock Big Magic</p>
+   752→   752→                  <p className="text-xl font-bold text-amber-700 dark:text-amber-300">{selectedItem.stock_big_magic}</p>
+   753→   753→                </div>
+   754→   754→                <div>
+   755→   755→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Stock en Racks</p>
+   756→   756→                  <p className="text-xl font-bold text-slate-400">0</p>
+   757→   757→                </div>
+   758→   758→              </div>
+   759→   759→            </div>
+   760→   760→          ) : (
+   761→   761→            <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
+   762→   762→              <PackageSearch className="h-5 w-5" />
+   763→   763→              <span>Sin stock en RACKLY para &quot;{selectedCodigo}&quot; (no encontrado en catálogo)</span>
+   764→   764→            </div>
+   765→   765→          )}
+   766→   766→        </div>
+   767→   767→      )}
+   768→   768→
+   769→   769→      {/* ═══ SECCIÓN CRUZADA: También en Kardex Piso ═══ */}
+   770→   770→      <CrossSectionPiso
+   771→   771→        selectedCodigo={selectedCodigo}
+   772→   772→        stockFilter={stockFilter}
+   773→   773→        pisoStock={pisoStock}
+   774→   774→        setPisoStock={setPisoStock}
+   775→   775→        pisoLoading={pisoLoading}
+   776→   776→        setPisoLoading={setPisoLoading}
+   777→   777→        pisoSearchedCode={pisoSearchedCode}
+   778→   778→        setPisoSearchedCode={setPisoSearchedCode}
+   779→   779→      />
+   780→   780→    </div>
+   781→   781→  )
+   782→   782→}
+   783→   783→

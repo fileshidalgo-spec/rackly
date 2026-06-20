@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -33,21 +34,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof window !== 'undefined') {
       const hash = window.location.hash
       if (hash.includes('type=recovery') || hash.includes('type=_recovery')) {
-        console.log('[RACKLY] Tokens de recuperación detectados en URL')
+        // Tokens de recuperación en URL (no log en producción)
         return true
       }
     }
     return false
   })
+  // Ref para evitar que refresh paralelo sobreescriba un resultado más reciente
+  const refreshGenRef = useRef(0)
 
   async function refresh(): Promise<Perfil | null> {
+    const gen = ++refreshGenRef.current
     try {
       const p = await getPerfilActual()
-      setPerfil(p)
+      // Solo actualizar si este refresh sigue siendo el más reciente
+      if (refreshGenRef.current === gen) {
+        setPerfil(p)
+      }
       return p
     } catch (err) {
       console.error('[RACKLY] Error cargando perfil:', err)
-      setPerfil(null)
+      if (refreshGenRef.current === gen) {
+        setPerfil(null)
+      }
       return null
     }
   }
@@ -57,10 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return
-      console.log('[RACKLY] Auth event:', event)
+      // Auth event:
       // Detectar flujo de recuperación de contraseña
       if (event === 'PASSWORD_RECOVERY') {
-        console.log('[RACKLY] PASSWORD_RECOVERY detectado')
+        // PASSWORD_RECOVERY detectado
         setPasswordRecovery(true)
         if (!session) {
           setPerfil(null)
@@ -87,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .getSession()
       .then(({ data, error }) => {
         if (!active) return
-        console.log('[RACKLY] getSession:', error ? error.message : 'OK', 'session:', !!data.session)
+        // getSession result:
         if (error || !data.session) {
           // Si no hay sesión pero hay tokens de recovery en la URL, mostrar formulario
           const h = window.location.hash

@@ -49,6 +49,9 @@ export const POLLING_TURNO = 60000        // ms — refresco del turno
 export const POLLING_OCUPACION = 10000    // ms — refresco de ocupación
 export const MAX_ITERATIONS = 100         // Guard para bucles de paginación
 
+// ── Timeouts ──────────────────────────────────────────
+export const QUERY_TIMEOUT_MS = 8000      // Timeout para queries de stock por código
+
 // ── Seguridad ───────────────────────────────────────────
 export const PASSWORD_MIN_LENGTH = 6
 

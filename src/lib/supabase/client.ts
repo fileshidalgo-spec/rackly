@@ -85,16 +85,24 @@ export const dataClient = new Proxy({} as ReturnType<typeof createBrowserClient>
   get(_, prop, receiver) {
     if (!_dataClient) _dataClient = safeCreateDataClient()
     if (!_dataClient) {
+      const configError = getMissingConfigMessage() ?? 'Supabase no configurado'
       if (prop === 'from') {
         return (table: string) => new Proxy({}, {
           get(__, method) {
-            return (...args: unknown[]) => Promise.resolve({ data: null, error: { message: getMissingConfigMessage() ?? 'Supabase no configurado' } })
+            return (...args: unknown[]) => {
+              console.error(`[RACKLY] dataClient.${table}.${String(method)}() llamado sin config válida`)
+              return Promise.resolve({ data: null, error: { message: configError } })
+            }
           }
         })
       }
       if (prop === 'rpc') {
-        return (fn: string, ...args: unknown[]) => Promise.resolve({ data: null, error: { message: getMissingConfigMessage() ?? 'Supabase no configurado' } })
+        return (fn: string, ...args: unknown[]) => {
+          console.error(`[RACKLY] dataClient.rpc('${fn}') llamado sin config válida`)
+          return Promise.resolve({ data: null, error: { message: configError } })
+        }
       }
+      console.error(`[RACKLY] dataClient.${String(prop)} accedido sin config válida`)
       return undefined
     }
     const value = Reflect.get(_dataClient, prop, receiver)

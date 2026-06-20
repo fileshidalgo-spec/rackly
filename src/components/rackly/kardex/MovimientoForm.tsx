@@ -9,7 +9,7 @@ import {
   type StockEnUbicacion,
   type Turno,
 } from '@/lib/rackly/kardex'
-import { SyncEngine } from '@/lib/rackly/sync-engine'
+
 import { calcularTurno } from '@/lib/rackly/turno'
 import { BLOQUES, PISOS, PROVEEDORES_FILM } from '@/lib/rackly/constants'
 import { torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
@@ -161,7 +161,7 @@ function IngresoForm({
 
   async function doInsert(qty: number) {
     try {
-      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      const movs = await addMovimiento({
         tipo,
         bloque,
         torre,
@@ -178,29 +178,14 @@ function IngresoForm({
         usuarioCorreo: perfil.correo,
         proveedor: proveedor || undefined,
       })
-      if (wasOffline) {
-        toast.success(tipo === 'devolucion' ? 'Devolución guardada (offline)' : 'Ingreso guardado (offline)', {
-          description: 'Se sincronizará al reconectarse',
-          duration: 5000,
-        })
-        // OFFLINE: Limpiar formulario para evitar duplicados
-        setCodigo('')
-        setDescripcion('')
-        setUn('')
-        setCantidad('')
-        setFVencimiento('')
-        setProveedor('')
-        setConfirmData(null)
-      } else {
-        toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
-        setCodigo('')
-        setDescripcion('')
-        setUn('')
-        setCantidad('')
-        setFVencimiento('')
-        setProveedor('')
-        onCreated(movs)
-      }
+      toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
+      setCodigo('')
+      setDescripcion('')
+      setUn('')
+      setCantidad('')
+      setFVencimiento('')
+      setProveedor('')
+      onCreated(movs)
     } catch (err: unknown) {
       const message = extractError(err)
       toast.error('Error al registrar ingreso', { description: message })
@@ -214,7 +199,7 @@ function IngresoForm({
   async function handleSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
     setSalidaBusy(stockItem.codigo)
     try {
-      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      const movs = await addMovimiento({
         tipo: 'salida',
         bloque,
         torre,
@@ -233,26 +218,16 @@ function IngresoForm({
         // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
         codigoInc: stockItem.codigoInc || undefined,
       })
-      if (wasOffline) {
-        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
-          description: 'Se sincronizará al reconectarse. La ubicación se actualizará cuando haya conexión.',
-          duration: 5000,
-        })
-        // OFFLINE: Limpiar UI para evitar doble operación
-        setConfirmData(null)
-        setSalidaBusy(null)
+      toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
+      onCreated(movs)
+      // Refrescar datos del alerta
+      const updated = await stockEnUbicacion(bloque, torre, piso, posicion)
+      if (updated.length > 0) {
+        setConfirmData(updated)
       } else {
-        toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
-        onCreated(movs)
-        // Refrescar datos del alerta
-        const updated = await stockEnUbicacion(bloque, torre, piso, posicion)
-        if (updated.length > 0) {
-          setConfirmData(updated)
-        } else {
-          setConfirmData(null)
-          // Ya no hay productos, hacer el ingreso directamente
-          await doInsert(parseFloat(cantidad))
-        }
+        setConfirmData(null)
+        // Ya no hay productos, hacer el ingreso directamente
+        await doInsert(parseFloat(cantidad))
       }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
@@ -654,7 +629,7 @@ function SalidaForm({
         }
         const finalQty = Math.min(qtyNum, loc.stock)
         try {
-          const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+          await addMovimiento({
             tipo: 'salida',
             bloque: loc.bloque, torre: loc.torre, piso: loc.piso, posicion: loc.posicion,
             codigo: loc.codigo, descripcion: loc.descripcion, un: loc.un,
@@ -690,13 +665,7 @@ function SalidaForm({
       setMassConfirmOpen(false)
       setSelected(new Set())
       setQtyMap({})
-      // Si hubo operaciones offline, limpiar UI para evitar doble salida
-      if (totalProcessed > 0 && SyncEngine.isOffline()) {
-        setLocations([])
-        setProductoDesc('')
-        setProductoUn('')
-      } else {
-        // Refrescar datos reales cuando estamos online
+      if (totalProcessed > 0) {
         await refreshLocations()
       }
       onCreated([]) // trigger re-render
@@ -727,9 +696,8 @@ function SalidaForm({
         const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
         movs = await fetchMovimientosByCodigo(code)
       } catch {
-        // Fallback: usar movimientos cacheados en IndexedDB y filtrar por código
-        const cached = await SyncEngine.getCachedMovimientosForStock()
-        movs = cached.filter((m) => m.codigo === code.toUpperCase())
+        // Sin cache offline, usar lista vacia
+        movs = []
       }
       const upperCode = code.toUpperCase()
       const locMap = new Map<string, LocWithKey>()
@@ -868,7 +836,7 @@ function SalidaForm({
     const { loc, qtyNum } = confirmState
     setBusy(true)
     try {
-      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      const movs = await addMovimiento({
         tipo: 'salida',
         bloque: loc.bloque,
         torre: loc.torre,
@@ -887,25 +855,11 @@ function SalidaForm({
         // PRESERVAR codigoInc para consistencia (aunque SalidaForm excluye INC)
         codigoInc: loc.codigoInc || undefined,
       })
-      if (wasOffline) {
-        toast.success(`Salida de ${qtyNum} ${loc.un} guardada (offline)`, {
-          description: 'Se sincronizará al reconectarse. La ubicación se actualizará cuando haya conexión.',
-          duration: 5000,
-        })
-        // OFFLINE: Limpiar UI inmediatamente para evitar doble salida
-        setConfirmState(null)
-        setSearchCode('')
-        setQtyMap({})
-        setLocations([])
-        setProductoDesc('')
-        setProductoUn('')
-      } else {
-        toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
-        setConfirmState(null)
-        setSearchCode('')
-        setQtyMap({})
-        onCreated(movs)
-      }
+      toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
+      setConfirmState(null)
+      setSearchCode('')
+      setQtyMap({})
+      onCreated(movs)
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         const detail = (err as Record<string, string>).detail || ''
@@ -1474,8 +1428,8 @@ function SalidaIncForm({
         const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
         movs = await fetchMovimientosByCodigo(code)
       } catch {
-        const cached = await SyncEngine.getCachedMovimientosForStock()
-        movs = cached.filter((m) => m.codigo === code.toUpperCase())
+        // Sin cache offline, usar lista vacia
+        movs = []
       }
       const upperCode = code.toUpperCase()
       const locMap = new Map<string, LocIncWithKey>()
@@ -1607,7 +1561,7 @@ function SalidaIncForm({
     const { loc, qtyNum } = confirmState
     setBusy(true)
     try {
-      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      const movs = await addMovimiento({
         tipo: 'salida',
         bloque: loc.bloque,
         torre: loc.torre,
@@ -1626,25 +1580,11 @@ function SalidaIncForm({
         // PRESERVAR codigoInc para descuente correcto del stock INC
         codigoInc: loc.codigoInc || undefined,
       })
-      if (wasOffline) {
-        toast.success(`Salida INC de ${qtyNum} ${loc.un} guardada (offline)`, {
-          description: 'Se sincronizará al reconectarse. La ubicación se actualizará cuando haya conexión.',
-          duration: 5000,
-        })
-        // OFFLINE: Limpiar UI para evitar doble salida
-        setConfirmState(null)
-        setSearchCode('')
-        setQtyMap({})
-        setLocations([])
-        setProductoDesc('')
-        setProductoUn('')
-      } else {
-        toast.success(`Salida INC de ${qtyNum} ${loc.un} registrada`)
-        setConfirmState(null)
-        setSearchCode('')
-        setQtyMap({})
-        onCreated(movs)
-      }
+      toast.success(`Salida INC de ${qtyNum} ${loc.un} registrada`)
+      setConfirmState(null)
+      setSearchCode('')
+      setQtyMap({})
+      onCreated(movs)
     } catch (err: unknown) {
       const message = extractError(err)
       toast.error('Error al registrar salida INC', { description: message })
@@ -1672,7 +1612,7 @@ function SalidaIncForm({
         if (isNaN(qtyNum) || qtyNum <= 0) { errorDetails.push(`Cantidad inválida en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}`); totalErrors++; continue }
         // INC: usar la cantidad tal cual (sin limitar al stock)
         try {
-          await SyncEngine.offlineAwareAddMovimiento({
+          await addMovimiento({
             tipo: 'salida',
             bloque: loc.bloque, torre: loc.torre, piso: loc.piso, posicion: loc.posicion,
             codigo: loc.codigo, descripcion: loc.descripcion, un: loc.un,
@@ -2197,7 +2137,7 @@ function IncForm({
     }
     setBusy(true)
     try {
-      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      const movs = await addMovimiento({
         tipo: 'ingreso',
         bloque,
         torre,
@@ -2214,31 +2154,16 @@ function IncForm({
         usuarioCorreo: perfil.correo,
         codigoInc: codigoInc.trim(),
       })
-      if (wasOffline) {
-        toast.success('INC guardado (offline)', {
-          description: 'Se sincronizará al reconectarse',
-          duration: 5000,
-        })
-        // OFFLINE: Limpiar formulario para evitar duplicados
-        setCodigo('')
-        setDescripcion('')
-        setUn('')
-        setCantidad('')
-        setCodigoInc('')
-        setFVencimiento('')
-        setSinVencimiento(false)
-      } else {
-        toast.success('Insumo No Conforme registrado')
-        // Limpiar formulario
-        setCodigo('')
-        setDescripcion('')
-        setUn('')
-        setCantidad('')
-        setCodigoInc('')
-        setFVencimiento('')
-        setSinVencimiento(false)
-        onCreated(movs)
-      }
+      toast.success('Insumo No Conforme registrado')
+      // Limpiar formulario
+      setCodigo('')
+      setDescripcion('')
+      setUn('')
+      setCantidad('')
+      setCodigoInc('')
+      setFVencimiento('')
+      setSinVencimiento(false)
+      onCreated(movs)
     } catch (err: unknown) {
       const message = extractError(err)
       toast.error('Error al registrar INC', { description: message })

@@ -9,7 +9,6 @@ import {
   type Movimiento,
   type StockEnUbicacion,
 } from '@/lib/rackly/kardex'
-import { SyncEngine } from '@/lib/rackly/sync-engine'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
 import { useAuth } from '@/hooks/useAuth'
@@ -196,7 +195,7 @@ export function TrasladoTab() {
     if (cantNum > stockItem.stock) { toast.error(`Máximo: ${stockItem.stock} ${stockItem.un}`); return }
     setSalidaBusy(itemKey)
     try {
-      const { movs, wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      await addMovimiento({
         tipo: 'salida',
         bloque: destBloque,
         torre: destTorre,
@@ -214,20 +213,10 @@ export function TrasladoTab() {
         proveedor: stockItem.proveedor,
         codigoInc: stockItem.codigoInc || undefined,
       })
-      if (wasOffline) {
-        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
-          description: 'Se sincronizará al reconectarse',
-          duration: 5000,
-        })
-      } else {
-        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
-      }
-      if (!wasOffline) {
-        setMovs(await fetchMovimientos())
-        // Refrescar datos del alerta
-        const updated = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
-        setDestinoOcupado(updated)
-      }
+      toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
+      setMovs(await fetchMovimientos())
+      const updated = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
+      setDestinoOcupado(updated)
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         toast.error('Stock insuficiente', {
@@ -247,7 +236,7 @@ export function TrasladoTab() {
     const cantidadFinal = qtyNum || origin.stock
     setBusy(true)
     try {
-      const { movs, wasOffline } = await SyncEngine.offlineAwareTraslado({
+      await trasladarMovimiento({
         codigo: origin.codigo,
         descripcion: origin.descripcion,
         un: origin.un,
@@ -274,25 +263,18 @@ export function TrasladoTab() {
         // Se genera ajuste automático solo si aplica: qty > stock o (qty < stock y el usuario elige corregir)
         cantidadAjuste: ajusteActivo ? diferencia : undefined,
       })
-      if (wasOffline) {
-        toast.success('Traslado guardado (offline)', {
-          description: 'Se sincronizará al reconectarse',
-          duration: 5000,
-        })
-      } else {
-        toast.success('Traslado registrado')
-        if (ajusteActivo) {
-          if (excedeStock) {
-            toast.info(`Ajuste automático: +${Math.abs(diferencia)} ${origin.un} ingreso en origen (faltaba stock registrado)`, { duration: 6000 })
-          } else if (corregirDiferencia) {
-            toast.info(`Ajuste automático: -${Math.abs(diferencia)} ${origin.un} salida en origen (se deja posición en 0)`, { duration: 6000 })
-          }
+      toast.success('Traslado registrado')
+      if (ajusteActivo) {
+        if (excedeStock) {
+          toast.info(`Ajuste automático: +${Math.abs(diferencia)} ${origin.un} ingreso en origen (faltaba stock registrado)`, { duration: 6000 })
+        } else if (corregirDiferencia) {
+          toast.info(`Ajuste automático: -${Math.abs(diferencia)} ${origin.un} salida en origen (se deja posición en 0)`, { duration: 6000 })
         }
       }
       if (faltaStock && !corregirDiferencia) {
         toast.info(`Queda un saldo de ${saldoRestante} ${origin.un} en la ubicación de origen`, { duration: 6000 })
       }
-      setMovs(movs)
+      setMovs(await fetchMovimientos())
       resetForm()
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {

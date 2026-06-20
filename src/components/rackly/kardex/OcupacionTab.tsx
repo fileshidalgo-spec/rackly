@@ -14,7 +14,6 @@ import {
   type TrasladoInput,
 } from '@/lib/rackly/kardex'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
-import { SyncEngine } from '@/lib/rackly/sync-engine'
 import { supabase, dataClient } from '@/lib/supabase/client'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
@@ -377,21 +376,15 @@ export function OcupacionTab() {
     if (showProveedor && !ingProveedor) { toast.error('Selecciona un proveedor para este artículo'); return }
     setActionBusy(true)
     try {
-      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      await addMovimiento({
         tipo: ingTipo, bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
         codigo: ingCodigo.trim().toUpperCase(), descripcion: ingDescripcion, un: ingUn, cantidad: q,
         fVencimiento: ingSinFecha ? '' : ingFVenc,
         turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         proveedor: showProveedor ? ingProveedor : undefined,
       })
-      if (wasOffline) {
-        toast.success(ingTipo === 'ingreso' ? 'Ingreso guardado (offline)' : 'Devolución guardada (offline)', {
-          description: 'Se sincronizará al reconectarse', duration: 5000,
-        })
-      } else {
-        toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
-      }
-      if (mountedRef.current && !wasOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+      toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
+      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
   }
 
@@ -407,18 +400,14 @@ export function OcupacionTab() {
     const q = parseFloat(incCantidad); if (isNaN(q) || q <= 0) { toast.error('Cantidad inválida'); return }
     setActionBusy(true)
     try {
-      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      await addMovimiento({
         tipo: 'ingreso', bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
         codigo: incCodigo.trim().toUpperCase(), descripcion: incDescripcion, un: incUn, cantidad: q,
         fVencimiento: '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         codigoInc: incCodigoInc.trim(),
       })
-      if (wasOffline) {
-        toast.success('INC guardado (offline)', { description: 'Se sincronizará al reconectarse', duration: 5000 })
-      } else {
-        toast.success('INC registrado')
-      }
-      if (mountedRef.current && !wasOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+      toast.success('INC registrado')
+      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setActionBusy(false) }
   }
 
@@ -446,19 +435,15 @@ export function OcupacionTab() {
     }
     setActionBusy(true)
     try {
-      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      await addMovimiento({
         tipo: 'salida', bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
         codigo: item.codigo, descripcion: item.descripcion, un: item.un, cantidad: qty,
         fVencimiento: item.fVencimiento ?? '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
         codigoInc: item.codigoInc || undefined,
       })
-      if (wasOffline) {
-        toast.success(`Salida de ${qty} ${item.un} (offline)`, { description: 'Se sincronizará al reconectarse', duration: 5000 })
-      } else {
-        toast.success('Salida registrada')
-      }
-      if (mountedRef.current && !wasOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+      toast.success('Salida registrada')
+      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         const detail = (err as Record<string, string>).detail || ''
@@ -479,7 +464,7 @@ export function OcupacionTab() {
     if (cantNum > stockItem.stock) { toast.error(`Máximo: ${stockItem.stock} ${stockItem.un}`); return }
     setTrSalidaBusy(itemKey)
     try {
-      const { wasOffline } = await SyncEngine.offlineAwareAddMovimiento({
+      await addMovimiento({
         tipo: 'salida',
         bloque: trDestBloque,
         torre: trDestTorre,
@@ -497,20 +482,12 @@ export function OcupacionTab() {
         proveedor: stockItem.proveedor,
         codigoInc: stockItem.codigoInc || undefined,
       })
-      if (wasOffline) {
-        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
-          description: 'Se sincronizará al reconectarse', duration: 5000,
-        })
-      } else {
-        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
-      }
-      if (!wasOffline) {
-        // Refrescar stock del destino
-        const updated = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)
-        setTrDestStock(updated)
-        await refreshDetail()
-        refreshData()
-      }
+      toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
+      // Refrescar stock del destino
+      const updated = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)
+      setTrDestStock(updated)
+      await refreshDetail()
+      refreshData()
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         toast.error('Stock insuficiente', {
@@ -539,18 +516,16 @@ export function OcupacionTab() {
         cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
         codigoInc: trItem.codigoInc || undefined,
       }
-      const { wasOffline: wasTrOffline } = await SyncEngine.offlineAwareTraslado(input)
-      toast.success(wasTrOffline ? 'Traslado guardado (offline)' : 'Traslado registrado', {
-        ...(wasTrOffline ? { description: 'Se sincronizará al reconectarse', duration: 5000 } : {}),
-      })
-      if (!wasTrOffline && trFalta && trCorregirDiferencia) {
+      await trasladarMovimiento(input)
+      toast.success('Traslado registrado')
+      if (trFalta && trCorregirDiferencia) {
         toast.info(`Salida de ajuste: -${Math.abs(trDiferencia)} ${trItem.un} en origen`, { duration: 6000 })
       }
-      if (!wasTrOffline && trExcede) {
+      if (trExcede) {
         toast.info(`Ajuste automático: +${Math.abs(trDiferencia)} ${trItem.un} ingreso en origen`, { duration: 6000 })
       }
       setTrDestAlertOpen(false)
-      if (mountedRef.current && !wasTrOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+      if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         const d = (err as Record<string, string>).detail || ''

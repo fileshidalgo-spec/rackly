@@ -95,8 +95,10 @@ export function StockTab() {
     const code = selectedCodigo.trim().toUpperCase()
     const isIncMode = stockFilter === 'inc'
 
+    // FIX: Normalizar m.codigo igual que OcupaciónTab (trim + uppercase)
+    // para evitar perder movimientos por espacios o mayúsculas en la DB
     const relevant = movs.filter((m) => {
-      if (m.codigo !== code) return false
+      if (m.codigo.trim().toUpperCase() !== code) return false
       if (isIncMode) return !!m.codigoInc
       return !m.codigoInc
     })

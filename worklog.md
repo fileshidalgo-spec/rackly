@@ -91,3 +91,24 @@ Stage Summary:
 - INC items only show when filter is set to "Solo INC"
 - Deploy pending via Cloudflare Pages auto-deploy from GitHub
 ---
+---
+Task ID: 1
+Agent: main
+Task: Fix Stock vs Ocupación discrepancy (4th attempt - final fix)
+
+Work Log:
+- Read StockTab.tsx and OcupacionTab.tsx full files to compare calculations line-by-line
+- Confirmed both use fetchMovimientos() via dataClient (same data source)
+- Confirmed both exclude INC movements and use identical delta formula
+- Identified that StockTab was splitting stock by FEFO lots (multiple rows per position), which could cause user confusion when comparing with OcupacionTab (one row per position)
+- Rewrote stockData calculation in StockTab to use IDENTICAL logic to calcularOcupacion(): groups by (position, code), excludes INC, calculates net delta, ignores vencimiento for stock total
+- FEFO info (vencimiento dates) now shown as informational field only - one row per position, with tooltip showing all lots
+- Updated Mobile card and Desktop table UI to show lot count badge and tooltip
+- Updated delete handler to clear all stock in position (not just one lot)
+- Build successful, pushed to main for Cloudflare Pages deployment
+
+Stage Summary:
+- Root cause: StockTab's FEFO visual split created multiple rows per position, and the distribution algorithm could differ from OcupacionTab's aggregate view
+- Solution: Replaced FEFO split with aggregate-per-position approach matching OcupacionTab exactly. FEFO dates now informational only.
+- Key change: stockData now calculates net stock by (position, code) identically to calcularOcupacion, then filters by selected code
+- Deployed via git push to main (Cloudflare Pages auto-build)

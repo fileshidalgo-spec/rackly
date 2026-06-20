@@ -803,33 +803,41 @@ export function PisoSectoresTab() {
   function addIngresoRow() { setIngRows([...ingRows, { ...EMPTY_ROW }]) }
   function removeIngresoRow(i: number) { setIngRows(ingRows.filter((_, idx) => idx !== i)) }
   function updateIngresoCantidad(i: number, value: string) {
-    const updated = [...ingRows]; updated[i] = { ...updated[i], cantidad: value }; setIngRows(updated)
+    setIngRows(prev => { const u = [...prev]; u[i] = { ...u[i], cantidad: value }; return u })
   }
   function updateIngresoFecha(i: number, value: string) {
-    const updated = [...ingRows]
-    updated[i] = { ...updated[i], fecha_vencimiento: value, sin_vencimiento: !value }
-    setIngRows(updated)
+    setIngRows(prev => {
+      const updated = [...prev]
+      updated[i] = { ...updated[i], fecha_vencimiento: value, sin_vencimiento: !value }
+      return updated
+    })
   }
   function toggleIngresoSinVencimiento(i: number) {
-    const updated = [...ingRows]
-    updated[i] = { ...updated[i], sin_vencimiento: !updated[i].sin_vencimiento, fecha_vencimiento: '' }
-    setIngRows(updated)
+    setIngRows(prev => {
+      const updated = [...prev]
+      updated[i] = { ...updated[i], sin_vencimiento: !updated[i].sin_vencimiento, fecha_vencimiento: '' }
+      return updated
+    })
   }
 
   function addDevRow() { setDevRows([...devRows, { ...EMPTY_ROW }]) }
   function removeDevRow(i: number) { setDevRows(devRows.filter((_, idx) => idx !== i)) }
   function updateDevCantidad(i: number, value: string) {
-    const updated = [...devRows]; updated[i] = { ...updated[i], cantidad: value }; setDevRows(updated)
+    setDevRows(prev => { const u = [...prev]; u[i] = { ...u[i], cantidad: value }; return u })
   }
   function updateDevFecha(i: number, value: string) {
-    const updated = [...devRows]
-    updated[i] = { ...updated[i], fecha_vencimiento: value, sin_vencimiento: !value }
-    setDevRows(updated)
+    setDevRows(prev => {
+      const updated = [...prev]
+      updated[i] = { ...updated[i], fecha_vencimiento: value, sin_vencimiento: !value }
+      return updated
+    })
   }
   function toggleDevSinVencimiento(i: number) {
-    const updated = [...devRows]
-    updated[i] = { ...updated[i], sin_vencimiento: !updated[i].sin_vencimiento, fecha_vencimiento: '' }
-    setDevRows(updated)
+    setDevRows(prev => {
+      const updated = [...prev]
+      updated[i] = { ...updated[i], sin_vencimiento: !updated[i].sin_vencimiento, fecha_vencimiento: '' }
+      return updated
+    })
   }
 
   async function doIngreso() {

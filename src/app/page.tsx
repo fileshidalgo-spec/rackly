@@ -696,15 +696,36 @@ function RacklyApp() {
  */
 function HydrationGuard({ children }: { children: ReactNode }) {
   const [mounted, setMounted] = useState(false)
+  const [stuck, setStuck] = useState(false)
   useEffect(() => {
     setMounted(true)
   }, [])
+  useEffect(() => {
+    if (mounted) return
+    const timer = setTimeout(() => setStuck(true), 6000)
+    return () => clearTimeout(timer)
+  }, [mounted])
   if (!mounted) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-100">
         <div className="flex flex-col items-center gap-4">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-200 border-t-blue-700" />
-          <p className="text-base font-medium text-slate-700">Cargando Rackly…</p>
+          {stuck ? (
+            <>
+              <p className="text-base font-medium text-slate-700">La app tarda en cargar</p>
+              <button
+                onClick={() => {
+                  window.location.href = window.location.href.split('?')[0] + '?t=' + Date.now()
+                }}
+                className="mt-2 px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+              >
+                Recargar página
+              </button>
+              <p className="text-[10px] text-slate-400">Si persiste, borra caché del navegador</p>
+            </>
+          ) : (
+            <p className="text-base font-medium text-slate-700">Cargando Rackly…</p>
+          )}
         </div>
       </main>
     )

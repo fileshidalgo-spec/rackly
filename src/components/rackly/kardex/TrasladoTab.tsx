@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   fetchMovimientos,
   trasladarMovimiento,
@@ -71,7 +71,7 @@ export function TrasladoTab() {
   const [codigo, setCodigo] = useState('')
   const [descripcion, setDescripcion] = useState('')
   const [un, setUn] = useState('')
-  const [locations, setLocations] = useState<LocStock[]>([])
+  // locations ahora se calcula con useMemo (más abajo), reactivo a movs y codigo
   const [selectedOrigin, setSelectedOrigin] = useState<string | null>(null)
   const [trasladoTotal, setTrasladoTotal] = useState(true)
   const [destBloque, setDestBloque] = useState('')
@@ -97,12 +97,20 @@ export function TrasladoTab() {
     setCodigo(item.codigo)
     setDescripcion(item.descripcion)
     setUn(item.un)
-    // Find locations with stock
-    const code = item.codigo.toUpperCase()
+    setStep(1)
+    setSelectedOrigin(null)
+  }
+
+  // Recalcular ubicaciones reactivamente cuando cambian movs o codigo.
+  // Esto corrige el bug donde ubicaciones quedaban "pegadas" después de una salida.
+  // EXCLUYE movimientos INC del cálculo (igual que OcupaciónTab).
+  const locations = useMemo(() => {
+    if (!codigo) return []
+    const code = codigo.toUpperCase()
     const locMap = new Map<string, LocStock>()
-    const relevant = movs.filter((m) => m.codigo === code)
+    const relevant = movs.filter((m) => m.codigo === code && !m.codigoInc)
     for (const m of relevant) {
-      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
+      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
       const current = locMap.get(key)
       if (current) {
         current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
@@ -122,33 +130,35 @@ export function TrasladoTab() {
         })
       }
     }
-    // Ordenar: FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
-    setLocations(
-      Array.from(locMap.values())
-        .filter((l) => l.stock > 0)
-        .sort((a, b) => {
-          const aHasDate = !!a.fVencimiento
-          const bHasDate = !!b.fVencimiento
-          if (aHasDate && bHasDate) return a.fVencimiento.localeCompare(b.fVencimiento)
-          if (aHasDate && !bHasDate) return -1
-          if (!aHasDate && bHasDate) return 1
-          // Ambos sin fecha: ordenar por bloque, torre, piso, posición
-          const aB = parseInt(a.bloque, 10) || 0
-          const bB = parseInt(b.bloque, 10) || 0
-          if (aB !== bB) return aB - bB
-          const aT = parseInt(a.torre, 10) || 0
-          const bT = parseInt(b.torre, 10) || 0
-          if (aT !== bT) return aT - bT
-          const aP = parseInt(a.piso, 10) || 0
-          const bP = parseInt(b.piso, 10) || 0
-          if (aP !== bP) return aP - bP
-          const aPos = parseInt(a.posicion, 10) || 0
-          const bPos = parseInt(b.posicion, 10) || 0
-          return aPos - bPos
-        })
-    )
-    setStep(1)
-  }
+    return Array.from(locMap.values())
+      .filter((l) => l.stock > 0)
+      .sort((a, b) => {
+        const aHasDate = !!a.fVencimiento
+        const bHasDate = !!b.fVencimiento
+        if (aHasDate && bHasDate) return a.fVencimiento.localeCompare(b.fVencimiento)
+        if (aHasDate && !bHasDate) return -1
+        if (!aHasDate && bHasDate) return 1
+        const aB = parseInt(a.bloque, 10) || 0
+        const bB = parseInt(b.bloque, 10) || 0
+        if (aB !== bB) return aB - bB
+        const aT = parseInt(a.torre, 10) || 0
+        const bT = parseInt(b.torre, 10) || 0
+        if (aT !== bT) return aT - bT
+        const aP = parseInt(a.piso, 10) || 0
+        const bP = parseInt(b.piso, 10) || 0
+        if (aP !== bP) return aP - bP
+        const aPos = parseInt(a.posicion, 10) || 0
+        const bPos = parseInt(b.posicion, 10) || 0
+        return aPos - bPos
+      })
+  }, [movs, codigo])
+
+  // Limpiar selectedOrigin si la ubicación ya no existe en locations
+  useEffect(() => {
+    if (selectedOrigin && !locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}||${l.codigoInc || ''}` === selectedOrigin)) {
+      setSelectedOrigin(null)
+    }
+  }, [locations, selectedOrigin])
 
   const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}||${l.codigoInc || ''}` === selectedOrigin)
 
@@ -296,7 +306,7 @@ export function TrasladoTab() {
     setCodigo('')
     setDescripcion('')
     setUn('')
-    setLocations([])
+    // locations se limpia automáticamente al poner codigo en '' (useMemo returns [])
     setSelectedOrigin(null)
     setTrasladoTotal(true)
     setCorregirDiferencia(false)

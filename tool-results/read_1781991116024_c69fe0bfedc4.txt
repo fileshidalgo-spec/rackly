@@ -1,0 +1,645 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useState, useEffect, useMemo } from 'react'
+     4→     4→import {
+     5→     5→  type Movimiento,
+     6→     6→  eliminarUbicacion,
+     7→     7→} from '@/lib/rackly/kardex'
+     8→     8→// Decoupled: Kardex Racks ya no consulta stock de Kardex Piso
+     9→     9→import {
+    10→    10→  findCatalogoByCodigo,
+    11→    11→  fetchCatalogo,
+    12→    12→  isCatalogoLoaded,
+    13→    13→  searchCatalogo,
+    14→    14→  type CatalogoItem,
+    15→    15→} from '@/lib/rackly/catalogo'
+    16→    16→import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+    17→    17→import { Input } from '@/components/ui/input'
+    18→    18→import { Button } from '@/components/ui/button'
+    19→    19→import { Badge } from '@/components/ui/badge'
+    20→    20→import {
+    21→    21→  Table,
+    22→    22→  TableBody,
+    23→    23→  TableCell,
+    24→    24→  TableHead,
+    25→    25→  TableHeader,
+    26→    26→  TableRow,
+    27→    27→} from '@/components/ui/table'
+    28→    28→import { toast } from 'sonner'
+    29→    29→import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle } from 'lucide-react'
+    30→    30→import { useAuth } from '@/hooks/useAuth'
+    31→    31→
+    32→    32→export function StockTab() {
+    33→    33→  const { perfil } = useAuth()
+    34→    34→  const esAdmin = perfil?.rol === 'admin'
+    35→    35→  const [movs, setMovs] = useState<Movimiento[]>([])
+    36→    36→  const [query, setQuery] = useState('')
+    37→    37→  const [selectedCodigo, setSelectedCodigo] = useState('')
+    38→    38→  const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>('todos')
+    39→    39→  const [stock, setStock] = useState<
+    40→    40→    {
+    41→    41→      bloque: string
+    42→    42→      torre: string
+    43→    43→      piso: string
+    44→    44→      posicion: string
+    45→    45→      stock: number
+    46→    46→      descripcion: string
+    47→    47→      un: string
+    48→    48→      proveedor?: string
+    49→    49→      fVencimiento: string
+    50→    50→      codigoInc?: string
+    51→    51→    }[]
+    52→    52→  >([])
+    53→    53→
+    54→    54→  useMovimientosRealtime(setMovs)
+    55→    55→
+    56→    56→  // Catálogo para búsqueda y lookup
+    57→    57→  const [catalogoResults, setCatalogoResults] = useState<CatalogoItem[]>([])
+    58→    58→  const [catalogoLoaded, setCatalogoLoaded] = useState(false)
+    59→    59→
+    60→    60→  // Cargar catálogo al montar
+    61→    61→  useEffect(() => {
+    62→    62→    async function load() {
+    63→    63→      if (!isCatalogoLoaded()) {
+    64→    64→        await fetchCatalogo().catch(() => {})
+    65→    65→      }
+    66→    66→      setCatalogoLoaded(true)
+    67→    67→    }
+    68→    68→    load()
+    69→    69→  }, [])
+    70→    70→
+    71→    71→  // Buscar sugerencias del catálogo cuando el usuario escribe
+    72→    72→  useEffect(() => {
+    73→    73→    if (!catalogoLoaded || !query.trim()) {
+    74→    74→      setCatalogoResults([])
+    75→    75→      return
+    76→    76→    }
+    77→    77→    if (!isCatalogoLoaded()) return
+    78→    78→    const results = searchCatalogo(query.trim(), 8)
+    79→    79→    setCatalogoResults(results)
+    80→    80→  }, [query, catalogoLoaded])
+    81→    81→
+    82→    82→  // Datos del artículo seleccionado del catálogo
+    83→    83→  const selectedItem = useMemo(() => {
+    84→    84→    if (!selectedCodigo) return null
+    85→    85→    return findCatalogoByCodigo(selectedCodigo)
+    86→    86→  }, [selectedCodigo])
+    87→    87→
+    88→    88→  // Calcular stock por ubicación para el código seleccionado.
+    89→    89→  // ESTRATEGIA: Calcular stock neto por posición (IGUAL que OcupaciónTab, sin fechas),
+    90→    90→  // luego repartir ese neto en lotes con fecha (FEFO visual).
+    91→    91→  // Lo que sobra se muestra como "Sin fecha".
+    92→    92→  // Esto garantiza que la SUMA de lotes = stock neto = OcupaciónTab, SIEMPRE.
+    93→    93→  const stockData = useMemo(() => {
+    94→    94→    if (!selectedCodigo || movs.length === 0) return []
+    95→    95→    const code = selectedCodigo.trim().toUpperCase()
+    96→    96→    const isIncMode = stockFilter === 'inc'
+    97→    97→
+    98→    98→    // FIX: Normalizar m.codigo igual que OcupaciónTab (trim + uppercase)
+    99→    99→    // para evitar perder movimientos por espacios o mayúsculas en la DB
+   100→   100→    const relevant = movs.filter((m) => {
+   101→   101→      if (m.codigo.trim().toUpperCase() !== code) return false
+   102→   102→      if (isIncMode) return !!m.codigoInc
+   103→   103→      return !m.codigoInc
+   104→   104→    })
+   105→   105→
+   106→   106→    const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
+   107→   107→
+   108→   108→    // 1. Calcular stock neto por posición (idéntico a OcupaciónTab)
+   109→   109→    //    + recoger ingreso pool por vencimiento (solo para display FEFO)
+   110→   110→    type PosBucket = {
+   111→   111→      bloque: string; torre: string; piso: string; posicion: string
+   112→   112→      descripcion: string; un: string; proveedor?: string
+   113→   113→      netStock: number                    // stock neto real (igual que Ocupación)
+   114→   114→      ingresoPool: Map<string, number>    // fv → cantidad (solo ingresos con fecha)
+   115→   115→      ingresoTotal: number                // total ingresos con fecha
+   116→   116→    }
+   117→   117→    const posMap = new Map<string, PosBucket>()
+   118→   118→
+   119→   119→    for (const m of relevant) {
+   120→   120→      const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+   121→   121→      let bucket = posMap.get(posKey)
+   122→   122→      if (!bucket) {
+   123→   123→        bucket = {
+   124→   124→          bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
+   125→   125→          descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined,
+   126→   126→          netStock: 0, ingresoPool: new Map(), ingresoTotal: 0,
+   127→   127→        }
+   128→   128→        posMap.set(posKey, bucket)
+   129→   129→      }
+   130→   130→      const delta = isIngreso(m.tipo) ? m.cantidad : -m.cantidad
+   131→   131→      bucket.netStock += delta
+   132→   132→
+   133→   133→      // Solo rastrear ingresos/devoluciones que tengan fecha para FEFO visual
+   134→   134→      if (isIngreso(m.tipo) && m.fVencimiento) {
+   135→   135→        bucket.ingresoPool.set(m.fVencimiento, (bucket.ingresoPool.get(m.fVencimiento) ?? 0) + m.cantidad)
+   136→   136→        bucket.ingresoTotal += m.cantidad
+   137→   137→      }
+   138→   138→    }
+   139→   139→
+   140→   140→    // 2. Repartir stock neto en lotes FEFO (solo informativo)
+   141→   141→    const result: {
+   142→   142→      bloque: string; torre: string; piso: string; posicion: string
+   143→   143→      stock: number; descripcion: string; un: string; proveedor?: string
+   144→   144→      fVencimiento: string; codigoInc?: string
+   145→   145→    }[] = []
+   146→   146→
+   147→   147→    for (const [, bucket] of posMap) {
+   148→   148→      if (bucket.netStock <= 0) continue
+   149→   149→
+   150→   150→      // Lotes con fecha ordenados por FEFO (más antiguo primero)
+   151→   151→      const datedLots = [...bucket.ingresoPool.entries()].sort(([a], [b]) => a.localeCompare(b))
+   152→   152→
+   153→   153→      // Repartir el stock neto proporcionalmente entre los lotes con fecha
+   154→   154→      let remaining = bucket.netStock
+   155→   155→
+   156→   156→      // Caso especial: no hay ingresos con fecha → todo es "Sin fecha"
+   157→   157→      if (bucket.ingresoTotal === 0 || datedLots.length === 0) {
+   158→   158→        result.push({
+   159→   159→          bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
+   160→   160→          posicion: bucket.posicion, stock: bucket.netStock, descripcion: bucket.descripcion,
+   161→   161→          un: bucket.un, proveedor: bucket.proveedor, fVencimiento: '',
+   162→   162→        })
+   163→   163→        continue
+   164→   164→      }
+   165→   165→
+   166→   166→      // Si stock neto > total ingresos con fecha, asignar primero todos los lotes con fecha
+   167→   167→      // y el excedente va a "Sin fecha" (solo puede pasar si hay ingresos sin fecha)
+   168→   168→      for (const [fv, lotQty] of datedLots) {
+   169→   169→        // Asignar proporcionalmente: lo que quedó del neto, pero no más del lote
+   170→   170→        const assigned = Math.min(lotQty, remaining)
+   171→   171→        if (assigned > 0) {
+   172→   172→          result.push({
+   173→   173→            bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
+   174→   174→            posicion: bucket.posicion, stock: assigned, descripcion: bucket.descripcion,
+   175→   175→            un: bucket.un, proveedor: bucket.proveedor, fVencimiento: fv,
+   176→   176→          })
+   177→   177→          remaining -= assigned
+   178→   178→        }
+   179→   179→      }
+   180→   180→
+   181→   181→      // Si sobra stock (hubo ingresos sin fecha), mostrar como "Sin fecha"
+   182→   182→      if (remaining > 0) {
+   183→   183→        result.push({
+   184→   184→          bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
+   185→   185→          posicion: bucket.posicion, stock: remaining, descripcion: bucket.descripcion,
+   186→   186→          un: bucket.un, proveedor: bucket.proveedor, fVencimiento: '',
+   187→   187→        })
+   188→   188→      }
+   189→   189→    }
+   190→   190→
+   191→   191→    return result.sort((a, b) => {
+   192→   192→        // FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
+   193→   193→        const aHasDate = !!a.fVencimiento
+   194→   194→        const bHasDate = !!b.fVencimiento
+   195→   195→        if (aHasDate && bHasDate) return a.fVencimiento.localeCompare(b.fVencimiento)
+   196→   196→        if (aHasDate && !bHasDate) return -1
+   197→   197→        if (!aHasDate && bHasDate) return 1
+   198→   198→        // Ambos sin fecha: ordenar por bloque, torre, piso, posición
+   199→   199→        const aB = parseInt(a.bloque, 10) || 0
+   200→   200→        const bB = parseInt(b.bloque, 10) || 0
+   201→   201→        if (aB !== bB) return aB - bB
+   202→   202→        const aT = parseInt(a.torre, 10) || 0
+   203→   203→        const bT = parseInt(b.torre, 10) || 0
+   204→   204→        if (aT !== bT) return aT - bT
+   205→   205→        const aP = parseInt(a.piso, 10) || 0
+   206→   206→        const bP = parseInt(b.piso, 10) || 0
+   207→   207→        if (aP !== bP) return aP - bP
+   208→   208→        const aPos = parseInt(a.posicion, 10) || 0
+   209→   209→        const bPos = parseInt(b.posicion, 10) || 0
+   210→   210→        return aPos - bPos
+   211→   211→      })
+   212→   212→  }, [selectedCodigo, movs, stockFilter])
+   213→   213→
+   214→   214→  useEffect(() => {
+   215→   215→    setStock(stockData)
+   216→   216→  }, [stockData])
+   217→   217→
+   218→   218→  // Manejar selección de un código
+   219→   219→  function selectCodigo(codigo: string) {
+   220→   220→    setSelectedCodigo(codigo.toUpperCase())
+   221→   221→    setQuery(codigo.toUpperCase())
+   222→   222→    setCatalogoResults([])
+   223→   223→  }
+   224→   224→
+   225→   225→  async function handleDelete(
+   226→   226→    bloque: string,
+   227→   227→    torre: string,
+   228→   228→    piso: string,
+   229→   229→    posicion: string,
+   230→   230→    fVencimiento?: string,
+   231→   231→    codigoInc?: string
+   232→   232→  ) {
+   233→   233→    if (!confirm('¿Eliminar los movimientos de este lote en esta ubicación?')) return
+   234→   234→    try {
+   235→   235→      const next = await eliminarUbicacion(selectedCodigo, bloque, torre, piso, posicion, fVencimiento, codigoInc)
+   236→   236→      setMovs(next)
+   237→   237→      toast.success('Ubicación eliminada')
+   238→   238→    } catch (err: unknown) {
+   239→   239→      const message = err instanceof Error ? err.message : 'Error'
+   240→   240→      toast.error('No se pudo eliminar', { description: message })
+   241→   241→    }
+   242→   242→  }
+   243→   243→
+   244→   244→  // Badge color según días para vencer
+   245→   245→  function getBadgeClass(fVencimiento: string) {
+   246→   246→    const hoy = new Date(new Date().toDateString())
+   247→   247→    const fVen = fVencimiento ? new Date(fVencimiento + 'T00:00:00') : null
+   248→   248→    const diffDias = fVen ? (fVen.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24) : null
+   249→   249→    const vencido = diffDias !== null && diffDias < 0
+   250→   250→    const naranja = !vencido && diffDias !== null && diffDias <= 15
+   251→   251→    const azul = !vencido && !naranja && diffDias !== null && diffDias <= 30
+   252→   252→
+   253→   253→    return vencido
+   254→   254→      ? 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+   255→   255→      : naranja
+   256→   256→      ? 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-800'
+   257→   257→      : azul
+   258→   258→      ? 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800'
+   259→   259→      : 'bg-green-100 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-800'
+   260→   260→  }
+   261→   261→
+   262→   262→  // ── Sin código seleccionado: buscar por código o descripción ──
+   263→   263→  if (!selectedCodigo) {
+   264→   264→    return (
+   265→   265→      <div className="space-y-4">
+   266→   266→        {/* Barra de búsqueda */}
+   267→   267→        <div className="relative">
+   268→   268→          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   269→   269→          <Input
+   270→   270→            value={query}
+   271→   271→            onChange={(e) => {
+   272→   272→              setQuery(e.target.value)
+   273→   273→              // Si el usuario escribió un código exacto, seleccionarlo directo
+   274→   274→              const val = e.target.value.trim().toUpperCase()
+   275→   275→              if (isCatalogoLoaded() && findCatalogoByCodigo(val)) {
+   276→   276→                // No seleccionar automáticamente, dejar que el usuario elija
+   277→   277→              }
+   278→   278→            }}
+   279→   279→            onKeyDown={(e) => {
+   280→   280→              if (e.key === 'Enter' && query.trim()) {
+   281→   281→                // Buscar el primer resultado y seleccionarlo
+   282→   282→                if (catalogoResults.length > 0) {
+   283→   283→                  selectCodigo(catalogoResults[0].codigo)
+   284→   284→                } else {
+   285→   285→                  // Si no hay resultados en catálogo, buscar de todas formas
+   286→   286→                  selectCodigo(query.trim())
+   287→   287→                }
+   288→   288→              }
+   289→   289→              if (e.key === 'Escape') {
+   290→   290→                setQuery('')
+   291→   291→                setCatalogoResults([])
+   292→   292→              }
+   293→   293→            }}
+   294→   294→            placeholder="Buscar por código o descripción..."
+   295→   295→            className="pl-9"
+   296→   296→          />
+   297→   297→          {query && (
+   298→   298→            <button
+   299→   299→              type="button"
+   300→   300→              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+   301→   301→              onClick={() => { setQuery(''); setCatalogoResults([]) }}
+   302→   302→            >
+   303→   303→              ✕
+   304→   304→            </button>
+   305→   305→          )}
+   306→   306→        </div>
+   307→   307→
+   308→   308→        {/* Sugerencias del catálogo */}
+   309→   309→        {catalogoResults.length > 0 && (
+   310→   310→          <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
+   311→   311→            <div className="px-3 py-2 border-b bg-muted/30">
+   312→   312→              <p className="text-xs font-medium text-muted-foreground">
+   313→   313→                {catalogoResults.length} resultado{catalogoResults.length > 1 ? 's' : ''} en el catálogo
+   314→   314→              </p>
+   315→   315→            </div>
+   316→   316→            {catalogoResults.map((item) => (
+   317→   317→              <button
+   318→   318→                key={item.codigo}
+   319→   319→                type="button"
+   320→   320→                className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-accent/50 transition-colors text-left border-b last:border-b-0"
+   321→   321→                onClick={() => selectCodigo(item.codigo)}
+   322→   322→              >
+   323→   323→                <div className="min-w-0 flex-1">
+   324→   324→                  <div className="flex items-center gap-2">
+   325→   325→                    <span className="font-mono font-semibold text-sm">{item.codigo}</span>
+   326→   326→                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">{item.un}</Badge>
+   327→   327→                  </div>
+   328→   328→                  <p className="text-xs text-muted-foreground truncate mt-0.5">{item.descripcion}</p>
+   329→   329→                </div>
+   330→   330→                <div className="text-right shrink-0">
+   331→   331→                  {item.stock_big_magic > 0 && (
+   332→   332→                    <div className="flex items-center gap-1">
+   333→   333→                      <span className="text-[10px] text-amber-600 dark:text-amber-400">BM</span>
+   334→   334→                      <span className="text-sm font-bold text-amber-700 dark:text-amber-300">{item.stock_big_magic}</span>
+   335→   335→                    </div>
+   336→   336→                  )}
+   337→   337→                </div>
+   338→   338→                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+   339→   339→              </button>
+   340→   340→            ))}
+   341→   341→          </div>
+   342→   342→        )}
+   343→   343→
+   344→   344→        {/* Sin búsqueda activa */}
+   345→   345→        {!query && (
+   346→   346→          <p className="text-muted-foreground text-center py-8">
+   347→   347→            Escribe un código o descripción para buscar stock.
+   348→   348→          </p>
+   349→   349→        )}
+   350→   350→
+   351→   351→        {/* Búsqueda sin resultados */}
+   352→   352→        {query.trim() && catalogoResults.length === 0 && catalogoLoaded && (
+   353→   353→          <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
+   354→   354→            <PackageSearch className="h-5 w-5" />
+   355→   355→            <span>No se encontró &quot;{query}&quot; en el catálogo.</span>
+   356→   356→          </div>
+   357→   357→        )}
+   358→   358→      </div>
+   359→   359→    )
+   360→   360→  }
+   361→   361→
+   362→   362→  // ── Con código seleccionado: mostrar stock por ubicación o info de Big Magic ──
+   363→   363→  return (
+   364→   364→    <div className="space-y-4">
+   365→   365→      {/* Barra de búsqueda con código seleccionado */}
+   366→   366→      <div className="relative">
+   367→   367→        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   368→   368→        <Input
+   369→   369→          value={query}
+   370→   370→          onChange={(e) => {
+   371→   371→            setQuery(e.target.value)
+   372→   372→            setSelectedCodigo('')
+   373→   373→          }}
+   374→   374→          onKeyDown={(e) => {
+   375→   375→            if (e.key === 'Escape') {
+   376→   376→              setSelectedCodigo('')
+   377→   377→              setQuery('')
+   378→   378→            }
+   379→   379→          }}
+   380→   380→          placeholder="Buscar por código o descripción..."
+   381→   381→          className="pl-9"
+   382→   382→        />
+   383→   383→        <button
+   384→   384→          type="button"
+   385→   385→          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground px-1.5 py-0.5 rounded border hover:border-foreground/30 transition-colors"
+   386→   386→          onClick={() => { setSelectedCodigo(''); setQuery('') }}
+   387→   387→        >
+   388→   388→          × Cambiar
+   389→   389→        </button>
+   390→   390→      </div>
+   391→   391→
+   392→   392→      {/* Info del artículo seleccionado */}
+   393→   393→      {selectedItem && (
+   394→   394→        <div className="rounded-lg border bg-card p-3 space-y-2">
+   395→   395→          <div className="flex items-center gap-2">
+   396→   396→            <span className="font-mono font-bold text-sm">{selectedItem.codigo}</span>
+   397→   397→            <Badge variant="outline" className="text-xs">{selectedItem.un}</Badge>
+   398→   398→          </div>
+   399→   399→          <p className="text-sm">{selectedItem.descripcion}</p>
+   400→   400→        </div>
+   401→   401→      )}
+   402→   402→
+   403→   403→      {/* Card de Stock Big Magic */}
+   404→   404→      {selectedItem && (
+   405→   405→        <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+   406→   406→          <div className="flex items-center gap-2">
+   407→   407→            <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+   408→   408→              <span className="text-amber-600 dark:text-amber-400 font-bold text-xs">BM</span>
+   409→   409→            </div>
+   410→   410→            <div>
+   411→   411→              <p className="text-xs text-amber-600/80 dark:text-amber-400/80 font-medium">Stock Big Magic</p>
+   412→   412→              <p className="text-xs text-muted-foreground">Stock disponible en sistema Big Magic</p>
+   413→   413→            </div>
+   414→   414→          </div>
+   415→   415→          <div className="text-right">
+   416→   416→            <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{selectedItem.stock_big_magic}</p>
+   417→   417→          </div>
+   418→   418→        </div>
+   419→   419→      )}
+   420→   420→
+   421→   421→      {/* ── INC Filter buttons (always visible when a code is selected) ── */}
+   422→   422→      <div className="flex items-center justify-between">
+   423→   423→        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+   424→   424→          <Warehouse className="h-3.5 w-3.5" />
+   425→   425→          {stock.length > 0 ? 'Stock por ubicación en RACKLY' : 'Sin stock en ubicaciones de RACKLY'}
+   426→   426→        </p>
+   427→   427→      </div>
+   428→   428→      <div className="flex gap-2">
+   429→   429→        {([['todos', 'Todos'], ['disponibles', 'Disponibles'], ['inc', 'Solo INC']] as const).map(([key, label]) => (
+   430→   430→          <button
+   431→   431→            key={key}
+   432→   432→            type="button"
+   433→   433→            onClick={() => setStockFilter(key)}
+   434→   434→            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+   435→   435→              stockFilter === key
+   436→   436→                ? key === 'inc'
+   437→   437→                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+   438→   438→                  : key === 'disponibles'
+   439→   439→                    ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+   440→   440→                    : 'bg-sky-500/20 border-sky-500/50 text-sky-300'
+   441→   441→                : 'bg-slate-700/30 border-slate-600/30 text-slate-500 hover:text-slate-400'
+   442→   442→            }`}
+   443→   443→          >
+   444→   444→            {key === 'inc' && <AlertTriangle className="w-3 h-3" />}
+   445→   445→            {label}
+   446→   446→          </button>
+   447→   447→        ))}
+   448→   448→      </div>
+   449→   449→
+   450→   450→      {/* Stock por ubicación */}
+   451→   451→      {stock.length > 0 ? (
+   452→   452→        <>
+   453→   453→        <div className="space-y-3">
+   454→   454→
+   455→   455→          {/* ── Mobile: Card layout ── */}
+   456→   456→          <div className="md:hidden space-y-2">
+   457→   457→            {stock.map((s, i) => (
+   458→   458→              <div key={i} className="rounded-lg border bg-card p-3 space-y-2">
+   459→   459→                <div className="flex items-center justify-between gap-2">
+   460→   460→                  <div className="flex items-center gap-1.5 text-xs font-semibold">
+   461→   461→                    <span className="text-muted-foreground">Bloq</span>
+   462→   462→                    <span className="font-mono">{s.bloque}</span>
+   463→   463→                    <span className="text-muted-foreground mx-0.5">|</span>
+   464→   464→                    <span className="text-muted-foreground">Tor</span>
+   465→   465→                    <span className="font-mono">{s.torre}</span>
+   466→   466→                    <span className="text-muted-foreground mx-0.5">|</span>
+   467→   467→                    <span className="text-muted-foreground">Pis</span>
+   468→   468→                    <span className="font-mono">{s.piso}</span>
+   469→   469→                    <span className="text-muted-foreground mx-0.5">|</span>
+   470→   470→                    <span className="text-muted-foreground">Pos</span>
+   471→   471→                    <span className="font-mono">{s.posicion}</span>
+   472→   472→                  </div>
+   473→   473→                  <div className="flex items-center gap-2">
+   474→   474→                    <Badge variant="default" className="text-sm">{s.stock}</Badge>
+   475→   475→                    {esAdmin && (
+   476→   476→                      <Button
+   477→   477→                        variant="ghost"
+   478→   478→                        size="icon"
+   479→   479→                        className="h-7 w-7 text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+   480→   480→                        onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento, s.codigoInc)}
+   481→   481→                      >
+   482→   482→                        <Trash2 className="h-3.5 w-3.5" />
+   483→   483→                      </Button>
+   484→   484→                    )}
+   485→   485→                  </div>
+   486→   486→                </div>
+   487→   487→                <p className="text-xs text-muted-foreground leading-tight">{s.descripcion}</p>
+   488→   488→                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+   489→   489→                  <span><span className="text-muted-foreground">UN: </span>{s.un}</span>
+   490→   490→                  {s.proveedor ? (
+   491→   491→                    <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 text-[10px] px-1.5 py-0 font-semibold">
+   492→   492→                      {s.proveedor}
+   493→   493→                    </Badge>
+   494→   494→                  ) : (
+   495→   495→                    <span className="text-muted-foreground">Prov: —</span>
+   496→   496→                  )}
+   497→   497→                  {s.fVencimiento ? (
+   498→   498→                    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${getBadgeClass(s.fVencimiento)}`}>
+   499→   499→                      {s.fVencimiento}
+   500→   500→                    </Badge>
+   501→   501→                  ) : (
+   502→   502→                    <span className="text-muted-foreground">Venc: —</span>
+   503→   503→                  )}
+   504→   504→                  {s.codigoInc && (
+   505→   505→                    <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 text-[10px] px-1.5 py-0 font-semibold">
+   506→   506→                      <AlertTriangle className="w-3 h-3 mr-0.5" /> {s.codigoInc}
+   507→   507→                    </Badge>
+   508→   508→                  )}
+   509→   509→                </div>
+   510→   510→              </div>
+   511→   511→            ))}
+   512→   512→          </div>
+   513→   513→
+   514→   514→          {/* ── Desktop: Table layout ── */}
+   515→   515→          <div className="hidden md:block overflow-x-auto">
+   516→   516→            <Table>
+   517→   517→              <TableHeader>
+   518→   518→                <TableRow>
+   519→   519→                  <TableHead>Bloque</TableHead>
+   520→   520→                  <TableHead>Torre</TableHead>
+   521→   521→                  <TableHead>Piso</TableHead>
+   522→   522→                  <TableHead>Posición</TableHead>
+   523→   523→                  <TableHead>Descripción</TableHead>
+   524→   524→                  <TableHead>UN</TableHead>
+   525→   525→                  <TableHead>Proveedor</TableHead>
+   526→   526→                  <TableHead>Vencimiento</TableHead>
+   527→   527→                  <TableHead>INC</TableHead>
+   528→   528→                  <TableHead className="text-right">Stock</TableHead>
+   529→   529→                  {esAdmin && <TableHead className="w-12"></TableHead>}
+   530→   530→                </TableRow>
+   531→   531→              </TableHeader>
+   532→   532→              <TableBody>
+   533→   533→                {stock.map((s, i) => (
+   534→   534→                  <TableRow key={i}>
+   535→   535→                    <TableCell className="font-mono font-medium whitespace-nowrap">{s.bloque}</TableCell>
+   536→   536→                    <TableCell className="whitespace-nowrap">{s.torre}</TableCell>
+   537→   537→                    <TableCell className="font-medium whitespace-nowrap">{s.piso}</TableCell>
+   538→   538→                    <TableCell className="whitespace-nowrap">{s.posicion}</TableCell>
+   539→   539→                    <TableCell className="max-w-[200px] truncate">{s.descripcion}</TableCell>
+   540→   540→                    <TableCell className="whitespace-nowrap">{s.un}</TableCell>
+   541→   541→                    <TableCell>
+   542→   542→                      {s.proveedor ? (
+   543→   543→                        <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800 font-semibold">
+   544→   544→                          {s.proveedor}
+   545→   545→                        </Badge>
+   546→   546→                      ) : (
+   547→   547→                        <span className="text-xs text-muted-foreground">—</span>
+   548→   548→                      )}
+   549→   549→                    </TableCell>
+   550→   550→                    <TableCell>
+   551→   551→                      {s.fVencimiento ? (
+   552→   552→                        <Badge variant="outline" className={`font-semibold ${getBadgeClass(s.fVencimiento)}`}>
+   553→   553→                          {s.fVencimiento}
+   554→   554→                        </Badge>
+   555→   555→                      ) : (
+   556→   556→                        <span className="text-xs text-muted-foreground">—</span>
+   557→   557→                      )}
+   558→   558→                    </TableCell>
+   559→   559→                    <TableCell>
+   560→   560→                      {s.codigoInc ? (
+   561→   561→                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 font-semibold text-xs">
+   562→   562→                          <AlertTriangle className="w-3 h-3 mr-0.5" /> {s.codigoInc}
+   563→   563→                        </Badge>
+   564→   564→                      ) : (
+   565→   565→                        <span className="text-xs text-muted-foreground">—</span>
+   566→   566→                      )}
+   567→   567→                    </TableCell>
+   568→   568→                    <TableCell className="text-right font-medium">
+   569→   569→                      <Badge variant="default">{s.stock}</Badge>
+   570→   570→                    </TableCell>
+   571→   571→                    {esAdmin && (
+   572→   572→                      <TableCell>
+   573→   573→                        <Button
+   574→   574→                          variant="ghost"
+   575→   575→                          size="icon"
+   576→   576→                          className="text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+   577→   577→                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento, s.codigoInc)}
+   578→   578→                        >
+   579→   579→                          <Trash2 className="h-4 w-4" />
+   580→   580→                        </Button>
+   581→   581→                      </TableCell>
+   582→   582→                    )}
+   583→   583→                  </TableRow>
+   584→   584→                ))}
+   585→   585→              </TableBody>
+   586→   586→            </Table>
+   587→   587→          </div>
+   588→   588→
+   589→   589→          {/* Total sum */}
+   590→   590→          <div className="flex justify-end">
+   591→   591→            <Badge variant="outline" className="text-sm px-3 py-1">
+   592→   592→              Total stock: <span className="font-bold ml-1">{stock.reduce((sum, s) => sum + s.stock, 0)}</span>
+   593→   593→            </Badge>
+   594→   594→          </div>
+   595→   595→        </div>
+   596→   596→
+   597→   597→        </>
+   598→   598→      ) : (
+   599→   599→        /* Sin stock en ubicaciones — mostrar info del catálogo + Big Magic */
+   600→   600→        <div className="space-y-3">
+   601→   601→
+   602→   602→          {selectedItem ? (
+   603→   603→            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-gradient-to-r from-slate-50 to-slate-100 dark:from-slate-800/50 dark:to-slate-800 p-4">
+   604→   604→              <div className="flex items-center gap-2 mb-3">
+   605→   605→                <div className="w-8 h-8 rounded-lg bg-slate-500/10 flex items-center justify-center">
+   606→   606→                  <PackageSearch className="h-4 w-4 text-slate-500" />
+   607→   607→                </div>
+   608→   608→                <p className="text-sm font-medium">Datos del artículo</p>
+   609→   609→              </div>
+   610→   610→              <div className="grid grid-cols-2 gap-3">
+   611→   611→                <div>
+   612→   612→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Código</p>
+   613→   613→                  <p className="font-mono font-bold">{selectedItem.codigo}</p>
+   614→   614→                </div>
+   615→   615→                <div>
+   616→   616→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">UN</p>
+   617→   617→                  <p className="font-bold">{selectedItem.un}</p>
+   618→   618→                </div>
+   619→   619→                <div className="col-span-2">
+   620→   620→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Descripción</p>
+   621→   621→                  <p className="text-sm">{selectedItem.descripcion}</p>
+   622→   622→                </div>
+   623→   623→                <div>
+   624→   624→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Stock Big Magic</p>
+   625→   625→                  <p className="text-xl font-bold text-amber-700 dark:text-amber-300">{selectedItem.stock_big_magic}</p>
+   626→   626→                </div>
+   627→   627→                <div>
+   628→   628→                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Stock en Racks</p>
+   629→   629→                  <p className="text-xl font-bold text-slate-400">0</p>
+   630→   630→                </div>
+   631→   631→              </div>
+   632→   632→            </div>
+   633→   633→          ) : (
+   634→   634→            <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
+   635→   635→              <PackageSearch className="h-5 w-5" />
+   636→   636→              <span>Sin stock en RACKLY para &quot;{selectedCodigo}&quot; (no encontrado en catálogo)</span>
+   637→   637→            </div>
+   638→   638→          )}
+   639→   639→        </div>
+   640→   640→      )}
+   641→   641→
+   642→   642→    </div>
+   643→   643→  )
+   644→   644→}
+   645→   645→

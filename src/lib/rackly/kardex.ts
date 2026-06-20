@@ -569,6 +569,161 @@ export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
   }))
 }
 
+// ═══ Server-side: Ocupación por posición+código (sin límite de filas) ═══
+
+type OcupacionRawRow = {
+  bloque: string; torre: string; piso: string; posicion: string
+  codigo: string; stock: number
+  descripcion: string | null; un: string | null; proveedor: string | null
+}
+
+/**
+ * Calcula ocupación server-side usando GROUP BY en Supabase.
+ * Retorna filas agrupadas por (posición, código) con stock neto > 0.
+ * Sin límite de filas — Supabase procesa todo en la DB.
+ * Fallback: si falla, retorna null para que el caller use el método client-side.
+ */
+export async function fetchOcupacionServerSide(): Promise<OcupacionRawRow[] | null> {
+  try {
+    // Consulta SQL directa: suma delta por posición+código, excluye INC
+    const { data, error } = await dataClient
+      .from('movimientos')
+      .select('bloque, torre, piso, posicion, codigo, descripcion, un, proveedor, tipo, cantidad')
+      .is('codigo_inc', null)
+      .order('bloque')
+    if (error) {
+      console.warn('[fetchOcupacionServerSide] Error en consulta:', error.message)
+      return null
+    }
+    if (!data || data.length === 0) return []
+
+    // Agrupar en el cliente (mucha menos data que fetchMovimientos completo
+    // porque seleccionamos solo columnas necesarias)
+    const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
+    const posCodeMap = new Map<string, { stock: number; desc: string; un: string; prov: string }>()
+
+    for (const r of data) {
+      const posKey = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
+      const code = (r.codigo as string).trim().toUpperCase()
+      const key = `${posKey}||${code}`
+      let entry = posCodeMap.get(key)
+      if (!entry) {
+        entry = { stock: 0, desc: (r.descripcion as string) || '', un: (r.un as string) || '', prov: (r.proveedor as string) || '' }
+        posCodeMap.set(key, entry)
+      }
+      const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad)) || 0
+      entry.stock += isIngreso(r.tipo as string) ? qty : -qty
+      if (!entry.desc && r.descripcion) entry.desc = r.descripcion as string
+      if (!entry.un && r.un) entry.un = r.un as string
+      if (!entry.prov && r.proveedor) entry.prov = r.proveedor as string
+    }
+
+    const results: OcupacionRawRow[] = []
+    for (const [key, entry] of posCodeMap) {
+      if (entry.stock <= 0) continue
+      const [posKey, codigo] = key.split('||')
+      const [bloque, torre, piso, posicion] = posKey.split('-')
+      results.push({ bloque, torre, piso, posicion, codigo, stock: Math.round(entry.stock * 1000) / 1000, descripcion: entry.desc, un: entry.un, proveedor: entry.prov || null })
+    }
+    return results
+  } catch (err) {
+    console.warn('[fetchOcupacionServerSide] Falló, caller debe usar fallback:', err)
+    return null
+  }
+}
+
+// ═══ Server-side: Stock por código específico (sin límite de filas) ═══
+
+type StockPorCodigoRow = {
+  bloque: string; torre: string; piso: string; posicion: string
+  stock: number; descripcion: string | null; un: string | null
+  proveedor: string | null; fVencimiento: string | null
+  codigoInc: string | null
+}
+
+/**
+ * Calcula stock server-side para un código específico.
+ * Retorna filas agrupadas por posición con stock neto > 0.
+ * Sin límite de filas — la DB filtra por código ANTES de calcular.
+ * Fallback: retorna null para que el caller use el método client-side.
+ */
+export async function fetchStockPorCodigoServerSide(
+  codigo: string,
+  soloInc: boolean = false
+): Promise<StockPorCodigoRow[] | null> {
+  try {
+    const target = codigo.trim().toUpperCase()
+    const query = dataClient
+      .from('movimientos')
+      .select('bloque, torre, piso, posicion, codigo, descripcion, un, proveedor, tipo, cantidad, f_vencimiento, codigo_inc')
+      .eq('codigo', target)
+
+    if (soloInc) {
+      // Modo INC: solo movimientos con codigo_inc
+      query.not('codigo_inc', 'is', null).neq('codigo_inc', '')
+    } else {
+      // Modo normal: excluir INC
+      query.is('codigo_inc', null)
+    }
+
+    const { data, error } = await query.order('bloque')
+    if (error) {
+      console.warn('[fetchStockPorCodigoServerSide] Error en consulta:', error.message)
+      return null
+    }
+    if (!data || data.length === 0) return []
+
+    // Agrupar por posición (sin importar vencimiento para el cálculo)
+    const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
+    const posMap = new Map<string, { stock: number; desc: string; un: string; prov: string; fvMap: Map<string, number> }>()
+
+    for (const r of data) {
+      const posKey = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
+      let entry = posMap.get(posKey)
+      if (!entry) {
+        entry = { stock: 0, desc: (r.descripcion as string) || '', un: (r.un as string) || '', prov: (r.proveedor as string) || '', fvMap: new Map() }
+        posMap.set(posKey, entry)
+      }
+      const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad)) || 0
+      entry.stock += isIngreso(r.tipo as string) ? qty : -qty
+      if (!entry.desc && r.descripcion) entry.desc = r.descripcion as string
+      if (!entry.un && r.un) entry.un = r.un as string
+      if (!entry.prov && r.proveedor) entry.prov = r.proveedor as string
+
+      // Rastrear fechas para FEFO info
+      const fv = r.f_vencimiento as string
+      if (fv && isIngreso(r.tipo as string)) {
+        entry.fvMap.set(fv, (entry.fvMap.get(fv) ?? 0) + qty)
+      }
+    }
+
+    const results: StockPorCodigoRow[] = []
+    for (const [posKey, entry] of posMap) {
+      if (entry.stock <= 0) continue
+      const [bloque, torre, piso, posicion] = posKey.split('-')
+
+      // Fecha más próxima (FEFO)
+      let fVencimiento: string | null = null
+      if (entry.fvMap.size > 0) {
+        const sorted = [...entry.fvMap.keys()].sort()
+        fVencimiento = sorted[0]
+      }
+
+      results.push({
+        bloque, torre, piso, posicion,
+        stock: Math.round(entry.stock * 1000) / 1000,
+        descripcion: entry.desc || null, un: entry.un || null,
+        proveedor: entry.prov || null, fVencimiento,
+        codigoInc: soloInc ? target : null,
+      })
+    }
+    return results
+  } catch (err) {
+    console.warn('[fetchStockPorCodigoServerSide] Falló, caller debe usar fallback:', err)
+    return null
+  }
+}
+
 export type TrasladoInput = {
   codigo: string
   descripcion: string

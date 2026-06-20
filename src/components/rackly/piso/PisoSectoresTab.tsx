@@ -807,8 +807,8 @@ export function PisoSectoresTab() {
     return resolved
   }
 
-  function addIngresoRow() { setIngRows([...ingRows, { ...EMPTY_ROW }]) }
-  function removeIngresoRow(i: number) { setIngRows(ingRows.filter((_, idx) => idx !== i)) }
+  function addIngresoRow() { setIngRows(prev => [...prev, { ...EMPTY_ROW }]) }
+  function removeIngresoRow(i: number) { setIngRows(prev => prev.filter((_, idx) => idx !== i)) }
   function updateIngresoCantidad(i: number, value: string) {
     setIngRows(prev => { const u = [...prev]; u[i] = { ...u[i], cantidad: value }; return u })
   }
@@ -827,8 +827,8 @@ export function PisoSectoresTab() {
     })
   }
 
-  function addDevRow() { setDevRows([...devRows, { ...EMPTY_ROW }]) }
-  function removeDevRow(i: number) { setDevRows(devRows.filter((_, idx) => idx !== i)) }
+  function addDevRow() { setDevRows(prev => [...prev, { ...EMPTY_ROW }]) }
+  function removeDevRow(i: number) { setDevRows(prev => prev.filter((_, idx) => idx !== i)) }
   function updateDevCantidad(i: number, value: string) {
     setDevRows(prev => { const u = [...prev]; u[i] = { ...u[i], cantidad: value }; return u })
   }
@@ -891,6 +891,7 @@ export function PisoSectoresTab() {
         setStockByNivel(reloadedPerNivel)
         setMode('view')
         setIngRows([{ ...EMPTY_ROW }])
+        setIngresoKey(k => k + 1) // forzar remount de campos de fecha
       }
       // Reload positions grid
       await loadPosiciones()
@@ -1025,6 +1026,7 @@ export function PisoSectoresTab() {
         setStockByNivel(newSBN)
         setDetail({ ...detail, stock: filteredStock }); setMode('view')
         setDevRows([{ ...EMPTY_ROW }])
+        setDevKey(k => k + 1) // forzar remount de campos de fecha
       }
       await loadPosiciones()
       if (selectedColumn) loadColumnDetail(selectedColumn)
@@ -1897,7 +1899,13 @@ export function PisoSectoresTab() {
       </div>
 
       {/* ═══ DETAIL DIALOG — Frosted glass + breadcrumb + animated badge ═══ */}
-      <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setMode('view') } }}>
+      <Dialog open={!!detail} onOpenChange={(open) => {
+        if (!open) {
+          setDetail(null); setMode('view')
+          setIngRows([{ ...EMPTY_ROW }]); setIngresoKey(k => k + 1)
+          setDevRows([{ ...EMPTY_ROW }]); setDevKey(k => k + 1)
+        }
+      }}>
         <DialogContent
           className="max-w-[calc(100vw-1rem)] sm:max-w-xl rounded-2xl max-h-[85vh] flex flex-col overflow-hidden overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
           style={{

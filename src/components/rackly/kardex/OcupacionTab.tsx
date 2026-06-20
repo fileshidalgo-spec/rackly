@@ -199,6 +199,10 @@ export function OcupacionTab() {
       // Consulta paralela: movimientos generales + INC dedicado
       const [movs, incMap] = await Promise.all([fetchMovimientos(), fetchIncPorUbicacion()])
       if (!mountedRef.current) return
+      // Verificar si la consulta INC falló (no es crítico, pero avisar al usuario)
+      if (incMap._error) {
+        toast.error('No se pudo cargar información INC. Los datos INC pueden estar incompletos.')
+      }
       const celdas = calcularOcupacion(movs)
       // Crear mapa de celdas existentes para merge rápido
       const celdaMap = new Map<string, OcupacionCelda>()
@@ -281,7 +285,14 @@ export function OcupacionTab() {
   async function handleCellClick(b: string, t: string, p: string, pos: string) {
     setDetailLoading(true)
     try {
-      setDetail({ bloque: b, torre: t, piso: p, posicion: pos, stock: await stockEnUbicacion(b, t, p, pos) })
+      const stock = await stockEnUbicacion(b, t, p, pos)
+      // Verificar si la consulta falló (bandera _error)
+      if (stock.length > 0 && '_error' in stock[0] && stock[0]._error) {
+        toast.error('Error al consultar stock de esta ubicación. Intente nuevamente.')
+        setDetailLoading(false)
+        return
+      }
+      setDetail({ bloque: b, torre: t, piso: p, posicion: pos, stock })
       setDetailMode('view')
     } catch { toast.error('Error al cargar detalle') }
     finally { setDetailLoading(false) }

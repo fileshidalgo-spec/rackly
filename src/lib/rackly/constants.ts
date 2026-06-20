@@ -43,16 +43,20 @@ export const PROVEEDORES_FILM = [
 ] as const
 
 // ── Paginación y Polling ────────────────────────────────
-export const PAGE_SIZE = 1000
+export const PAGE_SIZE = 500                // Tamaño de página para queries paginadas
 export const POLLING_INTERVAL = 8000      // ms — refresco de datos en tiempo real
 export const POLLING_TURNO = 60000        // ms — refresco del turno
 export const POLLING_OCUPACION = 10000    // ms — refresco de ocupación
-export const MAX_ITERATIONS = 100         // Guard para bucles de paginación
+export const MAX_ITERATIONS = 100         // Guard para bucles de paginación (admin/bulk)
+export const FETCH_MOV_MAX_PAGES = 30     // Máx páginas para fetchMovimientos (15K filas)
 
 // ── Timeouts ──────────────────────────────────────────
 // Timeout para queries de stock por código.
-// 15 s permite tolerar conexiones lentas o queries complejas (agregaciones, joins).
-export const QUERY_TIMEOUT_MS = 15000
+// Configurable via NEXT_PUBLIC_QUERY_TIMEOUT_MS. Default: 15s.
+export const QUERY_TIMEOUT_MS = parseInt(
+  process.env.NEXT_PUBLIC_QUERY_TIMEOUT_MS ?? '15000',
+  10
+) || 15000
 
 // ── Seguridad ───────────────────────────────────────────
 export const PASSWORD_MIN_LENGTH = 6

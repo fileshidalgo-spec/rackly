@@ -32,6 +32,10 @@ import { Label } from '@/components/ui/label'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog, AlertDialogContent, AlertDialogTitle, AlertDialogDescription,
+  AlertDialogCancel, AlertDialogFooter,
+} from '@/components/ui/alert-dialog'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { extractError } from '@/lib/utils'
@@ -40,7 +44,7 @@ import {
   Layers3, BoxSelect, X, Plus, Trash2, RefreshCw, Package,
   RotateCcw, CalendarOff, Calendar, Warehouse, Sparkles, ChevronRight,
   Check, AlertTriangle, ToggleLeft, ToggleRight, Layers, ChevronDown, Lock,
-  Clock, RotateCwIcon,
+  Clock, RotateCwIcon, TriangleAlert, MapPin,
 } from 'lucide-react'
 
 type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }
@@ -186,6 +190,12 @@ export function PisoSectoresTab() {
   const [trDestPos, setTrDestPos] = useState<PosicionConStock | null>(null)
   const [trItems, setTrItems] = useState<TrItem[]>([])
   const [trConfirmOpen, setTrConfirmOpen] = useState(false)
+  // Destino ocupado alerta (traslado Piso)
+  const [trDestOccupied, setTrDestOccupied] = useState<DetailStock[]>([])
+  const [trDestAlertOpen, setTrDestAlertOpen] = useState(false)
+  const [trSalidaBusy, setTrSalidaBusy] = useState<string | null>(null)
+  const [trSalidaCant, setTrSalidaCant] = useState<Record<string, string>>({})
+  const [trSalidaTotalFlags, setTrSalidaTotalFlags] = useState<Record<string, boolean>>({})
 
   // Devolucion state
   const [devRows, setDevRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
@@ -934,9 +944,36 @@ export function PisoSectoresTab() {
     } catch (err: unknown) { toast.error('Error al registrar salida', { description: extractError(err) }) } finally { setBusy(false) }
   }
 
-  async function doTraslado() {
+  // Dar salida a un producto desde el alerta de destino ocupado (Piso traslado)
+  async function handleTrSalidaDesdeAlerta(stockItem: DetailStock) {
+    if (!perfil || !trDestPos || !trDestNivelId) return
+    const itemKey = `${stockItem.bloque_id}-${stockItem.fecha_vencimiento || ''}`
+    const isTotal = trSalidaTotalFlags[itemKey] === true
+    const cantStr = trSalidaCant[itemKey] || ''
+    const cantNum = isTotal ? stockItem.cantidad : parseFloat(cantStr)
+    if (isNaN(cantNum) || cantNum <= 0) { toast.error('Cantidad inválida'); return }
+    if (cantNum > stockItem.cantidad) { toast.error(`Máximo: ${stockItem.cantidad} ${stockItem.bloque_unidad}`); return }
+    setTrSalidaBusy(itemKey)
+    try {
+      await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
+        { nivel_id: trDestNivelId, bloque_id: stockItem.bloque_id, cantidad: cantNum, fecha_vencimiento: stockItem.fecha_vencimiento || null },
+      ])
+      toast.success(`Salida de ${cantNum} ${stockItem.bloque_unidad} de ${stockItem.bloque_codigo}`)
+      // Refrescar stock del destino
+      const updated = await stockDetallePosicion(trDestPos.posicionId)
+      setTrDestOccupied(updated)
+      await loadPosiciones()
+      if (selectedColumn) loadColumnDetail(selectedColumn)
+    } catch (err: unknown) {
+      toast.error('Error al dar salida', { description: extractError(err) })
+    } finally {
+      setTrSalidaBusy(null)
+    }
+  }
+
+  // Ejecutar traslado (se llama desde la alerta o desde confirmación normal)
+  async function ejecutarTrasladoPiso() {
     if (!detail || !perfil || !trDestPos) return
-    if (detail.posicionId === trDestPos.posicionId) { toast.error('Origen y destino no pueden ser iguales'); return }
     const validRows = trItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para trasladar'); return }
     if (!selectedNivelId || !trDestNivelId) { toast.error('Selecciona nivel de origen y destino'); return }
@@ -985,8 +1022,33 @@ export function PisoSectoresTab() {
       if (adjustedCount > 0) parts.push(`${adjustedCount} salida(s) por ajuste`)
       toast.success(parts.join(' · '))
       setTrConfirmOpen(false)
+      setTrDestAlertOpen(false)
       if (mountedRef.current) { setDetail(null); setTrDestPos(null); loadPosiciones(); if (selectedColumn) loadColumnDetail(selectedColumn) }
     } catch (err: unknown) { toast.error('Error al trasladar', { description: extractError(err) }) } finally { setBusy(false) }
+  }
+
+  async function doTraslado() {
+    if (!detail || !perfil || !trDestPos) return
+    if (detail.posicionId === trDestPos.posicionId) { toast.error('Origen y destino no pueden ser iguales'); return }
+    const validRows = trItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
+    if (validRows.length === 0) { toast.error('No hay articulos para trasladar'); return }
+    if (!selectedNivelId || !trDestNivelId) { toast.error('Selecciona nivel de origen y destino'); return }
+    // Verificar si destino está ocupado
+    try {
+      const destStock = await stockDetallePosicion(trDestPos.posicionId)
+      if (destStock.length > 0) {
+        setTrDestOccupied(destStock)
+        setTrSalidaCant({})
+        setTrSalidaTotalFlags({})
+        setTrConfirmOpen(false) // Cerrar confirmation dialog
+        setTrDestAlertOpen(true)
+        return
+      }
+    } catch {
+      // Si falla la verificación, continuar con el traslado
+    }
+    // Destino vacío — ejecutar directamente
+    await ejecutarTrasladoPiso()
   }
 
   async function doDevolucion() {
@@ -2831,6 +2893,176 @@ export function PisoSectoresTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ═══ DESTINO OCUPADO ALERTA (Traslado Piso) ═══ */}
+      <AlertDialog open={trDestAlertOpen} onOpenChange={setTrDestAlertOpen}>
+        <AlertDialogContent className="sm:max-w-lg max-w-[calc(100vw-1rem)] max-h-[85vh] flex flex-col overflow-hidden overscroll-contain bg-slate-900 border-slate-700/50 backdrop-blur-xl rounded-2xl p-0 [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100">
+          {/* Header */}
+          <div className={`px-4 sm:px-6 py-5 text-white shrink-0 rounded-t-2xl ${
+            trDestOccupied.length > 0
+              ? 'bg-gradient-to-r from-orange-500 via-red-500 to-red-600'
+              : 'bg-gradient-to-r from-sky-600 via-indigo-600 to-purple-600'
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+                {trDestOccupied.length > 0 ? (
+                  <TriangleAlert className="h-6 w-6 text-white" />
+                ) : (
+                  <ArrowRightLeft className="h-6 w-6 text-white" />
+                )}
+              </div>
+              <div>
+                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+                  {trDestOccupied.length > 0 ? 'Destino Ocupado' : 'Confirmar Traslado'}
+                </AlertDialogTitle>
+                <AlertDialogDescription className={`text-sm mt-0.5 ${
+                  trDestOccupied.length > 0 ? 'text-orange-100' : 'text-sky-100'
+                }`}>
+                  {trDestOccupied.length > 0
+                    ? 'El destino ya tiene stock. Puedes dar salida a los productos antes de trasladar o confirmar de todas formas.'
+                    : 'El destino está vacío. Puedes proceder con el traslado.'}
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+          <AlertDialogDescription className="sr-only">
+            Alerta de destino ocupado para traslado Piso
+          </AlertDialogDescription>
+
+          {/* Contenido */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4">
+            {/* Ruta */}
+            <div className="mb-3">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Ruta del traslado</p>
+              <div className="flex items-center gap-2 text-xs bg-slate-800/60 rounded-lg border border-slate-700/40 px-3 py-2">
+                <MapPin className="h-4 w-4 text-sky-400 flex-shrink-0" />
+                <span className="font-mono text-slate-300">
+                  {detail?.posicionId && posiciones.find(p => p.posicionId === detail.posicionId)
+                    ? (() => {
+                        const orig = posiciones.find(p => p.posicionId === detail.posicionId)!
+                        return `${orig.columnaLetra}-${orig.subcolumnaCodigo}-${orig.posicionNumero}`
+                      })()
+                    : '?'}
+                  <span className="mx-2 text-indigo-400 font-bold">→</span>
+                  {trDestPos?.columnaLetra}-{trDestPos?.subcolumnaCodigo}-{trDestPos?.posicionNumero}
+                </span>
+              </div>
+            </div>
+
+            {/* Artículos a trasladar */}
+            <div className="mb-3">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Artículos a trasladar</p>
+              <div className="space-y-1">
+                {trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0).map((r, i) => (
+                  <div key={i} className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-mono text-xs font-semibold text-sky-300">{r.bloque_codigo}</span>
+                      <span className="text-[10px] text-slate-500">{r.bloque_unidad}</span>
+                    </div>
+                    <span className="font-bold text-xs text-sky-300">{r.cantidad}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Stock en destino */}
+            {trDestOccupied.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
+                  <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Stock en destino</span>
+                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
+                </div>
+                <div className="space-y-2">
+                  {trDestOccupied.map((s, i) => {
+                    const itemKey = `${s.bloque_id}-${s.fecha_vencimiento || ''}`
+                    const isTotal = trSalidaTotalFlags[itemKey] === true
+                    return (
+                      <div key={`${s.bloque_id}-${i}`} className="rounded-xl border border-slate-700/50 bg-slate-800/40 p-3">
+                        <div className="flex items-start gap-3">
+                          <div className="w-9 h-9 rounded-lg bg-orange-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <Package className="h-4 w-4 text-orange-400" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-semibold text-sm text-slate-200">{s.bloque_codigo}</span>
+                              <span className="text-[10px] text-slate-500 bg-slate-700/50 px-1.5 py-0.5 rounded">{s.bloque_unidad}</span>
+                            </div>
+                            <p className="text-xs text-slate-400 truncate mt-0.5">{s.bloque_descripcion}</p>
+                            <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-500">
+                              <span className="font-bold text-slate-300 text-sm">{s.cantidad} {s.bloque_unidad}</span>
+                              {s.fecha_vencimiento && <span>Venc: {s.fecha_vencimiento}</span>}
+                            </div>
+                            {/* Salida parcial/total */}
+                            <div className="mt-2 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setTrSalidaTotalFlags(prev => ({ ...prev, [itemKey]: true }))}
+                                className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-all border ${
+                                  isTotal
+                                    ? 'border-red-400 bg-red-950/40 text-red-300'
+                                    : 'border-slate-600/40 text-slate-500 hover:bg-slate-700/50'
+                                }`}
+                              >
+                                Total ({s.cantidad})
+                              </button>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.001"
+                                max={s.cantidad}
+                                placeholder="Parcial"
+                                value={isTotal ? String(s.cantidad) : (trSalidaCant[itemKey] || '')}
+                                onChange={e => {
+                                  setTrSalidaCant(prev => ({ ...prev, [itemKey]: e.target.value }))
+                                  setTrSalidaTotalFlags(prev => ({ ...prev, [itemKey]: false }))
+                                }}
+                                disabled={isTotal || trSalidaBusy === itemKey}
+                                className="w-20 h-7 text-xs bg-slate-700/50 border border-slate-600/40 rounded-md px-2 text-slate-300 disabled:opacity-50"
+                              />
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleTrSalidaDesdeAlerta(s)}
+                                disabled={trSalidaBusy === itemKey}
+                                className="h-7 px-2.5 text-[10px] font-semibold border-red-800/40 bg-red-950/30 text-red-400 hover:bg-red-950/50 hover:text-red-300 flex-shrink-0 gap-1"
+                              >
+                                {trSalidaBusy === itemKey ? (
+                                  <><Loader2 className="h-3 w-3 animate-spin" /> ...</>
+                                ) : (
+                                  <><ArrowUpFromLine className="h-3 w-3" /> Dar Salida</>
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <p className="text-[10px] text-slate-500 mt-2 italic">
+                  Selecciona "Total" o ingresa cantidad parcial y presiona "Dar Salida" para retirar productos del destino.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Botones */}
+          <AlertDialogFooter className="px-4 sm:px-6 pb-5 pt-3 border-t border-slate-700/40 gap-2 shrink-0">
+            <AlertDialogCancel className="flex-1 h-11 rounded-xl text-xs font-medium border-slate-700/50 text-slate-400 hover:bg-slate-800/80">
+              Cancelar
+            </AlertDialogCancel>
+            <Button
+              onClick={(e) => { e.preventDefault(); setTrDestAlertOpen(false); ejecutarTrasladoPiso() }}
+              disabled={busy}
+              className="flex-1 h-11 gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20"
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
+              {trDestOccupied.length > 0 ? 'Trasladar de todas formas' : 'Confirmar Traslado'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ═══ MASS SALIDA DIALOG ═══ */}
       <Dialog open={massDialogOpen} onOpenChange={(open) => { if (!open) setMassDialogOpen(false) }}>

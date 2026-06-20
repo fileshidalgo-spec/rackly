@@ -585,24 +585,35 @@ type OcupacionRawRow = {
  */
 export async function fetchOcupacionServerSide(): Promise<OcupacionRawRow[] | null> {
   try {
-    // Consulta SQL directa: suma delta por posición+código, excluye INC
-    const { data, error } = await dataClient
-      .from('movimientos')
-      .select('bloque, torre, piso, posicion, codigo, descripcion, un, proveedor, tipo, cantidad')
-      .is('codigo_inc', null)
-      .order('bloque')
-    if (error) {
-      console.warn('[fetchOcupacionServerSide] Error en consulta:', error.message)
-      return null
+    // Consulta paginada: selecciona solo columnas necesarias, excluye INC
+    const all: Record<string, unknown>[] = []
+    let from = 0
+    let iterations = 0
+    while (iterations < FETCH_MOV_MAX_PAGES) {
+      iterations++
+      const to = from + PAGE_SIZE - 1
+      const { data, error } = await dataClient
+        .from('movimientos')
+        .select('bloque, torre, piso, posicion, codigo, descripcion, un, proveedor, tipo, cantidad')
+        .is('codigo_inc', null)
+        .order('bloque')
+        .range(from, to)
+      if (error) {
+        console.warn('[fetchOcupacionServerSide] Error en consulta:', error.message)
+        return null
+      }
+      const rows = data ?? []
+      all.push(...rows)
+      if (rows.length < PAGE_SIZE) break
+      from += PAGE_SIZE
     }
-    if (!data || data.length === 0) return []
 
     // Agrupar en el cliente (mucha menos data que fetchMovimientos completo
     // porque seleccionamos solo columnas necesarias)
     const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
     const posCodeMap = new Map<string, { stock: number; desc: string; un: string; prov: string }>()
 
-    for (const r of data) {
+    for (const r of all) {
       const posKey = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
       const code = (r.codigo as string).trim().toUpperCase()
       const key = `${posKey}||${code}`
@@ -653,31 +664,40 @@ export async function fetchStockPorCodigoServerSide(
 ): Promise<StockPorCodigoRow[] | null> {
   try {
     const target = codigo.trim().toUpperCase()
-    const query = dataClient
-      .from('movimientos')
-      .select('bloque, torre, piso, posicion, codigo, descripcion, un, proveedor, tipo, cantidad, f_vencimiento, codigo_inc')
-      .eq('codigo', target)
+    const all: Record<string, unknown>[] = []
+    let from = 0
+    let iterations = 0
+    while (iterations < FETCH_MOV_MAX_PAGES) {
+      iterations++
+      const to = from + PAGE_SIZE - 1
 
-    if (soloInc) {
-      // Modo INC: solo movimientos con codigo_inc
-      query.not('codigo_inc', 'is', null).neq('codigo_inc', '')
-    } else {
-      // Modo normal: excluir INC
-      query.is('codigo_inc', null)
-    }
+      let query = dataClient
+        .from('movimientos')
+        .select('bloque, torre, piso, posicion, codigo, descripcion, un, proveedor, tipo, cantidad, f_vencimiento, codigo_inc')
+        .eq('codigo', target)
 
-    const { data, error } = await query.order('bloque')
-    if (error) {
-      console.warn('[fetchStockPorCodigoServerSide] Error en consulta:', error.message)
-      return null
+      if (soloInc) {
+        query = query.not('codigo_inc', 'is', null).neq('codigo_inc', '')
+      } else {
+        query = query.is('codigo_inc', null)
+      }
+
+      const { data, error } = await query.order('bloque').range(from, to)
+      if (error) {
+        console.warn('[fetchStockPorCodigoServerSide] Error en consulta:', error.message)
+        return null
+      }
+      const rows = data ?? []
+      all.push(...rows)
+      if (rows.length < PAGE_SIZE) break
+      from += PAGE_SIZE
     }
-    if (!data || data.length === 0) return []
 
     // Agrupar por posición (sin importar vencimiento para el cálculo)
     const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
     const posMap = new Map<string, { stock: number; desc: string; un: string; prov: string; fvMap: Map<string, number> }>()
 
-    for (const r of data) {
+    for (const r of all) {
       const posKey = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
       let entry = posMap.get(posKey)
       if (!entry) {

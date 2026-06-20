@@ -1,0 +1,304 @@
+   100→   627→  if (loading) {
+   101→   628→    return (
+   102→   629→      <div className="flex items-center justify-center py-16">
+   103→   630→        <div className="flex flex-col items-center gap-3">
+   104→   631→          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 animate-pulse" />
+   105→   632→          <p className="text-sm text-slate-400 animate-pulse">Cargando ocupación...</p>
+   106→   633→        </div>
+   107→   634→      </div>
+   108→   635→    )
+   109→   636→  }
+   110→   637→
+   111→   638→  const dashBloques = BLOQUES.map(b => {
+   112→   639→    const bt = totalPosBloque(b), bo = ocupacion.filter(o => o.bloque === b && o.stock > 0).length
+   113→   640→    const bm = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length > 1).length
+   114→   641→    const bl = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length === 1 && o.lotes > 1).length
+   115→   642→    return { bloque: b, total: bt, occupied: bo, multi: bm, multiLote: bl, empty: bt - bo, pct: bt > 0 ? Math.round((bo / bt) * 100) : 0 }
+   116→   643→  })
+   117→   644→
+   118→   645→  const isView = detailMode === 'view'
+   119→   646→  const isInc = detailMode === 'inc'
+   120→   647→  const salItem = detail?.stock[salidaIdx]
+   121→   648→
+   122→   649→  return (
+   123→   650→    <div className="space-y-5">
+   124→   651→      {/* ═══ DASHBOARD ═══ */}
+   125→   652→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   126→   653→        <div className="rounded-xl border border-slate-600/40 bg-gradient-to-br from-slate-800 to-slate-900 p-4 shadow-md">
+   127→   654→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center"><BoxSelect className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-sky-400/80 uppercase tracking-widest">Total</p></div>
+   128→   655→          <p className="text-2xl font-bold text-slate-100">{total.toLocaleString()}</p>
+   129→   656→          <p className="text-[10px] text-slate-500 mt-0.5">{bloqueFilter === 'all' ? 'Todos los bloques' : `Bloque ${bloqueFilter}`}</p>
+   130→   657→        </div>
+   131→   658→        <div className="rounded-xl border border-blue-600/30 bg-gradient-to-br from-blue-950/40 to-slate-900 p-4 shadow-md">
+   132→   659→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center"><Layers className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-blue-400/80 uppercase tracking-widest">Ocupadas</p></div>
+   133→   660→          <p className="text-2xl font-bold text-blue-300">{occupied}</p>
+   134→   661→          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiLote} multi-lote · {multiArt} mixtas</p>
+   135→   662→        </div>
+   136→   663→        <div className="rounded-xl border border-emerald-600/30 bg-gradient-to-br from-emerald-950/40 to-slate-900 p-4 shadow-md">
+   137→   664→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>
+   138→   665→          <p className="text-2xl font-bold text-emerald-300">{empty.toLocaleString()}</p>
+   139→   666→          <p className="text-[10px] text-sky-600/60 mt-0.5">Disponibles</p>
+   140→   667→        </div>
+   141→   668→        <div className="rounded-xl border border-violet-600/30 bg-gradient-to-br from-violet-950/40 to-slate-900 p-4 shadow-md">
+   142→   669→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center"><Building2 className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-violet-400/80 uppercase tracking-widest">Ocupación</p></div>
+   143→   670→          <p className="text-2xl font-bold text-violet-300">{pct}<span className="text-base">%</span></p>
+   144→   671→          <div className="mt-2 h-1.5 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(pct, 100)}%`, background: pct > 80 ? 'linear-gradient(90deg,#ef4444,#f97316)' : pct > 50 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#0ea5e9,#3b82f6)' }} /></div>
+   145→   672→        </div>
+   146→   673→      </div>
+   147→   674→
+   148→   675→      {/* ═══ RESUMEN POR BLOQUE ═══ */}
+   149→   676→      <div className="rounded-xl border border-slate-600/30 bg-slate-800/60 shadow-md overflow-hidden">
+   150→   677→        <div className="px-4 py-2.5 border-b border-slate-600/30 flex items-center gap-2"><div className="w-1 h-3.5 rounded-full bg-gradient-to-b from-sky-400 to-blue-500" /><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Resumen por bloque</p></div>
+   151→   678→        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-px bg-slate-700/20">
+   152→   679→          {dashBloques.map(db => (
+   153→   680→            <button key={db.bloque} className="bg-slate-800/60 p-2 text-center space-y-1 transition-colors hover:bg-slate-700/60" onClick={() => setBloqueFilter(bloqueFilter === db.bloque ? 'all' : db.bloque)}>
+   154→   681→              <div className={`w-7 h-7 rounded-lg mx-auto flex items-center justify-center text-xs font-bold transition-all ${bloqueFilter === db.bloque ? 'bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-md scale-105' : 'bg-slate-700 text-slate-400'}`}>{db.bloque}</div>
+   155→   682→              <p className="text-[9px] text-slate-500">{db.total} pos</p>
+   156→   683→              <div className="flex justify-center gap-1"><span className="text-[9px] font-bold text-blue-400">{db.occupied}</span><span className="text-[9px] text-slate-600">/</span><span className="text-[9px] font-bold text-emerald-400">{db.empty}</span></div>
+   157→   684→              {db.multiLote > 0 && <span className="text-[8px] font-semibold text-yellow-400 bg-yellow-400/10 px-1 py-px rounded">{db.multiLote} lote</span>}
+   158→   685→              {db.multi > 0 && <span className="text-[8px] font-semibold text-amber-400 bg-amber-400/10 px-1 py-px rounded">{db.multi} mix</span>}
+   159→   686→              <div className="h-1 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-500" style={{ width: `${db.pct}%` }} /></div>
+   160→   687→            </button>
+   161→   688→          ))}
+   162→   689→        </div>
+   163→   690→      </div>
+   164→   691→
+   165→   692→      {/* ═══ FILTROS Y LEYENDA ═══ */}
+   166→   693→      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+   167→   694→        <Select value={bloqueFilter} onValueChange={setBloqueFilter}>
+   168→   695→          <SelectTrigger className="w-40 bg-slate-800/60 border-slate-600/40 text-slate-300 text-xs"><SelectValue placeholder="Filtrar bloque" /></SelectTrigger>
+   169→   696→          <SelectContent className="bg-slate-800 border-slate-600/40"><SelectItem value="all" className="text-slate-300 focus:bg-slate-700">Todos</SelectItem>{BLOQUES.map(b => <SelectItem key={b} value={b} className="text-slate-300 focus:bg-slate-700">Bloque {b}</SelectItem>)}</SelectContent>
+   170→   697→        </Select>
+   171→   698→        <div className="flex items-center gap-4 text-[10px] text-slate-400 flex-wrap">
+   172→   699→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600" /><span>Ocupado</span></div>
+   173→   700→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600 relative"><span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full" /></div><span>Multi-lote</span></div>
+   174→   701→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-amber-400 to-orange-500" /><span>Multi-art.</span></div>
+   175→   702→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-rose-400 to-pink-600" /><span>INC</span></div>
+   176→   703→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-emerald-400 to-green-600" /><span>Vacío</span></div>
+   177→   704→        </div>
+   178→   705→      </div>
+   179→   706→
+   180→   707→      {/* ═══ GRID DE BLOQUES ═══ */}
+   181→   708→      <div className="space-y-6">
+   182→   709→        {BLOQUES.filter(b => bloqueFilter === 'all' || b === bloqueFilter).map(bloque => {
+   183→   710→          const torres = torresDeBloque(bloque)
+   184→   711→          const posiciones = posicionesDeBloque(bloque)
+   185→   712→          const bTotal = totalPosBloque(bloque)
+   186→   713→          const bOcup = ocupacion.filter(o => o.bloque === bloque && o.stock > 0).length
+   187→   714→          const bEmpty = bTotal - bOcup
+   188→   715→          const bPct = bTotal > 0 ? Math.round((bOcup / bTotal) * 100) : 0
+   189→   716→          return (
+   190→   717→            <div key={bloque} className="rounded-xl border border-slate-600/30 bg-gradient-to-b from-slate-800/80 to-slate-900/80 shadow-lg overflow-hidden">
+   191→   718→              <div className="px-4 py-3 border-b border-slate-600/25 bg-gradient-to-r from-slate-800/60 to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+   192→   719→                <div className="flex items-center gap-2.5">
+   193→   720→                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow">{bloque}</div>
+   194→   721→                  <div><p className="text-xs font-bold text-slate-200">Bloque {bloque}</p><p className="text-[10px] text-slate-500">{torres.length} torre(s) · {posiciones.length} pos/torre</p></div>
+   195→   722→                </div>
+   196→   723→                <div className="flex items-center gap-2">
+   197→   724→                  <div className="w-20 h-1.5 rounded-full bg-slate-700/50 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-700" style={{ width: `${bPct}%` }} /></div>
+   198→   725→                  <span className="text-xs font-bold text-sky-400">{bPct}%</span>
+   199→   726→                  <span className="text-[10px] text-slate-500">({bOcup}/{bTotal})</span>
+   200→   727→                </div>
+   201→   728→              </div>
+   202→   729→              <div className="p-3 sm:p-4">
+   203→   730→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+   204→   731→                  {torres.map(torre => {
+   205→   732→                    const tTotal = PISOS.length * posiciones.length
+   206→   733→                    const tOcup = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.stock > 0).length
+   207→   734→                    const tInc = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.tieneInc).length
+   208→   735→                    const halfLen = Math.ceil(posiciones.length / 2)
+   209→   736→                    const posA = posiciones.slice(0, halfLen)
+   210→   737→                    const posB = posiciones.slice(halfLen)
+   211→   738→                    return (
+   212→   739→                      <div key={torre}>
+   213→   740→                        <div className="flex items-center justify-between px-3 py-1.5 mb-2">
+   214→   741→                          <div className="flex items-center gap-1.5"><div className="w-1.5 h-4 rounded-sm bg-gradient-to-b from-sky-400 to-blue-500" /><span className="text-[11px] font-bold text-slate-300">Torre {torre}</span></div>
+   215→   742→                          <div className="flex items-center gap-1"><span className="text-[10px] font-bold text-blue-400">{tOcup}</span><span className="text-[10px] text-slate-600">/</span><span className="text-[10px] font-bold text-emerald-400">{tTotal}</span></div>
+   216→   743→                        </div>
+   217→   744→                        <div className="space-y-1">
+   218→   745→                          {PISOS.map(piso => {
+   219→   746→                            const pisoOcup = posiciones.filter(pos => { const c = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos); return c && (c.stock > 0 || (c.tieneInc && c.incItems.length > 0)) }).length
+   220→   747→                            return (
+   221→   748→                              <div key={piso} className="rounded-lg border border-slate-600/15 bg-slate-900/40 overflow-hidden">
+   222→   749→                                <div className="flex items-center justify-center gap-2 py-1.5 px-2 bg-slate-800/50 border-b border-slate-700/15">
+   223→   750→                                  <div className={`w-1.5 h-1.5 rounded-full ${pisoOcup > 0 ? 'bg-blue-400' : 'bg-slate-600'}`} />
+   224→   751→                                  <span className="text-[10px] font-bold text-slate-300 tracking-wide">PISO {piso}</span>
+   225→   752→                                  {pisoOcup > 0 && <span className="text-[9px] font-bold text-blue-400 bg-blue-400/10 px-1.5 py-px rounded-full">{pisoOcup}</span>}
+   226→   753→                                  <div className="flex-1 h-px bg-slate-700/20" />
+   227→   754→                                  <span className="text-[8px] text-slate-600">{posA.length}+{posB.length}</span>
+   228→   755→                                </div>
+   229→   756→                                <div className="flex px-1.5 pt-1.5 gap-[2px]">
+   230→   757→                                  {posA.map(pos => {
+   231→   758→                                    const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
+   232→   759→                                    const isOcc = cell && cell.stock > 0
+   233→   760→                                    const isOnlyInc = !isOcc && cell && cell.tieneInc && cell.incItems.length > 0
+   234→   761→                                    const isInc = cell && cell.tieneInc && cell.incItems.length > 0
+   235→   762→                                    const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
+   236→   763→                                    const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
+   237→   764→                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+   238→   765→                                    if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
+   239→   766→                                    else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
+   240→   767→                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+   241→   768→                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
+   242→   769→                                    let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
+   243→   770→                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
+   244→   771→                                    else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+   245→   772→                                    else { title += ' · Vacío' }
+   246→   773→                                    const firstInc = isInc ? cell!.incItems[0] : null
+   247→   774→                                    return (
+   248→   775→                                      <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
+   249→   776→                                        {pos}
+   250→   777→                                        {isInc && firstInc && (
+   251→   778→                                          <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
+   252→   779→                                            {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}
+   253→   780→                                            {cell!.incItems.length > 1 && <span className="text-[5px] text-rose-200/60 ml-px">+{cell!.incItems.length - 1}</span>}
+   254→   781→                                          </span>
+   255→   782→                                        )}
+   256→   783→                                        {isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}
+   257→   784→                                        {isInc && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-rose-200 rounded-full ring-1 ring-rose-400" />}
+   258→   785→                                      </button>
+   259→   786→                                    )
+   260→   787→                                  })}
+   261→   788→                                </div>
+   262→   789→                                <div className="flex px-1.5 pt-[2px] pb-1.5 gap-[2px]">
+   263→   790→                                  {posB.map(pos => {
+   264→   791→                                    const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
+   265→   792→                                    const isOcc = cell && cell.stock > 0
+   266→   793→                                    const isOnlyInc = !isOcc && cell && cell.tieneInc && cell.incItems.length > 0
+   267→   794→                                    const isInc = cell && cell.tieneInc && cell.incItems.length > 0
+   268→   795→                                    const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
+   269→   796→                                    const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
+   270→   797→                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+   271→   798→                                    if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
+   272→   799→                                    else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
+   273→   800→                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+   274→   801→                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
+   275→   802→                                    let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
+   276→   803→                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
+   277→   804→                                    else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+   278→   805→                                    else { title += ' · Vacío' }
+   279→   806→                                    const firstInc = isInc ? cell!.incItems[0] : null
+   280→   807→                                    return (
+   281→   808→                                      <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
+   282→   809→                                        {pos}
+   283→   810→                                        {isInc && firstInc && (
+   284→   811→                                          <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
+   285→   812→                                            {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}
+   286→   813→                                            {cell!.incItems.length > 1 && <span className="text-[5px] text-rose-200/60 ml-px">+{cell!.incItems.length - 1}</span>}
+   287→   814→                                          </span>
+   288→   815→                                        )}
+   289→   816→                                        {isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}
+   290→   817→                                        {isInc && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-rose-200 rounded-full ring-1 ring-rose-400" />}
+   291→   818→                                      </button>
+   292→   819→                                    )
+   293→   820→                                  })}
+   294→   821→                                </div>
+   295→   822→                              </div>
+   296→   823→                            )
+   297→   824→                          })}
+   298→   825→                        </div>
+   299→   826→                      </div>
+   300→   827→                    )
+   301→   828→                  })}
+   302→   829→                </div>
+   303→   830→              </div>
+   304→   831→            </div>
+   305→   832→          )
+   306→   833→        })}
+   307→   834→      </div>
+   308→   835→
+   309→   836→      {/* Exportar */}
+   310→   837→      <div className="flex justify-end">
+   311→   838→        <Button onClick={handleExport} disabled={busyExport} variant="outline" size="sm" className="gap-1.5 border-slate-600/40 bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-sky-400 text-xs">
+   312→   839→          {busyExport ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Exportar
+   313→   840→        </Button>
+   314→   841→      </div>
+   315→   842→
+   316→   843→      {/* ═══════════════════════════════════════════════════════════════════
+   317→   844→          DIÁLOGO PRINCIPAL — Vista, Ingreso, Salida, Transferir
+   318→   845→          Todo dentro de la misma ventana emergente
+   319→   846→          ═══════════════════════════════════════════════════════════════════ */}
+   320→   847→      <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setDetailMode('view') } }}>
+   321→   848→        <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-xl bg-slate-800 border-slate-600/40 shadow-xl max-h-[90vh] overflow-y-auto overscroll-contain">
+   322→   849→          <DialogHeader>
+   323→   850→            <DialogTitle className="bg-gradient-to-r from-sky-400 to-blue-500 bg-clip-text text-transparent font-bold text-sm">
+   324→   851→              B{detail?.bloque} · T{detail?.torre} · P{detail?.piso} · Pos {detail?.posicion}
+   325→   852→              {!isView && <span className="text-slate-400 font-normal text-xs ml-2">
+   326→   853→                — {detailMode === 'inc' ? 'Registro INC' : detailMode === 'ingreso' ? (ingTipo === 'ingreso' ? 'Ingreso' : 'Devolución') : detailMode === 'salida' ? 'Salida' : 'Transferir'}
+   327→   854→              </span>}
+   328→   855→            </DialogTitle>
+   329→   856→          </DialogHeader>
+   330→   857→
+   331→   858→          {detail && (<>
+   332→   859→            {/* ═══════ MODO: VISTA ═══════ */}
+   333→   860→            {isView && (
+   334→   861→              detail.stock.length > 0 ? (
+   335→   862→                <>
+   336→   863→                  {(() => {
+   337→   864→                    const multiples = codigosConMultiplesLotes(detail.stock)
+   338→   865→                    const stockDisponible = detail.stock.filter(s => !s.codigoInc)
+   339→   866→                    const stockInc = detail.stock.filter(s => !!s.codigoInc)
+   340→   867→                    return (
+   341→   868→                      <div className="space-y-3">
+   342→   869→                        {/* ── Stock Disponible ── */}
+   343→   870→                        <div>
+   344→   871→                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+   345→   872→                            <Package className="w-3 h-3 text-emerald-400" /> Disponible ({stockDisponible.length})
+   346→   873→                          </p>
+   347→   874→                          <div className="space-y-2">
+   348→   875→                            {stockDisponible.map((s, i) => {
+   349→   876→                          const dias = diasParaVencer(s.fVencimiento)
+   350→   877→                          const esLoteMultiple = multiples.has(s.codigo)
+   351→   878→                          // Clase de color según urgencia de vencimiento
+   352→   879→                          let vencBadge = ''
+   353→   880→                          if (dias !== null) {
+   354→   881→                            if (dias < 0) { vencBadge = 'bg-red-500/15 border-red-500/25 text-red-400' }
+   355→   882→                            else if (dias <= 15) { vencBadge = 'bg-orange-500/15 border-orange-500/25 text-orange-400' }
+   356→   883→                            else if (dias <= 30) { vencBadge = 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' }
+   357→   884→                            else { vencBadge = 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' }
+   358→   885→                          }
+   359→   886→                          return (
+   360→   887→                            <div key={`${s.codigo}-${s.fVencimiento || 'sin-fecha'}`} className={`rounded-lg border overflow-hidden ${esLoteMultiple ? 'border-sky-500/25 bg-gradient-to-r from-sky-950/20 to-slate-700/20' : 'border-slate-600/30 bg-slate-700/20'}`}>
+   361→   888→                              <div className="p-3 space-y-1.5">
+   362→   889→                                {/* Encabezado: código + badges */}
+   363→   890→                                <div className="flex items-start justify-between gap-2">
+   364→   891→                                  <div className="min-w-0 flex-1">
+   365→   892→                                    <div className="flex items-center gap-2 flex-wrap">
+   366→   893→                                      <span className="font-mono text-sky-400 font-bold text-xs">{s.codigo}</span>
+   367→   894→                                      {s.proveedor && <span className="text-[8px] font-semibold text-purple-400 bg-purple-400/10 px-1.5 py-px rounded">{s.proveedor}</span>}
+   368→   895→                                      {/* Badge FEFO: indica que hay múltiples lotes del mismo artículo */}
+   369→   896→                                      {esLoteMultiple && (
+   370→   897→                                        <span className="flex items-center gap-0.5 text-[8px] font-bold text-sky-300 bg-sky-400/15 border border-sky-400/20 px-1.5 py-px rounded">
+   371→   898→                                          <CalendarClock className="w-2.5 h-2.5" /> FEFO #{i + 1}
+   372→   899→                                        </span>
+   373→   900→                                      )}
+   374→   901→                                    </div>
+   375→   902→                                    <p className={`text-xs mt-0.5 truncate ${s.descripcion ? 'text-slate-300' : 'text-slate-500 italic'}`}>{s.descripcion || 'Sin descripción'}</p>
+   376→   903→                                    {/* Fecha de vencimiento con badge de urgencia */}
+   377→   904→                                    <div className="flex items-center gap-2 mt-1 text-[10px] flex-wrap">
+   378→   905→                                      {s.fVencimiento && (
+   379→   906→                                        <span className={`flex items-center gap-1 px-1.5 py-px rounded border ${vencBadge || 'border-slate-600/20 text-slate-500'}`}>
+   380→   907→                                          {dias !== null && dias < 0 && <Flame className="w-2.5 h-2.5" />}
+   381→   908→                                          Venc: {s.fVencimiento}
+   382→   909→                                          {dias !== null && (
+   383→   910→                                            <span className="font-semibold">({dias < 0 ? `${Math.abs(dias)}d vencido` : `${dias}d`})</span>
+   384→   911→                                          )}
+   385→   912→                                        </span>
+   386→   913→                                      )}
+   387→   914→                                      {!s.fVencimiento && <span className="italic text-slate-500">Sin fecha de vencimiento</span>}
+   388→   915→                                      {s.usuarioPrimerNombre && <span className="text-slate-500">Ing: {s.usuarioPrimerNombre}</span>}
+   389→   916→                                    </div>
+   390→   917→                                  </div>
+   391→   918→                                  <div className="text-right flex-shrink-0">
+   392→   919→                                    <p className="font-bold text-emerald-400 text-sm">{s.stock}</p>
+   393→   920→                                    <p className="text-[10px] text-slate-500">{s.un}</p>
+   394→   921→                                  </div>
+   395→   922→                                </div>
+   396→   923→                                {/* Botones de acción */}
+   397→   924→                                <div className="flex items-center gap-1 pt-1">
+   398→   925→                                  <button onClick={() => openSalida(i, true)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Salida total</button>
+   399→   926→                                  <button onClick={() => openSalida(i, false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
+   400→   927→                                  <button onClick={() => openTransferir(i)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
+   401→
+
+[showing lines 100-401 of 402; use offset=402 with limit to continue reading]

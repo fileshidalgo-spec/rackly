@@ -86,55 +86,85 @@ export function StockTab() {
   }, [selectedCodigo])
 
   // Calcular stock por ubicación para el código seleccionado
+  // FIX: Usar FEFO (igual que OcupaciónTab + Piso) para que el total coincida.
+  // OcupaciónTab agrupa por (posición, código) ignorando vencimiento.
+  // StockTab muestra detalle por lote (vencimiento), pero la SUMA debe coincidir.
   const stockData = useMemo(() => {
     if (!selectedCodigo || movs.length === 0) return []
     const code = selectedCodigo.trim().toUpperCase()
-    const locMap = new Map<
-      string,
-      {
-        bloque: string
-        torre: string
-        piso: string
-        posicion: string
-        stock: number
-        descripcion: string
-        un: string
-        proveedor?: string
-        fVencimiento: string
-        codigoInc?: string
-      }
-    >()
-    // FIX: Excluir movimientos INC del cálculo base para consistencia con OcupaciónTab
-    // Los movimientos INC se manejan por separado y solo se muestran cuando el filtro es "Solo INC"
     const isIncMode = stockFilter === 'inc'
+
     const relevant = movs.filter((m) => {
       if (m.codigo !== code) return false
-      // En modo INC, solo procesar movimientos INC
       if (isIncMode) return !!m.codigoInc
-      // En modo normal o disponibles, excluir movimientos INC
       return !m.codigoInc
     })
+
+    // 1. Agrupar por posición: pool ingresos por vencimiento + total salidas
+    const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
+    type PosBucket = {
+      bloque: string; torre: string; piso: string; posicion: string
+      descripcion: string; un: string; proveedor?: string
+      ingresoPool: Map<string, number>  // fv → cantidad total
+      totalSalida: number
+      hasInc: boolean
+    }
+    const posMap = new Map<string, PosBucket>()
+
     for (const m of relevant) {
-      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
-      const current = locMap.get(key)
-      if (current) {
-        current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+      const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+      let bucket = posMap.get(posKey)
+      if (!bucket) {
+        bucket = {
+          bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
+          descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined,
+          ingresoPool: new Map(), totalSalida: 0, hasInc: !!m.codigoInc,
+        }
+        posMap.set(posKey, bucket)
+      }
+      const fv = m.fVencimiento || ''
+      if (isIngreso(m.tipo)) {
+        bucket.ingresoPool.set(fv, (bucket.ingresoPool.get(fv) ?? 0) + m.cantidad)
       } else {
-        locMap.set(key, {
-          bloque: m.bloque,
-          torre: m.torre,
-          piso: m.piso,
-          posicion: m.posicion,
-          stock: ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad,
-          descripcion: m.descripcion,
-          un: m.un,
-          proveedor: m.proveedor || undefined,
-          fVencimiento: m.fVencimiento || '',
-          codigoInc: m.codigoInc || undefined,
-        })
+        bucket.totalSalida += m.cantidad
       }
     }
-    return Array.from(locMap.values()).filter((l) => l.stock > 0)
+
+    // 2. FEFO: restar salidas desde el lote más antiguo primero
+    const result: {
+      bloque: string; torre: string; piso: string; posicion: string
+      stock: number; descripcion: string; un: string; proveedor?: string
+      fVencimiento: string; codigoInc?: string
+    }[] = []
+
+    for (const [, bucket] of posMap) {
+      const lots = [...bucket.ingresoPool.entries()].sort(([a], [b]) => {
+        if (!a && b) return 1
+        if (a && !b) return -1
+        return a.localeCompare(b)
+      })
+      let pendiente = bucket.totalSalida
+      for (const [fv, cantidad] of lots) {
+        if (pendiente <= 0) {
+          result.push({
+            bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
+            posicion: bucket.posicion, stock: cantidad, descripcion: bucket.descripcion,
+            un: bucket.un, proveedor: bucket.proveedor, fVencimiento: fv,
+          })
+        } else if (cantidad <= pendiente) {
+          pendiente -= cantidad
+        } else {
+          result.push({
+            bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
+            posicion: bucket.posicion, stock: cantidad - pendiente, descripcion: bucket.descripcion,
+            un: bucket.un, proveedor: bucket.proveedor, fVencimiento: fv,
+          })
+          pendiente = 0
+        }
+      }
+    }
+
+    return result.filter((l) => l.stock > 0)
       .sort((a, b) => {
         // FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
         const aHasDate = !!a.fVencimiento

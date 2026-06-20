@@ -46,7 +46,8 @@ export function StockTab() {
       descripcion: string
       un: string
       proveedor?: string
-      fVencimiento: string
+      fVencimiento: string          // fecha más próxima (FEFO), solo informativo
+      lotesInfo: string            // resumen de lotes, solo informativo
       codigoInc?: string
     }[]
   >([])
@@ -86,128 +87,121 @@ export function StockTab() {
   }, [selectedCodigo])
 
   // Calcular stock por ubicación para el código seleccionado.
-  // ESTRATEGIA: Calcular stock neto por posición (IGUAL que OcupaciónTab, sin fechas),
-  // luego repartir ese neto en lotes con fecha (FEFO visual).
-  // Lo que sobra se muestra como "Sin fecha".
-  // Esto garantiza que la SUMA de lotes = stock neto = OcupaciónTab, SIEMPRE.
+  // LÓGICA IDÉNTICA a calcularOcupacion() en OcupacionTab:
+  //   - Agrupa por posición + código
+  //   - Excluye INC
+  //   - Suma delta (ingreso/devolucion/traslado = +, salida = -)
+  //   - Ignora f_vencimiento para el cálculo de stock
+  // Luego filtra por el código seleccionado y agrega info FEFO como datos extras.
   const stockData = useMemo(() => {
     if (!selectedCodigo || movs.length === 0) return []
     const code = selectedCodigo.trim().toUpperCase()
     const isIncMode = stockFilter === 'inc'
 
-    // FIX: Normalizar m.codigo igual que OcupaciónTab (trim + uppercase)
-    // para evitar perder movimientos por espacios o mayúsculas en la DB
-    const relevant = movs.filter((m) => {
-      if (m.codigo.trim().toUpperCase() !== code) return false
-      if (isIncMode) return !!m.codigoInc
-      return !m.codigoInc
-    })
+    // PASO 1: Calcular stock neto por (posición, código) — IDÉNTICO a calcularOcupacion
+    const cellMap = new Map<string, Map<string, number>>() // posKey → (codigo → stock)
+    const fvMap = new Map<string, Map<string, Map<string, number>>>() // posKey → (codigo → (fv → qty))
+    const descMap = new Map<string, { descripcion: string; un: string; proveedor?: string }>()
 
-    const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
-
-    // 1. Calcular stock neto por posición (idéntico a OcupaciónTab)
-    //    + recoger ingreso pool por vencimiento (solo para display FEFO)
-    type PosBucket = {
-      bloque: string; torre: string; piso: string; posicion: string
-      descripcion: string; un: string; proveedor?: string
-      netStock: number                    // stock neto real (igual que Ocupación)
-      ingresoPool: Map<string, number>    // fv → cantidad (solo ingresos con fecha)
-      ingresoTotal: number                // total ingresos con fecha
-    }
-    const posMap = new Map<string, PosBucket>()
-
-    for (const m of relevant) {
+    for (const m of movs) {
+      if (m.codigoInc) continue // EXCLUIR INC
       const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-      let bucket = posMap.get(posKey)
-      if (!bucket) {
-        bucket = {
-          bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
-          descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined,
-          netStock: 0, ingresoPool: new Map(), ingresoTotal: 0,
-        }
-        posMap.set(posKey, bucket)
-      }
-      const delta = isIngreso(m.tipo) ? m.cantidad : -m.cantidad
-      bucket.netStock += delta
+      const mCode = m.codigo.trim().toUpperCase()
+      let codeMap = cellMap.get(posKey)
+      if (!codeMap) { codeMap = new Map(); cellMap.set(posKey, codeMap) }
+      const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+      const current = codeMap.get(mCode) ?? 0
+      codeMap.set(mCode, current + delta)
 
-      // Solo rastrear ingresos/devoluciones que tengan fecha para FEFO visual
-      if (isIngreso(m.tipo) && m.fVencimiento) {
-        bucket.ingresoPool.set(m.fVencimiento, (bucket.ingresoPool.get(m.fVencimiento) ?? 0) + m.cantidad)
-        bucket.ingresoTotal += m.cantidad
+      // Rastrear fechas de vencimiento para info FEFO (solo informativo)
+      if (m.fVencimiento && ['ingreso', 'devolucion', 'traslado'].includes(m.tipo)) {
+        let fvCodeMap = fvMap.get(posKey)
+        if (!fvCodeMap) { fvCodeMap = new Map(); fvMap.set(posKey, fvCodeMap) }
+        let fvQtyMap = fvCodeMap.get(mCode)
+        if (!fvQtyMap) { fvQtyMap = new Map(); fvCodeMap.set(mCode, fvQtyMap) }
+        fvQtyMap.set(m.fVencimiento, (fvQtyMap.get(m.fVencimiento) ?? 0) + m.cantidad)
+      }
+
+      if (!descMap.has(posKey)) {
+        descMap.set(posKey, { descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined })
       }
     }
 
-    // 2. Repartir stock neto en lotes FEFO (solo informativo)
+    // PASO 2: Filtrar por código seleccionado y construir resultado
+    // En modo INC, buscamos movimientos con codigoInc (se calculan aparte)
     const result: {
       bloque: string; torre: string; piso: string; posicion: string
       stock: number; descripcion: string; un: string; proveedor?: string
-      fVencimiento: string; codigoInc?: string
+      fVencimiento: string      // fecha más próxima (FEFO), solo informativo
+      lotesInfo: string         // resumen de lotes, solo informativo
+      codigoInc?: string
     }[] = []
 
-    for (const [, bucket] of posMap) {
-      if (bucket.netStock <= 0) continue
-
-      // Lotes con fecha ordenados por FEFO (más antiguo primero)
-      const datedLots = [...bucket.ingresoPool.entries()].sort(([a], [b]) => a.localeCompare(b))
-
-      // Repartir el stock neto proporcionalmente entre los lotes con fecha
-      let remaining = bucket.netStock
-
-      // Caso especial: no hay ingresos con fecha → todo es "Sin fecha"
-      if (bucket.ingresoTotal === 0 || datedLots.length === 0) {
-        result.push({
-          bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
-          posicion: bucket.posicion, stock: bucket.netStock, descripcion: bucket.descripcion,
-          un: bucket.un, proveedor: bucket.proveedor, fVencimiento: '',
-        })
-        continue
-      }
-
-      // Si stock neto > total ingresos con fecha, asignar primero todos los lotes con fecha
-      // y el excedente va a "Sin fecha" (solo puede pasar si hay ingresos sin fecha)
-      for (const [fv, lotQty] of datedLots) {
-        // Asignar proporcionalmente: lo que quedó del neto, pero no más del lote
-        const assigned = Math.min(lotQty, remaining)
-        if (assigned > 0) {
-          result.push({
-            bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
-            posicion: bucket.posicion, stock: assigned, descripcion: bucket.descripcion,
-            un: bucket.un, proveedor: bucket.proveedor, fVencimiento: fv,
-          })
-          remaining -= assigned
+    if (isIncMode) {
+      // Modo INC: calcular stock de movimientos INC para este código
+      const incCellMap = new Map<string, number>()
+      for (const m of movs) {
+        if (!m.codigoInc) continue
+        const mCode = m.codigo.trim().toUpperCase()
+        if (mCode !== code) continue
+        const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+        const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+        incCellMap.set(posKey, (incCellMap.get(posKey) ?? 0) + delta)
+        if (!descMap.has(posKey)) {
+          descMap.set(posKey, { descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined })
         }
       }
-
-      // Si sobra stock (hubo ingresos sin fecha), mostrar como "Sin fecha"
-      if (remaining > 0) {
+      for (const [posKey, stock] of incCellMap) {
+        if (stock <= 0) continue
+        const desc = descMap.get(posKey)
+        if (!desc) continue
+        const [bloque, torre, piso, posicion] = posKey.split('-')
         result.push({
-          bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
-          posicion: bucket.posicion, stock: remaining, descripcion: bucket.descripcion,
-          un: bucket.un, proveedor: bucket.proveedor, fVencimiento: '',
+          bloque, torre, piso, posicion, stock,
+          descripcion: desc.descripcion, un: desc.un, proveedor: desc.proveedor,
+          fVencimiento: '', lotesInfo: '', codigoInc: code,
+        })
+      }
+    } else {
+      // Modo normal: filtrar celdas donde el código seleccionado tiene stock > 0
+      for (const [posKey, codeMap] of cellMap) {
+        const posStock = codeMap.get(code)
+        if (!posStock || posStock <= 0) continue
+        const desc = descMap.get(posKey)
+        if (!desc) continue
+        const [bloque, torre, piso, posicion] = posKey.split('-')
+
+        // Info FEFO: fecha más próxima del código en esta posición
+        const fvCodeMap = fvMap.get(posKey)?.get(code)
+        let fVencimiento = ''
+        let lotesInfo = ''
+        if (fvCodeMap && fvCodeMap.size > 0) {
+          const sorted = [...fvCodeMap.entries()].sort(([a], [b]) => a.localeCompare(b))
+          fVencimiento = sorted[0][0] // fecha más próxima
+          lotesInfo = sorted.map(([fv, qty]) => `${fv}: ${qty}`).join(' | ')
+        }
+
+        result.push({
+          bloque, torre, piso, posicion, stock: posStock,
+          descripcion: desc.descripcion, un: desc.un, proveedor: desc.proveedor,
+          fVencimiento, lotesInfo, codigoInc: undefined,
         })
       }
     }
 
     return result.sort((a, b) => {
-        // FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
-        const aHasDate = !!a.fVencimiento
-        const bHasDate = !!b.fVencimiento
-        if (aHasDate && bHasDate) return a.fVencimiento.localeCompare(b.fVencimiento)
-        if (aHasDate && !bHasDate) return -1
-        if (!aHasDate && bHasDate) return 1
-        // Ambos sin fecha: ordenar por bloque, torre, piso, posición
-        const aB = parseInt(a.bloque, 10) || 0
-        const bB = parseInt(b.bloque, 10) || 0
-        if (aB !== bB) return aB - bB
-        const aT = parseInt(a.torre, 10) || 0
-        const bT = parseInt(b.torre, 10) || 0
-        if (aT !== bT) return aT - bT
-        const aP = parseInt(a.piso, 10) || 0
-        const bP = parseInt(b.piso, 10) || 0
-        if (aP !== bP) return aP - bP
-        const aPos = parseInt(a.posicion, 10) || 0
-        const bPos = parseInt(b.posicion, 10) || 0
-        return aPos - bPos
+      const aB = parseInt(a.bloque, 10) || 0
+      const bB = parseInt(b.bloque, 10) || 0
+      if (aB !== bB) return aB - bB
+      const aT = parseInt(a.torre, 10) || 0
+      const bT = parseInt(b.torre, 10) || 0
+      if (aT !== bT) return aT - bT
+      const aP = parseInt(a.piso, 10) || 0
+      const bP = parseInt(b.piso, 10) || 0
+      if (aP !== bP) return aP - bP
+      const aPos = parseInt(a.posicion, 10) || 0
+      const bPos = parseInt(b.posicion, 10) || 0
+      return aPos - bPos
       })
   }, [selectedCodigo, movs, stockFilter])
 
@@ -230,7 +224,7 @@ export function StockTab() {
     fVencimiento?: string,
     codigoInc?: string
   ) {
-    if (!confirm('¿Eliminar los movimientos de este lote en esta ubicación?')) return
+    if (!confirm('¿Eliminar TODOS los movimientos de esta ubicación?')) return
     try {
       const next = await eliminarUbicacion(selectedCodigo, bloque, torre, piso, posicion, fVencimiento, codigoInc)
       setMovs(next)
@@ -477,7 +471,7 @@ export function StockTab() {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                        onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento, s.codigoInc)}
+                        onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, '', s.codigoInc)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -495,11 +489,16 @@ export function StockTab() {
                     <span className="text-muted-foreground">Prov: —</span>
                   )}
                   {s.fVencimiento ? (
-                    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${getBadgeClass(s.fVencimiento)}`}>
+                    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${getBadgeClass(s.fVencimiento)}`} title={s.lotesInfo}>
                       {s.fVencimiento}
                     </Badge>
                   ) : (
                     <span className="text-muted-foreground">Venc: —</span>
+                  )}
+                  {s.lotesInfo && s.lotesInfo.includes('|') && (
+                    <span className="text-[9px] text-muted-foreground" title={s.lotesInfo}>
+                      +{s.lotesInfo.split('|').length - 1} lotes
+                    </span>
                   )}
                   {s.codigoInc && (
                     <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800 text-[10px] px-1.5 py-0 font-semibold">
@@ -549,8 +548,13 @@ export function StockTab() {
                     </TableCell>
                     <TableCell>
                       {s.fVencimiento ? (
-                        <Badge variant="outline" className={`font-semibold ${getBadgeClass(s.fVencimiento)}`}>
+                        <Badge variant="outline" className={`font-semibold ${getBadgeClass(s.fVencimiento)}`} title={s.lotesInfo}>
                           {s.fVencimiento}
+                          {s.lotesInfo && s.lotesInfo.includes('|') && (
+                            <span className="ml-1 text-[9px] opacity-70">
+                              (+{s.lotesInfo.split('|').length - 1})
+                            </span>
+                          )}
                         </Badge>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
@@ -574,7 +578,7 @@ export function StockTab() {
                           variant="ghost"
                           size="icon"
                           className="text-red-400/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
-                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, s.fVencimiento, s.codigoInc)}
+                          onClick={() => handleDelete(s.bloque, s.torre, s.piso, s.posicion, '', s.codigoInc)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

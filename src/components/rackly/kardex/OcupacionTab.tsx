@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   fetchOcupacionCeldas,
+  fetchOcupacionServerSide,
   fetchMovimientos,
   fetchIncPorUbicacion,
   stockEnUbicacion,
@@ -192,45 +193,74 @@ export function OcupacionTab() {
   const [incCodigoInc, setIncCodigoInc] = useState('')
 
   // ── Data refresh ──
-  // Primario: calcularOcupacion + consulta INC dedicada (paralelo)
-  // Fallback: RPC 'ocupacion_celdas' (server-side)
+  // Primario: server-side (fetchOcupacionServerSide) — sin límite de filas
+  // Fallback 1: client-side (fetchMovimientos + calcularOcupacion) — con límite de 15K
+  // Fallback 2: RPC 'ocupacion_celdas' — server-side legacy
   const refreshData = useCallback(async () => {
+    // INC se consulta siempre en paralelo (no afectado por límite de filas)
+    const incPromise = fetchIncPorUbicacion()
+
     try {
-      // Consulta paralela: movimientos generales + INC dedicado
-      const [movs, incMap] = await Promise.all([fetchMovimientos(), fetchIncPorUbicacion()])
+      // INTENTO 1: Server-side (sin límite de filas)
+      const [serverRows, incMap] = await Promise.all([fetchOcupacionServerSide(), incPromise])
       if (!mountedRef.current) return
-      // Verificar si la consulta INC falló (no es crítico, pero avisar al usuario)
       if (incMap._error) {
         toast.error('No se pudo cargar información INC. Los datos INC pueden estar incompletos.')
       }
+
+      if (serverRows !== null) {
+        // Server-side exitó: agrupar filas por posición para construir celdas
+        const celdaMap = new Map<string, OcupacionCelda>()
+        for (const r of serverRows) {
+          const key = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
+          let cell = celdaMap.get(key)
+          if (!cell) {
+            cell = { bloque: r.bloque, torre: r.torre, piso: r.piso, posicion: r.posicion, stock: 0, codigos: [], lotes: 0, tieneInc: false, incItems: [] }
+            celdaMap.set(key, cell)
+          }
+          cell.stock += r.stock
+          if (!cell.codigos.includes(r.codigo)) cell.codigos.push(r.codigo)
+          cell.lotes = cell.codigos.length
+        }
+        // Merge INC dedicado
+        for (const [key, incItems] of incMap) {
+          const existing = celdaMap.get(key)
+          if (existing) {
+            existing.tieneInc = true
+            existing.incItems = incItems
+          } else {
+            const [bloque, torre, piso, posicion] = key.split('-')
+            celdaMap.set(key, { bloque, torre, piso, posicion, stock: 0, codigos: incItems.map(i => i.codigo), lotes: incItems.length, tieneInc: true, incItems })
+          }
+        }
+        setOcupacion(Array.from(celdaMap.values()))
+        return
+      }
+
+      // Server-side falló → Fallback client-side
+      // INTENTO 2: fetchMovimientos + calcularOcupacion (límite 15K)
+      // incPromise ya se resolvió arriba, usar await directly
+      const [movs] = await Promise.all([fetchMovimientos()])
+      if (!mountedRef.current) return
       const celdas = calcularOcupacion(movs)
-      // Crear mapa de celdas existentes para merge rápido
       const celdaMap = new Map<string, OcupacionCelda>()
       for (const cell of celdas) {
         celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
       }
-      // Merge INC dedicado: agregar datos INC a celdas existentes O crear celdas nuevas si solo tienen INC
+      // Reusar el mismo incMap resuelto arriba
       for (const [key, incItems] of incMap) {
         const existing = celdaMap.get(key)
         if (existing) {
           existing.tieneInc = true
           existing.incItems = incItems
         } else {
-          // Celda que SOLO tiene INC (sin stock normal)
           const [bloque, torre, piso, posicion] = key.split('-')
-          celdaMap.set(key, {
-            bloque, torre, piso, posicion,
-            stock: 0, // Stock normal = 0, solo INC
-            codigos: incItems.map(i => i.codigo),
-            lotes: incItems.length,
-            tieneInc: true,
-            incItems,
-          })
+          celdaMap.set(key, { bloque, torre, piso, posicion, stock: 0, codigos: incItems.map(i => i.codigo), lotes: incItems.length, tieneInc: true, incItems })
         }
       }
       setOcupacion(Array.from(celdaMap.values()))
     } catch {
-      // Fallback al RPC si falla la carga de movimientos
+      // INTENTO 3: RPC legacy
       try {
         const celdas = await fetchOcupacionCeldas()
         if (mountedRef.current) setOcupacion(celdas)

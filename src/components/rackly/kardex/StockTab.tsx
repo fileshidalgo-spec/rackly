@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   type Movimiento,
   eliminarUbicacion,
+  fetchStockPorCodigoServerSide,
 } from '@/lib/rackly/kardex'
 // Decoupled: Kardex Racks ya no consulta stock de Kardex Piso
 import {
@@ -208,6 +209,65 @@ export function StockTab() {
   useEffect(() => {
     setStock(stockData)
   }, [stockData])
+
+  // Server-side fetch: cuando cambia el código seleccionado, intentar
+  // obtener datos server-side (sin límite de filas). Si falla, usar client-side.
+  const [serverStock, setServerStock] = useState<typeof stock | null>(null)
+  const [serverLoading, setServerLoading] = useState(false)
+
+  useEffect(() => {
+    if (!selectedCodigo) { setServerStock(null); return }
+    const code = selectedCodigo.trim().toUpperCase()
+    const isInc = stockFilter === 'inc'
+
+    setServerLoading(true)
+    fetchStockPorCodigoServerSide(code, isInc)
+      .then((rows) => {
+        if (!mountedRef.current) return
+        setServerLoading(false)
+        if (rows === null) {
+          // Server-side falló → usar client-side (stockData)
+          setServerStock(null)
+          return
+        }
+        // Convertir filas server-side al formato de stock
+        const mapped = rows.map(r => ({
+          bloque: r.bloque,
+          torre: r.torre,
+          piso: r.piso,
+          posicion: r.posicion,
+          stock: r.stock,
+          descripcion: r.descripcion || '',
+          un: r.un || '',
+          proveedor: r.proveedor || undefined,
+          fVencimiento: r.fVencimiento || '',
+          lotesInfo: '', // Server-side no calcula lotesInfo por ahora
+          codigoInc: r.codigoInc || undefined,
+        }))
+        // Ordenar por bloque, torre, piso, posición
+        mapped.sort((a, b) => {
+          const aB = parseInt(a.bloque, 10) || 0; const bB = parseInt(b.bloque, 10) || 0
+          if (aB !== bB) return aB - bB
+          const aT = parseInt(a.torre, 10) || 0; const bT = parseInt(b.torre, 10) || 0
+          if (aT !== bT) return aT - bT
+          const aP = parseInt(a.piso, 10) || 0; const bP = parseInt(b.piso, 10) || 0
+          if (aP !== bP) return aP - bP
+          const aPos = parseInt(a.posicion, 10) || 0; const bPos = parseInt(b.posicion, 10) || 0
+          return aPos - bPos
+        })
+        setServerStock(mapped)
+      })
+      .catch(() => {
+        if (mountedRef.current) { setServerLoading(false); setServerStock(null) }
+      })
+  }, [selectedCodigo, stockFilter])
+
+  // useRef para evitar setStock en componentes desmontados
+  const mountedRef = useRef(true)
+  useEffect(() => () => { mountedRef.current = false }, [])
+
+  // Stock final: server-side si disponible, si no client-side
+  const displayStock = serverStock ?? stock
 
   // Manejar selección de un código
   function selectCodigo(codigo: string) {
@@ -416,7 +476,7 @@ export function StockTab() {
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
           <Warehouse className="h-3.5 w-3.5" />
-          {stock.length > 0 ? 'Stock por ubicación en RACKLY' : 'Sin stock en ubicaciones de RACKLY'}
+          {displayStock.length > 0 ? 'Stock por ubicación en RACKLY' : 'Sin stock en ubicaciones de RACKLY'}
         </p>
       </div>
       <div className="flex gap-2">
@@ -442,13 +502,13 @@ export function StockTab() {
       </div>
 
       {/* Stock por ubicación */}
-      {stock.length > 0 ? (
+      {displayStock.length > 0 ? (
         <>
         <div className="space-y-3">
 
           {/* ── Mobile: Card layout ── */}
           <div className="md:hidden space-y-2">
-            {stock.map((s, i) => (
+            {displayStock.map((s, i) => (
               <div key={i} className="rounded-lg border bg-card p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-xs font-semibold">
@@ -529,7 +589,7 @@ export function StockTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {stock.map((s, i) => (
+                {displayStock.map((s, i) => (
                   <TableRow key={i}>
                     <TableCell className="font-mono font-medium whitespace-nowrap">{s.bloque}</TableCell>
                     <TableCell className="whitespace-nowrap">{s.torre}</TableCell>
@@ -593,7 +653,7 @@ export function StockTab() {
           {/* Total sum */}
           <div className="flex justify-end">
             <Badge variant="outline" className="text-sm px-3 py-1">
-              Total stock: <span className="font-bold ml-1">{stock.reduce((sum, s) => sum + s.stock, 0)}</span>
+              Total stock: <span className="font-bold ml-1">{displayStock.reduce((sum, s) => sum + s.stock, 0)}</span>
             </Badge>
           </div>
         </div>

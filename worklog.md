@@ -1,20 +1,23 @@
 ---
-Task ID: 1
+Task ID: 2
 Agent: Main Agent
-Task: Deep audit of all Rackly app movements and infrastructure
+Task: Eliminar modo offline del aplicativo Rackly
 
 Work Log:
-- Launched 3 parallel sub-agents to audit Pisos section, Racks section, and shared infrastructure
-- Pisos audit: 25 findings (4 CRITICAL, 5 HIGH, 9 MEDIUM, 7 LOW)
-- Racks audit: 21 findings (3 CRITICAL, 4 HIGH, 6 MEDIUM, 8 LOW)
-- Infrastructure audit: 19 findings (4 CRITICAL, 4 HIGH, 8 MEDIUM, 3 LOW)
-- Generated comprehensive PDF audit report (14 pages) with all findings and remediation plan
-- PDF saved to /home/z/my-project/download/Auditoria_Rackly_Informe.pdf
+- Eliminados 4 archivos: sync-engine.ts, offline-db.ts, useConnectivity.ts, ConnectionIndicator.tsx
+- Refactorizado OcupacionTab.tsx: 6 cambios (removido import SyncEngine, 5 funciones offlineAware -> addMovimiento/trasladarMovimiento directo)
+- Refactorizado TrasladoTab.tsx: 3 cambios (removido import, 2 funciones offlineAware -> directo)
+- Refactorizado MovimientoForm.tsx: 12 cambios (removido import, doInsert, handleSalidaDesdeAlerta, 2x mass salida, 2x getCachedMovimientosForStock fallback, 2x doSalida, doIngresoINC)
+- page.tsx: removido import y <ConnectionIndicator /> del header
+- catalogo.ts: removido import de offline-db, cacheCatalogo, y loadCatalogoFromIndexedDB
+- Verificado: 0 referencias a SyncEngine/offlineAware/useConnectivity/ConnectionIndicator/offline-db en src/
+- Compilacion exitosa: next build sin errores
+- Deploy exitoso: push a main completado
 
 Stage Summary:
-- 57 total findings across both sections and infrastructure
-- 11 CRITICAL: Service role key exposure, phantom stock in traslados, non-atomic operations, broken column filtering, CSS template literal bug, multi-lote metric permanently zero, missing proveedor in traslado, incomplete TypeScript types, missing validation in alert, non-atomic Racks fallback, duplicate uuid_sync in RPC
-- 13 HIGH: Reset nivel selection, unresolved manual IDs, double-click race condition, empty bloque_codigo, FEFO code duplication, missing validation, no auth checks, silent errors, non-atomic catalog clear, ping leaks structure, DB_VERSION never incremented, variable shadowing, busy flag flicker
-- 18 MEDIUM: FEFO sort order, parallel mass salida, wrong nivel in salida, console.log in production, relationship delete error check, unlinked traslado movements, unnecessary refetches, stale realtime data, variable shadowing, no uuidSync passthrough, partial uuid_sync, unsafe casts, full table fetch, SyncEngine lifecycle, offline queue validation, O(n) conflict scan, module-level cache, Prisma boilerplate
-- 15 LOW: Unused imports, inline components, unsafe type assertions, lot date merging, dead imports, fragile delete, unused fallback import, silent refresh, silent count refresh, date validation, O(n2) export, non-null assertion, duplicate role logic, silent error returns, duplicate max-w
-- PDF report delivered to /home/z/my-project/download/Auditoria_Rackly_Informe.pdf
+- ~800 lineas de codigo eliminadas
+- 4 archivos eliminados completamente
+- 23 cambios en 5 archivos modificados
+- Resuelve 9 hallazgos de auditoria: C10, H8, H10, H11, M10, M11, M14, M15, M16
+- Deploy URL: rackly.pages.dev
+- Commit: 151ad83

@@ -1,0 +1,745 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
+     4→import { AuthProvider, useAuth } from '@/hooks/useAuth'
+     5→import { AuthGate } from '@/components/rackly/auth/AuthGate'
+     6→import { SesionBar } from '@/components/rackly/kardex/SesionBar'
+     7→import { MovimientoForm } from '@/components/rackly/kardex/MovimientoForm'
+     8→import { StockTab } from '@/components/rackly/kardex/StockTab'
+     9→import { CatalogoTab } from '@/components/rackly/kardex/CatalogoTab'
+    10→import { UsuariosTab } from '@/components/rackly/kardex/UsuariosTab'
+    11→import { DescargaTab } from '@/components/rackly/kardex/DescargaTab'
+    12→import { FefoTab } from '@/components/rackly/kardex/FefoTab'
+    13→import { OcupacionTab } from '@/components/rackly/kardex/OcupacionTab'
+    14→import { TrasladoTab } from '@/components/rackly/kardex/TrasladoTab'
+    15→import { SectoresConfigTab } from '@/components/rackly/piso/SectoresTab'
+    16→import { MovimientosTab } from '@/components/rackly/piso/MovimientosTab'
+    17→import { PisoSectoresTab } from '@/components/rackly/piso/PisoSectoresTab'
+    18→import { PisoStockTab } from '@/components/rackly/piso/PisoStockTab'
+    19→import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
+    20→import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+    21→import { Button } from '@/components/ui/button'
+    22→import { Input } from '@/components/ui/input'
+    23→import {
+    24→  Card,
+    25→  CardContent,
+    26→  CardDescription,
+    27→  CardHeader,
+    28→  CardTitle,
+    29→} from '@/components/ui/card'
+    30→import {
+    31→  Table,
+    32→  TableBody,
+    33→  TableCell,
+    34→  TableHead,
+    35→  TableHeader,
+    36→  TableRow,
+    37→} from '@/components/ui/table'
+    38→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    39→import { Badge } from '@/components/ui/badge'
+    40→import {
+    41→  Select,
+    42→  SelectContent,
+    43→  SelectItem,
+    44→  SelectTrigger,
+    45→  SelectValue,
+    46→} from '@/components/ui/select'
+    47→import { toast } from 'sonner'
+    48→import { TIPOS_MOVIMIENTO, ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+    49→import {
+    50→  ArrowDownToLine,
+    51→  ArrowUpFromLine,
+    52→  ArrowRightLeft,
+    53→  BookOpen,
+    54→  CalendarClock,
+    55→  ChevronDown,
+    56→  ChevronUp,
+    57→  Download,
+    58→  PackageSearch,
+    59→  Trash2,
+    60→  LayoutGrid,
+    61→  Warehouse,
+    62→  Layers3,
+    63→  History,
+    64→  Settings,
+    65→  Upload,
+    66→  Shield,
+    67→  Filter,
+    68→  BarChart3,
+    69→  TriangleAlert,
+    70→} from 'lucide-react'
+    71→
+    72→function fmtCantidad(n: number) {
+    73→  return Number.isInteger(n)
+    74→    ? n.toString()
+    75→    : n.toLocaleString(undefined, { maximumFractionDigits: 3 })
+    76→}
+    77→
+    78→function formatDateTime(iso: string) {
+    79→  return new Date(iso).toLocaleString()
+    80→}
+    81→
+    82→function RacklyApp() {
+    83→  const { perfil } = useAuth()
+    84→  const [view, setView] = useState<'racks' | 'piso'>('racks')
+    85→  const [movs, setMovs] = useState<Movimiento[]>([])
+    86→  const [expandMovs, setExpandMovs] = useState(false)
+    87→  const [filterTipo, setFilterTipo] = useState('todos')
+    88→  const [filterUsuario, setFilterUsuario] = useState('todos')
+    89→  const [filterCodigo, setFilterCodigo] = useState('')
+    90→
+    91→  useMovimientosRealtime(setMovs)
+    92→
+    93→  // Usuarios únicos para el filtro
+    94→  const usuariosUnicos = Array.from(
+    95→    new Map(
+    96→      movs
+    97→        .map((m) => m.usuarioNombre || m.usuarioCorreo || '')
+    98→        .filter(Boolean)
+    99→        .map((name) => [name.toLowerCase(), name] as [string, string])
+   100→    ).values()
+   101→  ).sort()
+   102→
+   103→  // Movimientos filtrados
+   104→  const movsFiltrados = movs.filter((m) => {
+   105→    if (filterTipo !== 'todos' && m.tipo !== filterTipo) return false
+   106→    if (filterUsuario !== 'todos') {
+   107→      const usuario = m.usuarioNombre || m.usuarioCorreo || ''
+   108→      if (usuario.toLowerCase() !== filterUsuario.toLowerCase()) return false
+   109→    }
+   110→    if (filterCodigo.trim() && !m.codigo.toUpperCase().includes(filterCodigo.trim().toUpperCase())) return false
+   111→    return true
+   112→  })
+   113→
+   114→  const hayFiltrosActivos = filterTipo !== 'todos' || filterUsuario !== 'todos' || filterCodigo.trim() !== ''
+   115→
+   116→  const SUPERVISORES_SET = new Set<string>(ROLES_SUPERVISORES)
+   117→  const puedeEliminar = perfil?.rol === 'admin' || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
+   118→
+   119→  async function handleDelete(id: string) {
+   120→    if (!puedeEliminar) {
+   121→      toast.error('No tienes permiso para eliminar movimientos.')
+   122→      return
+   123→    }
+   124→    try {
+   125→      const next = await deleteMovimiento(id)
+   126→      setMovs(next)
+   127→      toast.success('Movimiento eliminado')
+   128→    } catch (err: unknown) {
+   129→      const message = err instanceof Error ? err.message : 'Error desconocido'
+   130→      toast.error('No se pudo eliminar', { description: message })
+   131→    }
+   132→  }
+   133→
+   134→  return (
+   135→    <main
+   136→      className="min-h-screen bg-cover bg-center bg-fixed bg-no-repeat relative"
+   137→      style={{ backgroundImage: "url('/bg-rackly.png')" }}
+   138→    >
+   139→      {/* Overlay semitransparente para no interrumpir la legibilidad */}
+   140→      <div className="absolute inset-0 bg-white/70 backdrop-blur-[1px] pointer-events-none" />
+   141→      {/* ═══ HEADER ═══ */}
+   142→      <header className="sticky top-0 z-50 border-b-0 bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900 shadow-lg shadow-slate-900/10">
+   143→        <div className="mx-auto max-w-7xl flex items-center justify-between px-3 sm:px-4 py-2.5 sm:py-3">
+   144→          <div className="flex items-center gap-4">
+   145→            {/* Logo */}
+   146→            <div className="flex items-center gap-2.5">
+   147→              <div className="flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/25 font-extrabold text-sm text-white tracking-tight">
+   148→                R
+   149→              </div>
+   150→              <div>
+   151→                <h1 className="text-lg sm:text-xl font-extrabold tracking-tight leading-none text-white">
+   152→                  RACKLY
+   153→                </h1>
+   154→                <p className="text-[10px] font-medium text-indigo-300/80 tracking-wider uppercase hidden sm:block">
+   155→                  Warehouse Management
+   156→                </p>
+   157→              </div>
+   158→            </div>
+   159→            {/* View Switcher */}
+   160→            <div className="flex items-center bg-white/10 rounded-lg p-0.5 ml-2 sm:ml-4">
+   161→              <button
+   162→                onClick={() => setView('racks')}
+   163→                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+   164→                  view === 'racks'
+   165→                    ? 'bg-white text-slate-900 shadow-sm'
+   166→                    : 'text-slate-300 hover:text-white hover:bg-white/5'
+   167→                }`}
+   168→              >
+   169→                <Warehouse className="h-3.5 w-3.5" />
+   170→                <span className="hidden sm:inline">Racks</span>
+   171→              </button>
+   172→              <button
+   173→                onClick={() => setView('piso')}
+   174→                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+   175→                  view === 'piso'
+   176→                    ? 'bg-white text-slate-900 shadow-sm'
+   177→                    : 'text-slate-300 hover:text-white hover:bg-white/5'
+   178→                }`}
+   179→              >
+   180→                <Layers3 className="h-3.5 w-3.5" />
+   181→                <span className="hidden sm:inline">Piso</span>
+   182→              </button>
+   183→            </div>
+   184→          </div>
+   185→          <div className="flex items-center gap-2">
+   186→            <SesionBar />
+   187→          </div>
+   188→        </div>
+   189→      </header>
+   190→
+   191→      <div className="mx-auto max-w-7xl p-4 md:p-6 relative z-10">
+   192→        {/* ═══ KARDEX RACKS VIEW ═══ */}
+   193→        {view === 'racks' && (
+   194→          <Tabs defaultValue="movimientos" className="w-full">
+   195→            {/* Nav Tabs */}
+   196→            <TabsList className="sticky top-0 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
+   197→              {[
+   198→                { val: 'movimientos', icon: BarChart3, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
+   199→                { val: 'traslado', icon: ArrowRightLeft, label: 'Traslado', shortLabel: 'Trasl', color: 'from-blue-500 to-indigo-600' },
+   200→                { val: 'kardex', icon: BookOpen, label: 'Catálogo', shortLabel: 'Cat', color: 'from-amber-500 to-orange-600' },
+   201→                { val: 'stock', icon: PackageSearch, label: 'Stock', shortLabel: 'Stock', color: 'from-cyan-500 to-teal-600' },
+   202→                { val: 'ocupacion', icon: LayoutGrid, label: 'Ocupación', shortLabel: 'Ocup', color: 'from-violet-500 to-purple-600' },
+   203→                { val: 'descarga', icon: Download, label: 'Descarga', shortLabel: 'Desc', color: 'from-rose-500 to-pink-600' },
+   204→                { val: 'fefo', icon: CalendarClock, label: 'FEFO', shortLabel: 'FEFO', color: 'from-orange-500 to-red-500' },
+   205→                { val: 'usuarios', icon: Shield, label: 'Usuarios', shortLabel: 'Users', color: 'from-slate-500 to-slate-700' },
+   206→              ].map((tab) => (
+   207→                <TabsTrigger
+   208→                  key={tab.val}
+   209→                  value={tab.val}
+   210→                  className="gap-1.5 px-2.5 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-slate-200 hover:bg-white/60 data-[state=active]:hover:bg-white basis-[calc(25%-6px)] md:basis-auto shrink-0"
+   211→                >
+   212→                  <div className={`w-5 h-5 rounded-md bg-gradient-to-br ${tab.color} flex items-center justify-center shadow-sm`}>
+   213→                    <tab.icon className="h-3 w-3 text-white" />
+   214→                  </div>
+   215→                  <span className="md:hidden text-[10px] leading-tight">{tab.shortLabel}</span>
+   216→                  <span className="hidden md:inline">{tab.label}</span>
+   217→                </TabsTrigger>
+   218→              ))}
+   219→            </TabsList>
+   220→
+   221→            {/* ═══ MOVIMIENTOS ═══ */}
+   222→            <TabsContent value="movimientos" className="mt-5 space-y-5">
+   223→              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+   224→                <CardHeader className="pb-3">
+   225→                  <div className="flex items-center gap-3">
+   226→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-md shadow-emerald-500/20">
+   227→                      <BarChart3 className="h-5 w-5 text-white" />
+   228→                    </div>
+   229→                    <div>
+   230→                      <CardTitle className="text-lg">Registrar movimiento</CardTitle>
+   231→                      <CardDescription>Selecciona el tipo de movimiento a registrar.</CardDescription>
+   232→                    </div>
+   233→                  </div>
+   234→                </CardHeader>
+   235→                <CardContent>
+   236→                  {/* Movement type sub-tabs */}
+   237→                  <Tabs defaultValue="ingreso" className="w-full">
+   238→                    <TabsList className="sticky top-0 z-40 flex flex-wrap gap-2 bg-white/80 backdrop-blur-sm p-0 mb-5 h-auto rounded-none">
+   239→                      {[
+   240→                        { val: 'ingreso', icon: ArrowDownToLine, label: 'Ingreso', gradient: 'from-green-500 to-emerald-600', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', ring: 'ring-green-500/20' },
+   241→                        { val: 'salida', icon: ArrowUpFromLine, label: 'Salida', gradient: 'from-red-500 to-rose-600', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', ring: 'ring-red-500/20' },
+   242→                        { val: 'devolucion', icon: ArrowRightLeft, label: 'Devolución', gradient: 'from-orange-500 to-amber-600', bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', ring: 'ring-orange-500/20' },
+   243→                        { val: 'inc', icon: TriangleAlert, label: 'INC', gradient: 'from-rose-500 to-pink-600', bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', ring: 'ring-rose-500/20' },
+   244→                        { val: 'salida-inc', icon: ArrowUpFromLine, label: 'Salida INC', gradient: 'from-rose-600 to-red-700', bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', ring: 'ring-rose-500/20' },
+   245→                      ].map((t) => (
+   246→                        <TabsTrigger
+   247→                          key={t.val}
+   248→                          value={t.val}
+   249→                          className="gap-2 flex-1 py-2.5 rounded-xl font-semibold text-sm transition-all border data-[state=active]:border-transparent data-[state=active]:shadow-lg data-[state=active]:ring-2"
+   250→                        >
+   251→                          <div className={`w-6 h-6 rounded-lg bg-gradient-to-br ${t.gradient} flex items-center justify-center shadow-sm`}>
+   252→                            <t.icon className="h-3.5 w-3.5 text-white" />
+   253→                          </div>
+   254→                          {t.label}
+   255→                        </TabsTrigger>
+   256→                      ))}
+   257→                    </TabsList>
+   258→                    <TabsContent value="ingreso" className="mt-0">
+   259→                      <MovimientoForm tipo="ingreso" onCreated={setMovs} />
+   260→                    </TabsContent>
+   261→                    <TabsContent value="salida" className="mt-0">
+   262→                      <MovimientoForm tipo="salida" onCreated={setMovs} />
+   263→                    </TabsContent>
+   264→                    <TabsContent value="devolucion" className="mt-0">
+   265→                      <MovimientoForm tipo="devolucion" onCreated={setMovs} />
+   266→                    </TabsContent>
+   267→                    <TabsContent value="inc" className="mt-0">
+   268→                      <MovimientoForm tipo="inc" onCreated={setMovs} />
+   269→                    </TabsContent>
+   270→                    <TabsContent value="salida-inc" className="mt-0">
+   271→                      <MovimientoForm tipo="salida-inc" onCreated={setMovs} />
+   272→                    </TabsContent>
+   273→                  </Tabs>
+   274→                </CardContent>
+   275→              </Card>
+   276→
+   277→              {/* Movimientos registrados */}
+   278→              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+   279→                <CardHeader className="pb-3">
+   280→                  <div className="flex flex-wrap items-center justify-between gap-2">
+   281→                    <div className="flex items-center gap-3">
+   282→                      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-500 to-slate-700 flex items-center justify-center shadow-md shadow-slate-500/20">
+   283→                        <History className="h-5 w-5 text-white" />
+   284→                      </div>
+   285→                      <div>
+   286→                        <CardTitle className="text-lg">Movimientos registrados</CardTitle>
+   287→                        <CardDescription>
+   288→                          {hayFiltrosActivos
+   289→                            ? `${movsFiltrados.length} de ${movs.length} movimiento(s).`
+   290→                            : movs.length === 0
+   291→                              ? 'Aún no hay movimientos.'
+   292→                              : expandMovs
+   293→                                ? `Mostrando ${movsFiltrados.length} movimiento(s).`
+   294→                                : `Mostrando los últimos ${Math.min(5, movsFiltrados.length)} de ${movsFiltrados.length}.`
+   295→                          }
+   296→                        </CardDescription>
+   297→                      </div>
+   298→                    </div>
+   299→                    {movs.length > 0 && (
+   300→                      <Badge variant="outline" className="font-bold text-xs px-3 py-1">
+   301→                        {movs.length} total
+   302→                      </Badge>
+   303→                    )}
+   304→                  </div>
+   305→                </CardHeader>
+   306→                <CardContent className="space-y-4">
+   307→                  {/* ═══ BARRA DE FILTROS ═══ */}
+   308→                  {movs.length > 0 && (
+   309→                    <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200/60">
+   310→                      <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">
+   311→                        <Filter className="h-3.5 w-3.5" />
+   312→                        Filtros
+   313→                      </div>
+   314→                      <Select value={filterTipo} onValueChange={setFilterTipo}>
+   315→                        <SelectTrigger className="h-9 w-[130px] sm:w-[150px] text-xs font-medium bg-white">
+   316→                          <SelectValue placeholder="Tipo" />
+   317→                        </SelectTrigger>
+   318→                        <SelectContent>
+   319→                          <SelectItem value="todos">Todos los tipos</SelectItem>
+   320→                          {Object.values(TIPOS_MOVIMIENTO).map((t) => (
+   321→                            <SelectItem key={t} value={t} className="capitalize">{t.charAt(0).toUpperCase() + t.slice(1)}</SelectItem>
+   322→                          ))}
+   323→                        </SelectContent>
+   324→                      </Select>
+   325→                      <Select value={filterUsuario} onValueChange={setFilterUsuario}>
+   326→                        <SelectTrigger className="h-9 w-[140px] sm:w-[180px] text-xs font-medium bg-white">
+   327→                          <SelectValue placeholder="Usuario" />
+   328→                        </SelectTrigger>
+   329→                        <SelectContent>
+   330→                          <SelectItem value="todos">Todos los usuarios</SelectItem>
+   331→                          {usuariosUnicos.map((u) => (
+   332→                            <SelectItem key={u} value={u}>{u}</SelectItem>
+   333→                          ))}
+   334→                        </SelectContent>
+   335→                      </Select>
+   336→                      <Input
+   337→                        value={filterCodigo}
+   338→                        onChange={(e) => setFilterCodigo(e.target.value)}
+   339→                        placeholder="Filtrar por código..."
+   340→                        className="h-9 w-[120px] sm:w-[160px] text-xs font-medium bg-white"
+   341→                      />
+   342→                      {hayFiltrosActivos && (
+   343→                        <Button
+   344→                          variant="ghost"
+   345→                          size="sm"
+   346→                          onClick={() => { setFilterTipo('todos'); setFilterUsuario('todos'); setFilterCodigo('') }}
+   347→                          className="h-9 text-xs text-slate-500 hover:text-red-600 gap-1"
+   348→                        >
+   349→                          <span className="text-base leading-none">×</span>
+   350→                          Limpiar
+   351→                        </Button>
+   352→                      )}
+   353→                      {hayFiltrosActivos && (
+   354→                        <Badge variant="secondary" className="text-xs ml-1">
+   355→                          {movsFiltrados.length} resultado{movsFiltrados.length !== 1 ? 's' : ''}
+   356→                        </Badge>
+   357→                      )}
+   358→                    </div>
+   359→                  )}
+   360→
+   361→                  <div className="overflow-x-auto rounded-xl border border-slate-200/60">
+   362→                    <Table className="min-w-[800px]">
+   363→                      <TableHeader>
+   364→                        <TableRow className="bg-slate-50/80 hover:bg-slate-50/80">
+   365→                          <TableHead className="font-semibold text-xs uppercase tracking-wider">Tipo</TableHead>
+   366→                          <TableHead className="font-semibold text-xs uppercase tracking-wider">Bloque</TableHead>
+   367→                          <TableHead className="font-semibold text-xs uppercase tracking-wider">Torre</TableHead>
+   368→                          <TableHead className="font-semibold text-xs uppercase tracking-wider">Piso</TableHead>
+   369→                          <TableHead className="font-semibold text-xs uppercase tracking-wider">Pos</TableHead>
+   370→                          <TableHead className="font-semibold text-xs uppercase tracking-wider">Código</TableHead>
+   371→                          <TableHead className="font-semibold text-xs uppercase tracking-wider hidden lg:table-cell">Descripción</TableHead>
+   372→                          <TableHead className="font-semibold text-xs uppercase tracking-wider hidden sm:table-cell">UN</TableHead>
+   373→                          <TableHead className="font-semibold text-xs uppercase tracking-wider text-right">Cant.</TableHead>
+   374→                          <TableHead className="font-semibold text-xs uppercase tracking-wider hidden md:table-cell">Venc.</TableHead>
+   375→                          <TableHead className="font-semibold text-xs uppercase tracking-wider hidden md:table-cell">Modificación</TableHead>
+   376→                          <TableHead className="font-semibold text-xs uppercase tracking-wider hidden sm:table-cell">Turno</TableHead>
+   377→                          <TableHead className="font-semibold text-xs uppercase tracking-wider hidden lg:table-cell">Usuario</TableHead>
+   378→                          {puedeEliminar && <TableHead className="w-10"></TableHead>}
+   379→                        </TableRow>
+   380→                      </TableHeader>
+   381→                      <TableBody>
+   382→                        {(expandMovs ? movsFiltrados : movsFiltrados.slice(0, 5)).map((m, idx) => (
+   383→                          <TableRow key={m.id} className="group hover:bg-indigo-50/30 transition-colors">
+   384→                            <TableCell>
+   385→                              <Badge className={
+   386→                                m.tipo === 'ingreso' ? 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white border-0 shadow-sm' :
+   387→                                m.tipo === 'salida' ? 'bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white border-0 shadow-sm' :
+   388→                                m.tipo === 'devolucion' ? 'bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white border-0 shadow-sm' :
+   389→                                'bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white border-0 shadow-sm'
+   390→                              }>
+   391→                                {m.tipo}
+   392→                              </Badge>
+   393→                            </TableCell>
+   394→                            <TableCell className="font-medium text-slate-700">{m.bloque}</TableCell>
+   395→                            <TableCell className="font-medium text-slate-700">{m.torre}</TableCell>
+   396→                            <TableCell className="font-medium text-slate-700">{m.piso}</TableCell>
+   397→                            <TableCell className="font-medium text-slate-700">{m.posicion}</TableCell>
+   398→                            <TableCell className="font-semibold font-mono text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">{m.codigo}</TableCell>
+   399→                            <TableCell className="hidden lg:table-cell max-w-48 truncate text-slate-600">{m.descripcion}</TableCell>
+   400→                            <TableCell className="hidden sm:table-cell">
+   401→                              <Badge variant="secondary" className="font-medium">{m.un}</Badge>
+   402→                            </TableCell>
+   403→                            <TableCell className="text-right font-bold text-slate-800">{fmtCantidad(m.cantidad)}</TableCell>
+   404→                            <TableCell className="hidden md:table-cell text-slate-500">{m.fVencimiento || '—'}</TableCell>
+   405→                            <TableCell className="hidden md:table-cell whitespace-nowrap text-muted-foreground text-xs">
+   406→                              {formatDateTime(m.fModificacion)}
+   407→                            </TableCell>
+   408→                            <TableCell className="hidden sm:table-cell">
+   409→                              <Badge variant="outline" className={
+   410→                                m.turno === 'Día' ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-indigo-300 bg-indigo-50 text-indigo-700'
+   411→                              }>
+   412→                                {m.turno}
+   413→                              </Badge>
+   414→                            </TableCell>
+   415→                            <TableCell className="hidden lg:table-cell text-slate-600">
+   416→                              {m.usuarioNombre ?? m.usuarioCorreo ?? '—'}
+   417→                            </TableCell>
+   418→                            {puedeEliminar && (
+   419→                              <TableCell>
+   420→                                <Button variant="ghost" size="icon" onClick={() => handleDelete(m.id)} aria-label="Eliminar" className="text-slate-300 hover:text-red-500 transition-colors md:opacity-0 md:group-hover:opacity-100">
+   421→                                  <Trash2 className="h-4 w-4" />
+   422→                                </Button>
+   423→                              </TableCell>
+   424→                            )}
+   425→                          </TableRow>
+   426→                        ))}
+   427→                      </TableBody>
+   428→                    </Table>
+   429→                  </div>
+   430→                  {movsFiltrados.length > 5 && (
+   431→                    <div className="mt-4 flex justify-center">
+   432→                      <Button variant="outline" size="sm" onClick={() => setExpandMovs((v) => !v)} className="gap-2 rounded-xl border-dashed font-medium">
+   433→                        {expandMovs ? (
+   434→                          <><ChevronUp className="h-4 w-4" /> Mostrar menos</>
+   435→                        ) : (
+   436→                          <><ChevronDown className="h-4 w-4" /> Expandir ({movsFiltrados.length - 5} más)</>
+   437→                        )}
+   438→                      </Button>
+   439→                    </div>
+   440→                  )}
+   441→                </CardContent>
+   442→              </Card>
+   443→            </TabsContent>
+   444→
+   445→            {/* ═══ TRASLADO ═══ */}
+   446→            <TabsContent value="traslado" className="mt-5">
+   447→              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+   448→                <CardHeader className="pb-3">
+   449→                  <div className="flex items-center gap-3">
+   450→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md shadow-blue-500/20">
+   451→                      <ArrowRightLeft className="h-5 w-5 text-white" />
+   452→                    </div>
+   453→                    <div>
+   454→                      <CardTitle className="text-lg">Traslado entre ubicaciones</CardTitle>
+   455→                      <CardDescription>Busca un código, elige la ubicación de origen y destino. Confirma el traslado.</CardDescription>
+   456→                    </div>
+   457→                  </div>
+   458→                </CardHeader>
+   459→                <CardContent><TrasladoTab /></CardContent>
+   460→              </Card>
+   461→            </TabsContent>
+   462→
+   463→            {/* ═══ CATÁLOGO ═══ */}
+   464→            <TabsContent value="kardex" className="mt-5">
+   465→              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+   466→                <CardHeader className="pb-3">
+   467→                  <div className="flex items-center gap-3">
+   468→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-md shadow-amber-500/20">
+   469→                      <BookOpen className="h-5 w-5 text-white" />
+   470→                    </div>
+   471→                    <div>
+   472→                      <CardTitle className="text-lg">Catálogo de códigos</CardTitle>
+   473→                      <CardDescription>Importa desde Excel o agrega códigos manualmente. Los formularios autocompletarán al escribir.</CardDescription>
+   474→                    </div>
+   475→                  </div>
+   476→                </CardHeader>
+   477→                <CardContent><CatalogoTab /></CardContent>
+   478→              </Card>
+   479→            </TabsContent>
+   480→
+   481→            {/* ═══ STOCK ═══ */}
+   482→            <TabsContent value="stock" className="mt-5">
+   483→              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+   484→                <CardHeader className="pb-3">
+   485→                  <div className="flex items-center gap-3">
+   486→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-600 flex items-center justify-center shadow-md shadow-cyan-500/20">
+   487→                      <PackageSearch className="h-5 w-5 text-white" />
+   488→                    </div>
+   489→                    <div>
+   490→                      <CardTitle className="text-lg">Stock actual por código</CardTitle>
+   491→                      <CardDescription>Stock = ingresos − salidas, agrupado por ubicación. Incluye Stock Big Magic.</CardDescription>
+   492→                    </div>
+   493→                  </div>
+   494→                </CardHeader>
+   495→                <CardContent><StockTab /></CardContent>
+   496→              </Card>
+   497→            </TabsContent>
+   498→
+   499→            {/* ═══ OCUPACIÓN ═══ */}
+   500→            <TabsContent value="ocupacion" className="mt-5">
+   501→              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+   502→                <CardHeader className="pb-3">
+   503→                  <div className="flex items-center gap-3">
+   504→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-md shadow-violet-500/20">
+   505→                      <LayoutGrid className="h-5 w-5 text-white" />
+   506→                    </div>
+   507→                    <div>
+   508→                      <CardTitle className="text-lg">Ocupación del Kardex</CardTitle>
+   509→                      <CardDescription>Mapa visual 3D con dashboard de resumen. Verde = vacío, Azul = 1 artículo, Naranja = varios artículos.</CardDescription>
+   510→                    </div>
+   511→                  </div>
+   512→                </CardHeader>
+   513→                <CardContent><OcupacionTab /></CardContent>
+   514→              </Card>
+   515→            </TabsContent>
+   516→
+   517→            {/* ═══ DESCARGA ═══ */}
+   518→            <TabsContent value="descarga" className="mt-5">
+   519→              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+   520→                <CardHeader className="pb-3">
+   521→                  <div className="flex items-center gap-3">
+   522→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 flex items-center justify-center shadow-md shadow-rose-500/20">
+   523→                      <Download className="h-5 w-5 text-white" />
+   524→                    </div>
+   525→                    <div>
+   526→                      <CardTitle className="text-lg">Descarga de datos</CardTitle>
+   527→                      <CardDescription>Exporta a Excel movimientos y stock actual.</CardDescription>
+   528→                    </div>
+   529→                  </div>
+   530→                </CardHeader>
+   531→                <CardContent><DescargaTab /></CardContent>
+   532→              </Card>
+   533→            </TabsContent>
+   534→
+   535→            {/* ═══ FEFO ═══ */}
+   536→            <TabsContent value="fefo" className="mt-5">
+   537→              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+   538→                <CardHeader className="pb-3">
+   539→                  <div className="flex items-center gap-3">
+   540→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center shadow-md shadow-orange-500/20">
+   541→                      <CalendarClock className="h-5 w-5 text-white" />
+   542→                    </div>
+   543→                    <div>
+   544→                      <CardTitle className="text-lg">FEFO — Control de vencimientos</CardTitle>
+   545→                      <CardDescription>Verde &gt; 60 días · Azul ≤ 30 días · Naranja ≤ 15 días · Rojo vencidos.</CardDescription>
+   546→                    </div>
+   547→                  </div>
+   548→                </CardHeader>
+   549→                <CardContent><FefoTab /></CardContent>
+   550→              </Card>
+   551→            </TabsContent>
+   552→
+   553→            {/* ═══ USUARIOS ═══ */}
+   554→            <TabsContent value="usuarios" className="mt-5">
+   555→              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+   556→                <CardHeader className="pb-3">
+   557→                  <div className="flex items-center gap-3">
+   558→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-500 to-slate-700 flex items-center justify-center shadow-md shadow-slate-500/20">
+   559→                      <Shield className="h-5 w-5 text-white" />
+   560→                    </div>
+   561→                    <div>
+   562→                      <CardTitle className="text-lg">Usuarios</CardTitle>
+   563→                      <CardDescription>
+   564→                        {puedeEliminar
+   565→                          ? 'Puedes aprobar accesos y eliminar movimientos.'
+   566→                          : 'No tienes permisos de administración en esta sección.'}
+   567→                      </CardDescription>
+   568→                    </div>
+   569→                  </div>
+   570→                </CardHeader>
+   571→                <CardContent><UsuariosTab /></CardContent>
+   572→              </Card>
+   573→            </TabsContent>
+   574→          </Tabs>
+   575→        )}
+   576→
+   577→        {/* ═══ KARDEX PISO VIEW ═══ */}
+   578→        {view === 'piso' && (
+   579→          <Tabs defaultValue="movimientos" className="w-full">
+   580→            <TabsList className="sticky top-0 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
+   581→              {[
+   582→                { val: 'movimientos', icon: History, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
+   583→                { val: 'sectores', icon: Layers3, label: 'Sectores', shortLabel: 'Sector', color: 'from-sky-500 to-blue-600' },
+   584→                { val: 'stock', icon: PackageSearch, label: 'Stock', shortLabel: 'Stock', color: 'from-cyan-500 to-teal-600' },
+   585→                { val: 'config', icon: Settings, label: 'Configuración', shortLabel: 'Config', color: 'from-slate-400 to-slate-600' },
+   586→              ].map((tab) => (
+   587→                <TabsTrigger
+   588→                  key={tab.val}
+   589→                  value={tab.val}
+   590→                  className="gap-1.5 px-2.5 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-slate-700 data-[state=active]:text-white data-[state=active]:border data-[state=active]:border-slate-600 hover:bg-slate-800/60 data-[state=active]:hover:bg-slate-700 basis-[calc(25%-6px)] md:basis-auto shrink-0 text-slate-400"
+   591→                >
+   592→                  <div className={`w-5 h-5 rounded-md bg-gradient-to-br ${tab.color} flex items-center justify-center shadow-sm`}>
+   593→                    <tab.icon className="h-3 w-3 text-white" />
+   594→                  </div>
+   595→                  <span className="md:hidden text-[10px] leading-tight">{tab.shortLabel}</span>
+   596→                  <span className="hidden md:inline">{tab.label}</span>
+   597→                </TabsTrigger>
+   598→              ))}
+   599→            </TabsList>
+   600→
+   601→            <TabsContent value="movimientos" className="mt-5">
+   602→              <Card className="border border-slate-700 shadow-xl shadow-slate-900/30 bg-slate-900">
+   603→                <CardHeader className="pb-3">
+   604→                  <div className="flex items-center gap-3">
+   605→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-md shadow-emerald-500/20">
+   606→                      <History className="h-5 w-5 text-white" />
+   607→                    </div>
+   608→                    <div>
+   609→                      <CardTitle className="text-lg text-white">Movimientos</CardTitle>
+   610→                      <CardDescription className="text-slate-400">Historial de todos los movimientos registrados. Los movimientos se realizan desde Sectores.</CardDescription>
+   611→                    </div>
+   612→                  </div>
+   613→                </CardHeader>
+   614→                <CardContent><MovimientosTab /></CardContent>
+   615→              </Card>
+   616→            </TabsContent>
+   617→
+   618→
+   619→
+   620→            <TabsContent value="stock" className="mt-5">
+   621→              <Card className="border border-slate-700 shadow-xl shadow-slate-900/30 bg-slate-900">
+   622→                <CardHeader className="pb-3">
+   623→                  <div className="flex items-center gap-3">
+   624→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-600 flex items-center justify-center shadow-md shadow-cyan-500/20">
+   625→                      <PackageSearch className="h-5 w-5 text-white" />
+   626→                    </div>
+   627→                    <div>
+   628→                      <CardTitle className="text-lg text-white">Stock Kardex Piso</CardTitle>
+   629→                      <CardDescription className="text-slate-400">Stock actual por ubicacion con FEFO. Incluye Stock Big Magic.</CardDescription>
+   630→                    </div>
+   631→                  </div>
+   632→                </CardHeader>
+   633→                <CardContent><PisoStockTab /></CardContent>
+   634→              </Card>
+   635→            </TabsContent>
+   636→
+   637→            <TabsContent value="sectores" className="mt-5">
+   638→              <PisoSectoresTab />
+   639→            </TabsContent>
+   640→
+   641→            <TabsContent value="config" className="mt-5">
+   642→              <Card className="border border-slate-700 shadow-xl shadow-slate-900/30 bg-slate-900">
+   643→                <CardHeader className="pb-3">
+   644→                  <div className="flex items-center gap-3">
+   645→                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-400 to-slate-600 flex items-center justify-center shadow-md shadow-slate-500/20">
+   646→                      <Settings className="h-5 w-5 text-white" />
+   647→                    </div>
+   648→                    <div>
+   649→                      <CardTitle className="text-lg text-white">Configuración</CardTitle>
+   650→                      <CardDescription className="text-slate-400">Administra sectores y estructura del almacén.</CardDescription>
+   651→                    </div>
+   652→                  </div>
+   653→                </CardHeader>
+   654→                <CardContent><SectoresConfigTab /></CardContent>
+   655→              </Card>
+   656→            </TabsContent>
+   657→          </Tabs>
+   658→        )}
+   659→      </div>
+   660→
+   661→      {/* ═══ FOOTER ═══ */}
+   662→      <footer className="mt-10 relative z-10 bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900">
+   663→        <div className="mx-auto max-w-7xl px-3 sm:px-4 py-3 sm:py-4 flex items-center justify-between">
+   664→          <div className="flex items-center gap-2">
+   665→            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center text-[9px] font-extrabold text-white">
+   666→              R
+   667→            </div>
+   668→            <span className="text-xs font-semibold text-slate-400">
+   669→              RACKLY <span className="text-slate-600">·</span> Sistema de Gestión de Almacenes
+   670→            </span>
+   671→          </div>
+   672→          <p className="text-[10px] text-slate-600">
+   673→            Created by <span className="text-slate-300">Miguel Hidalgo</span>
+   674→          </p>
+   675→        </div>
+   676→      </footer>
+   677→    </main>
+   678→  )
+   679→}
+   680→
+   681→/**
+   682→ * HydrationGuard — avoids React hydration mismatch in static export.
+   683→ *
+   684→ * During SSG, Next.js renders HTML WITHOUT env vars → AuthGate shows error page.
+   685→ * During client hydration, env vars ARE available → AuthGate shows spinner/login/app.
+   686→ *
+   687→ * Without this guard, React detects a severe DOM mismatch and must discard
+   688→ * the entire server HTML, re-rendering from scratch. On mobile this causes
+   689→ * a long "stuck loading" appearance.
+   690→ *
+   691→ * The guard simply shows a spinner until client-side mount, ensuring both
+   692→ * SSG and first client paint produce identical HTML (just a spinner),
+   693→ * then React hydrates cleanly and transitions to the real UI.
+   694→ */
+   695→function HydrationGuard({ children }: { children: ReactNode }) {
+   696→  const [mounted, setMounted] = useState(false)
+   697→  const [stuck, setStuck] = useState(false)
+   698→  useEffect(() => {
+   699→    setMounted(true)
+   700→  }, [])
+   701→  useEffect(() => {
+   702→    if (mounted) return
+   703→    const timer = setTimeout(() => setStuck(true), 6000)
+   704→    return () => clearTimeout(timer)
+   705→  }, [mounted])
+   706→  if (!mounted) {
+   707→    return (
+   708→      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+   709→        <div className="flex flex-col items-center gap-4">
+   710→          <div className="h-12 w-12 animate-spin rounded-full border-4 border-blue-200 border-t-blue-700" />
+   711→          {stuck ? (
+   712→            <>
+   713→              <p className="text-base font-medium text-slate-700">La app tarda en cargar</p>
+   714→              <button
+   715→                onClick={() => {
+   716→                  window.location.href = window.location.href.split('?')[0] + '?t=' + Date.now()
+   717→                }}
+   718→                className="mt-2 px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+   719→              >
+   720→                Recargar página
+   721→              </button>
+   722→              <p className="text-[10px] text-slate-400">Si persiste, borra caché del navegador</p>
+   723→            </>
+   724→          ) : (
+   725→            <p className="text-base font-medium text-slate-700">Cargando Rackly…</p>
+   726→          )}
+   727→        </div>
+   728→      </main>
+   729→    )
+   730→  }
+   731→  return <>{children}</>
+   732→}
+   733→
+   734→export default function Page() {
+   735→  return (
+   736→    <HydrationGuard>
+   737→      <AuthProvider>
+   738→        <AuthGate>
+   739→          <RacklyApp />
+   740→        </AuthGate>
+   741→      </AuthProvider>
+   742→    </HydrationGuard>
+   743→  )
+   744→}
+   745→

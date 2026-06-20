@@ -1,0 +1,502 @@
+  2200→                    <NivelSelector
+  2201→                      label="Nivel destino"
+  2202→                      nivelId={selectedNivelId}
+  2203→                      onNivelChange={setSelectedNivelId}
+  2204→                      nivelesList={niveles}
+  2205→                      accentColor="emerald"
+  2206→                    />
+  2207→                  )}
+  2208→                  {detail.stock.length > 0 && (
+  2209→                    <div className="rounded-xl border border-amber-500/20 bg-amber-950/30 backdrop-blur-sm p-3">
+  2210→                      <p className="text-[10px] font-bold text-amber-400">Posicion con {detail.stock.length} articulo(s). Se agregara el nuevo.</p>
+  2211→                    </div>
+  2212→                  )}
+  2213→                  <p className="text-xs font-bold text-slate-300">Escribe el codigo y se autocompletara:</p>
+  2214→                  {ingRows.map((row, i) => (
+  2215→                    <div key={`${ingresoKey}-${i}`} className="rounded-xl border border-emerald-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-emerald-500/40">
+  2216→                      <div className="grid grid-cols-12 gap-2 items-end">
+  2217→                        {/* Card number badge */}
+  2218→                        <div className="col-span-1 flex items-center justify-center">
+  2219→                          <div className="w-6 h-6 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-[9px] font-bold text-emerald-400">
+  2220→                            {i + 1}
+  2221→                          </div>
+  2222→                        </div>
+  2223→                        {/* Codigo */}
+  2224→                        <div className="col-span-11 sm:col-span-4">
+  2225→                          <Label className="text-[10px] text-emerald-400 font-semibold">Codigo</Label>
+  2226→                          <div className="relative">
+  2227→                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('ing', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('ing', i), 150)} placeholder="Buscar codigo o descripcion..."
+  2228→                              className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-emerald-500/40 ring-emerald-500/20 shadow-sm shadow-emerald-500/10' : 'border-slate-700/50 focus:ring-emerald-500/40'}`} autoFocus />
+  2229→                            <AutocompleteDropdown prefix="ing" idx={i} row={row} accentColor="emerald" />
+  2230→                          </div>
+  2231→                        </div>
+  2232→
+  2233→                        {/* Descripcion */}
+  2234→                        <div className="col-span-12 sm:col-span-4">
+  2235→                          <Label className="text-[10px] text-slate-500">Descripcion</Label>
+  2236→                          <input type="text" value={row.descripcion} readOnly placeholder="Se autocompleta..."
+  2237→                            className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-3 cursor-default backdrop-blur-sm transition-all duration-300" />
+  2238→                        </div>
+  2239→
+  2240→                        {/* UN */}
+  2241→                        <div className="col-span-4 sm:col-span-3">
+  2242→                          <Label className="text-[10px] text-slate-500">UN</Label>
+  2243→                          <input type="text" value={row.unidad} readOnly placeholder="-"
+  2244→                            className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-2 text-center cursor-default backdrop-blur-sm transition-all duration-300" />
+  2245→                        </div>
+  2246→
+  2247→                        {/* Cantidad */}
+  2248→                        <div className="col-span-8 sm:col-span-4">
+  2249→                          <Label className="text-[10px] text-sky-400 font-semibold">Cantidad</Label>
+  2250→                          <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateIngresoCantidad(i, e.target.value)}
+  2251→                            className="h-10 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" />
+  2252→                        </div>
+  2253→                      </div>
+  2254→
+  2255→                      {/* Fecha de vencimiento */}
+  2256→                      <FechaVencimientoField value={row.fecha_vencimiento} disabled={row.sin_vencimiento} variant="ing" onChange={(val) => updateIngresoFecha(i, val)} onToggleSin={() => toggleIngresoSinVencimiento(i)} />
+  2257→
+  2258→                      {ingRows.length > 1 && (
+  2259→                        <div className="flex justify-end">
+  2260→                          <button onClick={() => removeIngresoRow(i)} className="p-1.5 rounded-lg hover:bg-red-900/30 text-slate-600 hover:text-red-400 transition-all duration-300"><Trash2 className="h-3.5 w-3.5" /></button>
+  2261→                        </div>
+  2262→                      )}
+  2263→                    </div>
+  2264→                  ))}
+  2265→                  <button onClick={addIngresoRow} className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-medium transition-all duration-300 hover:pl-1"><Plus className="h-3.5 w-3.5" /> Agregar otro articulo</button>
+  2266→                  <div className="flex gap-2 pt-2">
+  2267→                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
+  2268→                    <Button onClick={doIngreso} disabled={busy} size="sm" className="h-11 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/20 transition-all duration-300 hover:shadow-emerald-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowDownToLine className="h-3.5 w-3.5" />} Registrar ingreso</Button>
+  2269→                  </div>
+  2270→                </div>
+  2271→              )}
+  2272→
+  2273→              {/* ── SALIDA MODE ── */}
+  2274→              {mode === 'salida' && (() => {
+  2275→                // Items para salida: originales (Todos) o derivados por nivel
+  2276→                const filteredSalItems = salNivelTab === 'all' ? salItems : salItemsByNivel
+  2277→                const isSalLevelView = salNivelTab !== 'all'
+  2278→                const selCount = filteredSalItems.filter((r) => r.selected).length
+  2279→                return (
+  2280→                <div className="space-y-3 mt-4">
+  2281→                  {/* Nivel tabs para salida — ocultar si singleNivelMode */}
+  2282→                  {!singleNivelMode && niveles.length > 1 && (
+  2283→                    <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm scrollbar-none">
+  2284→                      <button
+  2285→                        onClick={() => { setSalNivelTab('all'); setSalItems((prev) => prev.map((r) => ({ ...r, selected: false }))); setSalItemsByNivel([]) }}
+  2286→                        className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
+  2287→                          salNivelTab === 'all'
+  2288→                            ? 'bg-gradient-to-r from-red-400 to-rose-500 text-white shadow-lg shadow-red-500/25'
+  2289→                            : 'text-slate-400 hover:text-slate-300'
+  2290→                        }`}
+  2291→                      >
+  2292→                        Todos ({salItems.length})
+  2293→                      </button>
+  2294→                      {niveles.map((n) => {
+  2295→                        const nCount = (stockByNivel[n.id] ?? []).length
+  2296→                        return (
+  2297→                          <button
+  2298→                            key={n.id}
+  2299→                            onClick={() => { setSalNivelTab(n.id); setSalItemsByNivel(buildSalItemsForNivel(n.id)) }}
+  2300→                            className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
+  2301→                              salNivelTab === n.id
+  2302→                                ? 'bg-gradient-to-r from-red-400 to-rose-500 text-white shadow-lg shadow-red-500/25'
+  2303→                                : 'text-slate-400 hover:text-slate-300'
+  2304→                            }`}
+  2305→                          >
+  2306→                            Nivel {n.numero} ({nCount})
+  2307→                          </button>
+  2308→                        )
+  2309→                      })}
+  2310→                    </div>
+  2311→                  )}
+  2312→                  {salNivelTab !== 'all' && (
+  2313→                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-950/30 border border-red-500/20">
+  2314→                      <Layers className="h-3.5 w-3.5 text-red-400" />
+  2315→                      <span className="text-[10px] font-bold text-red-300">
+  2316→                        Salida de Nivel {niveles.find((n) => n.id === salNivelTab)?.numero ?? '?'}
+  2317→                        {niveles.find((n) => n.id === salNivelTab)?.codigo_ubicacion ? ` — ${niveles.find((n) => n.id === salNivelTab)?.codigo_ubicacion}` : ''}
+  2318→                      </span>
+  2319→                    </div>
+  2320→                  )}
+  2321→                  <div className="flex items-center justify-between">
+  2322→                    <p className="text-xs font-bold text-slate-300">Toca los articulos que quieres salir:</p>
+  2323→                    {filteredSalItems.length > 1 && (
+  2324→                      <button
+  2325→                        onClick={() => {
+  2326→                          const allSel = filteredSalItems.every((r) => r.selected)
+  2327→                          const updated = filteredSalItems.map((r) => ({ ...r, selected: !allSel, cantidad: !allSel ? String(r.stockActual) : r.cantidad }))
+  2328→                          if (isSalLevelView) setSalItemsByNivel(updated); else setSalItems(updated)
+  2329→                        }}
+  2330→                        className="flex items-center gap-1 text-[10px] font-semibold text-red-400 hover:text-red-300 transition-all duration-300"
+  2331→                      >
+  2332→                        {selCount === filteredSalItems.length && filteredSalItems.length > 0 ? (
+  2333→                          <><X className="h-3 w-3" /> Deseleccionar todos</>
+  2334→                        ) : (
+  2335→                          <><Check className="h-3 w-3" /> Seleccionar todos</>
+  2336→                        )}
+  2337→                      </button>
+  2338→                    )}
+  2339→                  </div>
+  2340→                  <p className="text-[10px] text-slate-500 -mt-2">{selCount} de {filteredSalItems.length} seleccionados</p>
+  2341→                  {filteredSalItems.map((row, i) => {
+  2342→                    return (
+  2343→                    <div key={`${row.bloque_id}-${row.fecha_vencimiento}-${i}`}
+  2344→                      onClick={() => {
+  2345→                        const u = [...filteredSalItems]
+  2346→                        const newSelected = !u[i].selected
+  2347→                        u[i] = { ...u[i], selected: newSelected, cantidad: newSelected ? String(u[i].stockActual) : u[i].cantidad }
+  2348→                        if (isSalLevelView) setSalItemsByNivel(u); else setSalItems(u)
+  2349→                      }}
+  2350→                      className={`rounded-xl border backdrop-blur-sm p-3 border-l-[3px] cursor-pointer transition-all duration-300 ${
+  2351→                        row.selected
+  2352→                          ? 'border-red-500/25 bg-red-950/30 border-l-red-500 shadow-md shadow-red-500/10 scale-[1.01]'
+  2353→                          : 'border-slate-700/30 bg-slate-800/20 border-l-slate-600/40 hover:border-slate-600/60 hover:bg-slate-800/40'
+  2354→                      }`}>
+  2355→                      <div className="flex items-start gap-3">
+  2356→                        {/* Selection indicator */}
+  2357→                        <div className="pt-0.5 flex-shrink-0">
+  2358→                          <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all duration-300 ${
+  2359→                            row.selected
+  2360→                              ? 'bg-red-500 border-red-500 shadow-md shadow-red-500/30'
+  2361→                              : 'border-slate-600 bg-slate-800/60'
+  2362→                          }`}>
+  2363→                            {row.selected && <Check className="h-3 w-3 text-white" />}
+  2364→                          </div>
+  2365→                        </div>
+  2366→                        {/* Article info */}
+  2367→                        <div className="flex-1 min-w-0">
+  2368→                          <div className="flex items-center gap-2 flex-wrap">
+  2369→                            <Package className="h-4 w-4 text-red-400/60 flex-shrink-0" />
+  2370→                            <span className="font-mono text-sky-300 text-xs font-semibold">{row.bloque_codigo}</span>
+  2371→                            {row.fecha_vencimiento && (
+  2372→                              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/20 flex items-center gap-0.5">
+  2373→                                <Calendar className="h-2.5 w-2.5" /> {row.fecha_vencimiento}
+  2374→                              </span>
+  2375→                            )}
+  2376→                            {row.selected && (
+  2377→                              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-red-500/20 text-red-300 border border-red-500/30 font-bold">SELECCIONADO</span>
+  2378→                            )}
+  2379→                          </div>
+  2380→                          <p className="text-slate-400 text-[10px] mt-0.5 truncate">{row.bloque_descripcion || 'Sin descripcion'}</p>
+  2381→                          <p className="text-[9px] text-slate-500 mt-0.5">Stock: {row.stockActual} {row.bloque_unidad}</p>
+  2382→                        </div>
+  2383→                        {/* Quantity */}
+  2384→                        {row.selected && (
+  2385→                          <Input type="number" step="any" min="0" max={row.stockActual} value={row.cantidad}
+  2386→                            onClick={(e) => e.stopPropagation()}
+  2387→                            onChange={(e) => {
+  2388→                              const u = [...filteredSalItems]
+  2389→                              u[i] = { ...u[i], cantidad: e.target.value }
+  2390→                              if (isSalLevelView) setSalItemsByNivel(u); else setSalItems(u)
+  2391→                            }}
+  2392→                            className="w-16 sm:w-20 h-9 text-xs bg-slate-900/80 border-red-500/30 text-white focus:ring-red-500/40 rounded-xl backdrop-blur-sm transition-all duration-300" />
+  2393→                        )}
+  2394→                      </div>
+  2395→                    </div>
+  2396→                    )
+  2397→                  })}
+  2398→                  {filteredSalItems.length === 0 && (
+  2399→                    <div className="py-6 text-center">
+  2400→                      <p className="text-slate-500 text-xs">No hay articulos en este nivel</p>
+  2401→                    </div>
+  2402→                  )}
+  2403→                  <div className="flex gap-2 pt-2">
+  2404→                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
+  2405→                    <Button onClick={doSalida} disabled={busy || selCount === 0} size="sm" className="h-11 gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20 transition-all duration-300 hover:shadow-red-500/30 hover:scale-[1.02] disabled:opacity-40 disabled:hover:scale-100">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />} Registrar salida</Button>
+  2406→                  </div>
+  2407→                </div>
+  2408→                )
+  2409→              })()}
+  2410→
+  2411→              {/* ── TRASLADO MODE ── */}
+  2412→              {mode === 'traslado' && (
+  2413→                <div className="space-y-3 mt-4">
+  2414→                  <div className="flex gap-2">
+  2415→                    <div className="flex-1">
+  2416→                      {singleNivelMode ? (
+  2417→                        <div className="flex items-center gap-2 rounded-xl border border-sky-500/30 bg-sky-950/20 px-3 py-2.5">
+  2418→                          <Layers className="h-3.5 w-3.5 text-sky-400 shrink-0" />
+  2419→                          <span className="text-[10px] font-semibold text-sky-400 uppercase tracking-wider shrink-0">Nivel origen:</span>
+  2420→                          <span className="text-xs font-bold text-sky-300">Nivel {niveles.find(n => n.id === selectedNivelId)?.numero ?? '?'}{niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion ? ` (${niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion})` : ''}</span>
+  2421→                          <Lock className="h-3 w-3 text-sky-500/60 ml-auto" />
+  2422→                        </div>
+  2423→                      ) : (
+  2424→                        <NivelSelector
+  2425→                          label="Nivel origen"
+  2426→                          nivelId={selectedNivelId}
+  2427→                          onNivelChange={setSelectedNivelId}
+  2428→                          nivelesList={niveles}
+  2429→                          accentColor="sky"
+  2430→                        />
+  2431→                      )}
+  2432→                    </div>
+  2433→                    {trDestPos && (
+  2434→                      <div className="flex-1">
+  2435→                        <NivelSelector
+  2436→                          label="Nivel destino"
+  2437→                          nivelId={trDestNivelId}
+  2438→                          onNivelChange={setTrDestNivelId}
+  2439→                          nivelesList={niveles}
+  2440→                          accentColor="sky"
+  2441→                        />
+  2442→                      </div>
+  2443→                    )}
+  2444→                  </div>
+  2445→                  <div className="flex items-center justify-between">
+  2446→                    <p className="text-xs font-bold text-slate-300">Toca los articulos que quieres trasladar:</p>
+  2447→                    {trItems.length > 1 && (
+  2448→                      <button
+  2449→                        onClick={() => {
+  2450→                          const allSelected = trItems.every((r) => r.selected)
+  2451→                          setTrItems((prev) => prev.map((r) => ({ ...r, selected: !allSelected, cantidad: !allSelected ? String(r.stockActual) : r.cantidad })))
+  2452→                        }}
+  2453→                        className="flex items-center gap-1 text-[10px] font-semibold text-sky-400 hover:text-sky-300 transition-all duration-300"
+  2454→                      >
+  2455→                        {trItems.every((r) => r.selected) ? (
+  2456→                          <><X className="h-3 w-3" /> Deseleccionar todos</>
+  2457→                        ) : (
+  2458→                          <><Check className="h-3 w-3" /> Seleccionar todos</>
+  2459→                        )}
+  2460→                      </button>
+  2461→                    )}
+  2462→                  </div>
+  2463→                  <p className="text-[10px] text-slate-500 -mt-2">{trItems.filter((r) => r.selected).length} de {trItems.length} seleccionados</p>
+  2464→                  {trItems.map((row, i) => {
+  2465→                    const qty = parseFloat(row.cantidad) || 0
+  2466→                    const diffType = qty > row.stockActual ? 'surplus' : qty < row.stockActual ? 'deficit' : 'exact'
+  2467→                    return (
+  2468→                      <div key={i} onClick={() => {
+  2469→                        const u = [...trItems]
+  2470→                        const newSelected = !u[i].selected
+  2471→                        u[i] = { ...u[i], selected: newSelected, cantidad: newSelected ? String(u[i].stockActual) : u[i].cantidad }
+  2472→                        setTrItems(u)
+  2473→                      }} className={`rounded-xl border backdrop-blur-sm p-3 border-l-[3px] cursor-pointer transition-all duration-300 ${
+  2474→                        row.selected
+  2475→                          ? diffType === 'surplus'
+  2476→                            ? 'border-amber-500/25 bg-amber-950/25 border-l-amber-500 shadow-md shadow-amber-500/10 scale-[1.01]'
+  2477→                            : diffType === 'deficit'
+  2478→                              ? 'border-sky-500/20 bg-sky-950/20 border-l-sky-500 shadow-md shadow-sky-500/10 scale-[1.01]'
+  2479→                              : 'border-emerald-500/20 bg-emerald-950/20 border-l-emerald-500 shadow-md shadow-emerald-500/10 scale-[1.01]'
+  2480→                          : 'border-slate-700/30 bg-slate-800/20 border-l-slate-600/40 hover:border-slate-600/60 hover:bg-slate-800/40'
+  2481→                      }`}>
+  2482→                        <div className="flex items-start gap-3">
+  2483→                          {/* Selection indicator */}
+  2484→                          <div className="pt-0.5 flex-shrink-0">
+  2485→                            <div className={`w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all duration-300 ${
+  2486→                              row.selected
+  2487→                                ? 'bg-sky-500 border-sky-500 shadow-md shadow-sky-500/30'
+  2488→                                : 'border-slate-600 bg-slate-800/60'
+  2489→                            }`}>
+  2490→                              {row.selected && <Check className="h-3 w-3 text-white" />}
+  2491→                            </div>
+  2492→                          </div>
+  2493→                          {/* Article info */}
+  2494→                          <div className="flex-1 min-w-0">
+  2495→                            <div className="flex items-center gap-2">
+  2496→                              <Package className="h-4 w-4 text-sky-400/60 flex-shrink-0" />
+  2497→                              <span className="font-mono text-sky-400 text-xs font-semibold">{row.bloque_codigo}</span>
+  2498→                              <span className="text-[10px] text-slate-500 truncate">{row.bloque_descripcion}</span>
+  2499→                            </div>
+  2500→                            {/* Stock reference + qty input row */}
+  2501→                            <div className="flex items-center gap-3 mt-2">
+  2502→                              <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
+  2503→                                <span>Stock:</span>
+  2504→                                <span className="font-mono font-semibold text-slate-300">{row.stockActual}</span>
+  2505→                                <span>{row.bloque_unidad}</span>
+  2506→                              </div>
+  2507→                              {row.selected && (
+  2508→                                <Input
+  2509→                                  type="number"
+  2510→                                  step="any"
+  2511→                                  min="0"
+  2512→                                  value={row.cantidad}
+  2513→                                  onClick={(e) => e.stopPropagation()}
+  2514→                                  onChange={(e) => {
+  2515→                                    const u = [...trItems]
+  2516→                                    u[i] = { ...u[i], cantidad: e.target.value }
+  2517→                                    setTrItems(u)
+  2518→                                  }}
+  2519→                                  className="w-20 sm:w-24 h-8 text-xs bg-slate-900/80 border-sky-500/30 text-white focus:ring-sky-500/40 rounded-lg backdrop-blur-sm transition-all duration-300"
+  2520→                                />
+  2521→                              )}
+  2522→                            </div>
+  2523→                            {/* Discrepancy indicators */}
+  2524→                            {row.selected && qty > 0 && diffType === 'surplus' && (
+  2525→                              <div className="flex items-center gap-1.5 mt-2 text-amber-400 text-[10px]">
+  2526→                                <AlertTriangle className="h-3 w-3" />
+  2527→                                <span className="font-semibold">Excedente: se registrara ingreso de <span className="font-mono">{(qty - row.stockActual).toFixed(2)}</span> {row.bloque_unidad}</span>
+  2528→                              </div>
+  2529→                            )}
+  2530→                            {row.selected && qty > 0 && diffType === 'deficit' && (
+  2531→                              <div className="flex items-center gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
+  2532→                                <button
+  2533→                                  onClick={() => {
+  2534→                                    const u = [...trItems]
+  2535→                                    u[i] = { ...u[i], saldoMode: 'saldo' }
+  2536→                                    setTrItems(u)
+  2537→                                  }}
+  2538→                                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold border transition-all duration-300 ${
+  2539→                                    row.saldoMode === 'saldo'
+  2540→                                      ? 'bg-sky-500/20 border-sky-500/40 text-sky-300 shadow-inner'
+  2541→                                      : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
+  2542→                                  }`}
+  2543→                                >
+  2544→                                  <ToggleLeft className="h-3 w-3" />
+  2545→                                  Dejar saldo
+  2546→                                </button>
+  2547→                                <button
+  2548→                                  onClick={() => {
+  2549→                                    const u = [...trItems]
+  2550→                                    u[i] = { ...u[i], saldoMode: 'ajustar' }
+  2551→                                    setTrItems(u)
+  2552→                                  }}
+  2553→                                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold border transition-all duration-300 ${
+  2554→                                    row.saldoMode === 'ajustar'
+  2555→                                      ? 'bg-red-500/20 border-red-500/40 text-red-300 shadow-inner'
+  2556→                                      : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-400'
+  2557→                                  }`}
+  2558→                                >
+  2559→                                  <ToggleRight className="h-3 w-3" />
+  2560→                                  Ajustar salida
+  2561→                                </button>
+  2562→                                {row.saldoMode === 'ajustar' && (
+  2563→                                  <span className="text-[10px] text-red-400">
+  2564→                                    Salida de <span className="font-mono font-semibold">{(row.stockActual - qty).toFixed(2)}</span> {row.bloque_unidad}
+  2565→                                  </span>
+  2566→                                )}
+  2567→                                {row.saldoMode === 'saldo' && (
+  2568→                                  <span className="text-[10px] text-slate-500">
+  2569→                                    Queda <span className="font-mono font-semibold">{(row.stockActual - qty).toFixed(2)}</span> {row.bloque_unidad} en origen
+  2570→                                  </span>
+  2571→                                )}
+  2572→                              </div>
+  2573→                            )}
+  2574→                            {row.selected && qty > 0 && diffType === 'exact' && (
+  2575→                              <div className="flex items-center gap-1.5 mt-2 text-emerald-400 text-[10px]">
+  2576→                                <Check className="h-3 w-3" />
+  2577→                                <span className="font-semibold">Total</span>
+  2578→                              </div>
+  2579→                            )}
+  2580→                          </div>
+  2581→                        </div>
+  2582→                      </div>
+  2583→                    )
+  2584→                  })}
+  2585→                  <div className="space-y-2 pt-3 border-t border-slate-700/40">
+  2586→                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">DESTINO:</p>
+  2587→                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+  2588→                      {posiciones.filter((p) => p.posicionId !== detail.posicionId).map((p) => (
+  2589→                        <button key={p.posicionId} onClick={async () => {
+  2590→                          setTrDestPos(p)
+  2591→                          // Cargar niveles del destino
+  2592→                          try {
+  2593→                            const destNivs = await obtenerNivelesPosicion(p.posicionId, p.columnaLetra)
+  2594→                            setTrDestNivelId(destNivs.length > 0 ? destNivs[0].id : '')
+  2595→                          } catch { /* ok */ }
+  2596→                        }}
+  2597→                          className={`px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-all duration-300 border ${trDestPos?.posicionId === p.posicionId
+  2598→                            ? 'bg-sky-500 text-white border-sky-500 shadow-lg shadow-sky-500/20 scale-105'
+  2599→                            : 'bg-slate-800/60 text-slate-400 hover:bg-slate-700/80 hover:text-slate-300 border-slate-700/40 backdrop-blur-sm hover:scale-[1.02]'
+  2600→                            }`}>
+  2601→                          {p.columnaLetra}-{p.subcolumnaCodigo}-{p.posicionNumero}
+  2602→                        </button>
+  2603→                      ))}
+  2604→                    </div>
+  2605→                  </div>
+  2606→                  <div className="flex gap-2 pt-2">
+  2607→                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
+  2608→                    <Button onClick={() => setTrConfirmOpen(true)} disabled={busy || !trDestPos || trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0).length === 0} size="sm" className="h-11 gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20 transition-all duration-300 hover:shadow-sky-500/30 hover:scale-[1.02]">
+  2609→                      <ArrowRightLeft className="h-3.5 w-3.5" /> Confirmar traslado
+  2610→                    </Button>
+  2611→                  </div>
+  2612→                </div>
+  2613→              )}
+  2614→
+  2615→              {/* ── DEVOLUCION MODE ── */}
+  2616→              {mode === 'devolucion' && (
+  2617→                <div className="space-y-4 mt-4">
+  2618→                  {singleNivelMode ? (
+  2619→                    <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-950/20 px-3 py-2.5">
+  2620→                      <Layers className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+  2621→                      <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider shrink-0">Nivel destino:</span>
+  2622→                      <span className="text-xs font-bold text-amber-300">Nivel {niveles.find(n => n.id === selectedNivelId)?.numero ?? '?'}{niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion ? ` (${niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion})` : ''}</span>
+  2623→                      <Lock className="h-3 w-3 text-amber-500/60 ml-auto" />
+  2624→                    </div>
+  2625→                  ) : (
+  2626→                    <NivelSelector
+  2627→                      label="Nivel destino"
+  2628→                      nivelId={selectedNivelId}
+  2629→                      onNivelChange={setSelectedNivelId}
+  2630→                      nivelesList={niveles}
+  2631→                      accentColor="amber"
+  2632→                    />
+  2633→                  )}
+  2634→                  <div className="rounded-xl border border-amber-500/20 bg-amber-950/30 backdrop-blur-sm p-3">
+  2635→                    <p className="text-[10px] font-bold text-amber-400">Registra articulos devueltos a esta posicion.</p>
+  2636→                  </div>
+  2637→                  <p className="text-xs font-bold text-slate-300">Escribe el codigo y se autocompletara:</p>
+  2638→                  {devRows.map((row, i) => (
+  2639→                    <div key={`${devKey}-${i}`} className="rounded-xl border border-amber-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-amber-500/40">
+  2640→                      <div className="grid grid-cols-12 gap-2 items-end">
+  2641→                        {/* Card number badge */}
+  2642→                        <div className="col-span-1 flex items-center justify-center">
+  2643→                          <div className="w-6 h-6 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-[9px] font-bold text-amber-400">
+  2644→                            {i + 1}
+  2645→                          </div>
+  2646→                        </div>
+  2647→                        {/* Codigo */}
+  2648→                        <div className="col-span-11 sm:col-span-4">
+  2649→                          <Label className="text-[10px] text-amber-400 font-semibold">Codigo</Label>
+  2650→                          <div className="relative">
+  2651→                            <input type="text" value={row.codigo} onChange={(e) => handleCodeInput('dev', i, e.target.value)} onBlur={() => setTimeout(() => handleCodeBlur('dev', i), 150)} placeholder="Buscar codigo o descripcion..."
+  2652→                              className={`w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.bloque_id ? 'border-amber-500/40 ring-amber-500/20 shadow-sm shadow-amber-500/10' : 'border-slate-700/50 focus:ring-amber-500/40'}`} autoFocus />
+  2653→                            <AutocompleteDropdown prefix="dev" idx={i} row={row} accentColor="amber" />
+  2654→                          </div>
+  2655→                        </div>
+  2656→
+  2657→                        {/* Descripcion */}
+  2658→                        <div className="col-span-12 sm:col-span-4">
+  2659→                          <Label className="text-[10px] text-slate-500">Descripcion</Label>
+  2660→                          <input type="text" value={row.descripcion} readOnly placeholder="Se autocompleta..."
+  2661→                            className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-3 cursor-default backdrop-blur-sm transition-all duration-300" />
+  2662→                        </div>
+  2663→
+  2664→                        {/* UN */}
+  2665→                        <div className="col-span-4 sm:col-span-3">
+  2666→                          <Label className="text-[10px] text-slate-500">UN</Label>
+  2667→                          <input type="text" value={row.unidad} readOnly placeholder="-"
+  2668→                            className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-2 text-center cursor-default backdrop-blur-sm transition-all duration-300" />
+  2669→                        </div>
+  2670→
+  2671→                        {/* Cantidad */}
+  2672→                        <div className="col-span-8 sm:col-span-4">
+  2673→                          <Label className="text-[10px] text-amber-400 font-semibold">Cantidad</Label>
+  2674→                          <Input type="number" step="any" min="0" value={row.cantidad} onChange={(e) => updateDevCantidad(i, e.target.value)}
+  2675→                            className="h-10 text-xs bg-slate-900/80 border-amber-500/30 text-white focus:ring-amber-500/40 font-bold rounded-xl backdrop-blur-sm transition-all duration-300" placeholder="0" />
+  2676→                        </div>
+  2677→                      </div>
+  2678→
+  2679→                      {/* Fecha de vencimiento */}
+  2680→                      <FechaVencimientoField value={row.fecha_vencimiento} disabled={row.sin_vencimiento} variant="dev" onChange={(val) => updateDevFecha(i, val)} onToggleSin={() => toggleDevSinVencimiento(i)} />
+  2681→
+  2682→                      {devRows.length > 1 && (
+  2683→                        <div className="flex justify-end">
+  2684→                          <button onClick={() => removeDevRow(i)} className="p-1.5 rounded-lg hover:bg-red-900/30 text-slate-600 hover:text-red-400 transition-all duration-300"><Trash2 className="h-3.5 w-3.5" /></button>
+  2685→                        </div>
+  2686→                      )}
+  2687→                    </div>
+  2688→                  ))}
+  2689→                  <button onClick={addDevRow} className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 font-medium transition-all duration-300 hover:pl-1"><Plus className="h-3.5 w-3.5" /> Agregar otro articulo</button>
+  2690→                  <div className="flex gap-2 pt-2">
+  2691→                    <Button onClick={() => setMode('view')} variant="outline" size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl bg-slate-800/40 transition-all duration-300">Cancelar</Button>
+  2692→                    <Button onClick={doDevolucion} disabled={busy} size="sm" className="h-11 gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs rounded-xl shadow-lg shadow-amber-500/20 transition-all duration-300 hover:shadow-amber-500/30 hover:scale-[1.02]">{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />} Registrar devolucion</Button>
+  2693→                  </div>
+  2694→                </div>
+  2695→              )}
+  2696→
+  2697→              {/* ── INC MODE ── */}
+  2698→              {mode === 'inc' && (
+  2699→                <div className="space-y-4 mt-4">
+
+[showing lines 2200-2699 of 3404; use offset=2700 with limit to continue reading]

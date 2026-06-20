@@ -1,0 +1,402 @@
+   900→                                      )}
+   901→                                    </div>
+   902→                                    <p className={`text-xs mt-0.5 truncate ${s.descripcion ? 'text-slate-300' : 'text-slate-500 italic'}`}>{s.descripcion || 'Sin descripción'}</p>
+   903→                                    {/* Fecha de vencimiento con badge de urgencia */}
+   904→                                    <div className="flex items-center gap-2 mt-1 text-[10px] flex-wrap">
+   905→                                      {s.fVencimiento && (
+   906→                                        <span className={`flex items-center gap-1 px-1.5 py-px rounded border ${vencBadge || 'border-slate-600/20 text-slate-500'}`}>
+   907→                                          {dias !== null && dias < 0 && <Flame className="w-2.5 h-2.5" />}
+   908→                                          Venc: {s.fVencimiento}
+   909→                                          {dias !== null && (
+   910→                                            <span className="font-semibold">({dias < 0 ? `${Math.abs(dias)}d vencido` : `${dias}d`})</span>
+   911→                                          )}
+   912→                                        </span>
+   913→                                      )}
+   914→                                      {!s.fVencimiento && <span className="italic text-slate-500">Sin fecha de vencimiento</span>}
+   915→                                      {s.usuarioPrimerNombre && <span className="text-slate-500">Ing: {s.usuarioPrimerNombre}</span>}
+   916→                                    </div>
+   917→                                  </div>
+   918→                                  <div className="text-right flex-shrink-0">
+   919→                                    <p className="font-bold text-emerald-400 text-sm">{s.stock}</p>
+   920→                                    <p className="text-[10px] text-slate-500">{s.un}</p>
+   921→                                  </div>
+   922→                                </div>
+   923→                                {/* Botones de acción */}
+   924→                                <div className="flex items-center gap-1 pt-1">
+   925→                                  <button onClick={() => openSalida(i, true)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Salida total</button>
+   926→                                  <button onClick={() => openSalida(i, false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
+   927→                                  <button onClick={() => openTransferir(i)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
+   928→                                  <button onClick={() => openHistorial()} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-colors text-[10px] font-medium border border-violet-500/15"><Clock className="w-3 h-3" /> Historial</button>
+   929→                                </div>
+   930→                              </div>
+   931→                            </div>
+   932→                          )
+   933→                        })}
+   934→                        {stockDisponible.length === 0 && (
+   935→                          <p className="text-slate-500 text-xs italic py-2">Sin stock disponible.</p>
+   936→                        )}
+   937→                      </div>
+   938→                        </div>
+   939→
+   940→                        {/* ── Stock INC (Insumo No Conforme) ── */}
+   941→                        {stockInc.length > 0 && (
+   942→                          <div>
+   943→                            <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+   944→                              <AlertTriangle className="w-3 h-3 text-rose-400" /> INC — Insumo No Conforme ({stockInc.length})
+   945→                            </p>
+   946→                            <div className="space-y-2">
+   947→                              {stockInc.map((s, i) => (
+   948→                                <div key={`inc-${s.codigo}-${s.fVencimiento || 'sin-fecha'}`} className="rounded-lg border overflow-hidden border-rose-500/25 bg-gradient-to-r from-rose-950/20 to-slate-700/20">
+   949→                                  <div className="p-3 space-y-1.5">
+   950→                                    <div className="flex items-start justify-between gap-2">
+   951→                                      <div className="min-w-0 flex-1">
+   952→                                        <div className="flex items-center gap-2 flex-wrap">
+   953→                                          <span className="font-mono text-rose-400 font-bold text-xs">{s.codigo}</span>
+   954→                                          {s.codigoInc && <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 border border-rose-400/20 px-1.5 py-px rounded">{s.codigoInc}</span>}
+   955→                                        </div>
+   956→                                        <p className={`text-xs mt-0.5 truncate ${s.descripcion ? 'text-slate-300' : 'text-slate-500 italic'}`}>{s.descripcion || 'Sin descripción'}</p>
+   957→                                      </div>
+   958→                                      <div className="text-right flex-shrink-0">
+   959→                                        <p className="font-bold text-rose-300 text-sm">{s.stock}</p>
+   960→                                        <p className="text-[10px] text-slate-500">{s.un}</p>
+   961→                                      </div>
+   962→                                    </div>
+   963→                                    <div className="flex items-center gap-1 pt-1">
+   964→                                      <button onClick={() => openSalida(detail.stock.indexOf(s), true)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Todo</button>
+   965→                                      <button onClick={() => openSalida(detail.stock.indexOf(s), false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
+   966→                                      <button onClick={() => openTransferir(detail.stock.indexOf(s))} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
+   967→                                    </div>
+   968→                                  </div>
+   969→                                </div>
+   970→                              ))}
+   971→                            </div>
+   972→                          </div>
+   973→                        )}
+   974→                      </div>
+   975→                    )
+   976→                  })()}
+   977→                  {/* Botones principales */}
+   978→                  <div className="flex gap-2 pt-1">
+   979→                    <Button onClick={() => openIngreso('ingreso')} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white text-xs"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+   980→                    <Button onClick={() => openInc()} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs"><AlertTriangle className="h-3.5 w-3.5" /> INC</Button>
+   981→                  </div>
+   982→                </>
+   983→              ) : (
+   984→                /* Ubicación vacía */
+   985→                <div className="space-y-3 py-2">
+   986→                  <div className="flex flex-col items-center gap-2 py-4">
+   987→                    <BoxSelect className="w-8 h-8 text-slate-600" />
+   988→                    <p className="text-slate-500 text-sm">Ubicación vacía</p>
+   989→                  </div>
+   990→                  <div className="grid grid-cols-2 gap-2">
+   991→                    <Button onClick={() => openIngreso('ingreso')} size="sm" className="gap-1.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white text-xs"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+   992→                    <Button onClick={() => openInc()} size="sm" className="gap-1.5 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs"><AlertTriangle className="h-3.5 w-3.5" /> INC</Button>
+   993→                  </div>
+   994→                </div>
+   995→              )
+   996→            )}
+   997→
+   998→            {/* ═══════ MODO: INC (Ingreso INC) ═══════ */}
+   999→            {isInc && (
+  1000→              <div className="space-y-3">
+  1001→                <div className="rounded-lg border border-rose-500/25 bg-rose-950/10 p-3 space-y-1.5">
+  1002→                  <div className="flex items-center gap-2">
+  1003→                    <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+  1004→                    <div>
+  1005→                      <p className="text-xs font-bold text-rose-400">Registro INC — Insumo No Conforme</p>
+  1006→                      <p className="text-[10px] text-slate-400">Producto que no cumple con especificaciones de calidad</p>
+  1007→                    </div>
+  1008→                  </div>
+  1009→                </div>
+  1010→                <p className="text-[10px] text-slate-500">Ubicación: <span className="text-sky-400 font-mono">B{detail.bloque} T{detail.torre} P{detail.piso} Pos {detail.posicion}</span></p>
+  1011→
+  1012→                {/* Búsqueda de artículo */}
+  1013→                <div className="space-y-1">
+  1014→                  <Label className="text-[10px] text-slate-400">Buscar artículo (código o descripción) *</Label>
+  1015→                  <CatalogoSearchInput
+  1016→                    onPick={handleIncCatalogoPick}
+  1017→                    value={incCodigo}
+  1018→                    onChange={(val) => setIncCodigo(val)}
+  1019→                  />
+  1020→                </div>
+  1021→
+  1022→                {/* Descripción y UN */}
+  1023→                <div className="grid grid-cols-2 gap-2">
+  1024→                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">Descripción</Label><Input value={incDescripcion} onChange={e => setIncDescripcion(e.target.value)} placeholder="Auto o manual" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+  1025→                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">UN</Label><Input value={incUn} onChange={e => setIncUn(e.target.value)} placeholder="Auto o manual" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+  1026→                </div>
+  1027→
+  1028→                {/* Cantidad */}
+  1029→                <div className="grid grid-cols-2 gap-2">
+  1030→                  <div className="space-y-1">
+  1031→                    <Label className="text-[10px] text-slate-400">Cantidad *</Label>
+  1032→                    <Input type="number" step="any" min="0.001" value={incCantidad} onChange={e => setIncCantidad(e.target.value)} placeholder="0" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" />
+  1033→                  </div>
+  1034→                  <div className="space-y-1">
+  1035→                    <Label className="text-[10px] text-slate-400">Código INC *</Label>
+  1036→                    <Input value={incCodigoInc} onChange={e => setIncCodigoInc(e.target.value)} placeholder="Ej: INC026-120" className="h-8 bg-slate-700/50 border-rose-600/40 text-rose-300 text-xs placeholder:text-rose-500/40 focus:border-rose-400/60" />
+  1037→                  </div>
+  1038→                </div>
+  1039→
+  1040→                {/* Botones */}
+  1041→                <div className="flex gap-2">
+  1042→                  <button onClick={() => setDetailMode('view')} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold border border-slate-600/40 text-slate-400 hover:bg-slate-700/40 hover:text-slate-200 transition-colors">← Cancelar</button>
+  1043→                  <Button onClick={() => doIngresoINC()} disabled={actionBusy} className="flex-1 gap-1.5 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs">
+  1044→                    {actionBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+  1045→                    <AlertTriangle className="h-3.5 w-3.5" /> Registrar INC
+  1046→                  </Button>
+  1047→                </div>
+  1048→              </div>
+  1049→            )}
+  1050→
+  1051→            {/* ═══════ MODO: INGRESO / DEVOLUCIÓN ═══════ */}
+  1052→            {detailMode === 'ingreso' && (
+  1053→              <div className="space-y-3">
+  1054→                {/* Alerta posición ocupada */}
+  1055→                {detail.stock.length > 0 && (
+  1056→                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-1.5">
+  1057→                    <div className="flex items-center gap-2">
+  1058→                      <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+  1059→                      <span className="text-xs font-bold text-amber-400">Posición ocupada</span>
+  1060→                    </div>
+  1061→                    <p className="text-[10px] text-slate-400">Esta ubicación ya tiene {detail.stock.length} artículo(s). Se agregará el nuevo producto en la misma posición.</p>
+  1062→                    <div className="space-y-1 mt-1">
+  1063→                      {detail.stock.map((s, i) => (
+  1064→                        <div key={i} className="flex items-center gap-2 text-[10px] bg-slate-800/40 rounded px-2 py-1">
+  1065→                          <Package className="w-3 h-3 text-slate-500 flex-shrink-0" />
+  1066→                          <span className="font-mono text-sky-400 font-medium">{s.codigo}</span>
+  1067→                          <span className="text-slate-500 truncate flex-1">{s.descripcion || ''}</span>
+  1068→                          <span className="text-emerald-400 font-bold flex-shrink-0">{s.stock} {s.un}</span>
+  1069→                        </div>
+  1070→                      ))}
+  1071→                    </div>
+  1072→                  </div>
+  1073→                )}
+  1074→
+  1075→                {/* Toggle tipo */}
+  1076→                <div className="flex gap-1 p-1 rounded-lg bg-slate-700/40">
+  1077→                  <button onClick={() => setIngTipo('ingreso')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1 ${ingTipo === 'ingreso' ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}><ArrowDownToLine className="w-3.5 h-3.5" /> Ingreso</button>
+  1078→                  <button onClick={() => setIngTipo('devolucion')} className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1 ${ingTipo === 'devolucion' ? 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}><RotateCcw className="w-3.5 h-3.5" /> Devolución</button>
+  1079→                </div>
+  1080→                <p className="text-[10px] text-slate-500">Ubicación: <span className="text-sky-400 font-mono">B{detail.bloque} T{detail.torre} P{detail.piso} Pos {detail.posicion}</span></p>
+  1081→
+  1082→                {/* Búsqueda de artículo por código o descripción */}
+  1083→                <div className="space-y-1">
+  1084→                  <Label className="text-[10px] text-slate-400">Buscar artículo (código o descripción) *</Label>
+  1085→                  <CatalogoSearchInput
+  1086→                    onPick={handleCatalogoPick}
+  1087→                    value={ingCodigo}
+  1088→                    onChange={(val) => {
+  1089→                      setIngCodigo(val)
+  1090→                      // If user clears or types manually, don't auto-clear descripcion/un
+  1091→                      // They might be editing manually
+  1092→                    }}
+  1093→                  />
+  1094→                </div>
+  1095→
+  1096→                {/* Descripción y UN (auto-llenados, pero editables) */}
+  1097→                <div className="grid grid-cols-2 gap-2">
+  1098→                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">Descripción</Label><Input value={ingDescripcion} onChange={e => setIngDescripcion(e.target.value)} placeholder="Auto o manual" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+  1099→                  <div className="space-y-1"><Label className="text-[10px] text-slate-400">UN</Label><Input value={ingUn} onChange={e => setIngUn(e.target.value)} placeholder="KG" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+  1100→                </div>
+  1101→
+  1102→                {/* Cantidad */}
+  1103→                <div className="space-y-1"><Label className="text-[10px] text-slate-400">Cantidad *</Label><Input type="number" step="any" min="0.001" value={ingCantidad} onChange={e => setIngCantidad(e.target.value)} placeholder="0" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" /></div>
+  1104→
+  1105→                {/* Fecha de vencimiento + botón Sin Fecha */}
+  1106→                <div className="space-y-1.5">
+  1107→                  <Label className="text-[10px] text-slate-400">Fecha de vencimiento</Label>
+  1108→                  <div className="flex gap-2">
+  1109→                    <Input
+  1110→                      type="date"
+  1111→                      value={ingSinFecha ? '' : ingFVenc}
+  1112→                      onChange={e => { setIngFVenc(e.target.value); if (e.target.value) setIngSinFecha(false) }}
+  1113→                      disabled={ingSinFecha}
+  1114→                      className="flex-1 h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50 disabled:opacity-40 [color-scheme:dark]"
+  1115→                    />
+  1116→                    <button
+  1117→                      type="button"
+  1118→                      onClick={() => { setIngSinFecha(!ingSinFecha); if (!ingSinFecha) setIngFVenc('') }}
+  1119→                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all border flex-shrink-0 ${
+  1120→                        ingSinFecha
+  1121→                          ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+  1122→                          : 'bg-slate-700/30 border-slate-600/30 text-slate-400 hover:text-slate-300 hover:border-slate-500/40'
+  1123→                      }`}
+  1124→                    >
+  1125→                      <CalendarOff className="w-3.5 h-3.5" />
+  1126→                      {ingSinFecha ? 'Sin fecha' : 'Sin fecha'}
+  1127→                    </button>
+  1128→                  </div>
+  1129→                  {ingSinFecha && <p className="text-[10px] text-purple-400/80 italic">El artículo no tiene fecha de vencimiento</p>}
+  1130→                </div>
+  1131→
+  1132→                {/* Proveedor — solo si es LÁMINA o STRETCH (excepto ETIQUETA LAMINA) */}
+  1133→                {showProveedor && (
+  1134→                  <div className="space-y-1">
+  1135→                    <Label className="text-[10px] text-purple-400 font-semibold">Proveedor *</Label>
+  1136→                    <Select value={ingProveedor} onValueChange={setIngProveedor}>
+  1137→                      <SelectTrigger className="h-8 bg-slate-700/50 border-purple-500/30 text-slate-200 text-xs">
+  1138→                        <SelectValue placeholder="Seleccionar proveedor..." />
+  1139→                      </SelectTrigger>
+  1140→                      <SelectContent className="bg-slate-800 border-slate-600/40">
+  1141→                        {PROVEEDORES_FILM.map((p) => (
+  1142→                          <SelectItem key={p} value={p} className="text-slate-300 focus:bg-slate-700">{p}</SelectItem>
+  1143→                        ))}
+  1144→                      </SelectContent>
+  1145→                    </Select>
+  1146→                  </div>
+  1147→                )}
+  1148→
+  1149→                <div className="flex gap-2 pt-1">
+  1150→                  <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>
+  1151→                  <Button onClick={doIngreso} disabled={actionBusy} size="sm" className={`flex-1 gap-1.5 text-white text-xs ${ingTipo === 'ingreso' ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700' : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700'}`}>{actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : ingTipo === 'ingreso' ? <><ArrowDownToLine className="h-3.5 w-3.5" /> Registrar</> : <><RotateCcw className="h-3.5 w-3.5" /> Registrar</>}</Button>
+  1152→                </div>
+  1153→              </div>
+  1154→            )}
+  1155→
+  1156→            {/* ═══════ MODO: SALIDA ═══════ */}
+  1157→            {detailMode === 'salida' && salItem && (
+  1158→              <div className="space-y-3">
+  1159→                {/* Selector de artículo si hay múltiples */}
+  1160→                {detail.stock.length > 1 && (
+  1161→                  <div className="rounded-lg border border-slate-600/20 bg-slate-700/20 p-2">
+  1162→                    <p className="text-[10px] text-slate-400 mb-1.5 font-medium">Selecciona el artículo a dar salida:</p>
+  1163→                    <div className="space-y-1">
+  1164→                      {detail.stock.map((s, i) => (
+  1165→                        <button key={i} onClick={() => { setSalidaIdx(i); setSalidaCantidad(salidaTotal ? String(s.stock) : ''); }}
+  1166→                          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${i === salidaIdx ? 'bg-red-500/15 border border-red-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>
+  1167→                          <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0" style={{ borderColor: i === salidaIdx ? '#f87171' : '#475569', backgroundColor: i === salidaIdx ? '#ef4444' : 'transparent' }}>
+  1168→                            {i === salidaIdx && <div className="w-2 h-2 rounded-full bg-white" />}
+  1169→                          </div>
+  1170→                          <div className="flex-1 min-w-0">
+  1171→                            <div className="flex items-center gap-2">
+  1172→                              <span className={`font-mono font-bold text-xs ${s.codigoInc ? 'text-rose-400' : 'text-sky-400'}`}>{s.codigo}</span>
+  1173→                              {s.codigoInc && <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 border border-rose-400/20 px-1.5 py-px rounded">INC</span>}
+  1174→                              {s.proveedor && <span className="text-[8px] font-semibold text-purple-400 bg-purple-400/10 px-1.5 py-px rounded">{s.proveedor}</span>}
+  1175→                            </div>
+  1176→                            {s.descripcion && <p className="text-[10px] text-slate-400 truncate">{s.descripcion}</p>}
+  1177→                          </div>
+  1178→                          <span className={`font-bold text-xs flex-shrink-0 ${s.codigoInc ? 'text-rose-300' : 'text-emerald-400'}`}>{s.stock} <span className="text-slate-500 font-normal">{s.un}</span></span>
+  1179→                        </button>
+  1180→                      ))}
+  1181→                    </div>
+  1182→                  </div>
+  1183→                )}
+  1184→
+  1185→                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 space-y-1.5">
+  1186→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Producto:</span><span className="text-slate-200 font-mono">{salItem.codigo}</span></div>
+  1187→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Descripción:</span><span className="text-slate-300 truncate ml-2">{salItem.descripcion || '—'}</span></div>
+  1188→                  {salItem.proveedor && <div className="flex justify-between text-xs"><span className="text-slate-400">Proveedor:</span><span className="text-purple-400 font-medium">{salItem.proveedor}</span></div>}
+  1189→                  {salItem.codigoInc && (
+  1190→                  <div className="rounded-lg border border-rose-500/25 bg-rose-500/5 p-2 flex items-center gap-2">
+  1191→                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+  1192→                    <span className="text-[10px] text-rose-300 font-medium">INC — {salItem.codigoInc} — La salida puede exceder el stock</span>
+  1193→                  </div>
+  1194→                )}
+  1195→                {salItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className={salItem.fVencimiento < new Date().toISOString().slice(0, 10) ? 'text-red-400 font-semibold' : 'text-slate-300'}>{salItem.fVencimiento}</span></div>}
+  1196→                  {!salItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+  1197→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Stock actual:</span><span className={`font-bold ${salItem.codigoInc ? 'text-rose-300' : 'text-emerald-400'}`}>{salItem.stock} {salItem.un}</span></div>
+  1198→                </div>
+  1199→                <div className="space-y-1">
+  1200→                  <Label className="text-[10px] text-slate-400">
+  1201→                    {salidaTotal ? 'Salida total' : 'Cantidad a salir'} *
+  1202→                    {!salidaTotal && !salItem.codigoInc && <span className="text-slate-600 ml-1">(máx: {salItem.stock})</span>}
+  1203→                  </Label>
+  1204→                  <Input type="number" step="any" min="0.001" max={salItem.codigoInc ? undefined : salItem.stock} value={salidaCantidad}
+  1205→                    onChange={e => setSalidaCantidad(e.target.value)}
+  1206→                    disabled={salidaTotal}
+  1207→                    className={`h-8 bg-slate-700/50 text-slate-200 text-xs disabled:opacity-50 ${salItem.codigoInc ? 'border-rose-500/30 focus:border-rose-400/50' : 'border-slate-600/40 focus:border-red-500/50'}`} />
+  1208→                </div>
+  1209→                {!salidaTotal && (
+  1210→                  <p className="text-[10px] text-slate-500">Saldrán {salidaCantidad || '0'} de {salItem.stock} {salItem.un} — quedarán {Math.max(0, salItem.stock - (parseFloat(salidaCantidad) || 0))} {salItem.un}</p>
+  1211→                )}
+  1212→                <div className="flex gap-2 pt-1">
+  1213→                  <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>
+  1214→                  <Button onClick={doSalida} disabled={actionBusy} size="sm" className="flex-1 gap-1.5 bg-gradient-to-r from-red-500 to-red-600 text-white text-xs">
+  1215→                    {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><ArrowUpFromLine className="h-3.5 w-3.5" /> Confirmar salida</>}
+  1216→                  </Button>
+  1217→                </div>
+  1218→              </div>
+  1219→            )}
+  1220→
+  1221→            {/* ═══════ MODO: TRANSFERIR ═══════ */}
+  1222→            {detailMode === 'transferir' && trItem && (
+  1223→              <div className="space-y-3">
+  1224→                {/* Info del producto */}
+  1225→                <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-1.5">
+  1226→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Producto:</span><span className="text-slate-200 font-mono">{trItem.codigo}</span></div>
+  1227→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Descripción:</span><span className="text-slate-300">{trItem.descripcion || '—'}</span></div>
+  1228→                  {trItem.proveedor && <div className="flex justify-between text-xs"><span className="text-slate-400">Proveedor:</span><span className="text-purple-400 font-medium">{trItem.proveedor}</span></div>}
+  1229→                  {trItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className={trItem.fVencimiento < new Date().toISOString().slice(0, 10) ? 'text-red-400 font-semibold' : 'text-slate-300'}>{trItem.fVencimiento}</span></div>}
+  1230→                  {!trItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+  1231→                  <div className="flex justify-between text-xs"><span className="text-slate-400">Stock origen:</span><span className="text-emerald-400 font-bold">{trItem.stock} {trItem.un}</span></div>
+  1232→                </div>
+  1233→
+  1234→                {/* Origen */}
+  1235→                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Origen</p>
+  1236→                <div className="rounded-lg border border-slate-600/20 bg-slate-700/30 px-3 py-2 text-xs text-slate-300 font-mono">
+  1237→                  B{detail.bloque} · T{detail.torre} · P{detail.piso} · Pos {detail.posicion}
+  1238→                </div>
+  1239→
+  1240→                {/* Flecha */}
+  1241→                <div className="flex justify-center"><ArrowRightLeft className="w-4 h-4 text-sky-400" /></div>
+  1242→
+  1243→                {/* Destino */}
+  1244→                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Destino</p>
+  1245→                <div className="grid grid-cols-4 gap-2">
+  1246→                  <div className="space-y-1">
+  1247→                    <Label className="text-[10px] text-slate-500">Bloque</Label>
+  1248→                    <Select value={trDestBloque} onValueChange={v => { setTrDestBloque(v); setTrDestTorre(''); setTrDestPos('') }}>
+  1249→                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+  1250→                      <SelectContent className="bg-slate-800 border-slate-600/40">{BLOQUES.map(b => <SelectItem key={b} value={b} className="text-slate-300 focus:bg-slate-700">{b}</SelectItem>)}</SelectContent>
+  1251→                    </Select>
+  1252→                  </div>
+  1253→                  <div className="space-y-1">
+  1254→                    <Label className="text-[10px] text-slate-500">Torre</Label>
+  1255→                    <Select value={trDestTorre} onValueChange={setTrDestTorre} disabled={!trDestBloque}>
+  1256→                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+  1257→                      <SelectContent className="bg-slate-800 border-slate-600/40">{trTorres.map(t => <SelectItem key={t} value={t} className="text-slate-300 focus:bg-slate-700">{t}</SelectItem>)}</SelectContent>
+  1258→                    </Select>
+  1259→                  </div>
+  1260→                  <div className="space-y-1">
+  1261→                    <Label className="text-[10px] text-slate-500">Piso</Label>
+  1262→                    <Select value={trDestPiso} onValueChange={setTrDestPiso} disabled={!trDestBloque}>
+  1263→                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+  1264→                      <SelectContent className="bg-slate-800 border-slate-600/40">{PISOS.map(p => <SelectItem key={p} value={p} className="text-slate-300 focus:bg-slate-700">{p}</SelectItem>)}</SelectContent>
+  1265→                    </Select>
+  1266→                  </div>
+  1267→                  <div className="space-y-1">
+  1268→                    <Label className="text-[10px] text-slate-500">Pos</Label>
+  1269→                    <Select value={trDestPos} onValueChange={setTrDestPos} disabled={!trDestBloque}>
+  1270→                      <SelectTrigger className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs"><SelectValue placeholder="..." /></SelectTrigger>
+  1271→                      <SelectContent className="bg-slate-800 border-slate-600/40">{trPositions.map(p => <SelectItem key={p} value={p} className="text-slate-300 focus:bg-slate-700">{p}</SelectItem>)}</SelectContent>
+  1272→                    </Select>
+  1273→                  </div>
+  1274→                </div>
+  1275→
+  1276→                {/* Cantidad */}
+  1277→                <div className="space-y-1">
+  1278→                  <Label className="text-[10px] text-slate-400">Cantidad a transferir *</Label>
+  1279→                  <Input type="number" step="any" min="0.001" value={trCantidad} onChange={e => setTrCantidad(e.target.value)}
+  1280→                    className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50" />
+  1281→                </div>
+  1282→
+  1283→                {/* Ajuste automático */}
+  1284→                {trExcede && (
+  1285→                  <div className={`rounded-lg border p-2.5 space-y-1.5 border-amber-500/30 bg-amber-500/5`}>
+  1286→                    <div className="flex items-center gap-1.5">
+  1287→                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+  1288→                      <span className="text-[10px] font-bold text-amber-400">Ajuste positivo</span>
+  1289→                    </div>
+  1290→                    <p className="text-[10px] text-slate-400">
+  1291→                      Se registrará un ingreso de {Math.abs(trDiferencia)} {trItem?.un} en origen para cubrir la diferencia.
+  1292→                    </p>
+  1293→                    <div className="flex gap-2 text-[10px]">
+  1294→                      <span className="text-slate-500">Origen: {trItem.stock} → {trQtyNum} {trItem?.un}</span>
+  1295→                      <span className="text-amber-400">[+{Math.abs(trDiferencia)} ajuste]</span>
+  1296→                    </div>
+  1297→                    <p className="text-[10px] text-slate-500">Destino: +{trQtyNum} {trItem?.un}</p>
+  1298→                  </div>
+  1299→                )}
+
+[showing lines 900-1299 of 1635; use offset=1300 with limit to continue reading]

@@ -1,0 +1,502 @@
+  1700→                        {colPos.map((pos) => {
+  1701→                          const count = pos.stock > 0 ? pos.bloques.length : 0
+  1702→                          const totalQty = pos.bloques.reduce((s, b) => s + b.cantidad, 0)
+  1703→
+  1704→                          let cellBg = 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30'
+  1705→                          if (count > 1) cellBg = 'bg-orange-500 hover:bg-orange-400 shadow-orange-900/30'
+  1706→                          else if (count === 1) cellBg = 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/30'
+  1707→
+  1708→                          return (
+  1709→                            <button
+  1710→                              key={pos.posicionId}
+  1711→                              onClick={() => massMode ? toggleMassSelect(pos.posicionId) : handleClick(pos)}
+  1712→                              className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400 ring-offset-1 ring-offset-slate-900 scale-105' : ''} ${cellBg} relative rounded-xl aspect-square flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95 shadow-lg`}
+  1713→                              title={`Pos ${pos.posicionNumero} — ${count} artículo(s)${totalQty > 0 ? ` · ${totalQty.toFixed(1)}` : ''}`}
+  1714→                            >
+  1715→                              {massMode && (
+  1716→                                <div className={`absolute top-1 right-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${massSelected.has(pos.posicionId) ? 'bg-red-500 border-red-400' : 'bg-slate-800/80 border-slate-500/60'}`}>
+  1717→                                  {massSelected.has(pos.posicionId) && <Check className="h-2 w-2 text-white" />}
+  1718→                                </div>
+  1719→                              )}
+  1720→                              <span className="text-sm sm:text-base font-extrabold leading-none">{pos.posicionNumero}</span>
+  1721→                              {count === 1 && (
+  1722→                                <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{totalQty % 1 === 0 ? totalQty : totalQty.toFixed(1)}</span>
+  1723→                              )}
+  1724→                              {count > 1 && (
+  1725→                                <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{count} arts</span>
+  1726→                              )}
+  1727→                            </button>
+  1728→                          )
+  1729→                        })}
+  1730→                      </div>
+  1731→                      {/* Legend */}
+  1732→                      <div className="flex flex-wrap items-center gap-3 sm:gap-4 mt-4 px-1 text-[10px] sm:text-[11px]">
+  1733→                        <div className="flex items-center gap-1.5">
+  1734→                          <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
+  1735→                          <span className="text-slate-400">Vacío</span>
+  1736→                        </div>
+  1737→                        <div className="flex items-center gap-1.5">
+  1738→                          <div className="w-3.5 h-3.5 rounded bg-blue-600" />
+  1739→                          <span className="text-slate-400">1 artículo</span>
+  1740→                        </div>
+  1741→                        <div className="flex items-center gap-1.5">
+  1742→                          <div className="w-3.5 h-3.5 rounded bg-orange-500" />
+  1743→                          <span className="text-slate-400">2+ artículos</span>
+  1744→                        </div>
+  1745→                      </div>
+  1746→                    </>
+  1747→                  )}
+  1748→                </div>
+  1749→              </div>
+  1750→            )
+  1751→          }
+  1752→
+  1753→          // ── Multi-nivel: tabla POS × Niveles (sin cambios) ──
+  1754→          return (
+  1755→          <div className="space-y-4">
+  1756→          {/* Back button + column title */}
+  1757→          <div className="flex items-center gap-3">
+  1758→            <button
+  1759→              onClick={() => { setSelectedColumn(null); setColDetail([]) }}
+  1760→              className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 hover:bg-slate-700 transition-all duration-300 text-slate-400 hover:text-white"
+  1761→            >
+  1762→              <ChevronDown className="h-4 w-4 rotate-90" />
+  1763→            </button>
+  1764→            <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-white font-extrabold text-sm shadow-lg ${
+  1765→              colDetail.some(p => p.tieneInc) ? 'bg-rose-600 shadow-rose-900/40' : 'bg-blue-600 shadow-blue-900/40'
+  1766→            }`}>
+  1767→              {selectedColumn}
+  1768→            </div>
+  1769→            <div className="flex-1 min-w-0">
+  1770→              <span className="text-sm font-bold text-slate-200">Columna {selectedColumn}</span>
+  1771→              <span className="text-[10px] text-slate-500 ml-2">{colDetail.length} posiciones</span>
+  1772→            </div>
+  1773→          </div>
+  1774→
+  1775→          {/* Table */}
+  1776→          {colDetailLoading ? (
+  1777→            <div className="flex items-center justify-center py-16">
+  1778→              <div className="flex flex-col items-center gap-3">
+  1779→                <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
+  1780→                <span className="text-xs text-slate-400">Cargando columna...</span>
+  1781→              </div>
+  1782→            </div>
+  1783→          ) : colDetail.length === 0 ? (
+  1784→            <div className="rounded-xl border border-slate-700/50 bg-slate-800/60 p-10 text-center">
+  1785→              <p className="text-sm text-slate-400">No hay posiciones en esta columna</p>
+  1786→            </div>
+  1787→          ) : (
+  1788→            <div className="space-y-5">
+  1789→              {/* Agrupar por subcolumna */}
+  1790→              {(() => {
+  1791→                const subGroups = new Map<string, VistaPosicion[]>()
+  1792→                for (const p of colDetail) {
+  1793→                  const key = p.subcolumnaCodigo
+  1794→                  if (!subGroups.has(key)) subGroups.set(key, [])
+  1795→                  subGroups.get(key)!.push(p)
+  1796→                }
+  1797→                const sortedKeys = [...subGroups.keys()].sort()
+  1798→
+  1799→                return sortedKeys.map((subCode) => {
+  1800→                  const subPositions = subGroups.get(subCode)!
+  1801→                  // Sort by position number
+  1802→                  const sorted = [...subPositions].sort((a, b) => a.posicionNumero - b.posicionNumero)
+  1803→                  // Find max number of levels across all positions
+  1804→                  const maxNiveles = Math.max(...sorted.map(p => p.niveles.length), 1)
+  1805→
+  1806→                  return (
+  1807→                    <div key={subCode} className="space-y-2.5">
+  1808→                      {/* Subcolumn header */}
+  1809→                      <div className="flex items-center gap-2 px-1">
+  1810→                        <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg bg-blue-600 flex items-center justify-center text-white font-extrabold text-[9px] sm:text-[10px]">
+  1811→                          {selectedColumn}
+  1812→                        </div>
+  1813→                        <span className="text-xs font-bold text-slate-200">{subCode}</span>
+  1814→                        <span className="text-[10px] text-slate-500">{subPositions.length} pos</span>
+  1815→                      </div>
+  1816→
+  1817→                      {/* Tabla POS × Niveles con botones coloreados */}
+  1818→                      <div className="rounded-xl bg-slate-800 border border-slate-700/50 overflow-hidden">
+  1819→                        {/* Header row */}
+  1820→                        <div className="flex">
+  1821→                          <div className="w-11 sm:w-14 shrink-0 px-1 py-1.5 bg-slate-900/80 border-b border-r border-slate-700/50 flex items-center justify-center">
+  1822→                            <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider">POS</span>
+  1823→                          </div>
+  1824→                          <div className="flex-1 flex border-b border-slate-700/50">
+  1825→                            {Array.from({ length: maxNiveles }, (_, i) => (
+  1826→                              <div key={i} className="flex-1 px-0.5 sm:px-1 py-1.5 text-center border-r border-slate-700/30 last:border-r-0">
+  1827→                                <span className="text-[9px] sm:text-[10px] font-bold text-slate-400">N{i + 1}</span>
+  1828→                              </div>
+  1829→                            ))}
+  1830→                          </div>
+  1831→                        </div>
+  1832→
+  1833→                        {/* Position rows */}
+  1834→                        <div className="divide-y divide-slate-700/30">
+  1835→                          {sorted.map((pos) => {
+  1836→                            const totalArticulos = pos.niveles.reduce((s, n) => s + n.bloques.length, 0)
+  1837→                            const hasInc = pos.tieneInc
+  1838→
+  1839→                            // Color for POS cell
+  1840→                            let posColor = 'bg-emerald-600 hover:bg-emerald-500'
+  1841→                            if (hasInc) posColor = 'bg-rose-600 hover:bg-rose-500'
+  1842→                            else if (totalArticulos > 1) posColor = 'bg-orange-500 hover:bg-orange-400'
+  1843→                            else if (totalArticulos === 1) posColor = 'bg-blue-600 hover:bg-blue-500'
+  1844→
+  1845→                            const posData = posiciones.find(p => p.posicionId === pos.posicionId)
+  1846→
+  1847→                            return (
+  1848→                              <div key={pos.posicionId} className="flex">
+  1849→                                {/* POS button */}
+  1850→                                <div className="w-11 sm:w-14 shrink-0 p-0.5 border-r border-slate-700/30">
+  1851→                                  <button
+  1852→                                    onClick={() => massMode ? toggleMassSelect(pos.posicionId) : (posData ? handleClick(posData) : undefined)}
+  1853→                                    className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400 ring-offset-1 ring-offset-slate-900 scale-105' : ''} ${posColor} w-full h-9 sm:h-10 rounded-md flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95 relative`}
+  1854→                                    title={`Pos ${pos.posicionNumero} — ${totalArticulos} artículo(s)`}
+  1855→                                  >
+  1856→                                    {massMode && (
+  1857→                                      <div className={`absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${massSelected.has(pos.posicionId) ? 'bg-red-500 border-red-400' : 'bg-slate-800/80 border-slate-500/60'}`}>
+  1858→                                        {massSelected.has(pos.posicionId) && <Check className="h-2 w-2 text-white" />}
+  1859→                                      </div>
+  1860→                                    )}
+  1861→                                    <span className="text-[11px] sm:text-xs font-extrabold leading-none">P{pos.posicionNumero}</span>
+  1862→                                    {totalArticulos > 0 && (
+  1863→                                      <span className="text-[8px] font-bold mt-px opacity-90 leading-none">{totalArticulos}</span>
+  1864→                                    )}
+  1865→                                  </button>
+  1866→                                </div>
+  1867→
+  1868→                                {/* Level cells */}
+  1869→                                <div className="flex-1 flex">
+  1870→                                  {Array.from({ length: maxNiveles }, (_, i) => {
+  1871→                                    const nivel = pos.niveles.find(n => n.nivelNumero === i + 1)
+  1872→                                    const bloques = nivel?.bloques ?? []
+  1873→                                    const count = bloques.length
+  1874→                                    const nivelHasInc = bloques.some(b => b.codigo_inc)
+  1875→
+  1876→                                    let cellColor = 'bg-slate-700/40 hover:bg-slate-700/60 text-slate-500' // empty
+  1877→                                    if (nivelHasInc) cellColor = 'bg-rose-600/90 hover:bg-rose-500 text-white'
+  1878→                                    else if (count > 1) cellColor = 'bg-orange-500/90 hover:bg-orange-400 text-white'
+  1879→                                    else if (count === 1) cellColor = 'bg-blue-600/90 hover:bg-blue-500 text-white'
+  1880→
+  1881→                                    return (
+  1882→                                      <div key={i} className="flex-1 p-0.5 border-r border-slate-700/20 last:border-r-0">
+  1883→                                        <button
+  1884→                                          onClick={() => massMode ? toggleMassSelect(pos.posicionId) : (posData ? handleClick(posData, nivel?.nivelId) : undefined)}
+  1885→                                          className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400/70 ring-offset-1 ring-offset-slate-900' : ''} ${cellColor} w-full h-9 sm:h-10 rounded-md flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95`}
+  1886→                                          title={count > 0
+  1887→                                            ? bloques.map(b => `${b.bloque_codigo} (${b.cantidad} ${b.bloque_unidad})${b.codigo_inc ? ' INC' : ''}`).join('\n')
+  1888→                                            : 'Vacío'}
+  1889→                                        >
+  1890→                                          {count > 0 ? (
+  1891→                                            <span className="text-[10px] sm:text-[11px] font-bold leading-none">{count}</span>
+  1892→                                          ) : (
+  1893→                                            <span className="text-[10px] font-bold opacity-30">—</span>
+  1894→                                          )}
+  1895→                                        </button>
+  1896→                                      </div>
+  1897→                                    )
+  1898→                                  })}
+  1899→                                </div>
+  1900→                              </div>
+  1901→                            )
+  1902→                          })}
+  1903→                        </div>
+  1904→                      </div>
+  1905→                    </div>
+  1906→                  )
+  1907→                })
+  1908→              })()}
+  1909→              {/* Legend */}
+  1910→              <div className="flex flex-wrap items-center gap-3 sm:gap-4 px-1 text-[10px] sm:text-[11px]">
+  1911→                <div className="flex items-center gap-1.5">
+  1912→                  <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
+  1913→                  <span className="text-slate-400">Vacío</span>
+  1914→                </div>
+  1915→                <div className="flex items-center gap-1.5">
+  1916→                  <div className="w-3.5 h-3.5 rounded bg-blue-600" />
+  1917→                  <span className="text-slate-400">1 artículo</span>
+  1918→                </div>
+  1919→                <div className="flex items-center gap-1.5">
+  1920→                  <div className="w-3.5 h-3.5 rounded bg-orange-500" />
+  1921→                  <span className="text-slate-400">2+ artículos</span>
+  1922→                </div>
+  1923→                <div className="flex items-center gap-1.5">
+  1924→                  <div className="w-3.5 h-3.5 rounded bg-rose-600" />
+  1925→                  <span className="text-slate-400">INC</span>
+  1926→                </div>
+  1927→              </div>
+  1928→            </div>
+  1929→          )}
+  1930→        </div>
+  1931→          )
+  1932→        })()
+  1933→      )}
+  1934→
+  1935→      {/* ═══ MASS SALIDA FLOATING BAR ═══ */}
+  1936→      {massMode && massSelected.size > 0 && (
+  1937→        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 py-2.5 sm:py-3 rounded-2xl bg-slate-900/95 border border-red-500/40 shadow-2xl shadow-red-500/20 backdrop-blur-xl animate-[scale-in_0.2s_ease-out] max-w-[calc(100vw-1.5rem)]" style={{ paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom, 0.625rem))' }}>
+  1938→          <div className="flex items-center gap-1.5 sm:gap-2">
+  1939→            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-red-500/20 flex items-center justify-center">
+  1940→              <span className="font-extrabold text-red-400 text-xs sm:text-sm">{massSelected.size}</span>
+  1941→            </div>
+  1942→            <span className="text-[10px] sm:text-xs font-bold text-slate-300 hidden sm:inline">posicion(es) seleccionada(s)</span>
+  1943→          </div>
+  1944→          <Button
+  1945→            onClick={openMassDialog}
+  1946→            disabled={massSelected.size === 0}
+  1947→            size="sm"
+  1948→            className="gap-1 sm:gap-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] sm:text-xs rounded-xl shadow-lg shadow-red-500/30 transition-all duration-300 hover:scale-[1.03] shrink-0"
+  1949→          >
+  1950→            <ArrowUpFromLine className="h-3 w-3 sm:h-3.5 sm:w-3.5" /> <span className="hidden xs:inline">Procesar</span> salida
+  1951→          </Button>
+  1952→        </div>
+  1953→      )}
+  1954→
+  1955→      {/* Banner modo masa activo */}
+  1956→      {massMode && massSelected.size === 0 && (
+  1957→        <div className="flex items-center justify-center gap-2 py-3 rounded-xl bg-red-950/20 border border-red-500/20">
+  1958→          <span className="text-xs text-red-400 font-semibold">Modo salida en masa activado — toca las posiciones que quieres seleccionar</span>
+  1959→          <button onClick={toggleMassMode} className="text-[10px] text-slate-400 hover:text-slate-300 underline">Cancelar</button>
+  1960→        </div>
+  1961→      )}
+  1962→
+  1963→      {/* Exportar */}
+  1964→      <div className="flex justify-end">
+  1965→        <Button onClick={handleExport} disabled={busyExport} variant="outline" size="sm"
+  1966→          className="gap-2 border-slate-700/50 text-slate-400 hover:text-sky-400 hover:border-sky-500/50 hover:bg-sky-500/5 text-xs bg-slate-800/60 backdrop-blur-sm rounded-xl transition-all duration-300 hover:shadow-lg hover:shadow-sky-500/10 hover:scale-[1.02]">
+  1967→          {busyExport ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Exportar Excel
+  1968→        </Button>
+  1969→      </div>
+  1970→
+  1971→      {/* ═══ DETAIL DIALOG — Frosted glass + breadcrumb + animated badge ═══ */}
+  1972→      <Dialog open={!!detail} onOpenChange={(open) => {
+  1973→        if (!open) {
+  1974→          setDetail(null); setMode('view')
+  1975→          setIngRows([{ ...EMPTY_ROW }]); setIngresoKey(k => k + 1)
+  1976→          setDevRows([{ ...EMPTY_ROW }]); setDevKey(k => k + 1)
+  1977→        }
+  1978→      }}>
+  1979→        <DialogContent
+  1980→          className="max-w-[calc(100vw-1rem)] sm:max-w-xl rounded-2xl max-h-[85vh] flex flex-col overflow-hidden overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+  1981→          style={{
+  1982→            background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.88))',
+  1983→            backdropFilter: 'blur(24px) saturate(1.2)',
+  1984→            border: '1px solid rgba(71, 85, 105, 0.25)',
+  1985→          }}
+  1986→        >
+  1987→          {/* Animated gradient border accent at top */}
+  1988→          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-sky-400 to-transparent opacity-60" />
+  1989→          {/* Subtle inner glow */}
+  1990→          <div className="absolute top-0 left-0 right-0 h-20 bg-gradient-to-b from-white/[0.03] to-transparent pointer-events-none rounded-t-2xl" />
+  1991→
+  1992→          <div className="p-4 sm:p-6 relative flex-1 min-h-0 overflow-y-auto overscroll-contain">
+  1993→            <DialogHeader>
+  1994→              <DialogTitle className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
+  1995→                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-400 to-cyan-500 flex items-center justify-center text-white font-extrabold text-xs shadow-lg shadow-sky-500/25">
+  1996→                  {detail?.columnaLetra}
+  1997→                </div>
+  1998→                {/* Position breadcrumb */}
+  1999→                <nav className="flex items-center gap-1 text-xs">
+  2000→                  <span className="text-slate-300 font-medium">{detail?.columnaLetra}</span>
+  2001→                  <ChevronRight className="h-3 w-3 text-slate-400" />
+  2002→                  <span className="text-slate-300 font-medium">{detail?.subcolumnaCodigo}</span>
+  2003→                  <ChevronRight className="h-3 w-3 text-slate-400" />
+  2004→                  <span className="text-sky-300 font-bold">Pos {detail?.posicionNumero}</span>
+  2005→                  <span className="text-slate-500 text-[10px]">({niveles.length} nivel{niveles.length !== 1 ? 'es' : ''})</span>
+  2006→                </nav>
+  2007→                {/* Animated type badge */}
+  2008→                {(!mode || mode === 'view') ? null : (
+  2009→                  <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full border animate-[scale-in_0.2s_ease-out] ${
+  2010→                    mode === 'ingreso' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 shadow-sm shadow-emerald-500/10' :
+  2011→                    mode === 'salida' ? 'bg-red-500/15 text-red-400 border-red-500/30 shadow-sm shadow-red-500/10' :
+  2012→                    mode === 'traslado' ? 'bg-sky-500/15 text-sky-400 border-sky-500/30 shadow-sm shadow-sky-500/10' :
+  2013→                    mode === 'inc' ? 'bg-rose-500/15 text-rose-400 border-rose-500/30 shadow-sm shadow-rose-500/10' :
+  2014→                    'bg-amber-500/15 text-amber-400 border-amber-500/30 shadow-sm shadow-amber-500/10'
+  2015→                  }`}>
+  2016→                    {mode === 'ingreso' ? '↓ Ingreso' : mode === 'salida' ? '↑ Salida' : mode === 'traslado' ? '⇄ Traslado' : mode === 'inc' ? '⚠ INC' : '↺ Devolucion'}
+  2017→                  </span>
+  2018→                )}
+  2019→              </DialogTitle>
+  2020→            </DialogHeader>
+  2021→
+  2022→            {detail && (<>
+  2023→              {/* ── VIEW MODE ── */}
+  2024→              {mode === 'view' && (() => {
+  2025→                const isAllView = viewNivelTab === 'all'
+  2026→                const displayStock = isAllView
+  2027→                  ? detail.stock
+  2028→                  : (stockByNivel[viewNivelTab] ?? [])
+  2029→                const selectedNivelLabel = niveles.find((n) => n.id === viewNivelTab)
+  2030→                const hasAnyStock = isAllView
+  2031→                  ? niveles.some(n => (stockByNivel[n.id] ?? []).length > 0)
+  2032→                  : displayStock.length > 0
+  2033→                return hasAnyStock ? (
+  2034→                  <div className="space-y-2.5 mt-4">
+  2035→                    {/* Level tabs — only show if position has multiple levels AND not in singleNivelMode */}
+  2036→                    {!singleNivelMode && niveles.length > 1 && (
+  2037→                      <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm scrollbar-none">
+  2038→                        <button
+  2039→                          onClick={() => setViewNivelTab('all')}
+  2040→                          className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
+  2041→                            isAllView
+  2042→                              ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white shadow-lg shadow-sky-500/25'
+  2043→                              : 'text-slate-400 hover:text-slate-300'
+  2044→                          }`}
+  2045→                        >
+  2046→                          Todos
+  2047→                        </button>
+  2048→                        {niveles.map((n) => {
+  2049→                          const count = (stockByNivel[n.id] ?? []).length
+  2050→                          return (
+  2051→                            <button
+  2052→                              key={n.id}
+  2053→                              onClick={() => setViewNivelTab(n.id)}
+  2054→                              className={`relative z-10 shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all duration-300 ${
+  2055→                                viewNivelTab === n.id
+  2056→                                  ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white shadow-lg shadow-sky-500/25'
+  2057→                                  : 'text-slate-400 hover:text-slate-300'
+  2058→                              }`}
+  2059→                            >
+  2060→                              Nivel {n.numero} ({count})
+  2061→                            </button>
+  2062→                          )
+  2063→                        })}
+  2064→                      </div>
+  2065→                    )}
+  2066→                    {/* Level label when viewing a specific level */}
+  2067→                    {viewNivelTab !== 'all' && selectedNivelLabel && (
+  2068→                      <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-sky-950/30 border border-sky-500/20">
+  2069→                        <Layers className="h-3.5 w-3.5 text-sky-400" />
+  2070→                        <span className="text-[10px] font-bold text-sky-300">
+  2071→                          Nivel {selectedNivelLabel.numero}{selectedNivelLabel.codigo_ubicacion ? ` — ${selectedNivelLabel.codigo_ubicacion}` : ''}
+  2072→                        </span>
+  2073→                        <span className="text-[9px] text-slate-500">· {(stockByNivel[viewNivelTab] ?? []).reduce((s, it) => s + it.cantidad, 0).toFixed(2)} total</span>
+  2074→                      </div>
+  2075→                    )}
+  2076→                    {/* "Todos" view: grouped by nivel */}
+  2077→                    {isAllView && (
+  2078→                      <>
+  2079→                        {niveles.map((niv) => {
+  2080→                          const nivStock = stockByNivel[niv.id] ?? []
+  2081→                          if (nivStock.length === 0) return null
+  2082→                          const nivTotal = nivStock.reduce((s, it) => s + it.cantidad, 0)
+  2083→                          return (
+  2084→                            <div key={niv.id} className="space-y-1.5">
+  2085→                              <div className="flex items-center gap-2 px-2 py-1.5">
+  2086→                                <div className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+  2087→                                <span className="text-[10px] font-bold text-sky-300 uppercase tracking-wider">
+  2088→                                  Nivel {niv.numero}{niv.codigo_ubicacion ? ` — ${niv.codigo_ubicacion}` : ''}
+  2089→                                </span>
+  2090→                                <span className="text-[9px] text-slate-500">· {nivStock.length} articulo(s) · {nivTotal.toFixed(2)} total</span>
+  2091→                              </div>
+  2092→                              {nivStock.map((s, idx) => (
+  2093→                                <div key={`${s.bloque_id}-${s.fecha_vencimiento}-${idx}`}
+  2094→                                  className="rounded-xl border border-slate-700/40 bg-slate-800/50 backdrop-blur-sm p-3.5 hover:border-slate-600/50 transition-all duration-300 hover:shadow-lg group/item">
+  2095→                                  <div className="flex items-start justify-between">
+  2096→                                    <div className="flex items-start gap-3 flex-1 min-w-0">
+  2097→                                      <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-slate-700/60 flex items-center justify-center text-[9px] font-bold text-slate-300 border border-slate-600/40">
+  2098→                                        {idx + 1}
+  2099→                                      </div>
+  2100→                                      <div className="min-w-0 flex-1">
+  2101→                                        <div className="flex items-center gap-2">
+  2102→                                          <span className="font-mono text-sky-300 font-bold text-sm">{s.bloque_codigo}</span>
+  2103→                                          {s.fecha_vencimiento && (
+  2104→                                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/20 flex items-center gap-0.5">
+  2105→                                              <Calendar className="h-2.5 w-2.5" /> {s.fecha_vencimiento}
+  2106→                                            </span>
+  2107→                                          )}
+  2108→                                          {!s.fecha_vencimiento && (
+  2109→                                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-700/40 text-slate-400 border border-slate-600/30 flex items-center gap-0.5">
+  2110→                                              <CalendarOff className="h-2.5 w-2.5" /> Sin fecha
+  2111→                                            </span>
+  2112→                                          )}
+  2113→                                        </div>
+  2114→                                        <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
+  2115→                                      </div>
+  2116→                                    </div>
+  2117→                                    <div className="text-right flex-shrink-0 ml-3">
+  2118→                                      <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
+  2119→                                      <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
+  2120→                                    </div>
+  2121→                                  </div>
+  2122→                                </div>
+  2123→                              ))}
+  2124→                            </div>
+  2125→                          )
+  2126→                        })}
+  2127→                      </>
+  2128→                    )}
+  2129→                    {/* Single level view (not "all") */}
+  2130→                    {!isAllView && displayStock.map((s, idx) => (
+  2131→                      <div key={`${s.bloque_id}-${s.fecha_vencimiento}-${idx}`}
+  2132→                        className="rounded-xl border border-slate-700/40 bg-slate-800/50 backdrop-blur-sm p-3.5 hover:border-slate-600/50 transition-all duration-300 hover:shadow-lg group/item">
+  2133→                        <div className="flex items-start justify-between">
+  2134→                          <div className="flex items-start gap-3 flex-1 min-w-0">
+  2135→                            <div className="flex-shrink-0 w-6 h-6 rounded-lg bg-slate-700/60 flex items-center justify-center text-[9px] font-bold text-slate-300 border border-slate-600/40">
+  2136→                              {idx + 1}
+  2137→                            </div>
+  2138→                            <div className="min-w-0 flex-1">
+  2139→                              <div className="flex items-center gap-2">
+  2140→                                <span className="font-mono text-sky-300 font-bold text-sm">{s.bloque_codigo}</span>
+  2141→                                {s.fecha_vencimiento && (
+  2142→                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/20 flex items-center gap-0.5">
+  2143→                                    <Calendar className="h-2.5 w-2.5" /> {s.fecha_vencimiento}
+  2144→                                  </span>
+  2145→                                )}
+  2146→                                {!s.fecha_vencimiento && (
+  2147→                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-700/40 text-slate-400 border border-slate-600/30 flex items-center gap-0.5">
+  2148→                                    <CalendarOff className="h-2.5 w-2.5" /> Sin fecha
+  2149→                                  </span>
+  2150→                                )}
+  2151→                              </div>
+  2152→                              <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
+  2153→                            </div>
+  2154→                          </div>
+  2155→                          <div className="text-right flex-shrink-0 ml-3">
+  2156→                            <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
+  2157→                            <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
+  2158→                          </div>
+  2159→                        </div>
+  2160→                      </div>
+  2161→                    ))}
+  2162→                    <div className="grid grid-cols-2 gap-2 pt-3">
+  2163→                      <Button onClick={openTraslado} size="sm" className="gap-1.5 bg-sky-600/90 hover:bg-sky-600 text-white text-xs rounded-xl shadow-lg shadow-sky-500/15 transition-all duration-300 hover:shadow-sky-500/25 hover:scale-[1.02]"><ArrowRightLeft className="h-3.5 w-3.5" /> Traslado</Button>
+  2164→                      <Button onClick={openDevolucion} size="sm" className="gap-1.5 bg-amber-600/90 hover:bg-amber-600 text-white text-xs rounded-xl shadow-lg shadow-amber-500/15 transition-all duration-300 hover:shadow-amber-500/25 hover:scale-[1.02]"><RotateCcw className="h-3.5 w-3.5" /> Devolucion</Button>
+  2165→                      <Button onClick={openHistorial} size="sm" className="gap-1.5 bg-violet-600/90 hover:bg-violet-600 text-white text-xs rounded-xl shadow-lg shadow-violet-500/15 transition-all duration-300 hover:shadow-violet-500/25 hover:scale-[1.02]"><Clock className="h-3.5 w-3.5" /> Historial</Button>
+  2166→                      <Button onClick={openInc} size="sm" className="gap-1.5 bg-rose-600/90 hover:bg-rose-600 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300 hover:shadow-rose-500/25 hover:scale-[1.02]"><AlertTriangle className="h-3.5 w-3.5" /> INC</Button>
+  2167→                      <Button onClick={openIngreso} size="sm" className="gap-1.5 col-span-2 bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/15 transition-all duration-300 hover:shadow-emerald-500/25 hover:scale-[1.02] py-3"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+  2168→                      <Button onClick={openSalida} size="sm" className="gap-1.5 col-span-2 bg-red-600/90 hover:bg-red-600 text-white text-xs rounded-xl shadow-lg shadow-red-500/15 transition-all duration-300 hover:shadow-red-500/25 hover:scale-[1.02] py-3"><ArrowUpFromLine className="h-3.5 w-3.5" /> Salida</Button>
+  2169→                    </div>
+  2170→                  </div>
+  2171→                ) : (
+  2172→                  <div className="space-y-4 py-6 text-center">
+  2173→                    <div className="w-16 h-16 rounded-2xl bg-slate-800/60 border border-slate-700/30 flex items-center justify-center mx-auto animate-pulse">
+  2174→                      <BoxSelect className="h-8 w-8 text-slate-600" />
+  2175→                    </div>
+  2176→                    <div>
+  2177→                      <p className="text-slate-400 font-semibold">{viewNivelTab !== 'all' ? 'Nivel sin articulos' : 'Posicion vacia'}</p>
+  2178→                      <p className="text-xs text-slate-500 mt-1">{viewNivelTab !== 'all' ? 'Este nivel no tiene articulos registrados' : 'Esta posicion no tiene articulos registrados'}</p>
+  2179→                    </div>
+  2180→                    <div className="grid grid-cols-2 gap-2 max-w-xs mx-auto">
+  2181→                      <Button onClick={openIngreso} size="sm" className="gap-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white text-xs rounded-xl shadow-lg shadow-emerald-500/15 transition-all duration-300 hover:scale-[1.02]"><ArrowDownToLine className="h-3.5 w-3.5" /> Ingreso</Button>
+  2182→                      <Button onClick={openDevolucion} size="sm" className="gap-1.5 bg-amber-600/90 hover:bg-amber-600 text-white text-xs rounded-xl shadow-lg shadow-amber-500/15 transition-all duration-300 hover:scale-[1.02]"><RotateCcw className="h-3.5 w-3.5" /> Devolucion</Button>
+  2183→                      <Button onClick={openInc} size="sm" className="gap-1.5 col-span-2 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300 hover:shadow-rose-500/25 hover:scale-[1.02]"><AlertTriangle className="h-3.5 w-3.5" /> INC — Insumo No Conforme</Button>
+  2184→                    </div>
+  2185→                  </div>
+  2186→                )
+  2187→              })()}
+  2188→
+  2189→              {/* ── INGRESO MODE ── */}
+  2190→              {mode === 'ingreso' && (
+  2191→                <div className="space-y-4 mt-4">
+  2192→                  {singleNivelMode ? (
+  2193→                    <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/20 px-3 py-2.5">
+  2194→                      <Layers className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+  2195→                      <span className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider shrink-0">Nivel destino:</span>
+  2196→                      <span className="text-xs font-bold text-emerald-300">Nivel {niveles.find(n => n.id === selectedNivelId)?.numero ?? '?'}{niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion ? ` (${niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion})` : ''}</span>
+  2197→                      <Lock className="h-3 w-3 text-emerald-500/60 ml-auto" />
+  2198→                    </div>
+  2199→                  ) : (
+
+[showing lines 1700-2199 of 3404; use offset=2200 with limit to continue reading]

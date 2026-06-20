@@ -1,0 +1,502 @@
+  2700→                  <div className="rounded-xl border border-rose-500/25 bg-rose-950/10 p-3 space-y-1.5">
+  2701→                    <div className="flex items-center gap-2">
+  2702→                      <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+  2703→                      <div>
+  2704→                        <p className="text-xs font-bold text-rose-400">Registro INC — Insumo No Conforme</p>
+  2705→                        <p className="text-[10px] text-slate-400">Producto que no cumple con especificaciones de calidad</p>
+  2706→                      </div>
+  2707→                    </div>
+  2708→                  </div>
+  2709→                  <p className="text-xs text-slate-400">Posicion: <span className="text-sky-300 font-mono">{detail?.columnaLetra} / {detail?.subcolumnaCodigo} / Pos {detail?.posicionNumero}</span></p>
+  2710→
+  2711→                  {singleNivelMode ? (
+  2712→                    <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-950/20 px-3 py-2.5">
+  2713→                      <Layers className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+  2714→                      <span className="text-[10px] font-semibold text-rose-400 uppercase tracking-wider shrink-0">Nivel destino:</span>
+  2715→                      <span className="text-xs font-bold text-rose-300">Nivel {niveles.find(n => n.id === selectedNivelId)?.numero ?? '?'}{niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion ? ` (${niveles.find(n => n.id === selectedNivelId)?.codigo_ubicacion})` : ''}</span>
+  2716→                      <Lock className="h-3 w-3 text-rose-500/60 ml-auto" />
+  2717→                    </div>
+  2718→                  ) : (
+  2719→                    <NivelSelector
+  2720→                      label="Nivel destino"
+  2721→                      nivelId={selectedNivelId}
+  2722→                      onNivelChange={setSelectedNivelId}
+  2723→                      nivelesList={niveles}
+  2724→                      accentColor="red"
+  2725→                    />
+  2726→                  )}
+  2727→
+  2728→                  {/* Codigo */}
+  2729→                  <div className="rounded-xl border border-rose-500/15 bg-slate-800/40 backdrop-blur-sm p-4 space-y-3 border-l-2 border-l-rose-500/40">
+  2730→                    <div className="grid grid-cols-12 gap-2 items-end">
+  2731→                      <div className="col-span-12 sm:col-span-4">
+  2732→                        <Label className="text-[10px] text-rose-400 font-semibold">Codigo *</Label>
+  2733→                        <div className="relative">
+  2734→                          <input
+  2735→                            type="text"
+  2736→                            value={incCodigo}
+  2737→                            onChange={(e) => setIncCodigo(e.target.value)}
+  2738→                            onBlur={() => setTimeout(async () => {
+  2739→                              if (justSelectedRef.current) { justSelectedRef.current = false; return }
+  2740→                              if (!incCodigo.trim() || incDescripcion) return
+  2741→                              const upper = incCodigo.trim().toUpperCase()
+  2742→                              const bloque = await buscarBloquePorCodigo(upper)
+  2743→                              if (bloque) {
+  2744→                                setIncDescripcion(bloque.descripcion)
+  2745→                                setIncUn(bloque.unidad)
+  2746→                              }
+  2747→                            }, 150)}
+  2748→                            placeholder="Buscar codigo..."
+  2749→                            className="w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 border-slate-700/50 focus:ring-rose-500/40 backdrop-blur-sm transition-all duration-300"
+  2750→                          />
+  2751→                          {/* Autocomplete dropdown for INC */}
+  2752→                          {!incDescripcion && incCodigo.trim().length > 0 && (
+  2753→                            <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-700/80 bg-slate-900/95 backdrop-blur-sm shadow-2xl shadow-black/40">
+  2754→                              {getFilteredIncCatalogo().slice(0, 10).map((b) => (
+  2755→                                <button
+  2756→                                  key={b.id}
+  2757→                                  onClick={() => handleIncCatalogoPick(b)}
+  2758→                                  className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/80 text-slate-300 border-b border-slate-800/50 last:border-0 transition-all duration-200"
+  2759→                                >
+  2760→                                  <span className="font-mono text-rose-400">{b.codigo}</span>
+  2761→                                  <span className="text-slate-500 ml-1.5">— {b.descripcion || b.unidad}</span>
+  2762→                                </button>
+  2763→                              ))}
+  2764→                            </div>
+  2765→                          )}
+  2766→                        </div>
+  2767→                      </div>
+  2768→                      <div className="col-span-6 sm:col-span-4">
+  2769→                        <Label className="text-[10px] text-slate-500">Descripcion</Label>
+  2770→                        <input type="text" value={incDescripcion} readOnly placeholder="Auto o manual"
+  2771→                          className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-3 cursor-default backdrop-blur-sm transition-all duration-300" />
+  2772→                      </div>
+  2773→                      <div className="col-span-6 sm:col-span-4">
+  2774→                        <Label className="text-[10px] text-slate-500">UN</Label>
+  2775→                        <input type="text" value={incUn} readOnly placeholder="Auto o manual"
+  2776→                          className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-3 cursor-default backdrop-blur-sm transition-all duration-300" />
+  2777→                      </div>
+  2778→                    </div>
+  2779→
+  2780→                    <div className="grid grid-cols-12 gap-2 items-end">
+  2781→                      <div className="col-span-6 sm:col-span-4">
+  2782→                        <Label className="text-[10px] text-rose-400 font-semibold">Cantidad *</Label>
+  2783→                        <input type="number" step="any" min="0.001" value={incCantidad} onChange={(e) => setIncCantidad(e.target.value)} placeholder="0"
+  2784→                          className="w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-white placeholder-slate-600 px-3 font-mono focus:outline-none focus:ring-2 border-rose-500/40 focus:ring-rose-500/40 backdrop-blur-sm transition-all duration-300" />
+  2785→                      </div>
+  2786→                      <div className="col-span-6 sm:col-span-4">
+  2787→                        <Label className="text-[10px] text-rose-400 font-semibold">Codigo INC *</Label>
+  2788→                        <input type="text" value={incCodigoInc} onChange={(e) => setIncCodigoInc(e.target.value)} placeholder="Ej: INC026-120"
+  2789→                          className="w-full h-10 rounded-xl border text-xs bg-slate-900/80 text-rose-300 placeholder:text-rose-500/40 px-3 font-mono focus:outline-none focus:ring-2 border-rose-500/40 focus:ring-rose-500/40 backdrop-blur-sm transition-all duration-300" />
+  2790→                      </div>
+  2791→                      <div className="col-span-12 sm:col-span-4">
+  2792→                        <FechaVencimientoField
+  2793→                          value={incFechaVencimiento}
+  2794→                          disabled={incSinVencimiento}
+  2795→                          variant="inc"
+  2796→                          onChange={(val) => setIncFechaVencimiento(val)}
+  2797→                          onToggleSin={() => setIncSinVencimiento(!incSinVencimiento)}
+  2798→                        />
+  2799→                      </div>
+  2800→                    </div>
+  2801→                  </div>
+  2802→
+  2803→                  <div className="flex gap-2">
+  2804→                    <button onClick={() => setMode('view')} className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl text-xs font-bold border border-slate-700/50 text-slate-400 hover:bg-slate-700/40 hover:text-slate-200 transition-all duration-300">← Cancelar</button>
+  2805→                    <Button onClick={() => doIngresoINC()} disabled={busy} className="flex-1 gap-1.5 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white text-xs rounded-xl shadow-lg shadow-rose-500/15 transition-all duration-300">
+  2806→                      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+  2807→                      Registrar INC
+  2808→                    </Button>
+  2809→                  </div>
+  2810→                </div>
+  2811→              )}
+  2812→            </>)}
+  2813→          </div>
+  2814→        </DialogContent>
+  2815→      </Dialog>
+  2816→
+  2817→      {/* ═══ TRASLADO CONFIRMATION DIALOG ═══ */}
+  2818→      <Dialog open={trConfirmOpen} onOpenChange={(open) => { if (!open) setTrConfirmOpen(false) }}>
+  2819→        <DialogContent className="sm:max-w-lg max-w-[calc(100vw-1rem)] max-h-[85vh] flex flex-col overflow-hidden overscroll-contain bg-slate-900 border-slate-700/50 backdrop-blur-xl rounded-2xl p-0 [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100">
+  2820→          <DialogHeader className="px-4 sm:px-6 pt-5 shrink-0">
+  2821→            <DialogTitle className="flex items-center gap-2 text-base">
+  2822→              <ArrowRightLeft className="h-5 w-5 text-sky-400" />
+  2823→              Confirmar Traslado
+  2824→            </DialogTitle>
+  2825→            <DialogDescription className="text-xs text-slate-400">
+  2826→              Resumen de articulos a trasladar con ajustes.
+  2827→            </DialogDescription>
+  2828→          </DialogHeader>
+  2829→
+  2830→          <div className="px-4 sm:px-6 space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
+  2831→            {(() => {
+  2832→              const selected = trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0)
+  2833→              if (selected.length === 0) return <p className="text-xs text-slate-500">No hay articulos seleccionados.</p>
+  2834→              return selected.map((r, i) => {
+  2835→                const qty = parseFloat(r.cantidad)
+  2836→                const diff = qty - r.stockActual
+  2837→                let statusColor = 'text-emerald-400'
+  2838→                let statusBg = 'bg-emerald-500/10 border-emerald-500/20'
+  2839→                let statusLabel = 'Total'
+  2840→                let statusIcon = <Check className="h-3 w-3" />
+  2841→                if (diff > 0) {
+  2842→                  statusColor = 'text-amber-400'
+  2843→                  statusBg = 'bg-amber-500/10 border-amber-500/20'
+  2844→                  statusLabel = `+${diff.toFixed(2)} excedente → ingreso`
+  2845→                  statusIcon = <AlertTriangle className="h-3 w-3" />
+  2846→                } else if (diff < 0) {
+  2847→                  const deficit = Math.abs(diff)
+  2848→                  if (r.saldoMode === 'ajustar') {
+  2849→                    statusColor = 'text-red-400'
+  2850→                    statusBg = 'bg-red-500/10 border-red-500/20'
+  2851→                    statusLabel = `${deficit.toFixed(2)} queda → salida`
+  2852→                    statusIcon = <ArrowUpFromLine className="h-3 w-3" />
+  2853→                  } else {
+  2854→                    statusColor = 'text-sky-400'
+  2855→                    statusBg = 'bg-sky-500/10 border-sky-500/20'
+  2856→                    statusLabel = `${deficit.toFixed(2)} queda en origen`
+  2857→                    statusIcon = <ToggleLeft className="h-3 w-3" />
+  2858→                  }
+  2859→                }
+  2860→                return (
+  2861→                  <div key={i} className={`rounded-lg border ${statusBg} p-2.5`}>
+  2862→                    <div className="flex items-center justify-between gap-2">
+  2863→                      <div className="flex items-center gap-2 min-w-0">
+  2864→                        <Package className="h-3.5 w-3.5 text-slate-500 flex-shrink-0" />
+  2865→                        <span className="font-mono text-xs text-sky-300 font-semibold truncate">{r.bloque_codigo}</span>
+  2866→                      </div>
+  2867→                      <div className={`flex items-center gap-1 text-[10px] font-semibold shrink-0 ${statusColor}`}>
+  2868→                        {statusIcon}
+  2869→                        <span className="truncate max-w-[140px]">{statusLabel}</span>
+  2870→                      </div>
+  2871→                    </div>
+  2872→                    <div className="flex items-center flex-wrap gap-x-3 gap-y-0 mt-1 text-[10px] text-slate-500 pl-5">
+  2873→                      <span>Trasladar: <span className="font-mono font-semibold text-white">{qty.toFixed(2)}</span></span>
+  2874→                      <span>Stock: <span className="font-mono font-semibold text-slate-300">{r.stockActual}</span></span>
+  2875→                      <span>{r.bloque_unidad}</span>
+  2876→                    </div>
+  2877→                  </div>
+  2878→                )
+  2879→              })
+  2880→            })()}
+  2881→          </div>
+  2882→
+  2883→          {trDestPos && (
+  2884→            <div className="px-4 sm:px-6 flex items-center gap-2 text-xs bg-slate-800/60 rounded-lg border border-slate-700/40 px-3 py-2">
+  2885→              <Warehouse className="h-3.5 w-3.5 text-slate-500" />
+  2886→              <span className="text-slate-500">Destino:</span>
+  2887→              <span className="font-mono font-semibold text-sky-300">
+  2888→                {trDestPos.columnaLetra}-{trDestPos.subcolumnaCodigo}-{trDestPos.posicionNumero}
+  2889→              </span>
+  2890→            </div>
+  2891→          )}
+  2892→
+  2893→          <DialogFooter className="px-4 sm:px-6 pb-5 gap-2 sm:gap-0 shrink-0">
+  2894→            <Button variant="outline" onClick={() => setTrConfirmOpen(false)} size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
+  2895→              Cancelar
+  2896→            </Button>
+  2897→            <Button onClick={doTraslado} disabled={busy} size="sm" className="h-11 gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20">
+  2898→              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
+  2899→              Ejecutar traslado
+  2900→            </Button>
+  2901→          </DialogFooter>
+  2902→        </DialogContent>
+  2903→      </Dialog>
+  2904→
+  2905→      {/* ═══ DESTINO OCUPADO ALERTA (Traslado Piso) ═══ */}
+  2906→      <AlertDialog open={trDestAlertOpen} onOpenChange={setTrDestAlertOpen}>
+  2907→        <AlertDialogContent className="sm:max-w-lg max-w-[calc(100vw-1rem)] max-h-[85vh] flex flex-col overflow-hidden overscroll-contain bg-slate-900 border-slate-700/50 backdrop-blur-xl rounded-2xl p-0 [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100">
+  2908→          {/* Header */}
+  2909→          <div className={`px-4 sm:px-6 py-5 text-white shrink-0 rounded-t-2xl ${
+  2910→            trDestOccupied.length > 0
+  2911→              ? 'bg-gradient-to-r from-orange-500 via-red-500 to-red-600'
+  2912→              : 'bg-gradient-to-r from-sky-600 via-indigo-600 to-purple-600'
+  2913→          }`}>
+  2914→            <div className="flex items-center gap-3">
+  2915→              <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+  2916→                {trDestOccupied.length > 0 ? (
+  2917→                  <TriangleAlert className="h-6 w-6 text-white" />
+  2918→                ) : (
+  2919→                  <ArrowRightLeft className="h-6 w-6 text-white" />
+  2920→                )}
+  2921→              </div>
+  2922→              <div>
+  2923→                <AlertDialogTitle className="text-lg font-bold text-white m-0">
+  2924→                  {trDestOccupied.length > 0 ? 'Destino Ocupado' : 'Confirmar Traslado'}
+  2925→                </AlertDialogTitle>
+  2926→                <AlertDialogDescription className={`text-sm mt-0.5 ${
+  2927→                  trDestOccupied.length > 0 ? 'text-orange-100' : 'text-sky-100'
+  2928→                }`}>
+  2929→                  {trDestOccupied.length > 0
+  2930→                    ? 'El destino ya tiene stock. Puedes dar salida a los productos antes de trasladar o confirmar de todas formas.'
+  2931→                    : 'El destino está vacío. Puedes proceder con el traslado.'}
+  2932→                </AlertDialogDescription>
+  2933→              </div>
+  2934→            </div>
+  2935→          </div>
+  2936→          <AlertDialogDescription className="sr-only">
+  2937→            Alerta de destino ocupado para traslado Piso
+  2938→          </AlertDialogDescription>
+  2939→
+  2940→          {/* Contenido */}
+  2941→          <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-4">
+  2942→            {/* Ruta */}
+  2943→            <div className="mb-3">
+  2944→              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Ruta del traslado</p>
+  2945→              <div className="flex items-center gap-2 text-xs bg-slate-800/60 rounded-lg border border-slate-700/40 px-3 py-2">
+  2946→                <MapPin className="h-4 w-4 text-sky-400 flex-shrink-0" />
+  2947→                <span className="font-mono text-slate-300">
+  2948→                  {detail?.posicionId && posiciones.find(p => p.posicionId === detail.posicionId)
+  2949→                    ? (() => {
+  2950→                        const orig = posiciones.find(p => p.posicionId === detail.posicionId)!
+  2951→                        return `${orig.columnaLetra}-${orig.subcolumnaCodigo}-${orig.posicionNumero}`
+  2952→                      })()
+  2953→                    : '?'}
+  2954→                  <span className="mx-2 text-indigo-400 font-bold">→</span>
+  2955→                  {trDestPos?.columnaLetra}-{trDestPos?.subcolumnaCodigo}-{trDestPos?.posicionNumero}
+  2956→                </span>
+  2957→              </div>
+  2958→            </div>
+  2959→
+  2960→            {/* Artículos a trasladar */}
+  2961→            <div className="mb-3">
+  2962→              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Artículos a trasladar</p>
+  2963→              <div className="space-y-1">
+  2964→                {trItems.filter((r) => r.selected && r.cantidad && parseFloat(r.cantidad) > 0).map((r, i) => (
+  2965→                  <div key={i} className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2 flex items-center justify-between">
+  2966→                    <div className="flex items-center gap-2 min-w-0">
+  2967→                      <span className="font-mono text-xs font-semibold text-sky-300">{r.bloque_codigo}</span>
+  2968→                      <span className="text-[10px] text-slate-500">{r.bloque_unidad}</span>
+  2969→                    </div>
+  2970→                    <span className="font-bold text-xs text-sky-300">{r.cantidad}</span>
+  2971→                  </div>
+  2972→                ))}
+  2973→              </div>
+  2974→            </div>
+  2975→
+  2976→            {/* Stock en destino */}
+  2977→            {trDestOccupied.length > 0 && (
+  2978→              <div>
+  2979→                <div className="flex items-center gap-2 mb-2">
+  2980→                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
+  2981→                  <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Stock en destino</span>
+  2982→                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
+  2983→                </div>
+  2984→                <div className="space-y-2">
+  2985→                  {trDestOccupied.map((s, i) => {
+  2986→                    const itemKey = `${s.bloque_id}-${s.fecha_vencimiento || ''}`
+  2987→                    const isTotal = trSalidaTotalFlags[itemKey] === true
+  2988→                    return (
+  2989→                      <div key={`${s.bloque_id}-${i}`} className="rounded-xl border border-slate-700/50 bg-slate-800/40 p-3">
+  2990→                        <div className="flex items-start gap-3">
+  2991→                          <div className="w-9 h-9 rounded-lg bg-orange-900/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+  2992→                            <Package className="h-4 w-4 text-orange-400" />
+  2993→                          </div>
+  2994→                          <div className="flex-1 min-w-0">
+  2995→                            <div className="flex items-center gap-2">
+  2996→                              <span className="font-mono font-semibold text-sm text-slate-200">{s.bloque_codigo}</span>
+  2997→                              <span className="text-[10px] text-slate-500 bg-slate-700/50 px-1.5 py-0.5 rounded">{s.bloque_unidad}</span>
+  2998→                            </div>
+  2999→                            <p className="text-xs text-slate-400 truncate mt-0.5">{s.bloque_descripcion}</p>
+  3000→                            <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-500">
+  3001→                              <span className="font-bold text-slate-300 text-sm">{s.cantidad} {s.bloque_unidad}</span>
+  3002→                              {s.fecha_vencimiento && <span>Venc: {s.fecha_vencimiento}</span>}
+  3003→                            </div>
+  3004→                            {/* Salida parcial/total */}
+  3005→                            <div className="mt-2 flex items-center gap-2">
+  3006→                              <button
+  3007→                                type="button"
+  3008→                                onClick={() => setTrSalidaTotalFlags(prev => ({ ...prev, [itemKey]: true }))}
+  3009→                                className={`px-2 py-1 rounded-md text-[10px] font-semibold transition-all border ${
+  3010→                                  isTotal
+  3011→                                    ? 'border-red-400 bg-red-950/40 text-red-300'
+  3012→                                    : 'border-slate-600/40 text-slate-500 hover:bg-slate-700/50'
+  3013→                                }`}
+  3014→                              >
+  3015→                                Total ({s.cantidad})
+  3016→                              </button>
+  3017→                              <input
+  3018→                                type="number"
+  3019→                                step="any"
+  3020→                                min="0.001"
+  3021→                                max={s.cantidad}
+  3022→                                placeholder="Parcial"
+  3023→                                value={isTotal ? String(s.cantidad) : (trSalidaCant[itemKey] || '')}
+  3024→                                onChange={e => {
+  3025→                                  setTrSalidaCant(prev => ({ ...prev, [itemKey]: e.target.value }))
+  3026→                                  setTrSalidaTotalFlags(prev => ({ ...prev, [itemKey]: false }))
+  3027→                                }}
+  3028→                                disabled={isTotal || trSalidaBusy === itemKey}
+  3029→                                className="w-20 h-7 text-xs bg-slate-700/50 border border-slate-600/40 rounded-md px-2 text-slate-300 disabled:opacity-50"
+  3030→                              />
+  3031→                              <Button
+  3032→                                size="sm"
+  3033→                                variant="outline"
+  3034→                                onClick={() => handleTrSalidaDesdeAlerta(s)}
+  3035→                                disabled={trSalidaBusy === itemKey}
+  3036→                                className="h-7 px-2.5 text-[10px] font-semibold border-red-800/40 bg-red-950/30 text-red-400 hover:bg-red-950/50 hover:text-red-300 flex-shrink-0 gap-1"
+  3037→                              >
+  3038→                                {trSalidaBusy === itemKey ? (
+  3039→                                  <><Loader2 className="h-3 w-3 animate-spin" /> ...</>
+  3040→                                ) : (
+  3041→                                  <><ArrowUpFromLine className="h-3 w-3" /> Dar Salida</>
+  3042→                                )}
+  3043→                              </Button>
+  3044→                            </div>
+  3045→                          </div>
+  3046→                        </div>
+  3047→                      </div>
+  3048→                    )
+  3049→                  })}
+  3050→                </div>
+  3051→                <p className="text-[10px] text-slate-500 mt-2 italic">
+  3052→                  Selecciona "Total" o ingresa cantidad parcial y presiona "Dar Salida" para retirar productos del destino.
+  3053→                </p>
+  3054→              </div>
+  3055→            )}
+  3056→          </div>
+  3057→
+  3058→          {/* Botones */}
+  3059→          <AlertDialogFooter className="px-4 sm:px-6 pb-5 pt-3 border-t border-slate-700/40 gap-2 shrink-0">
+  3060→            <AlertDialogCancel className="flex-1 h-11 rounded-xl text-xs font-medium border-slate-700/50 text-slate-400 hover:bg-slate-800/80">
+  3061→              Cancelar
+  3062→            </AlertDialogCancel>
+  3063→            <Button
+  3064→              onClick={(e) => { e.preventDefault(); setTrDestAlertOpen(false); ejecutarTrasladoPiso() }}
+  3065→              disabled={busy}
+  3066→              className="flex-1 h-11 gap-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs rounded-xl shadow-lg shadow-sky-500/20"
+  3067→            >
+  3068→              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRightLeft className="h-3.5 w-3.5" />}
+  3069→              {trDestOccupied.length > 0 ? 'Trasladar de todas formas' : 'Confirmar Traslado'}
+  3070→            </Button>
+  3071→          </AlertDialogFooter>
+  3072→        </AlertDialogContent>
+  3073→      </AlertDialog>
+  3074→
+  3075→      {/* ═══ MASS SALIDA DIALOG ═══ */}
+  3076→      <Dialog open={massDialogOpen} onOpenChange={(open) => { if (!open) setMassDialogOpen(false) }}>
+  3077→        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] flex flex-col overflow-hidden overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+  3078→          style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.9))', backdropFilter: 'blur(24px)', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+  3079→          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-red-400 to-transparent opacity-60" />
+  3080→          <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+  3081→            <DialogHeader className="shrink-0">
+  3082→              <DialogTitle className="flex items-center gap-2 text-base text-white">
+  3083→                <div className="w-8 h-8 rounded-xl bg-red-600/20 flex items-center justify-center">
+  3084→                  <ArrowUpFromLine className="h-4 w-4 text-red-400" />
+  3085→                </div>
+  3086→                <span className="text-white">Salida en Masa — {massData.size} posicion(es)</span>
+  3087→              </DialogTitle>
+  3088→              <DialogDescription className="text-xs text-slate-400">
+  3089→                Se registrara salida de TODO el stock de cada articulo en el nivel seleccionado. Revisa las posiciones antes de confirmar.
+  3090→              </DialogDescription>
+  3091→            </DialogHeader>
+  3092→
+  3093→            {massBusy && massData.size === 0 ? (
+  3094→              <div className="flex items-center justify-center py-12">
+  3095→                <Loader2 className="h-8 w-8 animate-spin text-red-400" />
+  3096→                <span className="ml-3 text-slate-400 text-sm">Cargando datos de posiciones...</span>
+  3097→              </div>
+  3098→            ) : (
+  3099→              <div className="space-y-3 mt-4">
+  3100→                {[...massData.entries()].map(([posicionId, pd]) => {
+  3101→                  const displayItems = getMassDisplayItems(pd)
+  3102→                  const totalQty = displayItems.reduce((s, it) => s + it.cantidad, 0)
+  3103→                  const isAll = pd.selectedNivelIds.size === 0
+  3104→                  return (
+  3105→                    <div key={posicionId} className="rounded-xl border border-slate-700/40 bg-slate-800/40 backdrop-blur-sm p-3.5">
+  3106→                      {/* Position header + nivel selector */}
+  3107→                      <div className="flex items-center gap-2 mb-2">
+  3108→                        <div className="w-7 h-7 rounded-lg bg-sky-600/20 flex items-center justify-center text-sky-300 font-extrabold text-[10px] border border-sky-500/20">
+  3109→                          {pd.pos.columnaLetra}
+  3110→                        </div>
+  3111→                        <span className="font-mono text-xs font-bold text-slate-200">
+  3112→                          {pd.pos.columnaLetra}-{pd.pos.subcolumnaCodigo}-{pd.pos.posicionNumero}
+  3113→                        </span>
+  3114→                        <span className="text-[10px] text-slate-500 ml-auto">{displayItems.length} art. · {totalQty.toFixed(2)} total</span>
+  3115→                      </div>
+  3116→                      {/* Nivel toggle buttons si tiene multiples niveles */}
+  3117→                      {pd.niveles.length > 1 && (
+  3118→                        <div className="mb-2">
+  3119→                          <div className="flex items-center gap-1.5 overflow-x-auto bg-slate-900/60 rounded-lg p-0.5 border border-slate-700/30 scrollbar-none">
+  3120→                            {pd.niveles.map((n) => {
+  3121→                              const nItems = (pd.stockByNivel[n.id] ?? []).length
+  3122→                              const isSelected = pd.selectedNivelIds.has(n.id)
+  3123→                              return (
+  3124→                                <button
+  3125→                                  key={n.id}
+  3126→                                  onClick={() => toggleMassNivel(posicionId, n.id)}
+  3127→                                  className={`flex-1 px-2.5 py-1 rounded-md text-[9px] font-bold transition-all duration-200 ${
+  3128→                                    isSelected
+  3129→                                      ? 'bg-red-500/30 text-red-300 border border-red-500/30'
+  3130→                                      : 'text-slate-500 hover:text-slate-300 border border-transparent'
+  3131→                                  }`}
+  3132→                                >
+  3133→                                  Nivel {n.numero} ({nItems})
+  3134→                                </button>
+  3135→                              )
+  3136→                            })}
+  3137→                          </div>
+  3138→                          {isAll && (
+  3139→                            <p className="text-[9px] text-emerald-400/70 text-center mt-1">Salida total de todos los niveles</p>
+  3140→                          )}
+  3141→                          {!isAll && (
+  3142→                            <p className="text-[9px] text-amber-400/70 text-center mt-1">Salida solo de los niveles seleccionados</p>
+  3143→                          )}
+  3144→                        </div>
+  3145→                      )}
+  3146→                      {/* Items list */}
+  3147→                      <div className="space-y-1">
+  3148→                        {displayItems.map((item, idx) => (
+  3149→                          <div key={idx} className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-slate-900/40 text-[10px]">
+  3150→                            <div className="flex items-center gap-2 min-w-0">
+  3151→                              <Package className="h-3 w-3 text-slate-500 shrink-0" />
+  3152→                              <span className="font-mono text-sky-300 font-semibold">{item.bloque_codigo}</span>
+  3153→                              <span className="text-slate-500 truncate">{item.bloque_descripcion || ''}</span>
+  3154→                            </div>
+  3155→                            <div className="flex items-center gap-2 shrink-0">
+  3156→                              <span className="font-bold text-red-300">{item.cantidad}</span>
+  3157→                              <span className="text-slate-500">{item.bloque_unidad}</span>
+  3158→                            </div>
+  3159→                          </div>
+  3160→                        ))}
+  3161→                        {displayItems.length === 0 && (
+  3162→                          <p className="text-slate-500 text-[10px] text-center py-2">Sin articulos en este nivel</p>
+  3163→                        )}
+  3164→                      </div>
+  3165→                    </div>
+  3166→                  )
+  3167→                })}
+  3168→              </div>
+  3169→            )}
+  3170→
+  3171→            <DialogFooter className="gap-2 sm:gap-0 mt-4 pt-3 border-t border-slate-700/30 shrink-0">
+  3172→              <Button variant="outline" onClick={() => setMassDialogOpen(false)} size="sm" className="h-11 text-xs border-slate-700/50 text-slate-400 hover:bg-slate-800/80 rounded-xl">
+  3173→                Cancelar
+  3174→              </Button>
+  3175→              <Button onClick={() => setMassConfirmOpen(true)} disabled={massBusy || massData.size === 0} size="sm" className="h-11 gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded-xl shadow-lg shadow-red-500/20">
+  3176→                {massBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpFromLine className="h-3.5 w-3.5" />}
+  3177→                Registrar {massData.size} salida(s)
+  3178→              </Button>
+  3179→            </DialogFooter>
+  3180→          </div>
+  3181→        </DialogContent>
+  3182→      </Dialog>
+  3183→
+  3184→      {/* ═══ MASS SALIDA CONFIRMATION DIALOG ═══ */}
+  3185→      <Dialog open={massConfirmOpen} onOpenChange={(open) => { if (!open) setMassConfirmOpen(false) }}>
+  3186→        <DialogContent className="sm:max-w-2xl max-w-[calc(100vw-1rem)] rounded-2xl max-h-[85vh] flex flex-col overflow-hidden overscroll-contain p-0 border-0 shadow-2xl [&>button]:text-slate-400 hover:[&>button]:text-white [&>button]:opacity-70 hover:[&>button]:opacity-100"
+  3187→          style={{ background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.97), rgba(30, 41, 59, 0.95))', backdropFilter: 'blur(24px)', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
+  3188→          <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-amber-400 to-transparent opacity-60" />
+  3189→          <div className="p-4 sm:p-6 flex-1 min-h-0 overflow-y-auto overscroll-contain">
+  3190→            <DialogHeader className="shrink-0">
+  3191→              <DialogTitle className="flex items-center gap-2 text-base text-white">
+  3192→                <div className="w-8 h-8 rounded-xl bg-amber-600/20 flex items-center justify-center">
+  3193→                  <AlertTriangle className="h-4 w-4 text-amber-400" />
+  3194→                </div>
+  3195→                <span className="text-white">Confirmar Salida en Masa</span>
+  3196→              </DialogTitle>
+  3197→              <DialogDescription className="text-xs text-slate-400">
+  3198→                Revisa el resumen de articulos y cantidades antes de confirmar la salida.
+  3199→              </DialogDescription>
+
+[showing lines 2700-3199 of 3404; use offset=3200 with limit to continue reading]

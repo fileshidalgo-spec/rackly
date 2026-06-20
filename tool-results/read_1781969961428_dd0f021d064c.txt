@@ -1,0 +1,402 @@
+   499→      })
+   500→      if (wasOffline) {
+   501→        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo} (offline)`, {
+   502→          description: 'Se sincronizará al reconectarse', duration: 5000,
+   503→        })
+   504→      } else {
+   505→        toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
+   506→      }
+   507→      if (!wasOffline) {
+   508→        // Refrescar stock del destino
+   509→        const updated = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)
+   510→        setTrDestStock(updated)
+   511→        await refreshDetail()
+   512→        refreshData()
+   513→      }
+   514→    } catch (err: unknown) {
+   515→      if (isInsufficientStockError(err)) {
+   516→        toast.error('Stock insuficiente', {
+   517→          description: 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 6000,
+   518→        })
+   519→      } else {
+   520→        toast.error('Error al dar salida', { description: extractError(err) })
+   521→      }
+   522→    } finally {
+   523→      setTrSalidaBusy(null)
+   524→    }
+   525→  }
+   526→
+   527→  // Ejecutar el traslado (se llama desde la alerta o directamente si destino vacío)
+   528→  async function ejecutarTraslado() {
+   529→    if (!detail || !perfil || !trItem) return
+   530→    const qty = parseFloat(trCantidad)
+   531→    setActionBusy(true)
+   532→    try {
+   533→      const input: TrasladoInput = {
+   534→        codigo: trItem.codigo, descripcion: trItem.descripcion, un: trItem.un, cantidad: qty,
+   535→        origen: { bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion },
+   536→        destino: { bloque: trDestBloque, torre: trDestTorre, piso: trDestPiso, posicion: trDestPos },
+   537→        turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+   538→        fVencimiento: trItem.fVencimiento ?? '',
+   539→        cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
+   540→        codigoInc: trItem.codigoInc || undefined,
+   541→      }
+   542→      const { wasOffline: wasTrOffline } = await SyncEngine.offlineAwareTraslado(input)
+   543→      toast.success(wasTrOffline ? 'Traslado guardado (offline)' : 'Traslado registrado', {
+   544→        ...(wasTrOffline ? { description: 'Se sincronizará al reconectarse', duration: 5000 } : {}),
+   545→      })
+   546→      if (!wasTrOffline && trFalta && trCorregirDiferencia) {
+   547→        toast.info(`Salida de ajuste: -${Math.abs(trDiferencia)} ${trItem.un} en origen`, { duration: 6000 })
+   548→      }
+   549→      if (!wasTrOffline && trExcede) {
+   550→        toast.info(`Ajuste automático: +${Math.abs(trDiferencia)} ${trItem.un} ingreso en origen`, { duration: 6000 })
+   551→      }
+   552→      setTrDestAlertOpen(false)
+   553→      if (mountedRef.current && !wasTrOffline) { await refreshDetail(); refreshData(); setDetailMode('view') }
+   554→    } catch (err: unknown) {
+   555→      if (isInsufficientStockError(err)) {
+   556→        const d = (err as Record<string, string>).detail || ''
+   557→        toast.error('Stock insuficiente en origen', { description: d || 'Otro usuario pudo haber modificado el stock. Los datos se han actualizado.', duration: 8000 })
+   558→        refreshDetail(); refreshData()
+   559→      } else { toast.error('Error al trasladar', { description: extractError(err) }) }
+   560→    } finally { setActionBusy(false) }
+   561→  }
+   562→
+   563→  async function doTransferir() {
+   564→    if (!detail || !perfil || !trItem) return
+   565→    if (!trDestBloque || !trDestTorre || !trDestPiso || !trDestPos) { toast.error('Completa destino'); return }
+   566→    const qty = parseFloat(trCantidad)
+   567→    if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
+   568→    const origKey = `${detail.bloque}-${detail.torre}-${detail.piso}-${detail.posicion}`
+   569→    const destKey = `${trDestBloque}-${trDestTorre}-${trDestPiso}-${trDestPos}`
+   570→    if (origKey === destKey) { toast.error('Origen y destino no pueden ser iguales'); return }
+   571→    setActionBusy(true)
+   572→    try {
+   573→      // Check destination occupancy
+   574→      const destStock = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)
+   575→      if (destStock.length > 0) {
+   576→        // Mostrar alerta con opción de dar salida en vez de bloquear
+   577→        setTrDestStock(destStock)
+   578→        setTrSalidaCant({})
+   579→        setTrSalidaTotalFlags({})
+   580→        setTrDestAlertOpen(true)
+   581→        setActionBusy(false)
+   582→        return
+   583→      }
+   584→      // Destino vacío — ejecutar traslado directamente
+   585→      await ejecutarTraslado()
+   586→    } catch (err: unknown) {
+   587→      toast.error('Error al verificar destino', { description: extractError(err) })
+   588→    } finally { setActionBusy(false) }
+   589→  }
+   590→
+   591→  async function handleExport() {
+   592→    setBusyExport(true)
+   593→    try {
+   594→      const XLSX = await import('xlsx')
+   595→      // Generar TODAS las posiciones (ocupadas + vacías)
+   596→      const bloques = bloqueFilter === 'all' ? BLOQUES : [bloqueFilter]
+   597→      const data: Record<string, string | number>[] = []
+   598→      for (const b of bloques) {
+   599→        for (const t of torresDeBloque(b)) {
+   600→          for (const p of PISOS) {
+   601→            for (const pos of posicionesDeBloque(b)) {
+   602→              const cell = ocupacion.find(o => o.bloque === b && o.torre === t && o.piso === p && o.posicion === pos)
+   603→              const isOcc = cell && cell.stock > 0
+   604→              const incCount = cell?.incItems?.length ?? 0
+   605→              const incCodes = cell?.incItems?.map(i => `${i.codigoInc} (${i.cantidad})`).join(', ') ?? ''
+   606→              data.push({
+   607→                Bloque: b,
+   608→                Torre: t,
+   609→                Piso: p,
+   610→                Posición: pos,
+   611→                Stock: isOcc ? cell.stock : 0,
+   612→                Códigos: isOcc ? cell.codigos.join(', ') : '',
+   613→                Artículos: isOcc ? cell.codigos.length : 0,
+   614→                Estado: isOcc ? (cell!.codigos.length > 1 ? 'Mixto' : cell!.lotes > 1 ? 'Multi-lote' : 'Ocupado') : (incCount > 0 ? 'Solo INC' : 'Vacío'),
+   615→                Lotes: isOcc ? cell!.lotes : 0,
+   616→                'INC': incCount > 0 ? `${incCount} item(s): ${incCodes}` : '',
+   617→              })
+   618→            }
+   619→          }
+   620→        }
+   621→      }
+   622→      const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
+   623→      XLSX.utils.book_append_sheet(wb, ws, 'Ocupación'); XLSX.writeFile(wb, `RACKLY_Ocupacion_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
+   624→    } catch (err: unknown) { toast.error('Error', { description: err instanceof Error ? err.message : '' }) } finally { setBusyExport(false) }
+   625→  }
+   626→
+   627→  if (loading) {
+   628→    return (
+   629→      <div className="flex items-center justify-center py-16">
+   630→        <div className="flex flex-col items-center gap-3">
+   631→          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 animate-pulse" />
+   632→          <p className="text-sm text-slate-400 animate-pulse">Cargando ocupación...</p>
+   633→        </div>
+   634→      </div>
+   635→    )
+   636→  }
+   637→
+   638→  const dashBloques = BLOQUES.map(b => {
+   639→    const bt = totalPosBloque(b), bo = ocupacion.filter(o => o.bloque === b && o.stock > 0).length
+   640→    const bm = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length > 1).length
+   641→    const bl = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length === 1 && o.lotes > 1).length
+   642→    return { bloque: b, total: bt, occupied: bo, multi: bm, multiLote: bl, empty: bt - bo, pct: bt > 0 ? Math.round((bo / bt) * 100) : 0 }
+   643→  })
+   644→
+   645→  const isView = detailMode === 'view'
+   646→  const isInc = detailMode === 'inc'
+   647→  const salItem = detail?.stock[salidaIdx]
+   648→
+   649→  return (
+   650→    <div className="space-y-5">
+   651→      {/* ═══ DASHBOARD ═══ */}
+   652→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   653→        <div className="rounded-xl border border-slate-600/40 bg-gradient-to-br from-slate-800 to-slate-900 p-4 shadow-md">
+   654→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center"><BoxSelect className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-sky-400/80 uppercase tracking-widest">Total</p></div>
+   655→          <p className="text-2xl font-bold text-slate-100">{total.toLocaleString()}</p>
+   656→          <p className="text-[10px] text-slate-500 mt-0.5">{bloqueFilter === 'all' ? 'Todos los bloques' : `Bloque ${bloqueFilter}`}</p>
+   657→        </div>
+   658→        <div className="rounded-xl border border-blue-600/30 bg-gradient-to-br from-blue-950/40 to-slate-900 p-4 shadow-md">
+   659→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center"><Layers className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-blue-400/80 uppercase tracking-widest">Ocupadas</p></div>
+   660→          <p className="text-2xl font-bold text-blue-300">{occupied}</p>
+   661→          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiLote} multi-lote · {multiArt} mixtas</p>
+   662→        </div>
+   663→        <div className="rounded-xl border border-emerald-600/30 bg-gradient-to-br from-emerald-950/40 to-slate-900 p-4 shadow-md">
+   664→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>
+   665→          <p className="text-2xl font-bold text-emerald-300">{empty.toLocaleString()}</p>
+   666→          <p className="text-[10px] text-sky-600/60 mt-0.5">Disponibles</p>
+   667→        </div>
+   668→        <div className="rounded-xl border border-violet-600/30 bg-gradient-to-br from-violet-950/40 to-slate-900 p-4 shadow-md">
+   669→          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center"><Building2 className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-violet-400/80 uppercase tracking-widest">Ocupación</p></div>
+   670→          <p className="text-2xl font-bold text-violet-300">{pct}<span className="text-base">%</span></p>
+   671→          <div className="mt-2 h-1.5 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(pct, 100)}%`, background: pct > 80 ? 'linear-gradient(90deg,#ef4444,#f97316)' : pct > 50 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#0ea5e9,#3b82f6)' }} /></div>
+   672→        </div>
+   673→      </div>
+   674→
+   675→      {/* ═══ RESUMEN POR BLOQUE ═══ */}
+   676→      <div className="rounded-xl border border-slate-600/30 bg-slate-800/60 shadow-md overflow-hidden">
+   677→        <div className="px-4 py-2.5 border-b border-slate-600/30 flex items-center gap-2"><div className="w-1 h-3.5 rounded-full bg-gradient-to-b from-sky-400 to-blue-500" /><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Resumen por bloque</p></div>
+   678→        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-px bg-slate-700/20">
+   679→          {dashBloques.map(db => (
+   680→            <button key={db.bloque} className="bg-slate-800/60 p-2 text-center space-y-1 transition-colors hover:bg-slate-700/60" onClick={() => setBloqueFilter(bloqueFilter === db.bloque ? 'all' : db.bloque)}>
+   681→              <div className={`w-7 h-7 rounded-lg mx-auto flex items-center justify-center text-xs font-bold transition-all ${bloqueFilter === db.bloque ? 'bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-md scale-105' : 'bg-slate-700 text-slate-400'}`}>{db.bloque}</div>
+   682→              <p className="text-[9px] text-slate-500">{db.total} pos</p>
+   683→              <div className="flex justify-center gap-1"><span className="text-[9px] font-bold text-blue-400">{db.occupied}</span><span className="text-[9px] text-slate-600">/</span><span className="text-[9px] font-bold text-emerald-400">{db.empty}</span></div>
+   684→              {db.multiLote > 0 && <span className="text-[8px] font-semibold text-yellow-400 bg-yellow-400/10 px-1 py-px rounded">{db.multiLote} lote</span>}
+   685→              {db.multi > 0 && <span className="text-[8px] font-semibold text-amber-400 bg-amber-400/10 px-1 py-px rounded">{db.multi} mix</span>}
+   686→              <div className="h-1 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-500" style={{ width: `${db.pct}%` }} /></div>
+   687→            </button>
+   688→          ))}
+   689→        </div>
+   690→      </div>
+   691→
+   692→      {/* ═══ FILTROS Y LEYENDA ═══ */}
+   693→      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+   694→        <Select value={bloqueFilter} onValueChange={setBloqueFilter}>
+   695→          <SelectTrigger className="w-40 bg-slate-800/60 border-slate-600/40 text-slate-300 text-xs"><SelectValue placeholder="Filtrar bloque" /></SelectTrigger>
+   696→          <SelectContent className="bg-slate-800 border-slate-600/40"><SelectItem value="all" className="text-slate-300 focus:bg-slate-700">Todos</SelectItem>{BLOQUES.map(b => <SelectItem key={b} value={b} className="text-slate-300 focus:bg-slate-700">Bloque {b}</SelectItem>)}</SelectContent>
+   697→        </Select>
+   698→        <div className="flex items-center gap-4 text-[10px] text-slate-400 flex-wrap">
+   699→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600" /><span>Ocupado</span></div>
+   700→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-blue-400 to-blue-600 relative"><span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full" /></div><span>Multi-lote</span></div>
+   701→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-amber-400 to-orange-500" /><span>Multi-art.</span></div>
+   702→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-rose-400 to-pink-600" /><span>INC</span></div>
+   703→          <div className="flex items-center gap-1.5"><div className="w-4 h-4 rounded bg-gradient-to-br from-emerald-400 to-green-600" /><span>Vacío</span></div>
+   704→        </div>
+   705→      </div>
+   706→
+   707→      {/* ═══ GRID DE BLOQUES ═══ */}
+   708→      <div className="space-y-6">
+   709→        {BLOQUES.filter(b => bloqueFilter === 'all' || b === bloqueFilter).map(bloque => {
+   710→          const torres = torresDeBloque(bloque)
+   711→          const posiciones = posicionesDeBloque(bloque)
+   712→          const bTotal = totalPosBloque(bloque)
+   713→          const bOcup = ocupacion.filter(o => o.bloque === bloque && o.stock > 0).length
+   714→          const bEmpty = bTotal - bOcup
+   715→          const bPct = bTotal > 0 ? Math.round((bOcup / bTotal) * 100) : 0
+   716→          return (
+   717→            <div key={bloque} className="rounded-xl border border-slate-600/30 bg-gradient-to-b from-slate-800/80 to-slate-900/80 shadow-lg overflow-hidden">
+   718→              <div className="px-4 py-3 border-b border-slate-600/25 bg-gradient-to-r from-slate-800/60 to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+   719→                <div className="flex items-center gap-2.5">
+   720→                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center text-white font-bold text-xs shadow">{bloque}</div>
+   721→                  <div><p className="text-xs font-bold text-slate-200">Bloque {bloque}</p><p className="text-[10px] text-slate-500">{torres.length} torre(s) · {posiciones.length} pos/torre</p></div>
+   722→                </div>
+   723→                <div className="flex items-center gap-2">
+   724→                  <div className="w-20 h-1.5 rounded-full bg-slate-700/50 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-700" style={{ width: `${bPct}%` }} /></div>
+   725→                  <span className="text-xs font-bold text-sky-400">{bPct}%</span>
+   726→                  <span className="text-[10px] text-slate-500">({bOcup}/{bTotal})</span>
+   727→                </div>
+   728→              </div>
+   729→              <div className="p-3 sm:p-4">
+   730→                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
+   731→                  {torres.map(torre => {
+   732→                    const tTotal = PISOS.length * posiciones.length
+   733→                    const tOcup = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.stock > 0).length
+   734→                    const tInc = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.tieneInc).length
+   735→                    const halfLen = Math.ceil(posiciones.length / 2)
+   736→                    const posA = posiciones.slice(0, halfLen)
+   737→                    const posB = posiciones.slice(halfLen)
+   738→                    return (
+   739→                      <div key={torre}>
+   740→                        <div className="flex items-center justify-between px-3 py-1.5 mb-2">
+   741→                          <div className="flex items-center gap-1.5"><div className="w-1.5 h-4 rounded-sm bg-gradient-to-b from-sky-400 to-blue-500" /><span className="text-[11px] font-bold text-slate-300">Torre {torre}</span></div>
+   742→                          <div className="flex items-center gap-1"><span className="text-[10px] font-bold text-blue-400">{tOcup}</span><span className="text-[10px] text-slate-600">/</span><span className="text-[10px] font-bold text-emerald-400">{tTotal}</span></div>
+   743→                        </div>
+   744→                        <div className="space-y-1">
+   745→                          {PISOS.map(piso => {
+   746→                            const pisoOcup = posiciones.filter(pos => { const c = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos); return c && (c.stock > 0 || (c.tieneInc && c.incItems.length > 0)) }).length
+   747→                            return (
+   748→                              <div key={piso} className="rounded-lg border border-slate-600/15 bg-slate-900/40 overflow-hidden">
+   749→                                <div className="flex items-center justify-center gap-2 py-1.5 px-2 bg-slate-800/50 border-b border-slate-700/15">
+   750→                                  <div className={`w-1.5 h-1.5 rounded-full ${pisoOcup > 0 ? 'bg-blue-400' : 'bg-slate-600'}`} />
+   751→                                  <span className="text-[10px] font-bold text-slate-300 tracking-wide">PISO {piso}</span>
+   752→                                  {pisoOcup > 0 && <span className="text-[9px] font-bold text-blue-400 bg-blue-400/10 px-1.5 py-px rounded-full">{pisoOcup}</span>}
+   753→                                  <div className="flex-1 h-px bg-slate-700/20" />
+   754→                                  <span className="text-[8px] text-slate-600">{posA.length}+{posB.length}</span>
+   755→                                </div>
+   756→                                <div className="flex px-1.5 pt-1.5 gap-[2px]">
+   757→                                  {posA.map(pos => {
+   758→                                    const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
+   759→                                    const isOcc = cell && cell.stock > 0
+   760→                                    const isOnlyInc = !isOcc && cell && cell.tieneInc && cell.incItems.length > 0
+   761→                                    const isInc = cell && cell.tieneInc && cell.incItems.length > 0
+   762→                                    const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
+   763→                                    const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
+   764→                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+   765→                                    if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
+   766→                                    else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
+   767→                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+   768→                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
+   769→                                    let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
+   770→                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
+   771→                                    else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+   772→                                    else { title += ' · Vacío' }
+   773→                                    const firstInc = isInc ? cell!.incItems[0] : null
+   774→                                    return (
+   775→                                      <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
+   776→                                        {pos}
+   777→                                        {isInc && firstInc && (
+   778→                                          <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
+   779→                                            {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}
+   780→                                            {cell!.incItems.length > 1 && <span className="text-[5px] text-rose-200/60 ml-px">+{cell!.incItems.length - 1}</span>}
+   781→                                          </span>
+   782→                                        )}
+   783→                                        {isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}
+   784→                                        {isInc && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-rose-200 rounded-full ring-1 ring-rose-400" />}
+   785→                                      </button>
+   786→                                    )
+   787→                                  })}
+   788→                                </div>
+   789→                                <div className="flex px-1.5 pt-[2px] pb-1.5 gap-[2px]">
+   790→                                  {posB.map(pos => {
+   791→                                    const cell = ocupacion.find(o => o.bloque === bloque && o.torre === torre && o.piso === piso && o.posicion === pos)
+   792→                                    const isOcc = cell && cell.stock > 0
+   793→                                    const isOnlyInc = !isOcc && cell && cell.tieneInc && cell.incItems.length > 0
+   794→                                    const isInc = cell && cell.tieneInc && cell.incItems.length > 0
+   795→                                    const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
+   796→                                    const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
+   797→                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+   798→                                    if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
+   799→                                    else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
+   800→                                    else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+   801→                                    else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
+   802→                                    let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
+   803→                                    if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
+   804→                                    else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+   805→                                    else { title += ' · Vacío' }
+   806→                                    const firstInc = isInc ? cell!.incItems[0] : null
+   807→                                    return (
+   808→                                      <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
+   809→                                        {pos}
+   810→                                        {isInc && firstInc && (
+   811→                                          <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
+   812→                                            {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}
+   813→                                            {cell!.incItems.length > 1 && <span className="text-[5px] text-rose-200/60 ml-px">+{cell!.incItems.length - 1}</span>}
+   814→                                          </span>
+   815→                                        )}
+   816→                                        {isMultiLote && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full ring-1 ring-slate-800" />}
+   817→                                        {isInc && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-rose-200 rounded-full ring-1 ring-rose-400" />}
+   818→                                      </button>
+   819→                                    )
+   820→                                  })}
+   821→                                </div>
+   822→                              </div>
+   823→                            )
+   824→                          })}
+   825→                        </div>
+   826→                      </div>
+   827→                    )
+   828→                  })}
+   829→                </div>
+   830→              </div>
+   831→            </div>
+   832→          )
+   833→        })}
+   834→      </div>
+   835→
+   836→      {/* Exportar */}
+   837→      <div className="flex justify-end">
+   838→        <Button onClick={handleExport} disabled={busyExport} variant="outline" size="sm" className="gap-1.5 border-slate-600/40 bg-slate-800/50 text-slate-400 hover:bg-slate-700/50 hover:text-sky-400 text-xs">
+   839→          {busyExport ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Exportar
+   840→        </Button>
+   841→      </div>
+   842→
+   843→      {/* ═══════════════════════════════════════════════════════════════════
+   844→          DIÁLOGO PRINCIPAL — Vista, Ingreso, Salida, Transferir
+   845→          Todo dentro de la misma ventana emergente
+   846→          ═══════════════════════════════════════════════════════════════════ */}
+   847→      <Dialog open={!!detail} onOpenChange={(open) => { if (!open) { setDetail(null); setDetailMode('view') } }}>
+   848→        <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-xl bg-slate-800 border-slate-600/40 shadow-xl max-h-[90vh] overflow-y-auto overscroll-contain">
+   849→          <DialogHeader>
+   850→            <DialogTitle className="bg-gradient-to-r from-sky-400 to-blue-500 bg-clip-text text-transparent font-bold text-sm">
+   851→              B{detail?.bloque} · T{detail?.torre} · P{detail?.piso} · Pos {detail?.posicion}
+   852→              {!isView && <span className="text-slate-400 font-normal text-xs ml-2">
+   853→                — {detailMode === 'inc' ? 'Registro INC' : detailMode === 'ingreso' ? (ingTipo === 'ingreso' ? 'Ingreso' : 'Devolución') : detailMode === 'salida' ? 'Salida' : 'Transferir'}
+   854→              </span>}
+   855→            </DialogTitle>
+   856→          </DialogHeader>
+   857→
+   858→          {detail && (<>
+   859→            {/* ═══════ MODO: VISTA ═══════ */}
+   860→            {isView && (
+   861→              detail.stock.length > 0 ? (
+   862→                <>
+   863→                  {(() => {
+   864→                    const multiples = codigosConMultiplesLotes(detail.stock)
+   865→                    const stockDisponible = detail.stock.filter(s => !s.codigoInc)
+   866→                    const stockInc = detail.stock.filter(s => !!s.codigoInc)
+   867→                    return (
+   868→                      <div className="space-y-3">
+   869→                        {/* ── Stock Disponible ── */}
+   870→                        <div>
+   871→                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+   872→                            <Package className="w-3 h-3 text-emerald-400" /> Disponible ({stockDisponible.length})
+   873→                          </p>
+   874→                          <div className="space-y-2">
+   875→                            {stockDisponible.map((s, i) => {
+   876→                          const dias = diasParaVencer(s.fVencimiento)
+   877→                          const esLoteMultiple = multiples.has(s.codigo)
+   878→                          // Clase de color según urgencia de vencimiento
+   879→                          let vencBadge = ''
+   880→                          if (dias !== null) {
+   881→                            if (dias < 0) { vencBadge = 'bg-red-500/15 border-red-500/25 text-red-400' }
+   882→                            else if (dias <= 15) { vencBadge = 'bg-orange-500/15 border-orange-500/25 text-orange-400' }
+   883→                            else if (dias <= 30) { vencBadge = 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' }
+   884→                            else { vencBadge = 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' }
+   885→                          }
+   886→                          return (
+   887→                            <div key={`${s.codigo}-${s.fVencimiento || 'sin-fecha'}`} className={`rounded-lg border overflow-hidden ${esLoteMultiple ? 'border-sky-500/25 bg-gradient-to-r from-sky-950/20 to-slate-700/20' : 'border-slate-600/30 bg-slate-700/20'}`}>
+   888→                              <div className="p-3 space-y-1.5">
+   889→                                {/* Encabezado: código + badges */}
+   890→                                <div className="flex items-start justify-between gap-2">
+   891→                                  <div className="min-w-0 flex-1">
+   892→                                    <div className="flex items-center gap-2 flex-wrap">
+   893→                                      <span className="font-mono text-sky-400 font-bold text-xs">{s.codigo}</span>
+   894→                                      {s.proveedor && <span className="text-[8px] font-semibold text-purple-400 bg-purple-400/10 px-1.5 py-px rounded">{s.proveedor}</span>}
+   895→                                      {/* Badge FEFO: indica que hay múltiples lotes del mismo artículo */}
+   896→                                      {esLoteMultiple && (
+   897→                                        <span className="flex items-center gap-0.5 text-[8px] font-bold text-sky-300 bg-sky-400/15 border border-sky-400/20 px-1.5 py-px rounded">
+   898→                                          <CalendarClock className="w-2.5 h-2.5" /> FEFO #{i + 1}
+
+[showing lines 499-898 of 1635; use offset=899 with limit to continue reading]

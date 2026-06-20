@@ -1,0 +1,711 @@
+     1→     1→/**
+     2→     2→ * SyncEngine — Motor de sincronización offline/online
+     3→     3→ * 
+     4→     4→ * Responsabilidades:
+     5→     5→ * - Detectar estado de conectividad (navigator.onLine + ping a Supabase)
+     6→     6→ * - Gestionar la cola de movimientos pendientes
+     7→     7→ * - Sincronizar movimientos al reconectarse
+     8→     8→ * - Cachear datos (movimientos, catálogo, usuarios) para lectura offline
+     9→     9→ * - Notificar cambios de estado a los suscriptores
+    10→    10→ */
+    11→    11→
+    12→    12→import {
+    13→    13→  initOfflineDB,
+    14→    14→  type PendingMovement,
+    15→    15→  type CachedMovimiento,
+    16→    16→  savePendingMovement,
+    17→    17→  getPendingMovements,
+    18→    18→  updatePendingMovement,
+    19→    19→  removePendingMovement,
+    20→    20→  countPendingMovements,
+    21→    21→  countErrorMovements,
+    22→    22→  countConflictMovements,
+    23→    23→  cacheMovimientos,
+    24→    24→  getCachedMovimientos,
+    25→    25→  getSyncMeta,
+    26→    26→  setSyncMeta,
+    27→    27→} from './offline-db'
+    28→    28→
+    29→    29→import { addMovimiento, fetchMovimientos, trasladarMovimiento, type Movimiento, type Turno } from './kardex'
+    30→    30→
+    31→    31→// ═══════════════════════════════════════════
+    32→    32→// Types
+    33→    33→// ═══════════════════════════════════════════
+    34→    34→
+    35→    35→export type ConnectivityStatus = 'online' | 'offline' | 'syncing' | 'error'
+    36→    36→
+    37→    37→export type SyncState = {
+    38→    38→  connectivity: ConnectivityStatus
+    39→    39→  pendingCount: number
+    40→    40→  errorCount: number
+    41→    41→  conflictCount: number
+    42→    42→  isSyncing: boolean
+    43→    43→  lastSyncTime: number | null
+    44→    44→  lastPingTime: number | null
+    45→    45→  initialized: boolean
+    46→    46→}
+    47→    47→
+    48→    48→type SyncListener = (state: SyncState) => void
+    49→    49→
+    50→    50→// ═══════════════════════════════════════════
+    51→    51→// Singleton
+    52→    52→// ═══════════════════════════════════════════
+    53→    53→
+    54→    54→const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+    55→    55→
+    56→    56→const INITIAL_STATE: SyncState = {
+    57→    57→  connectivity: 'offline',
+    58→    58→  pendingCount: 0,
+    59→    59→  errorCount: 0,
+    60→    60→  conflictCount: 0,
+    61→    61→  isSyncing: false,
+    62→    62→  lastSyncTime: null,
+    63→    63→  lastPingTime: null,
+    64→    64→  initialized: false,
+    65→    65→}
+    66→    66→
+    67→    67→class SyncEngineSingleton {
+    68→    68→  private state: SyncState = { ...INITIAL_STATE }
+    69→    69→  private listeners: Set<SyncListener> = new Set()
+    70→    70→  private syncInProgress = false
+    71→    71→  private pingInterval: ReturnType<typeof setInterval> | null = null
+    72→    72→  private countsInterval: ReturnType<typeof setInterval> | null = null
+    73→    73→  private destroyed = false
+    74→    74→  private initPromise: Promise<void> | null = null
+    75→    75→
+    76→    76→  // ── Init ──────────────────────────────
+    77→    77→  async init(): Promise<void> {
+    78→    78→    // Patrón singleton async: evitar doble init en React Strict Mode
+    79→    79→    if (this.initPromise) return this.initPromise
+    80→    80→    if (this.state.initialized) return
+    81→    81→
+    82→    82→    this.initPromise = this._doInit()
+    83→    83→    try {
+    84→    84→      await this.initPromise
+    85→    85→    } catch {
+    86→    86→      // Si falla, limpiar la promise para permitir reintentos
+    87→    87→      this.initPromise = null
+    88→    88→      throw new Error('[SyncEngine] Falló la inicialización')
+    89→    89→    }
+    90→    90→  }
+    91→    91→
+    92→    92→  private async _doInit(): Promise<void> {
+    93→    93→
+    94→    94→    try {
+    95→    95→      // Abrir IndexedDB
+    96→    96→      const dbOk = await initOfflineDB()
+    97→    97→      if (!dbOk) {
+    98→    98→        console.warn('[SyncEngine] IndexedDB no disponible, modo offline desactivado')
+    99→    99→        this.updateState({ initialized: true, connectivity: 'online' }) // Sin IndexedDB, asumimos online
+   100→   100→        return
+   101→   101→      }
+   102→   102→
+   103→   103→      // Cargar última sincronización
+   104→   104→      const lastSync = await getSyncMeta('lastSyncTime')
+   105→   105→      this.state.lastSyncTime = lastSync ? parseInt(lastSync, 10) : null
+   106→   106→
+   107→   107→      // Conteo inicial de pendientes
+   108→   108→      await this.refreshCounts()
+   109→   109→
+   110→   110→      // Detectar conectividad inicial
+   111→   111→      const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
+   112→   112→      this.updateState({
+   113→   113→        initialized: true,
+   114→   114→        connectivity: isOnline ? 'online' : 'offline',
+   115→   115→      })
+   116→   116→
+   117→   117→      // Listeners de eventos del navegador
+   118→   118→      if (typeof window !== 'undefined') {
+   119→   119→        window.addEventListener('online', this.handleOnline)
+   120→   120→        window.addEventListener('offline', this.handleOffline)
+   121→   121→      }
+   122→   122→
+   123→   123→      // Ping periódico a Supabase (cada 30s)
+   124→   124→      this.startPing()
+   125→   125→
+   126→   126→      // Refresco de conteos (cada 5s)
+   127→   127→      this.countsInterval = setInterval(() => this.refreshCounts(), 5000)
+   128→   128→
+   129→   129→      // Si estamos online, sincronizar pendientes + cachear datos
+   130→   130→      if (isOnline) {
+   131→   131→        this.syncAll()
+   132→   132→      }
+   133→   133→
+   134→   134→      console.log('[SyncEngine] Inicializado. Online:', isOnline, 'Pendientes:', this.state.pendingCount)
+   135→   135→    } catch (err) {
+   136→   136→      console.error('[SyncEngine] Error en init:', err)
+   137→   137→      this.updateState({ initialized: true, connectivity: 'online' }) // Fallback: operar online
+   138→   138→    }
+   139→   139→  }
+   140→   140→
+   141→   141→  // ── Cleanup ─────────────────────────
+   142→   142→  destroy(): void {
+   143→   143→    this.destroyed = true
+   144→   144→    if (typeof window !== 'undefined') {
+   145→   145→      window.removeEventListener('online', this.handleOnline)
+   146→   146→      window.removeEventListener('offline', this.handleOffline)
+   147→   147→    }
+   148→   148→    if (this.pingInterval) clearInterval(this.pingInterval)
+   149→   149→    if (this.countsInterval) clearInterval(this.countsInterval)
+   150→   150→    this.listeners.clear()
+   151→   151→  }
+   152→   152→
+   153→   153→  // ── State ────────────────────────────
+   154→   154→  getState(): SyncState {
+   155→   155→    return { ...this.state }
+   156→   156→  }
+   157→   157→
+   158→   158→  subscribe(listener: SyncListener): () => void {
+   159→   159→    this.listeners.add(listener)
+   160→   160→    // Enviamos estado actual inmediatamente
+   161→   161→    listener(this.getState())
+   162→   162→    return () => this.listeners.delete(listener)
+   163→   163→  }
+   164→   164→
+   165→   165→  private updateState(partial: Partial<SyncState>): void {
+   166→   166→    this.state = { ...this.state, ...partial }
+   167→   167→    this.listeners.forEach((fn) => {
+   168→   168→      try { fn(this.state) } catch { /* ignore listener errors */ }
+   169→   169→    })
+   170→   170→  }
+   171→   171→
+   172→   172→  // ── Connectivity ────────────────────
+   173→   173→  private handleOnline = (): void => {
+   174→   174→    console.log('[SyncEngine] Navegador reporta: ONLINE')
+   175→   175→    this.updateState({ connectivity: 'online' })
+   176→   176→    // No sincronizar automáticamente aquí — esperar al ping confirmado
+   177→   177→    this.pingSupabase().then((ok) => {
+   178→   178→      if (ok && !this.syncInProgress) {
+   179→   179→        this.syncAll()
+   180→   180→      }
+   181→   181→    })
+   182→   182→  }
+   183→   183→
+   184→   184→  private handleOffline = (): void => {
+   185→   185→    console.log('[SyncEngine] Navegador reporta: OFFLINE')
+   186→   186→    this.updateState({ connectivity: 'offline' })
+   187→   187→    // NO resetear syncInProgress aquí — dejar que la sincronización en curso falle
+   188→   188→    // naturalmente. Resetearlo causaría que movimientos marcados como 'syncing'
+   189→   189→    // se reintenten al reconectar, creando duplicados.
+   190→   190→  }
+   191→   191→
+   192→   192→  private startPing(): void {
+   193→   193→    // Primer ping inmediato
+   194→   194→    this.pingSupabase()
+   195→   195→
+   196→   196→    // Ping cada 30 segundos
+   197→   197→    this.pingInterval = setInterval(() => {
+   198→   198→      this.pingSupabase()
+   199→   199→    }, 30000)
+   200→   200→  }
+   201→   201→
+   202→   202→  private async pingSupabase(): Promise<boolean> {
+   203→   203→    try {
+   204→   204→      const controller = new AbortController()
+   205→   205→      const timeout = setTimeout(() => controller.abort(), 5000)
+   206→   206→      // Ping al REST API de Supabase para verificar conectividad real.
+   207→   207→      // Cualquier respuesta del servidor (200, 401, 400) significa que hay conexión.
+   208→   208→      const response = await fetch(`${SUPABASE_URL}/rest/v1/profiles?select=id&limit=1`, {
+   209→   209→        method: 'GET',
+   210→   210→        headers: {
+   211→   211→          'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+   212→   212→          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''}`,
+   213→   213→          'Content-Type': 'application/json',
+   214→   214→          'Prefer': 'count=exact',
+   215→   215→        },
+   216→   216→        signal: controller.signal,
+   217→   217→      })
+   218→   218→      clearTimeout(timeout)
+   219→   219→
+   220→   220→      // Cualquier respuesta del servidor (200, 401, 400, 403) significa conectividad
+   221→   221→      this.updateState({
+   222→   222→        lastPingTime: Date.now(),
+   223→   223→        connectivity: 'online',
+   224→   224→      })
+   225→   225→      return true
+   226→   226→    } catch {
+   227→   227→      if (navigator.onLine) {
+   228→   228→        // El navegador dice online pero no hay conexión real al servidor
+   229→   229→        this.updateState({ connectivity: 'offline' })
+   230→   230→      }
+   231→   231→      return false
+   232→   232→    }
+   233→   233→  }
+   234→   234→
+   235→   235→  // ── Counts ───────────────────────────
+   236→   236→  private async refreshCounts(): Promise<void> {
+   237→   237→    try {
+   238→   238→      const [pending, errors, conflicts] = await Promise.all([
+   239→   239→        countPendingMovements(),
+   240→   240→        countErrorMovements(),
+   241→   241→        countConflictMovements(),
+   242→   242→      ])
+   243→   243→      this.updateState({
+   244→   244→        pendingCount: pending,
+   245→   245→        errorCount: errors,
+   246→   246→        conflictCount: conflicts,
+   247→   247→      })
+   248→   248→    } catch {
+   249→   249→      // Silencioso
+   250→   250→    }
+   251→   251→  }
+   252→   252→
+   253→   253→  // ── Enqueue Movement ─────────────────
+   254→   254→  /** Encolar un movimiento para sincronización offline.
+   255→   255→   *  Si se provee un uuidSync externo, se usa ese (idempotencia con intento online previo).
+   256→   256→   *  Si no, se genera uno nuevo.
+   257→   257→   */
+   258→   258→  async enqueueMovement(movement: Omit<PendingMovement, 'id' | 'uuidSync' | 'createdAt' | 'status' | 'retries'>, existingUuidSync?: string): Promise<PendingMovement> {
+   259→   259→    const id = existingUuidSync || crypto.randomUUID()
+   260→   260→    const uuidSync = id // El id generado local es el uuid_sync del servidor
+   261→   261→    const pending: PendingMovement = {
+   262→   262→      ...movement,
+   263→   263→      id,
+   264→   264→      uuidSync,
+   265→   265→      createdAt: Date.now(),
+   266→   266→      status: 'pending',
+   267→   267→      retries: 0,
+   268→   268→    }
+   269→   269→
+   270→   270→    await savePendingMovement(pending)
+   271→   271→    await this.refreshCounts()
+   272→   272→
+   273→   273→    // Si estamos online, intentar sincronizar inmediatamente
+   274→   274→    if (this.state.connectivity === 'online' && !this.syncInProgress) {
+   275→   275→      this.syncAll()
+   276→   276→    }
+   277→   277→
+   278→   278→    return pending
+   279→   279→  }
+   280→   280→
+   281→   281→  // ── Sync All ─────────────────────────
+   282→   282→  /** Sincronizar todos los pendientes + cachear datos del servidor */
+   283→   283→  async syncAll(): Promise<void> {
+   284→   284→    if (this.syncInProgress || this.destroyed) return
+   285→   285→    this.syncInProgress = true
+   286→   286→    this.updateState({ isSyncing: true, connectivity: 'syncing' })
+   287→   287→
+   288→   288→    try {
+   289→   289→      // 1. Enviar movimientos pendientes
+   290→   290→      await this.syncPendingMovements()
+   291→   291→
+   292→   292→      // 2. Cachear datos más recientes del servidor
+   293→   293→      await this.cacheAllData()
+   294→   294→
+   295→   295→      // 3. Marcar tiempo de última sincronización
+   296→   296→      const now = Date.now()
+   297→   297→      await setSyncMeta('lastSyncTime', now.toString())
+   298→   298→      this.updateState({ lastSyncTime: now })
+   299→   299→
+   300→   300→      // 4. Actualizar conteos
+   301→   301→      await this.refreshCounts()
+   302→   302→
+   303→   303→      // 5. Si no hay errores, volver a online
+   304→   304→      if (this.state.errorCount === 0 && this.state.conflictCount === 0) {
+   305→   305→        this.updateState({ connectivity: 'online' })
+   306→   306→      }
+   307→   307→    } catch (err) {
+   308→   308→      console.error('[SyncEngine] Error en syncAll:', err)
+   309→   309→      this.updateState({ connectivity: 'error' })
+   310→   310→    } finally {
+   311→   311→      this.syncInProgress = false
+   312→   312→      this.updateState({ isSyncing: false })
+   313→   313→    }
+   314→   314→  }
+   315→   315→
+   316→   316→  // ── Sync Pending Movements ───────────
+   317→   317→  private async syncPendingMovements(): Promise<{
+   318→   318→    synced: number
+   319→   319→    errors: number
+   320→   320→    conflicts: number
+   321→   321→  }> {
+   322→   322→    const pending = await getPendingMovements()
+   323→   323→    if (pending.length === 0) return { synced: 0, errors: 0, conflicts: 0 }
+   324→   324→
+   325→   325→    console.log(`[SyncEngine] Sincronizando ${pending.length} movimiento(s) pendiente(s)...`)
+   326→   326→    let synced = 0
+   327→   327→    let errors = 0
+   328→   328→    let conflicts = 0
+   329→   329→
+   330→   330→    // Procesar uno por uno, en orden cronológico
+   331→   331→    for (const mov of pending) {
+   332→   332→      if (this.destroyed) break
+   333→   333→      // Si nos quedamos sin conexión durante el loop, parar
+   334→   334→      if (!navigator.onLine) {
+   335→   335→        console.log('[SyncEngine] Conexión perdida durante sincronización, pausando...')
+   336→   336→        break
+   337→   337→      }
+   338→   338→
+   339→   339→      try {
+   340→   340→        // Marcar como syncing
+   341→   341→        await updatePendingMovement(mov.id, { status: 'syncing' })
+   342→   342→        await this.refreshCounts()
+   343→   343→
+   344→   344→        if (mov.tipo === 'traslado' && mov.destBloque) {
+   345→   345→          // Traslado — pasar uuidSync para idempotencia
+   346→   346→          await trasladarMovimiento(
+   347→   347→            {
+   348→   348→              codigo: mov.codigo,
+   349→   349→              descripcion: mov.descripcion,
+   350→   350→              un: mov.un,
+   351→   351→              cantidad: mov.cantidad,
+   352→   352→              origen: { bloque: mov.bloque, torre: mov.torre, piso: mov.piso, posicion: mov.posicion },
+   353→   353→              destino: { bloque: mov.destBloque, torre: mov.destTorre || '1', piso: mov.destPiso || '1', posicion: mov.destPosicion || '1' },
+   354→   354→              turno: mov.turno as Turno,
+   355→   355→              usuarioId: mov.usuarioId,
+   356→   356→              usuarioNombre: mov.usuarioNombre,
+   357→   357→              usuarioCorreo: mov.usuarioCorreo,
+   358→   358→              fVencimiento: mov.fVencimiento || undefined,
+   359→   359→              proveedor: mov.proveedor,
+   360→   360→              cantidadAjuste: mov.cantidadAjuste,
+   361→   361→              codigoInc: mov.codigo_inc || undefined,
+   362→   362→              uuidSync: mov.uuidSync,
+   363→   363→            }
+   364→   364→          )
+   365→   365→        } else {
+   366→   366→          // Ingreso, salida, devolución
+   367→   367→          await addMovimiento(
+   368→   368→            {
+   369→   369→              tipo: mov.tipo,
+   370→   370→              bloque: mov.bloque,
+   371→   371→              torre: mov.torre,
+   372→   372→              piso: mov.piso,
+   373→   373→              posicion: mov.posicion,
+   374→   374→              codigo: mov.codigo,
+   375→   375→              descripcion: mov.descripcion,
+   376→   376→              un: mov.un,
+   377→   377→              cantidad: mov.cantidad,
+   378→   378→              fVencimiento: mov.fVencimiento,
+   379→   379→              turno: mov.turno as Turno,
+   380→   380→              usuarioId: mov.usuarioId,
+   381→   381→              usuarioNombre: mov.usuarioNombre,
+   382→   382→              usuarioCorreo: mov.usuarioCorreo,
+   383→   383→              proveedor: mov.proveedor,
+   384→   384→              codigoInc: mov.codigo_inc || undefined,
+   385→   385→            },
+   386→   386→            mov.uuidSync
+   387→   387→          )
+   388→   388→        }
+   389→   389→
+   390→   390→        // Éxito: eliminar de la cola
+   391→   391→        await removePendingMovement(mov.id)
+   392→   392→        synced++
+   393→   393→        console.log(`[SyncEngine] ✓ Sincronizado: ${mov.tipo} ${mov.codigo} en B${mov.bloque}/T${mov.torre}/P${mov.piso}/Pos${mov.posicion}`)
+   394→   394→      } catch (err: unknown) {
+   395→   395→        const errMsg = err instanceof Error ? err.message : String(err)
+   396→   396→        const isConflict = errMsg.includes('INSUFFICIENT_STOCK')
+   397→   397→        const isDuplicate = errMsg.includes('duplicate') || errMsg.includes('UNIQUE')
+   398→   398→        // STOCK_VALIDATION_FAILED: la RPC no existe o falló la consulta de stock.
+   399→   399→        // Si ya hubo 2 reintentos, asumir que la RPC no existe y marcar como error permanente
+   400→   400→        // para que el usuario sepa que debe ejecutar el SQL en Supabase.
+   401→   401→        const isValidationFailed = errMsg.includes('STOCK_VALIDATION_FAILED')
+   402→   402→        // SAME_ORIGIN_DESTINATION: traslado a la misma ubicación — error permanente (no reintentable)
+   403→   403→        const isSameOrigin = errMsg.includes('SAME_ORIGIN_DESTINATION')
+   404→   404→
+   405→   405→        if (isDuplicate) {
+   406→   406→          // Ya existe en el servidor (idempotencia) — eliminar de cola
+   407→   407→          await removePendingMovement(mov.id)
+   408→   408→          synced++
+   409→   409→          console.log(`[SyncEngine] ✓ Duplicado (ya sincronizado): ${mov.uuidSync}`)
+   410→   410→        } else if (isSameOrigin) {
+   411→   411→          // Traslado a la misma ubicación — error de datos, no reintentable
+   412→   412→          await updatePendingMovement(mov.id, {
+   413→   413→            status: 'error',
+   414→   414→            retries: mov.retries + 1,
+   415→   415→            lastError: 'MISMA_UBICACION|El destino no puede ser igual al origen. Elimine este movimiento pendiente.',
+   416→   416→          })
+   417→   417→          errors++
+   418→   418→          console.error(`[SyncEngine] ✗ Traslado a misma ubicación: ${mov.uuidSync}`)
+   419→   419→        } else if (isConflict) {
+   420→   420→          // Conflicto de stock — marcar para resolución del usuario
+   421→   421→          await updatePendingMovement(mov.id, {
+   422→   422→            status: 'conflict',
+   423→   423→            retries: mov.retries + 1,
+   424→   424→            lastError: errMsg,
+   425→   425→          })
+   426→   426→          conflicts++
+   427→   427→          console.warn(`[SyncEngine] ⚠ Conflicto de stock: ${mov.codigo} en B${mov.bloque}/T${mov.torre}/P${mov.piso}/Pos${mov.posicion}`)
+   428→   428→        } else if (isValidationFailed && mov.retries >= 2) {
+   429→   429→          // RPC no existe o consulta de stock falla persistentemente.
+   430→   430→          // Marcar como error permanente con mensaje claro para el usuario.
+   431→   431→          await updatePendingMovement(mov.id, {
+   432→   432→            status: 'error',
+   433→   433→            retries: mov.retries + 1,
+   434→   434→            lastError: 'VALIDACION_FALLIDA_RPC|La función RPC no existe en la base de datos. Ejecute el SQL de migración en Supabase Dashboard y reintente.',
+   435→   435→          })
+   436→   436→          errors++
+   437→   437→          console.error(`[SyncEngine] ✗ Validación de stock fallida (RPC no encontrada?): ${mov.uuidSync}`)
+   438→   438→        } else {
+   439→   439→          // Error genérico — reintentable
+   440→   440→          const newRetries = mov.retries + 1
+   441→   441→          if (newRetries >= 5) {
+   442→   442→            // Demasiados reintentos, marcar como error permanente
+   443→   443→            await updatePendingMovement(mov.id, {
+   444→   444→              status: 'error',
+   445→   445→              retries: newRetries,
+   446→   446→              lastError: errMsg,
+   447→   447→            })
+   448→   448→            errors++
+   449→   449→          } else {
+   450→   450→            // Volver a pending para reintento
+   451→   451→            await updatePendingMovement(mov.id, {
+   452→   452→              status: 'pending',
+   453→   453→              retries: newRetries,
+   454→   454→              lastError: errMsg,
+   455→   455→            })
+   456→   456→            errors++
+   457→   457→          }
+   458→   458→          console.error(`[SyncEngine] ✗ Error (intento ${newRetries}): ${errMsg}`)
+   459→   459→        }
+   460→   460→      }
+   461→   461→    }
+   462→   462→
+   463→   463→    await this.refreshCounts()
+   464→   464→    console.log(`[SyncEngine] Sincronización completa: ${synced} ok, ${errors} errores, ${conflicts} conflictos`)
+   465→   465→    return { synced, errors, conflicts }
+   466→   466→  }
+   467→   467→
+   468→   468→  // ── Cache Data ───────────────────────
+   469→   469→  /** Descargar y cachear todos los datos del servidor para lectura offline */
+   470→   470→  private async cacheAllData(): Promise<void> {
+   471→   471→    try {
+   472→   472→      // Cachear movimientos
+   473→   473→      const movs = await fetchMovimientos()
+   474→   474→      const cached: CachedMovimiento[] = movs.map((m) => ({
+   475→   475→        ...m,
+   476→   476→        cachedAt: Date.now(),
+   477→   477→      }))
+   478→   478→      await cacheMovimientos(cached)
+   479→   479→
+   480→   480→      console.log(`[SyncEngine] Datos cacheados: ${cached.length} movimientos`)
+   481→   481→    } catch (err) {
+   482→   482→      console.error('[SyncEngine] Error cacheando datos:', err)
+   483→   483→      // No es crítico — la app sigue funcionando con datos antiguos
+   484→   484→    }
+   485→   485→  }
+   486→   486→
+   487→   487→  // ── Manual Actions ──────────────────
+   488→   488→
+   489→   489→  /** Forzar sincronización manual */
+   490→   490→  async forceSync(): Promise<void> {
+   491→   491→    if (this.state.connectivity === 'offline') {
+   492→   492→      console.warn('[SyncEngine] No se puede sincronizar offline')
+   493→   493→      return
+   494→   494→    }
+   495→   495→    await this.syncAll()
+   496→   496→  }
+   497→   497→
+   498→   498→  /** Reintentar un movimiento con conflicto — ajustar cantidad al stock disponible */
+   499→   499→  async retryConflictWithAdjustedQty(id: string, adjustedQty: number): Promise<boolean> {
+   500→   500→    const pending = await getPendingMovements()
+   501→   501→    const mov = pending.find((m) => m.id === id)
+   502→   502→    if (!mov) return false
+   503→   503→
+   504→   504→    try {
+   505→   505→      await updatePendingMovement(id, { status: 'syncing' })
+   506→   506→      await addMovimiento(
+   507→   507→        {
+   508→   508→          tipo: mov.tipo,
+   509→   509→          bloque: mov.bloque,
+   510→   510→          torre: mov.torre,
+   511→   511→          piso: mov.piso,
+   512→   512→          posicion: mov.posicion,
+   513→   513→          codigo: mov.codigo,
+   514→   514→          descripcion: mov.descripcion,
+   515→   515→          un: mov.un,
+   516→   516→          cantidad: adjustedQty,
+   517→   517→          fVencimiento: mov.fVencimiento,
+   518→   518→          turno: mov.turno as Turno,
+   519→   519→          usuarioId: mov.usuarioId,
+   520→   520→          usuarioNombre: mov.usuarioNombre,
+   521→   521→          usuarioCorreo: mov.usuarioCorreo,
+   522→   522→          proveedor: mov.proveedor,
+   523→   523→          codigoInc: mov.codigo_inc || undefined,
+   524→   524→        },
+   525→   525→        mov.uuidSync
+   526→   526→      )
+   527→   527→      await removePendingMovement(id)
+   528→   528→      await this.refreshCounts()
+   529→   529→      return true
+   530→   530→    } catch (err) {
+   531→   531→      const errMsg = err instanceof Error ? err.message : String(err)
+   532→   532→      await updatePendingMovement(id, { status: 'conflict', lastError: errMsg, retries: mov.retries + 1 })
+   533→   533→      await this.refreshCounts()
+   534→   534→      return false
+   535→   535→    }
+   536→   536→  }
+   537→   537→
+   538→   538→  /** Cancelar un movimiento con conflicto o error */
+   539→   539→  async cancelPendingMovement(id: string): Promise<void> {
+   540→   540→    await removePendingMovement(id)
+   541→   541→    await this.refreshCounts()
+   542→   542→  }
+   543→   543→
+   544→   544→  /** Obtener movimientos con conflicto para mostrar al usuario */
+   545→   545→  async getConflicts(): Promise<PendingMovement[]> {
+   546→   546→    const pending = await getPendingMovements()
+   547→   547→    return pending.filter((m) => m.status === 'conflict' || m.status === 'error')
+   548→   548→  }
+   549→   549→
+   550→   550→  /** Obtener movimientos cacheados para cálculo de stock local */
+   551→   551→  async getCachedMovimientosForStock(): Promise<CachedMovimiento[]> {
+   552→   552→    try {
+   553→   553→      return await getCachedMovimientos()
+   554→   554→    } catch {
+   555→   555→      return []
+   556→   556→    }
+   557→   557→  }
+   558→   558→
+   559→   559→  // ═══════════════════════════════════════════════════════════
+   560→   560→  // OFFLINE-AWARE WRAPPERS — Usados por los componentes
+   561→   561→  // ═══════════════════════════════════════════════════════════
+   562→   562→
+   563→   563→  /**
+   564→   564→   * Registrar un movimiento (ingreso/salida/devolución) con soporte offline.
+   565→   565→   * Si hay internet → envía al servidor normalmente.
+   566→   566→   * Si no hay internet → guarda en IndexedDB para sincronizar después.
+   567→   567→   * 
+   568→   568→   * Retorna: { movs, wasOffline }
+   569→   569→   * - movs: array de movimientos actualizados (vacío si fue offline)
+   570→   570→   * - wasOffline: true si se guardó offline
+   571→   571→   */
+   572→   572→  async offlineAwareAddMovimiento(
+   573→   573→    m: Parameters<typeof addMovimiento>[0],
+   574→   574→    uuidSync?: string
+   575→   575→  ): Promise<{ movs: Movimiento[]; wasOffline: boolean }> {
+   576→   576→    // GENERAR UUID de idempotencia ANTES del intento online.
+   577→   577→    // Este mismo UUID se usa tanto para el intento online como para la cola offline,
+   578→   578→    // garantizando que si el servidor recibe ambos, la UNIQUE constraint lo rechace.
+   579→   579→    const syncId = uuidSync || crypto.randomUUID()
+   580→   580→
+   581→   581→    // Intentar enviar al servidor si: online, o syncing/error PERO navigator dice online
+   582→   582→    const shouldTryOnline = this.state.connectivity === 'online' || navigator.onLine
+   583→   583→
+   584→   584→    if (shouldTryOnline) {
+   585→   585→      try {
+   586→   586→        const movs = await addMovimiento(m, syncId)
+   587→   587→        return { movs, wasOffline: false }
+   588→   588→      } catch (err) {
+   589→   589→        // Detectar si fue un error de red/conexión
+   590→   590→        const errMsg = err instanceof Error ? err.message : ''
+   591→   591→        const isNetworkError = !navigator.onLine ||
+   592→   592→          (err instanceof TypeError && errMsg.includes('fetch')) ||
+   593→   593→          errMsg.includes('Failed to fetch') ||
+   594→   594→          errMsg.includes('NetworkError') ||
+   595→   595→          errMsg.includes('Network request failed') ||
+   596→   596→          errMsg.includes('Load failed') ||
+   597→   597→          errMsg.includes('ERR_CONNECTION') ||
+   598→   598→          errMsg.includes('Aborted')
+   599→   599→        if (!isNetworkError) throw err // Error de negocio (ej: INSUFFICIENT_STOCK), propagar
+   600→   600→        // Error de red — caer al flujo offline con el MISMO UUID
+   601→   601→        console.warn('[SyncEngine] Error de red, guardando offline con syncId:', syncId, errMsg)
+   602→   602→      }
+   603→   603→    }
+   604→   604→
+   605→   605→    // Flujo offline: guardar en IndexedDB con el MISMO uuid de idempotencia
+   606→   606→    try {
+   607→   607→      await this.enqueueMovement({
+   608→   608→        tipo: m.tipo,
+   609→   609→        bloque: m.bloque,
+   610→   610→        torre: m.torre,
+   611→   611→        piso: m.piso,
+   612→   612→        posicion: m.posicion,
+   613→   613→        codigo: m.codigo,
+   614→   614→        descripcion: m.descripcion,
+   615→   615→        un: m.un,
+   616→   616→        cantidad: m.cantidad,
+   617→   617→        fVencimiento: m.fVencimiento,
+   618→   618→        turno: m.turno,
+   619→   619→        usuarioId: m.usuarioId,
+   620→   620→        usuarioNombre: m.usuarioNombre || '',
+   621→   621→        usuarioCorreo: m.usuarioCorreo || '',
+   622→   622→        proveedor: m.proveedor,
+   623→   623→        codigo_inc: m.codigoInc || '',
+   624→   624→      }, syncId) // ← Pasar el MISMO UUID para idempotencia
+   625→   625→      return { movs: [], wasOffline: true }
+   626→   626→    } catch (offlineErr) {
+   627→   627→      // IndexedDB no disponible — intentar enviar al servidor como último recurso
+   628→   628→      console.error('[SyncEngine] IndexedDB no disponible, intentando enviar directo:', offlineErr)
+   629→   629→      const movs = await addMovimiento(m, syncId)
+   630→   630→      return { movs, wasOffline: false }
+   631→   631→    }
+   632→   632→  }
+   633→   633→
+   634→   634→  /**
+   635→   635→   * Registrar un traslado con soporte offline.
+   636→   636→   * Si hay internet → envía al servidor normalmente.
+   637→   637→   * Si no hay internet → guarda en IndexedDB (como un solo movimiento pendiente).
+   638→   638→   */
+   639→   639→  async offlineAwareTraslado(
+   640→   640→    t: Parameters<typeof trasladarMovimiento>[0]
+   641→   641→  ): Promise<{ movs: Movimiento[]; wasOffline: boolean }> {
+   642→   642→    // Generar UUID de idempotencia para el traslado
+   643→   643→    const syncId = crypto.randomUUID()
+   644→   644→
+   645→   645→    // Intentar enviar al servidor si: online, o syncing/error PERO navigator dice online
+   646→   646→    const shouldTryOnline = this.state.connectivity === 'online' || navigator.onLine
+   647→   647→
+   648→   648→    if (shouldTryOnline) {
+   649→   649→      try {
+   650→   650→        // Pasar uuidSync para idempotencia del traslado
+   651→   651→        const movs = await trasladarMovimiento({ ...t, uuidSync: syncId })
+   652→   652→        return { movs, wasOffline: false }
+   653→   653→      } catch (err) {
+   654→   654→        const errMsg = err instanceof Error ? err.message : ''
+   655→   655→        const isNetworkError = !navigator.onLine ||
+   656→   656→          (err instanceof TypeError && errMsg.includes('fetch')) ||
+   657→   657→          errMsg.includes('Failed to fetch') ||
+   658→   658→          errMsg.includes('NetworkError') ||
+   659→   659→          errMsg.includes('Network request failed') ||
+   660→   660→          errMsg.includes('Load failed') ||
+   661→   661→          errMsg.includes('Aborted')
+   662→   662→        if (!isNetworkError) throw err
+   663→   663→        console.warn('[SyncEngine] Error de red en traslado, guardando offline con syncId:', syncId, errMsg)
+   664→   664→      }
+   665→   665→    }
+   666→   666→
+   667→   667→    // Flujo offline — usar el MISMO UUID para idempotencia
+   668→   668→    try {
+   669→   669→      await this.enqueueMovement({
+   670→   670→        tipo: 'traslado',
+   671→   671→        bloque: t.origen.bloque,
+   672→   672→        torre: t.origen.torre,
+   673→   673→        piso: t.origen.piso,
+   674→   674→        posicion: t.origen.posicion,
+   675→   675→        codigo: t.codigo,
+   676→   676→        descripcion: t.descripcion,
+   677→   677→        un: t.un,
+   678→   678→        cantidad: t.cantidad,
+   679→   679→        fVencimiento: t.fVencimiento || '',
+   680→   680→        turno: t.turno,
+   681→   681→        usuarioId: t.usuarioId,
+   682→   682→        usuarioNombre: t.usuarioNombre || '',
+   683→   683→        usuarioCorreo: t.usuarioCorreo || '',
+   684→   684→        proveedor: t.proveedor,
+   685→   685→        destBloque: t.destino.bloque,
+   686→   686→        destTorre: t.destino.torre,
+   687→   687→        destPiso: t.destino.piso,
+   688→   688→        destPosicion: t.destino.posicion,
+   689→   689→        cantidadAjuste: t.cantidadAjuste,
+   690→   690→        codigo_inc: t.codigoInc || '',
+   691→   691→      }, syncId) // ← Pasar el MISMO UUID
+   692→   692→      return { movs: [], wasOffline: true }
+   693→   693→    } catch (offlineErr) {
+   694→   694→      // IndexedDB no disponible — intentar enviar al servidor como último recurso
+   695→   695→      console.error('[SyncEngine] IndexedDB no disponible, intentando traslado directo:', offlineErr)
+   696→   696→      // PASAR syncId para idempotencia — si el intento online parcial funcionó,
+   697→   697→      // el uuidSync evitará duplicados en el servidor.
+   698→   698→      const movs = await trasladarMovimiento({ ...t, uuidSync: syncId })
+   699→   699→      return { movs, wasOffline: false }
+   700→   700→    }
+   701→   701→  }
+   702→   702→
+   703→   703→  /** Verificar si estamos offline */
+   704→   704→  isOffline(): boolean {
+   705→   705→    return this.state.connectivity === 'offline' || this.state.connectivity === 'error'
+   706→   706→  }
+   707→   707→}
+   708→   708→
+   709→   709→// Singleton exportado
+   710→   710→export const SyncEngine = new SyncEngineSingleton()
+   711→   711→

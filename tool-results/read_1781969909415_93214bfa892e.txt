@@ -1,0 +1,502 @@
+  1200→  // Toggle nivel seleccionado en salida en masa (empty = todos)
+  1201→  function toggleMassNivel(posicionId: string, nivelId: string) {
+  1202→    setMassData((prev) => {
+  1203→      const next = new Map(prev)
+  1204→      const d = next.get(posicionId)
+  1205→      if (d) {
+  1206→        const s = new Set(d.selectedNivelIds)
+  1207→        if (s.has(nivelId)) s.delete(nivelId); else s.add(nivelId)
+  1208→        next.set(posicionId, { ...d, selectedNivelIds: s })
+  1209→      }
+  1210→      return next
+  1211→    })
+  1212→  }
+  1213→
+  1214→  // Obtener items a mostrar según niveles seleccionados (vacío = todos)
+  1215→  function getMassDisplayItems(pd: MassPosData): DetailStock[] {
+  1216→    if (pd.selectedNivelIds.size === 0) return pd.stock
+  1217→    return pd.niveles
+  1218→      .filter((n) => pd.selectedNivelIds.has(n.id))
+  1219→      .flatMap((n) => pd.stockByNivel[n.id] ?? [])
+  1220→  }
+  1221→
+  1222→  // Export Excel
+  1223→  async function handleExport() {
+  1224→    setBusyExport(true)
+  1225→    try {
+  1226→      const XLSX = await import('xlsx')
+  1227→      const data = posiciones.map((p) => ({
+  1228→        Columna: p.columnaLetra,
+  1229→        Subcolumna: p.subcolumnaCodigo,
+  1230→        Posicion: p.posicionNumero,
+  1231→        Stock: p.stock,
+  1232→        Codigos: p.bloques.map((b) => `${b.bloque_codigo} (${b.cantidad})`).join(', '),
+  1233→        Articulos: p.bloques.length,
+  1234→        Estado: p.stock <= 0 ? 'Vacio' : p.bloques.length > 1 ? 'Multiple' : 'Ocupado',
+  1235→      }))
+  1236→      const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
+  1237→      XLSX.utils.book_append_sheet(wb, ws, 'Sectores Piso'); XLSX.writeFile(wb, `RACKLY_SectoresPiso_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
+  1238→    } catch (err: unknown) { toast.error('Error al exportar', { description: extractError(err) }) } finally { setBusyExport(false) }
+  1239→  }
+  1240→
+  1241→  // ─── FechaVencimientoField movido a archivo separado ───
+  1242→  // (importado arriba) — ver /src/components/rackly/piso/FechaVencimientoField.tsx
+  1243→  // Se extrajo porque estar definido DENTRO de PisoSectoresTab causaba que
+  1244→  // React.memo fuera completamente inútil (nueva referencia cada render).
+  1245→
+  1246→  // ─── Autocomplete dropdown sub-component ───
+  1247→  function AutocompleteDropdown({
+  1248→    prefix, idx, row,
+  1249→  }: {
+  1250→    prefix: 'ing' | 'dev'; idx: number; row: RowEntry; accentColor?: string
+  1251→  }) {
+  1252→    const rows = prefix === 'ing' ? ingRows : devRows
+  1253→    const isIng = prefix === 'ing'
+  1254→    // Show dropdown whenever there's text and no selection yet
+  1255→    if (row.bloque_id || row.codigo.trim().length < 1) return null
+  1256→    const suggestions = !catalogoLoading
+  1257→      ? getFilteredCatalogo(prefix, idx)
+  1258→          .filter((b) => !rows.some((r, ri) => ri !== idx && r.bloque_id === b.id))
+  1259→          .slice(0, 10)
+  1260→      : []
+  1261→    return (
+  1262→      <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-700/80 bg-slate-900/95 backdrop-blur-sm shadow-2xl shadow-black/40">
+  1263→        {catalogoLoading && <div className="px-3 py-2 text-xs text-slate-500">Cargando catalogo...</div>}
+  1264→        {!catalogoLoading && suggestions.length === 0 && (
+  1265→          <div className="px-3 py-2 text-xs text-slate-400 flex items-center gap-1.5">
+  1266→            <Sparkles className={`h-3 w-3 ${isIng ? 'text-emerald-400' : 'text-amber-400'}`} />
+  1267→            Articulo nuevo — se creara al registrar
+  1268→          </div>
+  1269→        )}
+  1270→        {!catalogoLoading && suggestions.map((b) => (
+  1271→          <button key={b.id} onClick={() => onSelectFromCatalog(prefix, idx, b)}
+  1272→            className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/80 text-slate-300 border-b border-slate-800/50 last:border-0 transition-all duration-200">
+  1273→            <span className={isIng ? 'font-mono text-emerald-400' : 'font-mono text-amber-400'}>{b.codigo}</span>
+  1274→            <span className="text-slate-500 ml-1.5">— {b.descripcion || b.unidad}</span>
+  1275→          </button>
+  1276→        ))}
+  1277→      </div>
+  1278→    )
+  1279→  }
+  1280→
+  1281→  // ─── Nivel Selector sub-component ───
+  1282→  function NivelSelector({
+  1283→    label,
+  1284→    nivelId,
+  1285→    onNivelChange,
+  1286→    nivelesList,
+  1287→    accentColor,
+  1288→  }: {
+  1289→    label: string
+  1290→    nivelId: string
+  1291→    onNivelChange: (id: string) => void
+  1292→    nivelesList: NivelInfo[]
+  1293→    accentColor: 'emerald' | 'red' | 'sky' | 'amber'
+  1294→  }) {
+  1295→    if (nivelesList.length <= 1) return null // No mostrar si solo hay 1 nivel
+  1296→    const colors = {
+  1297→      emerald: 'border-emerald-500/40 text-emerald-400 focus:ring-emerald-500/30',
+  1298→      red: 'border-red-500/40 text-red-400 focus:ring-red-500/30',
+  1299→      sky: 'border-sky-500/40 text-sky-400 focus:ring-sky-500/30',
+  1300→      amber: 'border-amber-500/40 text-amber-400 focus:ring-amber-500/30',
+  1301→    }
+  1302→    return (
+  1303→      <div className="flex items-center gap-2 rounded-xl border border-slate-700/40 bg-slate-800/50 px-3 py-2 backdrop-blur-sm">
+  1304→        <Layers className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+  1305→        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider shrink-0">{label}:</span>
+  1306→        <select
+  1307→          value={nivelId}
+  1308→          onChange={(e) => onNivelChange(e.target.value)}
+  1309→          className={`flex-1 bg-slate-900/80 border rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 transition-all duration-200 appearance-none cursor-pointer ${colors[accentColor]}`}
+  1310→        >
+  1311→          {nivelesList.map((n) => (
+  1312→            <option key={n.id} value={n.id}>
+  1313→              Nivel {n.numero}{n.codigo_ubicacion ? ` (${n.codigo_ubicacion})` : ''}
+  1314→            </option>
+  1315→          ))}
+  1316→        </select>
+  1317→        <ChevronDown className="h-3 w-3 text-slate-500 -ml-1 shrink-0 pointer-events-none" />
+  1318→      </div>
+  1319→    )
+  1320→  }
+  1321→
+  1322→  // ═══════════════════════════════════════════════
+  1323→  //  CELL STYLING — Clean 2D buttons
+  1324→  // ═══════════════════════════════════════════════
+  1325→  function getCellClasses(pos: PosicionConStock): string {
+  1326→    const base = 'w-full h-11 px-1 rounded-lg transition-colors duration-150 cursor-pointer border text-center'
+  1327→    if (pos.stock <= 0) {
+  1328→      return `${base} bg-emerald-950/40 border-emerald-700/30 text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-500/40`
+  1329→    }
+  1330→    if (pos.bloques.length > 1) {
+  1331→      return `${base} bg-amber-950/50 border-amber-700/40 text-amber-200 hover:bg-amber-900/50 hover:border-amber-500/40 ring-1 ring-amber-500/20`
+  1332→    }
+  1333→    return `${base} bg-sky-950/50 border-sky-700/30 text-sky-200 hover:bg-sky-900/50 hover:border-sky-500/40`
+  1334→  }
+  1335→
+  1336→  // ═══════════════════════════════════════════════
+  1337→  //  LOADING / EMPTY STATES — Skeleton shimmer
+  1338→  // ═══════════════════════════════════════════════
+  1339→  if (loading) {
+  1340→    return (
+  1341→      <div className="flex items-center justify-center py-20">
+  1342→        <div className="flex flex-col items-center gap-4">
+  1343→          <div className="relative">
+  1344→            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-sky-400 to-cyan-500 animate-pulse flex items-center justify-center">
+  1345→              <Warehouse className="h-7 w-7 text-white" />
+  1346→            </div>
+  1347→            <div className="absolute inset-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-sky-400 to-cyan-500 animate-ping opacity-20" />
+  1348→          </div>
+  1349→          <div className="text-center">
+  1350→            <p className="text-sm text-slate-400 animate-pulse font-medium">Cargando sectores...</p>
+  1351→            <p className="text-xs text-slate-600 mt-1">Preparando vista del almacén</p>
+  1352→          </div>
+  1353→        </div>
+  1354→      </div>
+  1355→    )
+  1356→  }
+  1357→
+  1358→  if (sectores.length === 0) {
+  1359→    return (
+  1360→      <div className="rounded-2xl border border-slate-700/50 bg-slate-800/40 backdrop-blur-sm p-10 text-center">
+  1361→        <Layers3 className="h-14 w-14 text-slate-600 mx-auto mb-4 animate-bounce" />
+  1362→        <p className="text-slate-400 font-semibold text-lg">No hay sectores creados</p>
+  1363→        <p className="text-xs text-slate-500 mt-1">Ve a Configuracion para crear tu primer sector</p>
+  1364→      </div>
+  1365→    )
+  1366→  }
+  1367→
+  1368→  const displayPos = posiciones
+  1369→
+  1370→  // Pill tab indicator position
+  1371→  const activeSectorIdx = sectores.findIndex((s) => s.id === sectorFilter)
+  1372→
+  1373→  // ═══════════════════════════════════════════════
+  1374→  //  MAIN RENDER
+  1375→  // ═══════════════════════════════════════════════
+  1376→  return (
+  1377→    <div className="space-y-6 relative">
+  1378→      {/* Subtle grid background pattern */}
+  1379→      <div className="absolute inset-0 -z-10 opacity-[0.03] pointer-events-none"
+  1380→        style={{
+  1381→          backgroundImage: `radial-gradient(circle, #94a3b8 1px, transparent 1px)`,
+  1382→          backgroundSize: '24px 24px',
+  1383→        }} />
+  1384→
+  1385→      {/* ═══ DASHBOARD STATS — Gradient border cards with animated counters ═══ */}
+  1386→      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+  1387→        {/* Total */}
+  1388→        <div className="group relative rounded-2xl p-[1px] bg-gradient-to-br from-slate-600/40 to-slate-700/20 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300">
+  1389→          <div className="rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 p-4 overflow-hidden relative">
+  1390→            <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-slate-600/15 to-transparent rounded-bl-full" />
+  1391→            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em]">Total</p>
+  1392→            <p className="text-2xl font-extrabold text-white mt-1 tracking-tight tabular-nums">{animatedTotal.toLocaleString()}</p>
+  1393→            <p className="text-[10px] text-slate-500 mt-1">posiciones</p>
+  1394→          </div>
+  1395→        </div>
+  1396→
+  1397→        {/* Ocupadas */}
+  1398→        <div className="group relative rounded-2xl p-[1px] bg-gradient-to-br from-sky-500/30 to-cyan-500/10 shadow-lg hover:shadow-sky-500/10 hover:-translate-y-0.5 transition-all duration-300">
+  1399→          <div className="rounded-2xl bg-gradient-to-br from-sky-950/60 to-slate-900 p-4 overflow-hidden relative">
+  1400→            <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-sky-500/10 to-transparent rounded-bl-full" />
+  1401→            <p className="text-[10px] font-bold text-sky-400 uppercase tracking-[0.15em]">Ocupadas</p>
+  1402→            <p className="text-2xl font-extrabold text-sky-200 mt-1 tracking-tight tabular-nums">{animatedOccupied}</p>
+  1403→            <p className="text-[10px] text-sky-400/60 mt-1">{multiArt} multiples</p>
+  1404→          </div>
+  1405→        </div>
+  1406→
+  1407→        {/* Vacias */}
+  1408→        <div className="group relative rounded-2xl p-[1px] bg-gradient-to-br from-emerald-500/30 to-emerald-500/10 shadow-lg hover:shadow-emerald-500/10 hover:-translate-y-0.5 transition-all duration-300">
+  1409→          <div className="rounded-2xl bg-gradient-to-br from-emerald-950/50 to-slate-900 p-4 overflow-hidden relative">
+  1410→            <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-emerald-500/10 to-transparent rounded-bl-full" />
+  1411→            <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-[0.15em]">Vacias</p>
+  1412→            <p className="text-2xl font-extrabold text-emerald-200 mt-1 tracking-tight tabular-nums">{animatedEmpty.toLocaleString()}</p>
+  1413→            <p className="text-[10px] text-emerald-400/60 mt-1">disponibles</p>
+  1414→          </div>
+  1415→        </div>
+  1416→
+  1417→        {/* Ocupacion */}
+  1418→        <div className="group relative rounded-2xl p-[1px] bg-gradient-to-br from-violet-500/30 to-fuchsia-500/10 shadow-lg hover:shadow-violet-500/10 hover:-translate-y-0.5 transition-all duration-300">
+  1419→          <div className="rounded-2xl bg-gradient-to-br from-violet-950/50 to-slate-900 p-4 overflow-hidden relative">
+  1420→            <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-violet-500/10 to-transparent rounded-bl-full" />
+  1421→            <p className="text-[10px] font-bold text-violet-400 uppercase tracking-[0.15em]">Ocupacion</p>
+  1422→            <p className="text-2xl font-extrabold text-violet-200 mt-1 tracking-tight tabular-nums">{pct}<span className="text-sm text-violet-400/60">%</span></p>
+  1423→            <div className="mt-2 h-2 rounded-full bg-slate-700/80 overflow-hidden">
+  1424→              <div
+  1425→                className="h-full rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 transition-all duration-1000 ease-out"
+  1426→                style={{ width: `${Math.min(pct, 100)}%` }}
+  1427→              />
+  1428→            </div>
+  1429→          </div>
+  1430→        </div>
+  1431→      </div>
+  1432→
+  1433→      {/* ═══ SELECTOR SECTOR — Pill-style with sliding indicator ═══ */}
+  1434→      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+  1435→        <div className="flex items-center gap-2.5 min-w-0">
+  1436→          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0">Sector:</span>
+  1437→          {sectores.length <= 4 ? (
+  1438→          <div className="relative flex gap-1 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm overflow-hidden">
+  1439→            {/* Sliding indicator */}
+  1440→            <div
+  1441→              className="absolute top-1 bottom-1 rounded-lg bg-gradient-to-r from-sky-400 to-cyan-500 shadow-lg shadow-sky-500/25 transition-all duration-300 ease-out"
+  1442→              style={{
+  1443→                left: activeSectorIdx >= 0 ? `calc(${activeSectorIdx} * (100% / ${sectores.length}) + 4px)` : '4px',
+  1444→                width: `calc(100% / ${sectores.length} - 8px)`,
+  1445→              }}
+  1446→            />
+  1447→            {sectores.map((s) => (
+  1448→              <button key={s.id} onClick={() => setSectorFilter(s.id)}
+  1449→                className={`relative z-10 flex-1 min-w-0 px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition-all duration-300 truncate ${sectorFilter === s.id
+  1450→                  ? 'text-white'
+  1451→                  : 'text-slate-400 hover:text-slate-300'
+  1452→                  }`}>
+  1453→                {s.nombre}
+  1454→              </button>
+  1455→            ))}
+  1456→          </div>
+  1457→          ) : (
+  1458→          <div className="flex gap-1 overflow-x-auto max-w-[60vw] sm:max-w-none">
+  1459→            {sectores.map((s) => (
+  1460→              <button key={s.id} onClick={() => setSectorFilter(s.id)}
+  1461→                className={`px-3 py-2 rounded-lg text-xs font-bold border transition-all duration-300 whitespace-nowrap shrink-0 ${sectorFilter === s.id
+  1462→                  ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white border-sky-400/50 shadow-lg shadow-sky-500/25'
+  1463→                  : 'bg-slate-800/60 text-slate-400 border-slate-700/30 hover:text-slate-300 hover:border-slate-600'
+  1464→                  }`}>
+  1465→                {s.nombre}
+  1466→              </button>
+  1467→            ))}
+  1468→          </div>
+  1469→          )}
+  1470→        </div>
+  1471→        <div className="flex items-center gap-3">
+  1472→          <button onClick={() => loadPosiciones()} className="p-2 rounded-xl border border-slate-700/50 hover:bg-slate-700/80 transition-all duration-500 hover:-rotate-180 bg-slate-800/60 backdrop-blur-sm hover:shadow-lg"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /></button>
+  1473→          {/* Salida en masa toggle */}
+  1474→          <button
+  1475→            onClick={toggleMassMode}
+  1476→            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all duration-300 ${massMode
+  1477→              ? 'bg-red-600/20 text-red-400 border-red-500/40 shadow-lg shadow-red-500/10'
+  1478→              : 'bg-slate-800/60 text-slate-400 border-slate-700/30 hover:text-red-400 hover:border-red-500/30'
+  1479→            }`}
+  1480→          >
+  1481→            <ArrowUpFromLine className="h-3.5 w-3.5" />
+  1482→            Salida en masa
+  1483→            {massMode && <span className="ml-1 text-[9px] bg-red-500/30 text-red-300 px-1.5 py-0.5 rounded-md font-mono">{massSelected.size}</span>}
+  1484→          </button>
+  1485→          <div className="hidden sm:flex items-center gap-3 text-[10px] text-slate-400 bg-slate-800/40 rounded-xl px-3 py-1.5 border border-slate-700/30 backdrop-blur-sm">
+  1486→            <div className="flex items-center gap-1.5">
+  1487→              <div className="w-3 h-3 rounded-md bg-sky-500/50 shadow-sm shadow-sky-500/20" />
+  1488→              <span>Ocupado</span>
+  1489→            </div>
+  1490→            <div className="flex items-center gap-1.5">
+  1491→              <div className="w-3 h-3 rounded-md bg-amber-500/50 shadow-sm shadow-amber-500/20" />
+  1492→              <span>Multiple</span>
+  1493→            </div>
+  1494→            <div className="flex items-center gap-1.5">
+  1495→              <div className="w-3 h-3 rounded-md bg-emerald-500/30 shadow-sm shadow-emerald-500/10" />
+  1496→              <span>Vacio</span>
+  1497→            </div>
+  1498→          </div>
+  1499→        </div>
+  1500→      </div>
+  1501→
+  1502→      {/* ═══ COLUMN SELECTOR DASHBOARD ═══ */}
+  1503→      {selectedColumn === null ? (() => {
+  1504→        const currentSector = sectores.find(s => s.id === sectorFilter)
+  1505→        const isSingleLevel = (currentSector?.n_niveles ?? 0) <= 1
+  1506→
+  1507→        // ═══ VISTA PLANA: sector con 1 nivel ═══
+  1508→        if (isSingleLevel) {
+  1509→          const nCol = currentSector?.n_columnas ?? 0
+  1510→          // Si tiene varias columnas → selector de columnas (como el mockup)
+  1511→          // Si tiene 1 columna → grid plano de posiciones (ej. Cámara de Frío)
+  1512→          if (nCol > 1) {
+  1513→            return (
+  1514→              <div className="space-y-4">
+  1515→                <div className="flex items-center gap-2.5 px-1">
+  1516→                  <Layers3 className="h-4 w-4 text-sky-400" />
+  1517→                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+  1518→                    {currentSector?.nombre || 'Selecciona un sector'}
+  1519→                  </span>
+  1520→                  <span className="text-[10px] text-slate-500">— {columnas.length} columnas</span>
+  1521→                </div>
+  1522→                <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+  1523→                  <div className="grid grid-cols-4 sm:grid-cols-8 gap-2.5">
+  1524→                    {columnas.map((col) => {
+  1525→                      const colOcc = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0).length, 0)
+  1526→                      const colTotal = col.subcols.reduce((s, sc) => s + sc.pos.length, 0)
+  1527→                      const isEmpty = colOcc === 0
+  1528→                      return (
+  1529→                        <button
+  1530→                          key={col.letra}
+  1531→                          onClick={() => handleSelectColumn(col.letra)}
+  1532→                          className={`relative rounded-xl h-12 flex items-center justify-center text-base font-extrabold text-white transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 ${
+  1533→                            isEmpty
+  1534→                              ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/40'
+  1535→                              : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'
+  1536→                          }`}
+  1537→                        >
+  1538→                          {col.letra}
+  1539→                          <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-slate-900 border border-slate-600 text-[9px] font-bold text-slate-300 flex items-center justify-center px-1">
+  1540→                            {colOcc}/{colTotal}
+  1541→                          </span>
+  1542→                        </button>
+  1543→                      )
+  1544→                    })}
+  1545→                  </div>
+  1546→                  {/* Legend */}
+  1547→                  <div className="flex flex-wrap items-center gap-3 sm:gap-4 mt-4 px-1 text-[10px] sm:text-[11px]">
+  1548→                    <div className="flex items-center gap-1.5">
+  1549→                      <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
+  1550→                      <span className="text-slate-400">Vacía</span>
+  1551→                    </div>
+  1552→                    <div className="flex items-center gap-1.5">
+  1553→                      <div className="w-3.5 h-3.5 rounded bg-blue-600" />
+  1554→                      <span className="text-slate-400">Con stock</span>
+  1555→                    </div>
+  1556→                  </div>
+  1557→                </div>
+  1558→              </div>
+  1559→            )
+  1560→          }
+  1561→          // 1 columna 1 nivel → grid plano original
+  1562→          return (
+  1563→            <div className="space-y-4">
+  1564→              <div className="flex items-center gap-2.5 px-1">
+  1565→                <Layers3 className="h-4 w-4 text-sky-400" />
+  1566→                <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+  1567→                  {currentSector?.nombre || 'Selecciona un sector'}
+  1568→                </span>
+  1569→                <span className="text-[10px] text-slate-500">— {posiciones.length} posiciones</span>
+  1570→              </div>
+  1571→              <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+  1572→                <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-10 gap-2.5">
+  1573→                  {posiciones.map((pos) => {
+  1574→                    const count = pos.stock > 0 ? pos.bloques.length : 0
+  1575→                    const totalQty = pos.bloques.reduce((s, b) => s + b.cantidad, 0)
+  1576→
+  1577→                    let cellBg = 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/30'
+  1578→                    if (count > 1) cellBg = 'bg-orange-500 hover:bg-orange-400 shadow-orange-900/30'
+  1579→                    else if (count === 1) cellBg = 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/30'
+  1580→
+  1581→                    return (
+  1582→                      <button
+  1583→                        key={pos.posicionId}
+  1584→                        onClick={() => massMode ? toggleMassSelect(pos.posicionId) : handleClick(pos)}
+  1585→                        className={`${massMode && massSelected.has(pos.posicionId) ? 'ring-2 ring-red-400 ring-offset-1 ring-offset-slate-900 scale-105' : ''} ${cellBg} relative rounded-xl aspect-square flex flex-col items-center justify-center text-white transition-all duration-200 hover:scale-105 active:scale-95 shadow-lg`}
+  1586→                        title={`Pos ${pos.posicionNumero} — ${count} artículo(s)${totalQty > 0 ? ` · ${totalQty.toFixed(1)}` : ''}`}
+  1587→                      >
+  1588→                        {massMode && (
+  1589→                          <div className={`absolute top-1 right-1 w-4 h-4 rounded-full border-2 flex items-center justify-center ${massSelected.has(pos.posicionId) ? 'bg-red-500 border-red-400' : 'bg-slate-800/80 border-slate-500/60'}`}>
+  1590→                            {massSelected.has(pos.posicionId) && <Check className="h-2 w-2 text-white" />}
+  1591→                          </div>
+  1592→                        )}
+  1593→                        <span className="text-sm sm:text-base font-extrabold leading-none">{pos.posicionNumero}</span>
+  1594→                        {count === 1 && (
+  1595→                          <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{totalQty % 1 === 0 ? totalQty : totalQty.toFixed(1)}</span>
+  1596→                        )}
+  1597→                        {count > 1 && (
+  1598→                          <span className="text-[8px] sm:text-[9px] font-semibold mt-0.5 opacity-90">{count} arts</span>
+  1599→                        )}
+  1600→                      </button>
+  1601→                    )
+  1602→                  })}
+  1603→                </div>
+  1604→                {/* Legend */}
+  1605→                <div className="flex flex-wrap items-center gap-3 sm:gap-4 mt-4 px-1 text-[10px] sm:text-[11px]">
+  1606→                  <div className="flex items-center gap-1.5">
+  1607→                    <div className="w-3.5 h-3.5 rounded bg-emerald-600" />
+  1608→                    <span className="text-slate-400">Vacío</span>
+  1609→                  </div>
+  1610→                  <div className="flex items-center gap-1.5">
+  1611→                    <div className="w-3.5 h-3.5 rounded bg-blue-600" />
+  1612→                    <span className="text-slate-400">1 artículo</span>
+  1613→                  </div>
+  1614→                  <div className="flex items-center gap-1.5">
+  1615→                    <div className="w-3.5 h-3.5 rounded bg-orange-500" />
+  1616→                    <span className="text-slate-400">2+ artículos</span>
+  1617→                  </div>
+  1618→                </div>
+  1619→              </div>
+  1620→            </div>
+  1621→          )
+  1622→        }
+  1623→
+  1624→        // ═══ VISTA NORMAL: sector con múltiples niveles → selector de columnas ═══
+  1625→        return (
+  1626→          <div className="space-y-4">
+  1627→            {/* Sector title */}
+  1628→            <div className="flex items-center gap-2.5 px-1">
+  1629→              <Layers3 className="h-4 w-4 text-sky-400" />
+  1630→              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+  1631→                {currentSector?.nombre || 'Selecciona un sector'}
+  1632→              </span>
+  1633→              <span className="text-[10px] text-slate-500">— {columnas.length} columnas</span>
+  1634→            </div>
+  1635→            {/* Column selector — dark container with solid colored buttons */}
+  1636→            <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+  1637→              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2.5">
+  1638→                {columnas.map((col) => {
+  1639→                  const colOcc = col.subcols.reduce((s, sc) => s + sc.pos.filter(p => p.stock > 0).length, 0)
+  1640→                  const colTotal = col.subcols.reduce((s, sc) => s + sc.pos.length, 0)
+  1641→                  const isEmpty = colOcc === 0
+  1642→                  return (
+  1643→                    <button
+  1644→                      key={col.letra}
+  1645→                      onClick={() => handleSelectColumn(col.letra)}
+  1646→                      className={`relative rounded-xl h-12 flex items-center justify-center text-base font-extrabold text-white transition-all duration-200 hover:scale-105 hover:shadow-lg active:scale-95 ${
+  1647→                        isEmpty
+  1648→                          ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/40'
+  1649→                          : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/40'
+  1650→                      }`}
+  1651→                    >
+  1652→                      {col.letra}
+  1653→                      <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-slate-900 border border-slate-600 text-[9px] font-bold text-slate-300 flex items-center justify-center px-1">
+  1654→                        {colOcc}/{colTotal}
+  1655→                      </span>
+  1656→                    </button>
+  1657→                  )
+  1658→                })}
+  1659→              </div>
+  1660→            </div>
+  1661→          </div>
+  1662→        )
+  1663→      })() : (
+  1664→        /* ═══ COLUMN DETAIL VIEW ═══ */
+  1665→        (() => {
+  1666→          const sec = sectores.find(s => s.id === sectorFilter)
+  1667→          const isSingleLevel = (sec?.n_niveles ?? 0) <= 1
+  1668→
+  1669→          // ── 1 nivel: grid plano de posiciones filtradas por columna ──
+  1670→          if (isSingleLevel) {
+  1671→            const colPos = posiciones.filter(p => p.columnaLetra === selectedColumn)
+  1672→            return (
+  1673→              <div className="space-y-4">
+  1674→                {/* Back button + column title */}
+  1675→                <div className="flex items-center gap-3">
+  1676→                  <button
+  1677→                    onClick={() => setSelectedColumn(null)}
+  1678→                    className="p-2 rounded-xl bg-slate-800 border border-slate-700/60 hover:bg-slate-700 transition-all duration-300 text-slate-400 hover:text-white"
+  1679→                  >
+  1680→                    <ChevronDown className="h-4 w-4 rotate-90" />
+  1681→                  </button>
+  1682→                  <div className="h-10 w-10 rounded-xl bg-blue-600 shadow-blue-900/40 flex items-center justify-center text-white font-extrabold text-sm shadow-lg">
+  1683→                    {selectedColumn}
+  1684→                  </div>
+  1685→                  <div className="flex-1 min-w-0">
+  1686→                    <span className="text-sm font-bold text-slate-200">Columna {selectedColumn}</span>
+  1687→                    <span className="text-[10px] text-slate-500 ml-2">{colPos.length} posiciones</span>
+  1688→                  </div>
+  1689→                </div>
+  1690→
+  1691→                {/* Position grid */}
+  1692→                <div className="rounded-2xl bg-slate-800 border border-slate-700/60 p-4">
+  1693→                  {colPos.length === 0 ? (
+  1694→                    <div className="text-center py-10">
+  1695→                      <p className="text-sm text-slate-400">No hay posiciones en esta columna</p>
+  1696→                    </div>
+  1697→                  ) : (
+  1698→                    <>
+  1699→                      <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-10 gap-2.5">
+
+[showing lines 1200-1699 of 3404; use offset=1700 with limit to continue reading]

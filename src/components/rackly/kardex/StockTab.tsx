@@ -85,10 +85,11 @@ export function StockTab() {
     return findCatalogoByCodigo(selectedCodigo)
   }, [selectedCodigo])
 
-  // Calcular stock por ubicación para el código seleccionado
-  // FIX: Usar FEFO (igual que OcupaciónTab + Piso) para que el total coincida.
-  // OcupaciónTab agrupa por (posición, código) ignorando vencimiento.
-  // StockTab muestra detalle por lote (vencimiento), pero la SUMA debe coincidir.
+  // Calcular stock por ubicación para el código seleccionado.
+  // ESTRATEGIA: Calcular stock neto por posición (IGUAL que OcupaciónTab, sin fechas),
+  // luego repartir ese neto en lotes con fecha (FEFO visual).
+  // Lo que sobra se muestra como "Sin fecha".
+  // Esto garantiza que la SUMA de lotes = stock neto = OcupaciónTab, SIEMPRE.
   const stockData = useMemo(() => {
     if (!selectedCodigo || movs.length === 0) return []
     const code = selectedCodigo.trim().toUpperCase()
@@ -100,14 +101,16 @@ export function StockTab() {
       return !m.codigoInc
     })
 
-    // 1. Agrupar por posición: pool ingresos por vencimiento + total salidas
     const isIngreso = (tipo: string) => ['ingreso', 'devolucion', 'traslado'].includes(tipo)
+
+    // 1. Calcular stock neto por posición (idéntico a OcupaciónTab)
+    //    + recoger ingreso pool por vencimiento (solo para display FEFO)
     type PosBucket = {
       bloque: string; torre: string; piso: string; posicion: string
       descripcion: string; un: string; proveedor?: string
-      ingresoPool: Map<string, number>  // fv → cantidad total
-      totalSalida: number
-      hasInc: boolean
+      netStock: number                    // stock neto real (igual que Ocupación)
+      ingresoPool: Map<string, number>    // fv → cantidad (solo ingresos con fecha)
+      ingresoTotal: number                // total ingresos con fecha
     }
     const posMap = new Map<string, PosBucket>()
 
@@ -118,19 +121,21 @@ export function StockTab() {
         bucket = {
           bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
           descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined,
-          ingresoPool: new Map(), totalSalida: 0, hasInc: !!m.codigoInc,
+          netStock: 0, ingresoPool: new Map(), ingresoTotal: 0,
         }
         posMap.set(posKey, bucket)
       }
-      const fv = m.fVencimiento || ''
-      if (isIngreso(m.tipo)) {
-        bucket.ingresoPool.set(fv, (bucket.ingresoPool.get(fv) ?? 0) + m.cantidad)
-      } else {
-        bucket.totalSalida += m.cantidad
+      const delta = isIngreso(m.tipo) ? m.cantidad : -m.cantidad
+      bucket.netStock += delta
+
+      // Solo rastrear ingresos/devoluciones que tengan fecha para FEFO visual
+      if (isIngreso(m.tipo) && m.fVencimiento) {
+        bucket.ingresoPool.set(m.fVencimiento, (bucket.ingresoPool.get(m.fVencimiento) ?? 0) + m.cantidad)
+        bucket.ingresoTotal += m.cantidad
       }
     }
 
-    // 2. FEFO: restar salidas desde el lote más antiguo primero
+    // 2. Repartir stock neto en lotes FEFO (solo informativo)
     const result: {
       bloque: string; torre: string; piso: string; posicion: string
       stock: number; descripcion: string; un: string; proveedor?: string
@@ -138,34 +143,50 @@ export function StockTab() {
     }[] = []
 
     for (const [, bucket] of posMap) {
-      const lots = [...bucket.ingresoPool.entries()].sort(([a], [b]) => {
-        if (!a && b) return 1
-        if (a && !b) return -1
-        return a.localeCompare(b)
-      })
-      let pendiente = bucket.totalSalida
-      for (const [fv, cantidad] of lots) {
-        if (pendiente <= 0) {
+      if (bucket.netStock <= 0) continue
+
+      // Lotes con fecha ordenados por FEFO (más antiguo primero)
+      const datedLots = [...bucket.ingresoPool.entries()].sort(([a], [b]) => a.localeCompare(b))
+
+      // Repartir el stock neto proporcionalmente entre los lotes con fecha
+      let remaining = bucket.netStock
+
+      // Caso especial: no hay ingresos con fecha → todo es "Sin fecha"
+      if (bucket.ingresoTotal === 0 || datedLots.length === 0) {
+        result.push({
+          bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
+          posicion: bucket.posicion, stock: bucket.netStock, descripcion: bucket.descripcion,
+          un: bucket.un, proveedor: bucket.proveedor, fVencimiento: '',
+        })
+        continue
+      }
+
+      // Si stock neto > total ingresos con fecha, asignar primero todos los lotes con fecha
+      // y el excedente va a "Sin fecha" (solo puede pasar si hay ingresos sin fecha)
+      for (const [fv, lotQty] of datedLots) {
+        // Asignar proporcionalmente: lo que quedó del neto, pero no más del lote
+        const assigned = Math.min(lotQty, remaining)
+        if (assigned > 0) {
           result.push({
             bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
-            posicion: bucket.posicion, stock: cantidad, descripcion: bucket.descripcion,
+            posicion: bucket.posicion, stock: assigned, descripcion: bucket.descripcion,
             un: bucket.un, proveedor: bucket.proveedor, fVencimiento: fv,
           })
-        } else if (cantidad <= pendiente) {
-          pendiente -= cantidad
-        } else {
-          result.push({
-            bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
-            posicion: bucket.posicion, stock: cantidad - pendiente, descripcion: bucket.descripcion,
-            un: bucket.un, proveedor: bucket.proveedor, fVencimiento: fv,
-          })
-          pendiente = 0
+          remaining -= assigned
         }
+      }
+
+      // Si sobra stock (hubo ingresos sin fecha), mostrar como "Sin fecha"
+      if (remaining > 0) {
+        result.push({
+          bloque: bucket.bloque, torre: bucket.torre, piso: bucket.piso,
+          posicion: bucket.posicion, stock: remaining, descripcion: bucket.descripcion,
+          un: bucket.un, proveedor: bucket.proveedor, fVencimiento: '',
+        })
       }
     }
 
-    return result.filter((l) => l.stock > 0)
-      .sort((a, b) => {
+    return result.sort((a, b) => {
         // FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
         const aHasDate = !!a.fVencimiento
         const bHasDate = !!b.fVencimiento

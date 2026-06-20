@@ -16,6 +16,7 @@ export type Database = {
         Row: {
           codigo: string
           descripcion: string
+          stock_big_magic: number
           un: string
           updated_at: string
           updated_by: string | null
@@ -23,6 +24,7 @@ export type Database = {
         Insert: {
           codigo: string
           descripcion: string
+          stock_big_magic?: number
           un: string
           updated_at?: string
           updated_by?: string | null
@@ -30,6 +32,7 @@ export type Database = {
         Update: {
           codigo?: string
           descripcion?: string
+          stock_big_magic?: number
           un?: string
           updated_at?: string
           updated_by?: string | null
@@ -41,6 +44,7 @@ export type Database = {
           bloque: string
           cantidad: number
           codigo: string
+          codigo_inc: string | null
           descripcion: string
           f_modificacion: string
           f_vencimiento: string | null
@@ -55,11 +59,13 @@ export type Database = {
           usuario_correo: string | null
           usuario_id: string | null
           usuario_nombre: string | null
+          uuid_sync: string | null
         }
         Insert: {
           bloque: string
           cantidad: number
           codigo: string
+          codigo_inc?: string | null
           descripcion: string
           f_modificacion?: string
           f_vencimiento?: string | null
@@ -74,11 +80,13 @@ export type Database = {
           usuario_correo?: string | null
           usuario_id?: string | null
           usuario_nombre?: string | null
+          uuid_sync?: string | null
         }
         Update: {
           bloque?: string
           cantidad?: number
           codigo?: string
+          codigo_inc?: string | null
           descripcion?: string
           f_modificacion?: string
           f_vencimiento?: string | null
@@ -93,6 +101,7 @@ export type Database = {
           usuario_correo?: string | null
           usuario_id?: string | null
           usuario_nombre?: string | null
+          uuid_sync?: string | null
         }
         Relationships: []
       }
@@ -448,6 +457,8 @@ export type Database = {
           p_usuario_nombre: string | null
           p_usuario_correo: string | null
           p_proveedor: string | null
+          p_uuid_sync: string | null
+          p_codigo_inc: string | null
         }
         Returns: {
           success: boolean
@@ -477,6 +488,8 @@ export type Database = {
           p_f_vencimiento: string | null
           p_proveedor: string | null
           p_cantidad_ajuste: number
+          p_codigo_inc: string | null
+          p_uuid_sync: string | null
         }
         Returns: {
           success: boolean

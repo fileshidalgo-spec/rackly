@@ -39,7 +39,7 @@ async function confirmarEmailUsuario(userId: string): Promise<void> {
     if (!res.ok) {
       console.error('[RACKLY] Error auto-confirmando email:', res.status, await res.text())
     } else {
-      console.log('[RACKLY] Email auto-confirmado para usuario:', userId)
+      console.warn('[RACKLY] Email auto-confirmado para nuevo usuario')
     }
   } catch (err) {
     console.error('[RACKLY] Error en auto-confirmación:', err)
@@ -88,7 +88,7 @@ export async function signIn(correo: string, password: string) {
     // Si el error es por email no confirmado, intentar auto-confirmar y reintentar
     const msg = error.message.toLowerCase()
     if (msg.includes('email not confirmed') || msg.includes('not confirmed')) {
-      console.log('[RACKLY] Intentando auto-confirmar email para:', correo)
+      console.warn('[RACKLY] Intentando auto-confirmar email para:', correo)
       // Obtener el user_id desde admin API
       if (SERVICE_ROLE_KEY) {
         try {

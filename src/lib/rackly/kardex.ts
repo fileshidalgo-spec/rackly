@@ -218,9 +218,9 @@ async function addMovimientoFallback(
   if (error) throw error
   try {
     return await fetchMovimientos()
-  } catch {
-    console.warn('[addMovimientoFallback] Insert exitoso pero fetchMovimientos() falló.')
-    return null as unknown as Movimiento[]
+  } catch (fetchErr) {
+    console.warn('[addMovimientoFallback] Insert exitoso pero fetchMovimientos() falló.', fetchErr)
+    return []
   }
 }
 
@@ -302,13 +302,13 @@ export async function addMovimiento(
     }
     // RPC exitosa: el movimiento ya fue registrado en la DB.
     // Intentar refrescar la lista de movimientos, pero si falla (timeout, red)
-    // NO propagar el error — el movimiento ya está guardado. Retornar null
-    // para que el caller pueda distinguir "se guardó pero no se refrescó".
+    // NO propagar el error — el movimiento ya está guardado. Retornar array vacío
+    // para que el caller no reciba null (evita crashes en .map()).
     try {
       return await fetchMovimientos()
-    } catch {
-      console.warn('[addMovimiento] RPC exitosa pero fetchMovimientos() falló. Movimiento ya registrado.')
-      return null as unknown as Movimiento[]
+    } catch (fetchErr) {
+      console.warn('[addMovimiento] RPC exitosa pero fetchMovimientos() falló. Movimiento ya registrado.', fetchErr)
+      return []
     }
   } catch (err: unknown) {
     // Si la RPC no existe aún (SQL no ejecutado), fallback al insert directo
@@ -489,7 +489,8 @@ export async function stockEnUbicacion(
       }))
     } catch (err) {
       console.error('[stockEnUbicacion] Tanto cálculo directo como RPC fallback fallaron:', err)
-      return []
+      // Retornar array vacío pero con marker de error para que el UI distinga
+      return [{ codigo: '', descripcion: '', un: '', stock: 0, _error: true } as StockEnUbicacion & { _error?: boolean }]
     }
   }
 }
@@ -540,7 +541,8 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]>>
     return result
   } catch (err) {
     console.error('[fetchIncPorUbicacion] Error consultando INC:', err)
-    return new Map()
+    // Retornar Map vacío — el UI mostrará stock INC vacío, lo cual es seguro
+    return new Map<string, IncEnCelda[]>()
   }
 }
 
@@ -663,9 +665,9 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
   if (error) throw error
   try {
     return await fetchMovimientos()
-  } catch {
-    console.warn('[trasladarMovimientoFallback] Insert exitoso pero fetchMovimientos() falló.')
-    return null as unknown as Movimiento[]
+  } catch (fetchErr) {
+    console.warn('[trasladarMovimientoFallback] Insert exitoso pero fetchMovimientos() falló.', fetchErr)
+    return []
   }
 }
 
@@ -720,12 +722,12 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       throw error
     }
     // RPC exitosa: refrescar movimientos, pero no fallar si fetchMovimientos falla.
-    // Retornar null para que el caller distinga "se guardó pero no se refrescó".
+    // Retornar array vacío para evitar crashes en el UI.
     try {
       return await fetchMovimientos()
-    } catch {
-      console.warn('[trasladarMovimiento] RPC exitosa pero fetchMovimientos() falló. Traslado ya registrado.')
-      return null as unknown as Movimiento[]
+    } catch (fetchErr) {
+      console.warn('[trasladarMovimiento] RPC exitosa pero fetchMovimientos() falló. Traslado ya registrado.', fetchErr)
+      return []
     }
   } catch (err: unknown) {
     // Fallback si la RPC no existe aún

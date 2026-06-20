@@ -292,7 +292,7 @@ export function PisoSectoresTab() {
         .select('movimiento_id')
         .in('nivel_id', nivelIds)
       if (idErr) throw idErr
-      const allMovIds = [...new Set((idRows ?? []).map((d: any) => d.movimiento_id))]
+      const allMovIds = [...new Set((idRows ?? []).map((d: { movimiento_id: string }) => d.movimiento_id))]
       if (allMovIds.length === 0) {
         setHistorialAllItems([])
         setHistorialData([])
@@ -315,18 +315,18 @@ export function PisoSectoresTab() {
         .in('nivel_id', nivelIds)
       if (detErr) throw detErr
       // 4) Obtener info de bloques
-      const uniqueBloqueIds = [...new Set((detData ?? []).map((d: any) => d.bloque_id))]
+      const uniqueBloqueIds = [...new Set((detData ?? []).map((d: { bloque_id: string }) => d.bloque_id))]
       const { data: bloqData, error: bloqErr } = await dataClient
         .from('piso_bloques')
         .select('id, codigo, descripcion, unidad')
         .in('id', uniqueBloqueIds)
       if (bloqErr) throw bloqErr
-      const bloqMap = new Map<string, { id: string; codigo: string; descripcion: string; unidad: string }>((bloqData ?? []).map((b: any) => [b.id, b]))
-      const movMap = new Map<string, { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }>((movData ?? []).map((m: any) => [m.id, m]))
+      const bloqMap = new Map<string, { id: string; codigo: string; descripcion: string; unidad: string }>((bloqData ?? []).map((b: { id: string; codigo: string; descripcion: string; unidad: string }) => [b.id, b]))
+      const movMap = new Map<string, { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }>((movData ?? []).map((m: { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }) => [m.id, m]))
       // 5) Crear items por detalle, manteniendo orden cronologico del movimiento
       const allItems: HistorialItem[] = []
       for (const mov of (movData ?? [])) {
-        const movDets = (detData ?? []).filter((d: any) => d.movimiento_id === mov.id)
+        const movDets = (detData ?? []).filter((d: { movimiento_id: string }) => d.movimiento_id === mov.id)
         for (const d of movDets) {
           const bloq = bloqMap.get(d.bloque_id)
           if (!bloq) continue
@@ -656,6 +656,7 @@ export function PisoSectoresTab() {
   }
 
   async function doIngresoINC() {
+    if (busy) return
     if (!detail || !perfil) return
     if (!incCodigo.trim() || !incCantidad || !incCodigoInc.trim()) {
       toast.error('Completa codigo, cantidad y codigo INC')
@@ -858,6 +859,7 @@ export function PisoSectoresTab() {
   }
 
   async function doIngreso() {
+    if (busy) return
     if (!detail || !perfil) return
     if (!selectedNivelId) { toast.error('No hay nivel seleccionado'); return }
     const nivelId = selectedNivelId
@@ -910,6 +912,7 @@ export function PisoSectoresTab() {
   }
 
   async function doSalida() {
+    if (busy) return
     if (!detail || !perfil) return
     // Filtrar items por nivel seleccionado
     const filteredItems = salNivelTab === 'all' ? salItems : salItemsByNivel
@@ -980,6 +983,7 @@ export function PisoSectoresTab() {
 
   // Ejecutar traslado (se llama desde la alerta o desde confirmación normal)
   async function ejecutarTrasladoPiso() {
+    if (busy) return
     if (!detail || !perfil || !trDestPos) return
     const validRows = trItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
     if (validRows.length === 0) { toast.error('No hay articulos para trasladar'); return }
@@ -1035,6 +1039,7 @@ export function PisoSectoresTab() {
   }
 
   async function doTraslado() {
+    if (busy) return
     if (!detail || !perfil || !trDestPos) return
     if (detail.posicionId === trDestPos.posicionId) { toast.error('Origen y destino no pueden ser iguales'); return }
     const validRows = trItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
@@ -1060,6 +1065,7 @@ export function PisoSectoresTab() {
   }
 
   async function doDevolucion() {
+    if (busy) return
     if (!detail || !perfil) return
     if (!selectedNivelId) { toast.error('No hay nivel seleccionado'); return }
     const nivelId = selectedNivelId

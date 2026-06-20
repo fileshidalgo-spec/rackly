@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   fetchOcupacionCeldas,
-  fetchOcupacionServerSide,
+  fetchOcupacionCeldasV2,
   fetchMovimientos,
   fetchIncPorUbicacion,
   stockEnUbicacion,
@@ -193,34 +193,26 @@ export function OcupacionTab() {
   const [incCodigoInc, setIncCodigoInc] = useState('')
 
   // ── Data refresh ──
-  // Primario: server-side (fetchOcupacionServerSide) — sin límite de filas
+  // Primario: RPC v2 (PostgreSQL calcula, sin límite de filas)
   // Fallback 1: client-side (fetchMovimientos + calcularOcupacion) — con límite de 15K
-  // Fallback 2: RPC 'ocupacion_celdas' — server-side legacy
+  // Fallback 2: RPC v1 legacy
   const refreshData = useCallback(async () => {
-    // INC se consulta siempre en paralelo (no afectado por límite de filas)
+    // INC se consulta siempre en paralelo
     const incPromise = fetchIncPorUbicacion()
 
     try {
-      // INTENTO 1: Server-side (sin límite de filas)
-      const [serverRows, incMap] = await Promise.all([fetchOcupacionServerSide(), incPromise])
+      // INTENTO 1: RPC v2 (PostgreSQL calcula todo, sin límite)
+      const [rpcCeldas, incMap] = await Promise.all([fetchOcupacionCeldasV2(), incPromise])
       if (!mountedRef.current) return
       if (incMap._error) {
         toast.error('No se pudo cargar información INC. Los datos INC pueden estar incompletos.')
       }
 
-      if (serverRows !== null) {
-        // Server-side exitó: agrupar filas por posición para construir celdas
+      if (rpcCeldas !== null) {
+        // RPC v2 exitó: tiene codigos[] y lotes para colores correctos
         const celdaMap = new Map<string, OcupacionCelda>()
-        for (const r of serverRows) {
-          const key = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
-          let cell = celdaMap.get(key)
-          if (!cell) {
-            cell = { bloque: r.bloque, torre: r.torre, piso: r.piso, posicion: r.posicion, stock: 0, codigos: [], lotes: 0, tieneInc: false, incItems: [] }
-            celdaMap.set(key, cell)
-          }
-          cell.stock += r.stock
-          if (!cell.codigos.includes(r.codigo)) cell.codigos.push(r.codigo)
-          cell.lotes = cell.codigos.length
+        for (const cell of rpcCeldas) {
+          celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
         }
         // Merge INC dedicado
         for (const [key, incItems] of incMap) {
@@ -237,9 +229,8 @@ export function OcupacionTab() {
         return
       }
 
-      // Server-side falló → Fallback client-side
+      // RPC v2 falló → Fallback client-side
       // INTENTO 2: fetchMovimientos + calcularOcupacion (límite 15K)
-      // incPromise ya se resolvió arriba, usar await directly
       const [movs] = await Promise.all([fetchMovimientos()])
       if (!mountedRef.current) return
       const celdas = calcularOcupacion(movs)
@@ -260,7 +251,7 @@ export function OcupacionTab() {
       }
       setOcupacion(Array.from(celdaMap.values()))
     } catch {
-      // INTENTO 3: RPC legacy
+      // INTENTO 3: RPC v1 legacy
       try {
         const celdas = await fetchOcupacionCeldas()
         if (mountedRef.current) setOcupacion(celdas)

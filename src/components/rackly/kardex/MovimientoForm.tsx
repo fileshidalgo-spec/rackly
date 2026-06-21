@@ -160,6 +160,7 @@ function IngresoForm({
   }
 
   async function doInsert(qty: number) {
+    setBusy(true)
     try {
       const movs = await addMovimiento({
         tipo,
@@ -477,7 +478,12 @@ function IngresoForm({
                           <p className="text-xs text-muted-foreground truncate mt-0.5">{s.descripcion}</p>
                           <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
                             <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{s.stock} {s.un}</span>
-                            {s.fVencimiento && <span>Venc: {s.fVencimiento}</span>}
+                            {s.fVencimiento && !s.lotes && <span>Venc: {s.fVencimiento}</span>}
+                            {s.lotes && s.lotes.length > 1 && (
+                              <span className="text-amber-600 dark:text-amber-400 font-medium">
+                                {s.lotes.length} lotes con venc: {s.lotes.map(l => l.fVencimiento || 'Sin fecha').join(', ')}
+                              </span>
+                            )}
                             {s.proveedor && <span>Prov: {s.proveedor}</span>}
                           </div>
                         </div>

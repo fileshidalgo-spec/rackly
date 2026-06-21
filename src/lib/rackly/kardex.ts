@@ -127,13 +127,19 @@ export async function buscarStockRacksPorCodigo(codigo: string): Promise<StockRa
   const locMap = new Map<string, StockRacksPorCodigoItem>()
 
   for (const m of movs) {
-    const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}||${m.codigoInc || ''}`
-    const current = locMap.get(key)
+    // Agrupar por ubicación SOLAMENTE — f_vencimiento NO participa.
+    // Se rastrea la fecha más próxima (FEFO) para display.
+    const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+    const current = locMap.get(posKey)
     const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
     if (current) {
       current.stock += delta
+      // Rastrear fecha FEFO (más próxima)
+      if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
+        current.fVencimiento = m.fVencimiento
+      }
     } else {
-      locMap.set(key, {
+      locMap.set(posKey, {
         bloque: m.bloque,
         torre: m.torre,
         piso: m.piso,

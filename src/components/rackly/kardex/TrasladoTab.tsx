@@ -102,7 +102,8 @@ export function TrasladoTab() {
   }
 
   // Recalcular ubicaciones reactivamente cuando cambian movs o codigo.
-  // Esto corrige el bug donde ubicaciones quedaban "pegadas" después de una salida.
+  // LÓGICA IDÉNTICA a calcularOcupacion() de OcupacionTab.
+  // Agrupa por (posición, código) — fVencimiento SOLO para FEFO (display), NO para stock.
   // EXCLUYE movimientos INC del cálculo (igual que OcupaciónTab).
   const locations = useMemo(() => {
     if (!codigo) return []
@@ -110,17 +111,22 @@ export function TrasladoTab() {
     const locMap = new Map<string, LocStock>()
     const relevant = movs.filter((m) => m.codigo === code && !m.codigoInc)
     for (const m of relevant) {
-      const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
-      const current = locMap.get(key)
+      const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+      const current = locMap.get(posKey)
+      const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
       if (current) {
-        current.stock += ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+        current.stock += delta
+        // Rastrear fecha de vencimiento más próxima (FEFO)
+        if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
+          current.fVencimiento = m.fVencimiento
+        }
       } else {
-        locMap.set(key, {
+        locMap.set(posKey, {
           bloque: m.bloque,
           torre: m.torre,
           piso: m.piso,
           posicion: m.posicion,
-          stock: ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad,
+          stock: delta,
           descripcion: m.descripcion,
           un: m.un,
           fVencimiento: m.fVencimiento || '',
@@ -133,6 +139,7 @@ export function TrasladoTab() {
     return Array.from(locMap.values())
       .filter((l) => l.stock > 0)
       .sort((a, b) => {
+        // FEFO primero (con fecha), luego sin fecha, luego por ubicación
         const aHasDate = !!a.fVencimiento
         const bHasDate = !!b.fVencimiento
         if (aHasDate && bHasDate) return a.fVencimiento.localeCompare(b.fVencimiento)
@@ -155,12 +162,12 @@ export function TrasladoTab() {
 
   // Limpiar selectedOrigin si la ubicación ya no existe en locations
   useEffect(() => {
-    if (selectedOrigin && !locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}` === selectedOrigin)) {
+    if (selectedOrigin && !locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedOrigin)) {
       setSelectedOrigin(null)
     }
   }, [locations, selectedOrigin])
 
-  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}` === selectedOrigin)
+  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedOrigin)
 
   const qtyNum = parseFloat(qty) || 0
   const saldoRestante = origin ? origin.stock - qtyNum : 0
@@ -172,9 +179,8 @@ export function TrasladoTab() {
 
   async function handleConfirm() {
     if (!origin) return
-    // Comparar ubicación real (bloque, torre, piso, posicion), ignorando fVencimiento y codigoInc.
-    // selectedOrigin tiene formato "bloque-torre-piso-pos||fVenc||inc", destKey solo "bloque-torre-piso-pos".
-    const originKey = (selectedOrigin || '').split('||')[0]
+    // selectedOrigin ahora es solo "bloque-torre-piso-pos" (sin fVencimiento ni codigoInc)
+    const originKey = selectedOrigin || ''
     const destKey = `${destBloque}-${destTorre}-${destPiso || '1'}-${destPos}`
     if (originKey === destKey) {
       toast.error('El destino no puede ser igual al origen')
@@ -373,7 +379,7 @@ export function TrasladoTab() {
           {/* ── Mobile: Cards con TODA la info visible ── */}
           <div className="sm:hidden space-y-3">
             {locations.map((loc) => {
-              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}||${loc.codigoInc || ''}`
+              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
               const isSelected = selectedOrigin === key
               return (
                 <div
@@ -494,7 +500,7 @@ export function TrasladoTab() {
               </TableHeader>
               <TableBody>
                 {locations.map((loc) => {
-                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.fVencimiento || ''}||${loc.codigoInc || ''}`
+                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
                   const isSelected = selectedOrigin === key
                   return (
                     <TableRow

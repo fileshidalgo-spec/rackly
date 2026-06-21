@@ -155,12 +155,12 @@ export function TrasladoTab() {
 
   // Limpiar selectedOrigin si la ubicación ya no existe en locations
   useEffect(() => {
-    if (selectedOrigin && !locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}||${l.codigoInc || ''}` === selectedOrigin)) {
+    if (selectedOrigin && !locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}` === selectedOrigin)) {
       setSelectedOrigin(null)
     }
   }, [locations, selectedOrigin])
 
-  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}||${l.codigoInc || ''}` === selectedOrigin)
+  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.fVencimiento || ''}` === selectedOrigin)
 
   const qtyNum = parseFloat(qty) || 0
   const saldoRestante = origin ? origin.stock - qtyNum : 0
@@ -1007,7 +1007,12 @@ export function TrasladoTab() {
                           <p className="text-xs text-muted-foreground truncate mt-0.5">{s.descripcion}</p>
                           <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
                             <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{s.stock} {s.un}</span>
-                            {s.fVencimiento && <span>Venc: {s.fVencimiento}</span>}
+                            {s.fVencimiento && !s.lotes && <span>Venc: {s.fVencimiento}</span>}
+                            {s.lotes && s.lotes.length > 1 && (
+                              <span className="text-amber-600 dark:text-amber-400 font-medium">
+                                {s.lotes.length} lotes: {s.lotes.map(l => l.fVencimiento || 'S/F').join(', ')}
+                              </span>
+                            )}
                             {s.proveedor && <span>Prov: {s.proveedor}</span>}
                           </div>
                           {/* Salida parcial/total */}

@@ -914,7 +914,7 @@ export function OcupacionTab() {
                                     <p className={`text-xs mt-0.5 truncate ${s.descripcion ? 'text-slate-300' : 'text-slate-500 italic'}`}>{s.descripcion || 'Sin descripción'}</p>
                                     {/* Fecha de vencimiento con badge de urgencia */}
                                     <div className="flex items-center gap-2 mt-1 text-[10px] flex-wrap">
-                                      {s.fVencimiento && (
+                                      {s.fVencimiento && !s.lotes && (
                                         <span className={`flex items-center gap-1 px-1.5 py-px rounded border ${vencBadge || 'border-slate-600/20 text-slate-500'}`}>
                                           {dias !== null && dias < 0 && <Flame className="w-2.5 h-2.5" />}
                                           Venc: {s.fVencimiento}
@@ -923,7 +923,12 @@ export function OcupacionTab() {
                                           )}
                                         </span>
                                       )}
-                                      {!s.fVencimiento && <span className="italic text-slate-500">Sin fecha de vencimiento</span>}
+                                      {s.lotes && s.lotes.length > 1 && (
+                                        <span className="flex items-center gap-1 px-1.5 py-px rounded border border-amber-500/25 text-amber-400">
+                                          {s.lotes.length} lotes: {s.lotes.map(l => l.fVencimiento || 'S/F').join(', ')}
+                                        </span>
+                                      )}
+                                      {!s.fVencimiento && !s.lotes && <span className="italic text-slate-500">Sin fecha de vencimiento</span>}
                                       {s.usuarioPrimerNombre && <span className="text-slate-500">Ing: {s.usuarioPrimerNombre}</span>}
                                     </div>
                                   </div>
@@ -1564,7 +1569,12 @@ export function OcupacionTab() {
                             <p className="text-xs text-muted-foreground truncate mt-0.5">{s.descripcion}</p>
                             <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
                               <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{s.stock} {s.un}</span>
-                              {s.fVencimiento && <span>Venc: {s.fVencimiento}</span>}
+                              {s.fVencimiento && !s.lotes && <span>Venc: {s.fVencimiento}</span>}
+                              {s.lotes && s.lotes.length > 1 && (
+                                <span className="text-amber-600 dark:text-amber-400 font-medium">
+                                  {s.lotes.length} lotes: {s.lotes.map(l => l.fVencimiento || 'S/F').join(', ')}
+                                </span>
+                              )}
                               {s.proveedor && <span>Prov: {s.proveedor}</span>}
                             </div>
                             {/* Salida parcial/total */}

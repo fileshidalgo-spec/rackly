@@ -77,6 +77,62 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
   return multiples
 }
 
+/** Obtiene movimientos de bloques específicos y calcula ocupación client-side.
+ *  Se usa cuando el RPC no retorna datos para ciertos bloques. */
+async function fetchBlockOcupacion(bloques: string[]): Promise<OcupacionCelda[]> {
+  if (bloques.length === 0) return []
+  try {
+    const allRows: Record<string, unknown>[] = []
+    let from = 0
+    const BATCH = 1000
+    for (let page = 0; page < 20; page++) {
+      const { data, error } = await dataClient
+        .from('movimientos')
+        .select('*')
+        .in('bloque', bloques)
+        .order('f_modificacion', { ascending: false })
+        .range(from, from + BATCH - 1)
+      if (error) { console.error('[fetchBlockOcupacion]', error.message); return [] }
+      const rows = data ?? []
+      allRows.push(...rows)
+      if (rows.length < BATCH) break
+      from += BATCH
+    }
+    // Convertir a Movimiento[] usando la misma lógica de kardex.ts
+    const movs: Movimiento[] = allRows.map(r => ({
+      id: r.id as string,
+      tipo: r.tipo as Movimiento['tipo'],
+      bloque: normLocal(r.bloque),
+      torre: normLocal(r.torre),
+      piso: normLocal(r.piso),
+      posicion: normLocal(r.posicion),
+      codigo: (r.codigo as string) ?? '',
+      descripcion: (r.descripcion as string) ?? '',
+      un: (r.un as string) ?? '',
+      cantidad: typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0,
+      fVencimiento: (r.f_vencimiento as string) ?? '',
+      fModificacion: (r.f_modificacion as string) ?? '',
+      turno: r.turno as Movimiento['turno'],
+      usuarioId: (r.usuario_id as string) ?? '',
+      usuarioNombre: (r.usuario_nombre as string) ?? undefined,
+      usuarioCorreo: (r.usuario_correo as string) ?? undefined,
+      proveedor: (r.proveedor as string) ?? undefined,
+      codigoInc: (r.codigo_inc as string) ?? undefined,
+    }))
+    console.log(`[fetchBlockOcupacion] ${bloques.map(b=>'B'+b).join(',')} → ${movs.length} movimientos`)
+    return calcularOcupacion(movs)
+  } catch (err) {
+    console.error('[fetchBlockOcupacion]', err)
+    return []
+  }
+}
+
+function normLocal(v: unknown): string {
+  if (v == null) return ''
+  const n = parseInt(String(v).trim(), 10)
+  return isNaN(n) ? String(v).trim() : String(n)
+}
+
 // Calcula ocupación desde movimientos — stock POR CÓDIGO (no por lote).
 // f_vencimiento es SOLO para FEFO (ordenamiento), NO para particionar stock.
 // IMPORTANTE: Los movimientos INC se EXCLUYEN del stock normal.
@@ -213,48 +269,30 @@ export function OcupacionTab() {
         // RPC v2 exitó: tiene codigos[] y lotes para colores correctos
         console.log('[Ocupacion] Fuente: RPC v2 PostgreSQL —', rpcCeldas.length, 'celdas')
 
-        // ── DIAGNÓSTICO: conteo por bloque ──
-        const perBlock = BLOQUES.map(b => ({ b, n: rpcCeldas.filter(c => c.bloque === b).length }))
-        console.table(perBlock)
-        const missingBlocks = perBlock.filter(x => x.n === 0)
-        if (missingBlocks.length > 0) {
-          console.warn('[Ocupacion] Bloques SIN celdas en RPC:', missingBlocks.map(x => 'B' + x.b))
-          // Consultar directamente la tabla movimientos para estos bloques
-          for (const mb of missingBlocks) {
-            try {
-              const { data: rawMovs, error: qErr } = await dataClient
-                .from('movimientos')
-                .select('bloque, torre, piso, posicion, tipo, codigo, cantidad, codigo_inc')
-                .eq('bloque', mb.b)
-                .limit(10)
-              if (qErr) {
-                console.error(`[Diag B${mb.b}] Error consulta:`, qErr.message)
-              } else {
-                console.log(`[Diag B${mb.b}] Movimientos encontrados: ${rawMovs?.length ?? 0}`, rawMovs?.slice(0, 5))
-              }
-              // También contar total de movimientos (sin INC) por posición
-              const { count: totalCount } = await dataClient
-                .from('movimientos')
-                .select('*', { count: 'exact', head: true })
-                .eq('bloque', mb.b)
-                .is('codigo_inc', null)
-              const { count: incCount } = await dataClient
-                .from('movimientos')
-                .select('*', { count: 'exact', head: true })
-                .eq('bloque', mb.b)
-                .not('codigo_inc', 'is', null)
-              console.log(`[Diag B${mb.b}] Total movs (sin INC): ${totalCount}, Total INC: ${incCount}`)
-            } catch (diagErr) {
-              console.error(`[Diag B${mb.b}]`, diagErr)
-            }
-          }
-        }
+        // Detectar bloques sin datos y complementar con consulta directa
+        const blockCounts = new Map<string, number>()
+        for (const b of BLOQUES) blockCounts.set(b, 0)
+        for (const c of rpcCeldas) blockCounts.set(c.bloque, (blockCounts.get(c.bloque) ?? 0) + 1)
+        const missingBlocks = BLOQUES.filter(b => (blockCounts.get(b) ?? 0) === 0)
+        console.table(BLOQUES.map(b => ({ bloque: b, celdas: blockCounts.get(b) ?? 0 })))
 
-        setDataSource('RPC v2 (' + rpcCeldas.length + ')')
+        setDataSource('RPC v2 (' + rpcCeldas.length + ')' + (missingBlocks.length > 0 ? ' + client' : ''))
         const celdaMap = new Map<string, OcupacionCelda>()
         for (const cell of rpcCeldas) {
           celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
         }
+
+        // Complementar bloques faltantes con consulta directa a movimientos
+        if (missingBlocks.length > 0) {
+          console.warn('[Ocupacion] Complementando bloques sin datos RPC:', missingBlocks.map(b => 'B' + b))
+          const extraCells = await fetchBlockOcupacion(missingBlocks)
+          console.log('[Ocupacion] Celdas complementarias:', extraCells.length)
+          for (const cell of extraCells) {
+            const key = `${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`
+            if (!celdaMap.has(key)) celdaMap.set(key, cell)
+          }
+        }
+
         // Merge INC dedicado
         for (const [key, incItems] of incMap) {
           const existing = celdaMap.get(key)

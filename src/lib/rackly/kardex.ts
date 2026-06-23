@@ -612,14 +612,21 @@ export async function fetchOcupacionCeldasV2(): Promise<OcupacionCelda[] | null>
       console.warn('[fetchOcupacionCeldasV2] RPC no disponible o error:', error.message)
       return null
     }
-    return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+    const raw = (data ?? []) as Record<string, unknown>[]
+    // Si el RPC retorna 0 celdas, podría estar mal — fall through a null
+    // para que el caller use el fallback client-side.
+    if (raw.length === 0) {
+      console.warn('[fetchOcupacionCeldasV2] RPC retornó 0 celdas, usando fallback')
+      return null
+    }
+    return raw.map((r) => ({
       bloque: String(r.bloque ?? ''),
       torre: String(r.torre ?? ''),
       piso: String(r.piso ?? ''),
       posicion: String(r.posicion ?? ''),
       stock: Number(r.stock ?? 0),
       codigos: Array.isArray(r.codigos) ? (r.codigos as string[]).map(String) : [],
-      lotes: Array.isArray(r.codigos) ? (r.codigos as string[]).length : Number(r.lotes ?? 0),
+      lotes: Number(r.lotes ?? 0),
       tieneInc: false,
       incItems: [],
     }))
@@ -640,7 +647,7 @@ export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
     posicion: String(r.posicion ?? ''),
     stock: Number(r.stock ?? 0),
     codigos: Array.isArray(r.codigos) ? (r.codigos as string[]).map(String) : [],
-    lotes: Array.isArray(r.codigos) ? (r.codigos as string[]).length : 0,
+    lotes: Number(r.lotes ?? 0),
     tieneInc: false,
     incItems: [],
   }))

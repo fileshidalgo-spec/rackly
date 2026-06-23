@@ -699,7 +699,7 @@ export function OcupacionTab() {
 
       {/* ═══ RESUMEN POR BLOQUE ═══ */}
       <div className="rounded-xl border border-slate-600/30 bg-slate-800/60 shadow-md overflow-hidden">
-<div className="px-4 py-2.5 border-b border-slate-600/30 flex items-center gap-2"><div className="w-1 h-3.5 rounded-full bg-gradient-to-b from-sky-400 to-blue-500" /><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Resumen por bloque</p>{dataSource && <span className="ml-auto text-[9px] font-mono text-slate-500 bg-slate-700/60 px-2 py-0.5 rounded" title={diagPerBlock.filter(d => d.count === 0).map(d => 'B' + d.bloque + '=0').join(', ') || 'Todos los bloques con datos'}>{dataSource}</span>}</div>
+<div className="px-4 py-2.5 border-b border-slate-600/30 flex items-center gap-2"><div className="w-1 h-3.5 rounded-full bg-gradient-to-b from-sky-400 to-blue-500" /><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Resumen por bloque</p>{dataSource && <span className="ml-auto text-[9px] font-mono text-slate-500 bg-slate-700/60 px-2 py-0.5 rounded" title={diagPerBlock.filter(d => d.count === 0).map(d => 'B' + d.bloque + '=0').join(', ') || 'Todos los bloques con datos'}>{dataSource}</span>}<span className="text-[8px] font-mono text-slate-700">v3</span></div>
         <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-px bg-slate-700/20">
           {dashBloques.map(db => (
             <button key={db.bloque} className="bg-slate-800/60 p-2 text-center space-y-1 transition-colors hover:bg-slate-700/60" onClick={() => setBloqueFilter(bloqueFilter === db.bloque ? 'all' : db.bloque)}>

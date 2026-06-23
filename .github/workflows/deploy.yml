@@ -30,6 +30,6 @@ jobs:
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          apiToken: ${{ secrets.TU_TOKEN_DE_API_CLOUDFLARE }}
+          accountId: ${{ secrets.ID_DE_CUENTA_CLOUDFLARE }}
           command: pages deploy out/ --project-name=rackly

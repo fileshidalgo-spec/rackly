@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   fetchOcupacionCeldas,
-  fetchOcupacionCeldasV2,
   fetchMovimientos,
   fetchIncPorUbicacion,
   stockEnUbicacion,
@@ -75,62 +74,6 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
     if (count > 1) multiples.add(code)
   }
   return multiples
-}
-
-/** Obtiene movimientos de bloques específicos y calcula ocupación client-side.
- *  Se usa cuando el RPC no retorna datos para ciertos bloques. */
-async function fetchBlockOcupacion(bloques: string[]): Promise<OcupacionCelda[]> {
-  if (bloques.length === 0) return []
-  try {
-    const allRows: Record<string, unknown>[] = []
-    let from = 0
-    const BATCH = 1000
-    for (let page = 0; page < 20; page++) {
-      const { data, error } = await dataClient
-        .from('movimientos')
-        .select('*')
-        .in('bloque', bloques)
-        .order('f_modificacion', { ascending: false })
-        .range(from, from + BATCH - 1)
-      if (error) { console.error('[fetchBlockOcupacion]', error.message); return [] }
-      const rows = data ?? []
-      allRows.push(...rows)
-      if (rows.length < BATCH) break
-      from += BATCH
-    }
-    // Convertir a Movimiento[] usando la misma lógica de kardex.ts
-    const movs: Movimiento[] = allRows.map(r => ({
-      id: r.id as string,
-      tipo: r.tipo as Movimiento['tipo'],
-      bloque: normLocal(r.bloque),
-      torre: normLocal(r.torre),
-      piso: normLocal(r.piso),
-      posicion: normLocal(r.posicion),
-      codigo: (r.codigo as string) ?? '',
-      descripcion: (r.descripcion as string) ?? '',
-      un: (r.un as string) ?? '',
-      cantidad: typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0,
-      fVencimiento: (r.f_vencimiento as string) ?? '',
-      fModificacion: (r.f_modificacion as string) ?? '',
-      turno: r.turno as Movimiento['turno'],
-      usuarioId: (r.usuario_id as string) ?? '',
-      usuarioNombre: (r.usuario_nombre as string) ?? undefined,
-      usuarioCorreo: (r.usuario_correo as string) ?? undefined,
-      proveedor: (r.proveedor as string) ?? undefined,
-      codigoInc: (r.codigo_inc as string) ?? undefined,
-    }))
-    console.log(`[fetchBlockOcupacion] ${bloques.map(b=>'B'+b).join(',')} → ${movs.length} movimientos`)
-    return calcularOcupacion(movs)
-  } catch (err) {
-    console.error('[fetchBlockOcupacion]', err)
-    return []
-  }
-}
-
-function normLocal(v: unknown): string {
-  if (v == null) return ''
-  const n = parseInt(String(v).trim(), 10)
-  return isNaN(n) ? String(v).trim() : String(n)
 }
 
 // Calcula ocupación desde movimientos — stock POR CÓDIGO (no por lote).
@@ -250,76 +193,28 @@ export function OcupacionTab() {
   const [incCodigoInc, setIncCodigoInc] = useState('')
 
   // ── Data refresh ──
-  // Primario: RPC v2 (PostgreSQL calcula, sin límite de filas)
-  // Fallback 1: client-side (fetchMovimientos + calcularOcupacion) — con límite de 15K
-  // Fallback 2: RPC v1 legacy
+  // Primario: consulta directa a movimientos + calcularOcupacion (confiable para todos los bloques)
+  // Fallback: RPC v1 legacy (solo si la consulta directa falla)
   const refreshData = useCallback(async () => {
     // INC se consulta siempre en paralelo
     const incPromise = fetchIncPorUbicacion()
 
     try {
-      // INTENTO 1: RPC v2 (PostgreSQL calcula todo, sin límite)
-      const [rpcCeldas, incMap] = await Promise.all([fetchOcupacionCeldasV2(), incPromise])
+      // MÉTODO PRIMARIO: fetchMovimientos + calcularOcupacion
+      const [movs, incMap] = await Promise.all([fetchMovimientos(), incPromise])
       if (!mountedRef.current) return
       if (incMap._error) {
         toast.error('No se pudo cargar información INC. Los datos INC pueden estar incompletos.')
       }
-
-      if (rpcCeldas !== null) {
-        // RPC v2 exitó: tiene codigos[] y lotes para colores correctos
-        console.log('[Ocupacion] Fuente: RPC v2 PostgreSQL —', rpcCeldas.length, 'celdas')
-
-        // Detectar bloques sin datos y complementar con consulta directa
-        const blockCounts = new Map<string, number>()
-        for (const b of BLOQUES) blockCounts.set(b, 0)
-        for (const c of rpcCeldas) blockCounts.set(c.bloque, (blockCounts.get(c.bloque) ?? 0) + 1)
-        const missingBlocks = BLOQUES.filter(b => (blockCounts.get(b) ?? 0) === 0)
-        console.table(BLOQUES.map(b => ({ bloque: b, celdas: blockCounts.get(b) ?? 0 })))
-
-        setDataSource('RPC v2 (' + rpcCeldas.length + ')' + (missingBlocks.length > 0 ? ' + client' : ''))
-        const celdaMap = new Map<string, OcupacionCelda>()
-        for (const cell of rpcCeldas) {
-          celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
-        }
-
-        // Complementar bloques faltantes con consulta directa a movimientos
-        if (missingBlocks.length > 0) {
-          console.warn('[Ocupacion] Complementando bloques sin datos RPC:', missingBlocks.map(b => 'B' + b))
-          const extraCells = await fetchBlockOcupacion(missingBlocks)
-          console.log('[Ocupacion] Celdas complementarias:', extraCells.length)
-          for (const cell of extraCells) {
-            const key = `${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`
-            if (!celdaMap.has(key)) celdaMap.set(key, cell)
-          }
-        }
-
-        // Merge INC dedicado
-        for (const [key, incItems] of incMap) {
-          const existing = celdaMap.get(key)
-          if (existing) {
-            existing.tieneInc = true
-            existing.incItems = incItems
-          } else {
-            const [bloque, torre, piso, posicion] = key.split('-')
-            celdaMap.set(key, { bloque, torre, piso, posicion, stock: 0, codigos: incItems.map(i => i.codigo), lotes: incItems.length, tieneInc: true, incItems })
-          }
-        }
-        setOcupacion(Array.from(celdaMap.values()))
-        return
-      }
-
-      // RPC v2 falló → Fallback client-side
-      // INTENTO 2: fetchMovimientos + calcularOcupacion
-      const [movs] = await Promise.all([fetchMovimientos()])
-      if (!mountedRef.current) return
-      console.warn('[Ocupacion] RPC v2 no disponible, fallback client-side —', movs.length, 'movimientos')
       const celdas = calcularOcupacion(movs)
-      setDataSource('Client-side (' + movs.length + ' movs)')
+      console.log('[Ocupacion] Fuente: Client-side —', movs.length, 'movimientos →', celdas.length, 'celdas')
+      setDataSource('Client (' + movs.length + ' movs)')
+
       const celdaMap = new Map<string, OcupacionCelda>()
       for (const cell of celdas) {
         celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
       }
-      // Reusar el mismo incMap resuelto arriba
+      // Merge INC dedicado
       for (const [key, incItems] of incMap) {
         const existing = celdaMap.get(key)
         if (existing) {
@@ -332,7 +227,7 @@ export function OcupacionTab() {
       }
       setOcupacion(Array.from(celdaMap.values()))
     } catch {
-      // INTENTO 3: RPC v1 legacy
+      // FALLBACK: RPC v1 legacy
       console.warn('[Ocupacion] Client-side falló, fallback RPC v1 legacy')
       setDataSource('RPC v1 legacy')
       try {

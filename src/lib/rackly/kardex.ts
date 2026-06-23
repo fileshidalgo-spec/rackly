@@ -47,14 +47,22 @@ export type OcupacionCelda = {
   incItems: IncEnCelda[]
 }
 
+/** Normaliza campos de ubicación eliminando ceros a la izquierda.
+ *  Evita fallos de comparación cuando la BD usa '01' y el grid usa '1'. */
+function norm(s: unknown): string {
+  if (s == null) return ''
+  const n = parseInt(String(s).trim(), 10)
+  return isNaN(n) ? String(s).trim() : String(n)
+}
+
 function fromRow(r: Record<string, unknown>): Movimiento {
   return {
     id: r.id as string,
     tipo: r.tipo as TipoMovimiento,
-    bloque: r.bloque as string,
-    torre: r.torre as string,
-    piso: r.piso as string,
-    posicion: r.posicion as string,
+    bloque: norm(r.bloque),
+    torre: norm(r.torre),
+    piso: norm(r.piso),
+    posicion: norm(r.posicion),
     codigo: r.codigo as string,
     descripcion: r.descripcion as string,
     un: r.un as string,
@@ -571,7 +579,7 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
     // Calcular stock neto por ubicación + código INC
     const map = new Map<string, Map<string, { codigo: string; descripcion: string; codigoInc: string; stock: number }>>()
     for (const r of allRows) {
-      const key = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
+      const key = `${norm(r.bloque)}-${norm(r.torre)}-${norm(r.piso)}-${norm(r.posicion)}`
       const code = String(r.codigo ?? '').trim().toUpperCase()
       const codeInc = String(r.codigo_inc ?? '').trim()
       const incKey = `${code}||${codeInc}`
@@ -619,17 +627,23 @@ export async function fetchOcupacionCeldasV2(): Promise<OcupacionCelda[] | null>
       console.warn('[fetchOcupacionCeldasV2] RPC retornó 0 celdas, usando fallback')
       return null
     }
-    return raw.map((r) => ({
-      bloque: String(r.bloque ?? ''),
-      torre: String(r.torre ?? ''),
-      piso: String(r.piso ?? ''),
-      posicion: String(r.posicion ?? ''),
+    const cells = raw.map((r) => ({
+      bloque: norm(r.bloque),
+      torre: norm(r.torre),
+      piso: norm(r.piso),
+      posicion: norm(r.posicion),
       stock: Number(r.stock ?? 0),
       codigos: Array.isArray(r.codigos) ? (r.codigos as string[]).map(String) : [],
       lotes: Number(r.lotes ?? 0),
       tieneInc: false,
       incItems: [],
     }))
+    // Diagnóstico: muestra si hay celdas en bloques 7-9 con posiciones normalizadas
+    const b789 = cells.filter(c => ['7','8','9'].includes(c.bloque))
+    if (b789.length > 0) {
+      console.log('[OcupacionV2] Muestra bloques 7-9:', b789.slice(0, 5).map(c => `B${c.bloque}-T${c.torre}-P${c.piso}-Pos${c.posicion} stock=${c.stock}`))
+    }
+    return cells
   } catch (err) {
     console.warn('[fetchOcupacionCeldasV2] Falló:', err)
     return null
@@ -641,10 +655,10 @@ export async function fetchOcupacionCeldas(): Promise<OcupacionCelda[]> {
   const { data, error } = await dataClient.rpc('ocupacion_celdas')
   if (error) throw error
   return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
-    bloque: String(r.bloque ?? ''),
-    torre: String(r.torre ?? ''),
-    piso: String(r.piso ?? ''),
-    posicion: String(r.posicion ?? ''),
+    bloque: norm(r.bloque),
+    torre: norm(r.torre),
+    piso: norm(r.piso),
+    posicion: norm(r.posicion),
     stock: Number(r.stock ?? 0),
     codigos: Array.isArray(r.codigos) ? (r.codigos as string[]).map(String) : [],
     lotes: Number(r.lotes ?? 0),
@@ -669,10 +683,10 @@ export async function fetchStockPorCodigoRPC(
       return null
     }
     return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
-      bloque: String(r.bloque ?? ''),
-      torre: String(r.torre ?? ''),
-      piso: String(r.piso ?? ''),
-      posicion: String(r.posicion ?? ''),
+      bloque: norm(r.bloque),
+      torre: norm(r.torre),
+      piso: norm(r.piso),
+      posicion: norm(r.posicion),
       stock: Number(r.stock ?? 0),
       descripcion: (r.descripcion as string) ?? null,
       un: (r.un as string) ?? null,
@@ -942,10 +956,10 @@ export async function addMovimientosBatch(
     const batch = rows.slice(i, i + BATCH_SIZE)
     const inserts = batch.map((r) => ({
       tipo: 'ingreso' as const,
-      bloque: String(r.bloque),
-      torre: String(r.torre),
-      piso: String(r.piso),
-      posicion: String(r.posicion),
+      bloque: norm(r.bloque),
+      torre: norm(r.torre),
+      piso: norm(r.piso),
+      posicion: norm(r.posicion),
       codigo: r.codigo.trim().toUpperCase(),
       descripcion: r.descripcion,
       un: r.un || 'KG',

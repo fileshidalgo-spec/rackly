@@ -3,12 +3,14 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   fetchOcupacionCeldas,
+  fetchOcupacionCeldasV2,
   fetchMovimientos,
   fetchIncPorUbicacion,
   stockEnUbicacion,
   type Movimiento,
   type StockEnUbicacion,
   type OcupacionCelda,
+  type IncEnCelda,
   addMovimiento,
   trasladarMovimiento,
   type TrasladoInput,
@@ -192,42 +194,75 @@ export function OcupacionTab() {
   const [incCantidad, setIncCantidad] = useState('')
   const [incCodigoInc, setIncCodigoInc] = useState('')
 
+  // ── Helper: construir celdaMap con merge de INC ──
+  function buildCellMap(
+    celdas: OcupacionCelda[],
+    incMap: Map<string, IncEnCelda[]>
+  ): Map<string, OcupacionCelda> {
+    const map = new Map<string, OcupacionCelda>()
+    for (const cell of celdas) {
+      map.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
+    }
+    for (const [key, incItems] of incMap) {
+      const existing = map.get(key)
+      if (existing) {
+        existing.tieneInc = true
+        existing.incItems = incItems
+      } else {
+        const [bloque, torre, piso, posicion] = key.split('-')
+        map.set(key, { bloque, torre, piso, posicion, stock: 0, codigos: incItems.map(i => i.codigo), lotes: incItems.length, tieneInc: true, incItems })
+      }
+    }
+    return map
+  }
+
   // ── Data refresh ──
-  // Primario: consulta directa a movimientos + calcularOcupacion (confiable para todos los bloques)
-  // Fallback: RPC v1 legacy (solo si la consulta directa falla)
+  // Estrategia: RPC v2 (rápido) → verificar que tenga TODOS los bloques
+  // Si el RPC falta bloques → client-side (confiable, sin límite de bloques)
+  // Fallback final: RPC v1 legacy
   const refreshData = useCallback(async () => {
-    // INC se consulta siempre en paralelo
     const incPromise = fetchIncPorUbicacion()
+    let incMap: Awaited<typeof incPromise>
 
     try {
-      // MÉTODO PRIMARIO: fetchMovimientos + calcularOcupacion
-      const [movs, incMap] = await Promise.all([fetchMovimientos(), incPromise])
+      // ── INTENTO 1: RPC v2 + verificación de completitud ──
+      const [rpcCeldas, incResult] = await Promise.all([fetchOcupacionCeldasV2(), incPromise])
+      incMap = incResult
       if (!mountedRef.current) return
       if (incMap._error) {
         toast.error('No se pudo cargar información INC. Los datos INC pueden estar incompletos.')
       }
-      const celdas = calcularOcupacion(movs)
-      console.log('[Ocupacion] Fuente: Client-side —', movs.length, 'movimientos →', celdas.length, 'celdas')
-      setDataSource('Client (' + movs.length + ' movs)')
 
-      const celdaMap = new Map<string, OcupacionCelda>()
-      for (const cell of celdas) {
-        celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
-      }
-      // Merge INC dedicado
-      for (const [key, incItems] of incMap) {
-        const existing = celdaMap.get(key)
-        if (existing) {
-          existing.tieneInc = true
-          existing.incItems = incItems
-        } else {
-          const [bloque, torre, piso, posicion] = key.split('-')
-          celdaMap.set(key, { bloque, torre, piso, posicion, stock: 0, codigos: incItems.map(i => i.codigo), lotes: incItems.length, tieneInc: true, incItems })
+      if (rpcCeldas !== null) {
+        // Verificar: el RPC tiene datos para TODOS los bloques configurados
+        const rpcBlocks = new Set(rpcCeldas.map(c => c.bloque))
+        const missingBlocks = BLOQUES.filter(b => !rpcBlocks.has(b))
+
+        if (missingBlocks.length === 0) {
+          // RPC completo → usarlo (el camino más rápido)
+          console.log('[Ocupacion] Fuente: RPC v2 ✓ —', rpcCeldas.length, 'celdas, 9 bloques')
+          setDataSource('RPC v2 (' + rpcCeldas.length + ')')
+          const celdaMap = buildCellMap(rpcCeldas, incMap)
+          setOcupacion(Array.from(celdaMap.values()))
+          return
         }
+
+        // RPC incompleto → log y caer a client-side
+        console.warn(`[Ocupacion] RPC v2 incompleto: faltan bloques ${missingBlocks.map(b=>'B'+b).join(', ')}. Usando client-side.`)
       }
+
+      // ── INTENTO 2: Client-side (fetchMovimientos + calcularOcupacion) ──
+      if (!incMap) incMap = await incPromise
+      const [movs] = await Promise.all([fetchMovimientos()])
+      if (!mountedRef.current) return
+
+      const celdas = calcularOcupacion(movs)
+      console.log('[Ocupacion] Fuente: Client-side —', movs.length, 'movs →', celdas.length, 'celdas')
+      setDataSource('Client (' + movs.length + ' movs)')
+      const celdaMap = buildCellMap(celdas, incMap)
       setOcupacion(Array.from(celdaMap.values()))
     } catch {
-      // FALLBACK: RPC v1 legacy
+      // ── FALLBACK: RPC v1 legacy ──
       console.warn('[Ocupacion] Client-side falló, fallback RPC v1 legacy')
       setDataSource('RPC v1 legacy')
       try {

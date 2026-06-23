@@ -212,6 +212,44 @@ export function OcupacionTab() {
       if (rpcCeldas !== null) {
         // RPC v2 exitó: tiene codigos[] y lotes para colores correctos
         console.log('[Ocupacion] Fuente: RPC v2 PostgreSQL —', rpcCeldas.length, 'celdas')
+
+        // ── DIAGNÓSTICO: conteo por bloque ──
+        const perBlock = BLOQUES.map(b => ({ b, n: rpcCeldas.filter(c => c.bloque === b).length }))
+        console.table(perBlock)
+        const missingBlocks = perBlock.filter(x => x.n === 0)
+        if (missingBlocks.length > 0) {
+          console.warn('[Ocupacion] Bloques SIN celdas en RPC:', missingBlocks.map(x => 'B' + x.b))
+          // Consultar directamente la tabla movimientos para estos bloques
+          for (const mb of missingBlocks) {
+            try {
+              const { data: rawMovs, error: qErr } = await dataClient
+                .from('movimientos')
+                .select('bloque, torre, piso, posicion, tipo, codigo, cantidad, codigo_inc')
+                .eq('bloque', mb.b)
+                .limit(10)
+              if (qErr) {
+                console.error(`[Diag B${mb.b}] Error consulta:`, qErr.message)
+              } else {
+                console.log(`[Diag B${mb.b}] Movimientos encontrados: ${rawMovs?.length ?? 0}`, rawMovs?.slice(0, 5))
+              }
+              // También contar total de movimientos (sin INC) por posición
+              const { count: totalCount } = await dataClient
+                .from('movimientos')
+                .select('*', { count: 'exact', head: true })
+                .eq('bloque', mb.b)
+                .is('codigo_inc', null)
+              const { count: incCount } = await dataClient
+                .from('movimientos')
+                .select('*', { count: 'exact', head: true })
+                .eq('bloque', mb.b)
+                .not('codigo_inc', 'is', null)
+              console.log(`[Diag B${mb.b}] Total movs (sin INC): ${totalCount}, Total INC: ${incCount}`)
+            } catch (diagErr) {
+              console.error(`[Diag B${mb.b}]`, diagErr)
+            }
+          }
+        }
+
         setDataSource('RPC v2 (' + rpcCeldas.length + ')')
         const celdaMap = new Map<string, OcupacionCelda>()
         for (const cell of rpcCeldas) {

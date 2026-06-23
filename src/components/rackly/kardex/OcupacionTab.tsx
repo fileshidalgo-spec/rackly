@@ -127,6 +127,7 @@ export function OcupacionTab() {
   const [detailMode, setDetailMode] = useState<DetailMode>('view')
   const [busyExport, setBusyExport] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
+  const [dataSource, setDataSource] = useState<string>('')
   const mountedRef = useRef(true)
 
   // ── Ingreso state ──
@@ -210,6 +211,8 @@ export function OcupacionTab() {
 
       if (rpcCeldas !== null) {
         // RPC v2 exitó: tiene codigos[] y lotes para colores correctos
+        console.log('[Ocupacion] Fuente: RPC v2 PostgreSQL —', rpcCeldas.length, 'celdas')
+        setDataSource('RPC v2 (' + rpcCeldas.length + ')')
         const celdaMap = new Map<string, OcupacionCelda>()
         for (const cell of rpcCeldas) {
           celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
@@ -230,10 +233,12 @@ export function OcupacionTab() {
       }
 
       // RPC v2 falló → Fallback client-side
-      // INTENTO 2: fetchMovimientos + calcularOcupacion (límite 15K)
+      // INTENTO 2: fetchMovimientos + calcularOcupacion
       const [movs] = await Promise.all([fetchMovimientos()])
       if (!mountedRef.current) return
+      console.warn('[Ocupacion] RPC v2 no disponible, fallback client-side —', movs.length, 'movimientos')
       const celdas = calcularOcupacion(movs)
+      setDataSource('Client-side (' + movs.length + ' movs)')
       const celdaMap = new Map<string, OcupacionCelda>()
       for (const cell of celdas) {
         celdaMap.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
@@ -252,6 +257,8 @@ export function OcupacionTab() {
       setOcupacion(Array.from(celdaMap.values()))
     } catch {
       // INTENTO 3: RPC v1 legacy
+      console.warn('[Ocupacion] Client-side falló, fallback RPC v1 legacy')
+      setDataSource('RPC v1 legacy')
       try {
         const celdas = await fetchOcupacionCeldas()
         if (mountedRef.current) setOcupacion(celdas)
@@ -684,7 +691,7 @@ export function OcupacionTab() {
 
       {/* ═══ RESUMEN POR BLOQUE ═══ */}
       <div className="rounded-xl border border-slate-600/30 bg-slate-800/60 shadow-md overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-slate-600/30 flex items-center gap-2"><div className="w-1 h-3.5 rounded-full bg-gradient-to-b from-sky-400 to-blue-500" /><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Resumen por bloque</p></div>
+        <div className="px-4 py-2.5 border-b border-slate-600/30 flex items-center gap-2"><div className="w-1 h-3.5 rounded-full bg-gradient-to-b from-sky-400 to-blue-500" /><p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Resumen por bloque</p>{dataSource && <span className="ml-auto text-[9px] font-mono text-slate-500 bg-slate-700/60 px-2 py-0.5 rounded">{dataSource}</span>}</div>
         <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-px bg-slate-700/20">
           {dashBloques.map(db => (
             <button key={db.bloque} className="bg-slate-800/60 p-2 text-center space-y-1 transition-colors hover:bg-slate-700/60" onClick={() => setBloqueFilter(bloqueFilter === db.bloque ? 'all' : db.bloque)}>

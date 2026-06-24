@@ -40,6 +40,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
         Descripción: m.descripcion,
         UN: m.un,
         Cantidad: m.cantidad,
+        'Número de INC': m.codigoInc || '',
         'F. Vencimiento': m.fVencimiento || '',
         'F. Modificación': new Date(m.fModificacion).toLocaleString(),
         Turno: m.turno,
@@ -56,7 +57,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
       const stockMap = new Map<string, {
         code: string; desc: string; un: string;
         bloque: string; torre: string; piso: string; posicion: string;
-        stock: number; fVencimiento: string; codigoInc: string;
+        stock: number; fVencimiento: string; codigoInc: string; proveedor: string;
       }>()
       for (const m of movs) {
         const vencKey = m.fVencimiento || ''
@@ -78,6 +79,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
             stock: delta,
             fVencimiento: m.fVencimiento || '',
             codigoInc: incKey,
+            proveedor: m.proveedor || '',
           })
         }
       }
@@ -109,6 +111,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
           'CANTIDAD': Math.round(e.stock * 1000) / 1000,
           'NUMERO DE INC': e.codigoInc,
           'FECHA DE VENCIMIENTO': e.fVencimiento,
+          'PROVEEDOR': e.proveedor,
         }))
       if (stockData.length > 0) {
         const ws2 = XLSX.utils.json_to_sheet(stockData)
@@ -124,6 +127,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
           { wch: 14 }, // CANTIDAD
           { wch: 18 }, // NUMERO DE INC
           { wch: 20 }, // FECHA DE VENCIMIENTO
+          { wch: 25 }, // PROVEEDOR
         ]
         XLSX.utils.book_append_sheet(wb, ws2, 'Stock Real')
       }

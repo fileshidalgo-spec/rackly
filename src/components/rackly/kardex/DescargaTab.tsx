@@ -107,7 +107,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
           'PISO': e.piso,
           'POSICIÓN': e.posicion,
           'DESCRIPCIÓN': e.desc,
-          'UND': e.un,
+          'UN': e.un,
           'CANTIDAD': Math.round(e.stock * 1000) / 1000,
           'NUMERO DE INC': e.codigoInc,
           'FECHA DE VENCIMIENTO': e.fVencimiento,
@@ -123,7 +123,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
           { wch: 6 },  // PISO
           { wch: 10 }, // POSICIÓN
           { wch: 35 }, // DESCRIPCIÓN
-          { wch: 6 },  // UND
+          { wch: 6 },  // UN
           { wch: 14 }, // CANTIDAD
           { wch: 18 }, // NUMERO DE INC
           { wch: 20 }, // FECHA DE VENCIMIENTO

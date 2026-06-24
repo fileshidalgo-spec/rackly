@@ -249,7 +249,7 @@ function UpDataSection() {
         /cant|cantidad|quantity|qty|stock/i.test(h)
       )
       const unCol = headers.find((h) =>
-        /^un$|unidad|unit|medida/i.test(h)
+        /^un[d]?$|unidad|unit|medida/i.test(h)
       )
       const vencCol = headers.find((h) =>
         /vencimiento|venc|vto/i.test(h) && /fecha|f\./i.test(h)

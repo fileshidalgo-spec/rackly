@@ -792,7 +792,7 @@ export function OcupacionTab() {
                                     const isInc = cell && cell.tieneInc && cell.incItems.length > 0
                                     const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
                                     const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
-                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+                                    let cls = 'relative flex-1 min-w-0 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
                                     if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
                                     else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
@@ -804,7 +804,7 @@ export function OcupacionTab() {
                                     const firstInc = isInc ? cell!.incItems[0] : null
                                     return (
                                       <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
-                                        {pos}
+                                        <span className="truncate w-full text-center px-px">{pos}</span>
                                         {isInc && firstInc && (
                                           <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
                                             {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}
@@ -825,7 +825,7 @@ export function OcupacionTab() {
                                     const isInc = cell && cell.tieneInc && cell.incItems.length > 0
                                     const isMultiArt = isOcc && !isInc && cell.codigos.length > 1
                                     const isMultiLote = isOcc && !isInc && !isMultiArt && cell.lotes > 1
-                                    let cls = 'relative flex-1 min-w-[24px] rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
+                                    let cls = 'relative flex-1 min-w-0 rounded text-[9px] font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center '
                                     if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
                                     else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
@@ -837,7 +837,7 @@ export function OcupacionTab() {
                                     const firstInc = isInc ? cell!.incItems[0] : null
                                     return (
                                       <button key={pos} className={cls} onClick={() => handleCellClick(bloque, torre, piso, pos)} title={title}>
-                                        {pos}
+                                        <span className="truncate w-full text-center px-px">{pos}</span>
                                         {isInc && firstInc && (
                                           <span className="text-[6px] leading-tight text-rose-100/85 font-semibold truncate max-w-full px-0.5 mt-px">
                                             {firstInc.codigo.length > 7 ? firstInc.codigo.slice(0, 7) + '…' : firstInc.codigo} ×{firstInc.cantidad}

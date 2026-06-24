@@ -113,7 +113,7 @@ export function TrasladoTab() {
     for (const m of relevant) {
       const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
       const current = locMap.get(posKey)
-      const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+      const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
       if (current) {
         current.stock += delta
         // Rastrear fecha de vencimiento más próxima (FEFO)

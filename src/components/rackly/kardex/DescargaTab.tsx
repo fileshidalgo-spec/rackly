@@ -49,33 +49,56 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
       const ws1 = XLSX.utils.json_to_sheet(movData)
       XLSX.utils.book_append_sheet(wb, ws1, 'Movimientos')
 
-      // Sheet 2: Stock actual
-      const locMap = new Map<string, Record<string, unknown>>()
+      // Sheet 2: Stock REAL por posicion-codigo (SIN agrupar por f_vencimiento)
+      // Esto evita stock fantasma por mismatch de fechas de vencimiento.
+      // El stock neto es la verdad: todo lo que entró menos todo lo que salió.
+      const ENTRADA_TYPES = new Set(['ingreso', 'devolucion', 'traslado', 'stock_inicial'])
+      const stockMap = new Map<string, {
+        code: string; desc: string; un: string;
+        bloque: string; torre: string; piso: string; posicion: string;
+        stock: number; fefoVenc: string;
+      }>()
       for (const m of movs) {
-        const key = `${m.codigo}-${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.fVencimiento || ''}`
-        const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
-        const current = locMap.get(key)
-        if (current) {
-          current['Stock'] = (current['Stock'] as number) + delta
+        if (m.codigoInc) continue // excluir INC del stock normal
+        const key = `${m.codigo}|${m.bloque}|${m.torre}|${m.piso}|${m.posicion}`
+        const delta = ENTRADA_TYPES.has(m.tipo) ? m.cantidad : -m.cantidad
+        const entry = stockMap.get(key)
+        if (entry) {
+          entry.stock += delta
+          // Rastrear fecha FEFO (más próxima) para referencia
+          if (m.fVencimiento && (!entry.fefoVenc || m.fVencimiento < entry.fefoVenc)) {
+            entry.fefoVenc = m.fVencimiento
+          }
         } else {
-          locMap.set(key, {
-            'Código': m.codigo,
-            'Descripción': m.descripcion,
-            UN: m.un,
-            Bloque: m.bloque,
-            Torre: m.torre,
-            Piso: m.piso,
-            'Posición': m.posicion,
-            Stock: delta,
+          stockMap.set(key, {
+            code: m.codigo,
+            desc: m.descripcion,
+            un: m.un,
+            bloque: m.bloque,
+            torre: m.torre,
+            piso: m.piso,
+            posicion: m.posicion,
+            stock: delta,
+            fefoVenc: m.fVencimiento || '',
           })
         }
       }
-      const stockData = Array.from(locMap.values()).filter(
-        (s) => (s['Stock'] as number) > 0
-      )
+      const stockData = Array.from(stockMap.values())
+        .filter((e) => e.stock > 0.001)
+        .map((e) => ({
+          'Código': e.code,
+          'Descripción': e.desc,
+          UN: e.un,
+          Bloque: e.bloque,
+          Torre: e.torre,
+          Piso: e.piso,
+          'Posición': e.posicion,
+          Stock: Math.round(e.stock * 1000) / 1000,
+          'F. Vencimiento': e.fefoVenc,
+        }))
       if (stockData.length > 0) {
         const ws2 = XLSX.utils.json_to_sheet(stockData)
-        XLSX.utils.book_append_sheet(wb, ws2, 'Stock Actual')
+        XLSX.utils.book_append_sheet(wb, ws2, 'Stock Real')
       }
 
       const fecha = new Date().toISOString().slice(0, 10)

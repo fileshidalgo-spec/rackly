@@ -139,7 +139,7 @@ export async function buscarStockRacksPorCodigo(codigo: string): Promise<StockRa
     // Se rastrea la fecha más próxima (FEFO) para display.
     const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
     const current = locMap.get(posKey)
-    const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+    const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
     if (current) {
       current.stock += delta
       // Rastrear fecha FEFO (más próxima)
@@ -589,7 +589,7 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
       let locMap = map.get(key)
       if (!locMap) { locMap = new Map(); map.set(key, locMap) }
       const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
-      const delta = ['ingreso', 'devolucion', 'traslado'].includes(String(r.tipo)) ? qty : -qty
+      const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(String(r.tipo)) ? qty : -qty
       const item = locMap.get(incKey)
       if (item) { item.stock += delta } else {
         locMap.set(incKey, { codigo: code, descripcion: String(r.descripcion ?? ''), codigoInc: codeInc, stock: delta })

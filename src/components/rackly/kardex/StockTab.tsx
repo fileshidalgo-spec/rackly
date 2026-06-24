@@ -110,12 +110,12 @@ export function StockTab() {
       const mCode = m.codigo.trim().toUpperCase()
       let codeMap = cellMap.get(posKey)
       if (!codeMap) { codeMap = new Map(); cellMap.set(posKey, codeMap) }
-      const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+      const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
       const current = codeMap.get(mCode) ?? 0
       codeMap.set(mCode, current + delta)
 
       // Rastrear fechas de vencimiento para info FEFO (solo informativo)
-      if (m.fVencimiento && ['ingreso', 'devolucion', 'traslado'].includes(m.tipo)) {
+      if (m.fVencimiento && ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo)) {
         let fvCodeMap = fvMap.get(posKey)
         if (!fvCodeMap) { fvCodeMap = new Map(); fvMap.set(posKey, fvCodeMap) }
         let fvQtyMap = fvCodeMap.get(mCode)
@@ -146,7 +146,7 @@ export function StockTab() {
         const mCode = m.codigo.trim().toUpperCase()
         if (mCode !== code) continue
         const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-        const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+        const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
         incCellMap.set(posKey, (incCellMap.get(posKey) ?? 0) + delta)
         if (!descMap.has(posKey)) {
           descMap.set(posKey, { descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined })

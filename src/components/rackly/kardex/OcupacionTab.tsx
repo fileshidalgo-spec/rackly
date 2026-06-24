@@ -92,7 +92,7 @@ function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
     const code = m.codigo.trim().toUpperCase()
     let codeMap = cellMap.get(key)
     if (!codeMap) { codeMap = new Map(); cellMap.set(key, codeMap) }
-    const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? m.cantidad : -m.cantidad
+    const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
     const current = codeMap.get(code) ?? 0
     codeMap.set(code, current + delta)
   }

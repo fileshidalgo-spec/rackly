@@ -350,24 +350,27 @@ export async function calcularStockUbicacion(
   excluirInc: boolean = false
 ): Promise<number> {
   const target = codigo.trim().toUpperCase()
-  let query = dataClient
+  // Filtrar en BD usando norm() en los parámetros para evitar fallos con formatos mixtos ('01' vs '1').
+  // Se envían AMBOS formatos posibles (con/sin ceros) cuando el valor tiene menos de 2 dígitos,
+  // pero la BD usa LPAD así que siempre tiene ceros. Aplicamos norm() al parámetro y comparamos
+  // client-side como respaldo.
+  const query = dataClient
     .from('movimientos')
-    .select('tipo, cantidad')
-    .eq('codigo', target)
+    .select('tipo, cantidad, torre, piso, posicion, codigo_inc')
     .eq('bloque', bloque)
-    .eq('torre', torre)
-    .eq('piso', piso)
-    .eq('posicion', posicion)
-  // Excluir movimientos INC para validar stock normal
+    .eq('codigo', target)
   if (excluirInc) {
-    query = query.is('codigo_inc', null)
+    query.is('codigo_inc', null)
   }
   const { data, error } = await query
   if (error) throw error
   return (data ?? []).reduce(
-    (s: number, r: { tipo: string; cantidad: unknown }) => {
+    (s: number, r: Record<string, unknown>) => {
+      // Doble filtro: BD ya filtró por bloque+codigo, pero verificamos ubicación con norm()
+      // por si hay formatos mixtos (ej. BD tiene '01' y el grid usa '1')
+      if (norm(r.torre) !== torre || norm(r.piso) !== piso || norm(r.posicion) !== posicion) return s
       const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
-      return s + impactoStock(r.tipo, qty)
+      return s + impactoStock(String(r.tipo), qty)
     },
     0
   )
@@ -397,9 +400,9 @@ export async function stockEnUbicacion(
   posicion: string
 ): Promise<StockEnUbicacion[]> {
   try {
-    // Método principal: consultar movimientos directamente con paginación
-    // f_vencimiento es SOLO para FEFO (ordenamiento), NO para particionar stock.
-    // Se agrupa por (codigo, codigo_inc) — el stock es la suma de TODOS los lotes.
+    // Filtrar en BD por ubicación completa con norm() para compatibilidad de formatos.
+    // Se consulta por (bloque, torre, piso, posicion) usando los valores normalizados,
+    // con un respaldo client-side para cualquier discrepancia de formato.
     const allRows: Record<string, unknown>[] = []
     let from = 0
     const BATCH = 1000

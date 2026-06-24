@@ -15,6 +15,7 @@ export const TIPOS_MOVIMIENTO = {
   SALIDA: 'salida',
   DEVOLUCION: 'devolucion',
   TRASLADO: 'traslado',
+  STOCK_INICIAL: 'stock_inicial',
 } as const
 
 /** Son movimientos que ENTRAN stock */
@@ -22,6 +23,7 @@ export const MOVIMIENTOS_ENTRADA = [
   TIPOS_MOVIMIENTO.INGRESO,
   TIPOS_MOVIMIENTO.DEVOLUCION,
   TIPOS_MOVIMIENTO.TRASLADO,
+  TIPOS_MOVIMIENTO.STOCK_INICIAL,
 ] as const
 
 /** Colores por tipo de movimiento */

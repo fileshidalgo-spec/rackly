@@ -49,26 +49,23 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
       const ws1 = XLSX.utils.json_to_sheet(movData)
       XLSX.utils.book_append_sheet(wb, ws1, 'Movimientos')
 
-      // Sheet 2: Stock REAL por posicion-codigo (SIN agrupar por f_vencimiento)
-      // Esto evita stock fantasma por mismatch de fechas de vencimiento.
-      // El stock neto es la verdad: todo lo que entró menos todo lo que salió.
+      // Sheet 2: Stock REAL — 1 fila = 1 combinación única
+      // Clave: (código, bloque, torre, piso, posición, f_vencimiento, codigo_inc)
+      // Esto separa lotes por fecha de vencimiento e INCs en filas distintas.
       const ENTRADA_TYPES = new Set(['ingreso', 'devolucion', 'traslado', 'stock_inicial'])
       const stockMap = new Map<string, {
         code: string; desc: string; un: string;
         bloque: string; torre: string; piso: string; posicion: string;
-        stock: number; fefoVenc: string;
+        stock: number; fVencimiento: string; codigoInc: string;
       }>()
       for (const m of movs) {
-        if (m.codigoInc) continue // excluir INC del stock normal
-        const key = `${m.codigo}|${m.bloque}|${m.torre}|${m.piso}|${m.posicion}`
+        const vencKey = m.fVencimiento || ''
+        const incKey = m.codigoInc || ''
+        const key = `${m.codigo}|${m.bloque}|${m.torre}|${m.piso}|${m.posicion}|${vencKey}|${incKey}`
         const delta = ENTRADA_TYPES.has(m.tipo) ? m.cantidad : -m.cantidad
         const entry = stockMap.get(key)
         if (entry) {
           entry.stock += delta
-          // Rastrear fecha FEFO (más próxima) para referencia
-          if (m.fVencimiento && (!entry.fefoVenc || m.fVencimiento < entry.fefoVenc)) {
-            entry.fefoVenc = m.fVencimiento
-          }
         } else {
           stockMap.set(key, {
             code: m.codigo,
@@ -79,25 +76,55 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
             piso: m.piso,
             posicion: m.posicion,
             stock: delta,
-            fefoVenc: m.fVencimiento || '',
+            fVencimiento: m.fVencimiento || '',
+            codigoInc: incKey,
           })
         }
       }
       const stockData = Array.from(stockMap.values())
         .filter((e) => e.stock > 0.001)
+        .sort((a, b) => {
+          // Ordenar por ubicación, luego código, luego fecha vencimiento
+          const locCmp = `${a.bloque}-${a.torre}-${a.piso}-${a.posicion}`.localeCompare(`${b.bloque}-${b.torre}-${b.piso}-${b.posicion}`)
+          if (locCmp !== 0) return locCmp
+          const codeCmp = a.code.localeCompare(b.code)
+          if (codeCmp !== 0) return codeCmp
+          // INCs al final
+          if (a.codigoInc && !b.codigoInc) return 1
+          if (!a.codigoInc && b.codigoInc) return -1
+          // Con fecha antes que sin fecha
+          if (a.fVencimiento && !b.fVencimiento) return -1
+          if (!a.fVencimiento && b.fVencimiento) return 1
+          if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
+          return 0
+        })
         .map((e) => ({
-          'Código': e.code,
-          'Descripción': e.desc,
-          UN: e.un,
-          Bloque: e.bloque,
-          Torre: e.torre,
-          Piso: e.piso,
-          'Posición': e.posicion,
-          Stock: Math.round(e.stock * 1000) / 1000,
-          'F. Vencimiento': e.fefoVenc,
+          'CÓDIGO': e.code,
+          'BLOQUE': e.bloque,
+          'TORRE': e.torre,
+          'PISO': e.piso,
+          'POSICIÓN': e.posicion,
+          'DESCRIPCIÓN': e.desc,
+          'UND': e.un,
+          'CANTIDAD': Math.round(e.stock * 1000) / 1000,
+          'NUMERO DE INC': e.codigoInc,
+          'FECHA DE VENCIMIENTO': e.fVencimiento,
         }))
       if (stockData.length > 0) {
         const ws2 = XLSX.utils.json_to_sheet(stockData)
+        // Ajustar anchos de columna
+        ws2['!cols'] = [
+          { wch: 18 }, // CÓDIGO
+          { wch: 8 },  // BLOQUE
+          { wch: 7 },  // TORRE
+          { wch: 6 },  // PISO
+          { wch: 10 }, // POSICIÓN
+          { wch: 35 }, // DESCRIPCIÓN
+          { wch: 6 },  // UND
+          { wch: 14 }, // CANTIDAD
+          { wch: 18 }, // NUMERO DE INC
+          { wch: 20 }, // FECHA DE VENCIMIENTO
+        ]
         XLSX.utils.book_append_sheet(wb, ws2, 'Stock Real')
       }
 
@@ -221,7 +248,12 @@ function UpDataSection() {
         /^un$|unidad|unit|medida/i.test(h)
       )
       const vencCol = headers.find((h) =>
-        /venc|fecha|date|vto/i.test(h)
+        /vencimiento|venc|vto/i.test(h) && /fecha|f\./i.test(h)
+      ) || headers.find((h) =>
+        /venc|fecha.*venc|date|vto/i.test(h)
+      )
+      const incCol = headers.find((h) =>
+        /numero.*inc|inc|n.*inc|codigo.*inc/i.test(h)
       )
       const provCol = headers.find((h) =>
         /prov|supplier|proveedor/i.test(h)
@@ -252,6 +284,7 @@ function UpDataSection() {
           posicion: String(row[posCol] ?? '').trim(),
           cantidad,
           fVencimiento: vencCol ? String(row[vencCol] ?? '').trim() : undefined,
+          codigoInc: incCol ? String(row[incCol] ?? '').trim() || undefined : undefined,
           proveedor: provCol ? String(row[provCol] ?? '').trim() : undefined,
         })
       }
@@ -345,7 +378,7 @@ function UpDataSection() {
           Columnas esperadas en el Excel
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {['Código', 'Descripción', 'Bloque', 'Torre', 'Piso', 'Posición', 'Cantidad', 'UN', 'Vencimiento', 'Proveedor'].map((col) => (
+          {['Código', 'Descripción', 'Bloque', 'Torre', 'Piso', 'Posición', 'Cantidad', 'UN', 'Número de INC', 'F. Vencimiento', 'Proveedor'].map((col) => (
             <Badge key={col} variant="outline" className="text-xs font-medium border-blue-200 text-blue-600 bg-white/80">
               {col}
             </Badge>
@@ -418,6 +451,7 @@ function UpDataSection() {
                   <TableHead className="font-semibold text-xs uppercase tracking-wider">Pos</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider text-right">Cant.</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider hidden md:table-cell">UN</TableHead>
+                  <TableHead className="font-semibold text-xs uppercase tracking-wider hidden md:table-cell">INC</TableHead>
                   <TableHead className="font-semibold text-xs uppercase tracking-wider hidden md:table-cell">Venc.</TableHead>
                 </TableRow>
               </TableHeader>
@@ -440,6 +474,9 @@ function UpDataSection() {
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       <Badge variant="secondary" className="font-medium">{row.un}</Badge>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-slate-500 text-xs">
+                      {row.codigoInc || '—'}
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-slate-500 text-xs">
                       {row.fVencimiento || '—'}

@@ -933,6 +933,7 @@ export type UploadStockRow = {
   posicion: string
   cantidad: number
   fVencimiento?: string
+  codigoInc?: string
   proveedor?: string
 }
 
@@ -973,7 +974,7 @@ export async function addMovimientosBatch(
       usuario_nombre: usuarioNombre ?? null,
       usuario_correo: usuarioCorreo ?? null,
       proveedor: r.proveedor ? r.proveedor : null,
-      codigo_inc: null,
+      codigo_inc: r.codigoInc ? r.codigoInc.trim() : null,
     }))
 
     const { error } = await admin.from('movimientos').insert(inserts)

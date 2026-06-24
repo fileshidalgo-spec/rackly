@@ -458,9 +458,9 @@ export async function stockEnUbicacion(
         if (!lot.descripcion && m.descripcion) lot.descripcion = m.descripcion
       }
 
-      // Calcular stock neto (ingreso/devolucion/traslado = +, salida = -)
+      // Calcular stock neto (ingreso/devolucion/traslado/stock_inicial = +, salida = -)
       const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
-      const delta = ['ingreso', 'devolucion', 'traslado'].includes(m.tipo) ? qty : -qty
+      const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? qty : -qty
       lot.stock += delta
     }
 

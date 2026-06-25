@@ -888,12 +888,11 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
 export async function deleteAllMovimientos(): Promise<{ deleted: boolean; error?: string }> {
   const admin = dataClient
 
-  // Borrar todo directamente — .neq('id','') requiere filtro pero matchea todas las filas
-  // Si hay muchas filas, PostgREST las borra en una sola transacción
+  // Borrar todo — gte('id', '00000000-...') matchea todos los UUIDs
   const { error } = await admin
     .from('movimientos')
     .delete()
-    .neq('id', '')
+    .gte('id', '00000000-0000-0000-0000-000000000000')
 
   if (error) return { deleted: false, error: error.message }
 

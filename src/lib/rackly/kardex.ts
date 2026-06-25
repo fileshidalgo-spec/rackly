@@ -884,41 +884,18 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
 /**
  * Elimina TODOS los movimientos de la tabla.
  * Usa service_role para bypassear RLS.
- * Borra en lotes de 1000 IDs para no exceder límites de URL.
  */
 export async function deleteAllMovimientos(): Promise<{ deleted: boolean; error?: string }> {
-  // Usar dataClient (service role) ya configurado — sin credenciales hardcodeadas
   const admin = dataClient
 
-  // Obtener todos los IDs
-  const allIds: string[] = []
-  let from = 0
-  let iterations = 0
-  const BATCH = 1000
-  while (iterations++ < MAX_ITERATIONS) {
-    const { data, error } = await admin
-      .from('movimientos')
-      .select('id')
-      .range(from, from + BATCH - 1)
-    if (error) return { deleted: false, error: error.message }
-    if (!data || data.length === 0) break
-    allIds.push(...data.map((r: { id: string }) => r.id))
-    if (data.length < BATCH) break
-    from += BATCH
-  }
+  // Borrar todo directamente — .neq('id','') requiere filtro pero matchea todas las filas
+  // Si hay muchas filas, PostgREST las borra en una sola transacción
+  const { error } = await admin
+    .from('movimientos')
+    .delete()
+    .neq('id', '')
 
-  if (allIds.length === 0) return { deleted: true }
-
-  // Borrar en lotes usando .in('id', [...])
-  const DELETE_BATCH = 500
-  for (let i = 0; i < allIds.length; i += DELETE_BATCH) {
-    const batch = allIds.slice(i, i + DELETE_BATCH)
-    const { error } = await admin
-      .from('movimientos')
-      .delete()
-      .in('id', batch)
-    if (error) return { deleted: false, error: `Lote ${Math.floor(i / DELETE_BATCH) + 1}: ${error.message}` }
-  }
+  if (error) return { deleted: false, error: error.message }
 
   return { deleted: true }
 }

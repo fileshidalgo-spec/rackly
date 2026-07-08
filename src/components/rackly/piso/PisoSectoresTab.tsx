@@ -1436,43 +1436,59 @@ export function PisoSectoresTab() {
         </div>
       </div>
 
-      {/* ═══ SELECTOR SECTOR — Pill-style with sliding indicator ═══ */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0">Sector:</span>
-          {sectores.length <= 4 ? (
-          <div className="relative flex gap-1 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm overflow-hidden">
-            {/* Sliding indicator */}
-            <div
-              className="absolute top-1 bottom-1 rounded-lg bg-gradient-to-r from-sky-400 to-cyan-500 shadow-lg shadow-sky-500/25 transition-all duration-300 ease-out"
-              style={{
-                left: activeSectorIdx >= 0 ? `calc(${activeSectorIdx} * (100% / ${sectores.length}) + 4px)` : '4px',
-                width: `calc(100% / ${sectores.length} - 8px)`,
-              }}
-            />
-            {sectores.map((s) => (
-              <button key={s.id} onClick={() => setSectorFilter(s.id)}
-                className={`relative z-10 flex-1 min-w-0 px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition-all duration-300 truncate ${sectorFilter === s.id
-                  ? 'text-white'
-                  : 'text-slate-400 hover:text-slate-300'
-                  }`}>
-                {s.nombre}
-              </button>
-            ))}
+      {/* ═══ SELECTOR SECTOR — Mobile: full-width scroll row; Desktop: pill-style ═══ */}
+      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 items-stretch sm:items-center justify-between w-full">
+        <div className="flex sm:items-center gap-2.5 min-w-0 flex-col sm:flex-row">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0 self-start sm:self-auto">Sector:</span>
+          {/* Mobile: full-width scrollable row */}
+          <div className="sm:hidden w-full overflow-x-auto scrollbar-none" style={{ WebkitOverflowScrolling: 'touch' }}>
+            <div className="flex gap-1.5 pb-1">
+              {sectores.map((s) => (
+                <button key={s.id} onClick={() => setSectorFilter(s.id)}
+                  className={`shrink-0 px-3 py-2 rounded-lg text-xs font-bold transition-all duration-300 whitespace-nowrap border ${sectorFilter === s.id
+                    ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white border-sky-400/50 shadow-lg shadow-sky-500/25'
+                    : 'bg-slate-800/60 text-slate-400 border-slate-700/30 hover:text-slate-300'
+                    }`}>
+                  {s.nombre}
+                </button>
+              ))}
+            </div>
           </div>
-          ) : (
-          <div className="flex gap-1 overflow-x-auto max-w-[60vw] sm:max-w-none">
-            {sectores.map((s) => (
-              <button key={s.id} onClick={() => setSectorFilter(s.id)}
-                className={`px-3 py-2 rounded-lg text-xs font-bold border transition-all duration-300 whitespace-nowrap shrink-0 ${sectorFilter === s.id
-                  ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white border-sky-400/50 shadow-lg shadow-sky-500/25'
-                  : 'bg-slate-800/60 text-slate-400 border-slate-700/30 hover:text-slate-300 hover:border-slate-600'
-                  }`}>
-                {s.nombre}
-              </button>
-            ))}
+          {/* Desktop: pill-style with sliding indicator (<=4) or simple row (>4) */}
+          <div className="hidden sm:block">
+            {sectores.length <= 4 ? (
+            <div className="relative flex gap-1 bg-slate-800/60 rounded-xl p-1 border border-slate-700/30 backdrop-blur-sm overflow-hidden flex-1 min-w-0">
+              <div
+                className="absolute top-1 bottom-1 rounded-lg bg-gradient-to-r from-sky-400 to-cyan-500 shadow-lg shadow-sky-500/25 transition-all duration-300 ease-out"
+                style={{
+                  left: activeSectorIdx >= 0 ? `calc(${activeSectorIdx} * (100% / ${sectores.length}) + 4px)` : '4px',
+                  width: `calc(100% / ${sectores.length} - 8px)`,
+                }}
+              />
+              {sectores.map((s) => (
+                <button key={s.id} onClick={() => setSectorFilter(s.id)}
+                  className={`relative z-10 flex-1 min-w-0 px-4 py-2 rounded-lg text-xs font-bold transition-all duration-300 truncate ${sectorFilter === s.id
+                    ? 'text-white bg-transparent shadow-none'
+                    : 'text-slate-400 hover:text-slate-300'
+                    }`}>
+                  {s.nombre}
+                </button>
+              ))}
+            </div>
+            ) : (
+            <div className="flex gap-1 overflow-x-auto">
+              {sectores.map((s) => (
+                <button key={s.id} onClick={() => setSectorFilter(s.id)}
+                  className={`px-3 py-2 rounded-lg text-xs font-bold border transition-all duration-300 whitespace-nowrap shrink-0 ${sectorFilter === s.id
+                    ? 'bg-gradient-to-r from-sky-400 to-cyan-500 text-white border-sky-400/50 shadow-lg shadow-sky-500/25'
+                    : 'bg-slate-800/60 text-slate-400 border-slate-700/30 hover:text-slate-300 hover:border-slate-600'
+                    }`}>
+                  {s.nombre}
+                </button>
+              ))}
+            </div>
+            )}
           </div>
-          )}
         </div>
         <div className="flex items-center gap-3">
           <button onClick={() => loadPosiciones()} className="p-2 rounded-xl border border-slate-700/50 hover:bg-slate-700/80 transition-all duration-500 hover:-rotate-180 bg-slate-800/60 backdrop-blur-sm hover:shadow-lg"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /></button>

@@ -426,48 +426,42 @@ export async function stockEnUbicacion(
       from += BATCH
     }
 
-    // Agrupar por (codigo, codigo_inc, f_vencimiento) para rastrear lotes individuales,
-    // luego reagrupar por (codigo, codigo_inc) con el desglose de lotes.
-    // Esto permite mostrar la fecha REAL de cada ingreso, no solo la FEFO.
-    const lotMap = new Map<string, {
+    // ── Paso 1: Stock NETO por (codigo, codigo_inc) SIN separar por vencimiento ──
+    const stockMap = new Map<string, {
       codigo: string; descripcion: string; un: string;
-      stock: number; fVencimiento: string;
+      stock: number;
       usuarioPrimerNombre: string; proveedor: string; codigoInc: string;
+    }>()
+
+    // ── Paso 2: Lotes por vencimiento SOLO para desglose FEFO visual ──
+    const lotMap = new Map<string, {
+      codigo: string; codigoInc: string;
+      fVencimiento: string; stock: number;
     }>()
 
     for (const r of allRows) {
       const m = fromRow(r)
       const incKey = m.codigoInc || ''
-      const vencKey = m.fVencimiento || '__sin_fecha__'
-      const key = `${m.codigo}||${incKey}||${vencKey}`
-
-      let lot = lotMap.get(key)
-      if (!lot) {
-        lot = {
-          codigo: m.codigo,
-          descripcion: m.descripcion,
-          un: m.un,
-          stock: 0,
-          fVencimiento: m.fVencimiento || '',
-          usuarioPrimerNombre: m.usuarioNombre?.split(' ')[0] ?? '',
-          proveedor: m.proveedor ?? '',
-          codigoInc: incKey,
-        }
-        lotMap.set(key, lot)
-      } else {
-        if (!lot.descripcion && m.descripcion) lot.descripcion = m.descripcion
-      }
-
-      // Calcular stock neto (ingreso/devolucion/traslado/stock_inicial = +, salida = -)
+      const isPos = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo)
       const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
-      const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? qty : -qty
+      const delta = isPos ? qty : -qty
+
+      const stockKey = `${m.codigo}||${incKey}`
+      let entry = stockMap.get(stockKey)
+      if (!entry) {
+        entry = { codigo: m.codigo, descripcion: m.descripcion, un: m.un, stock: 0, usuarioPrimerNombre: m.usuarioNombre?.split(' ')[0] ?? '', proveedor: m.proveedor ?? '', codigoInc: incKey }
+        stockMap.set(stockKey, entry)
+      } else { if (!entry.descripcion && m.descripcion) entry.descripcion = m.descripcion }
+      entry.stock += delta
+
+      const vencKey = m.fVencimiento || '__sin_fecha__'
+      const lotKey = `${m.codigo}||${incKey}||${vencKey}`
+      let lot = lotMap.get(lotKey)
+      if (!lot) { lot = { codigo: m.codigo, codigoInc: incKey, fVencimiento: m.fVencimiento || '', stock: 0 }; lotMap.set(lotKey, lot) }
       lot.stock += delta
     }
 
-    // Filtrar lotes con stock > 0
-    const activeLots = Array.from(lotMap.values()).filter(l => l.stock > 0)
-
-    // Reagrupar por (codigo, codigo_inc) para el resultado final
+    // ── Paso 3: Construir resultado final ──
     const groups = new Map<string, {
       codigo: string; descripcion: string; un: string;
       stock: number; fVencimientoMasProxima: string;
@@ -475,34 +469,22 @@ export async function stockEnUbicacion(
       lotes: LoteInfo[];
     }>()
 
-    for (const lot of activeLots) {
-      const groupKey = `${lot.codigo}||${lot.codigoInc}`
-      let group = groups.get(groupKey)
-      if (!group) {
-        group = {
-          codigo: lot.codigo,
-          descripcion: lot.descripcion,
-          un: lot.un,
-          stock: 0,
-          fVencimientoMasProxima: lot.fVencimiento,
-          usuarioPrimerNombre: lot.usuarioPrimerNombre,
-          proveedor: lot.proveedor,
-          codigoInc: lot.codigoInc,
-          lotes: [],
-        }
-        groups.set(groupKey, group)
-      }
-      group.stock += lot.stock
-      // Actualizar FEFO si este lote tiene fecha más próxima
-      if (lot.fVencimiento) {
-        if (!group.fVencimientoMasProxima || lot.fVencimiento < group.fVencimientoMasProxima) {
-          group.fVencimientoMasProxima = lot.fVencimiento
-        }
-      }
-      // Agregar lote individual
-      group.lotes.push({
-        fVencimiento: lot.fVencimiento,
-        cantidad: Math.round(lot.stock * 1000) / 1000,
+    for (const [stockKey, entry] of stockMap) {
+      if (entry.stock <= 0) continue
+      const lotsForCode = Array.from(lotMap.values())
+        .filter(l => l.codigo === entry.codigo && l.codigoInc === entry.codigoInc && l.stock > 0)
+      lotsForCode.sort((a, b) => {
+        if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
+        if (a.fVencimiento && !b.fVencimiento) return -1
+        if (!a.fVencimiento && b.fVencimiento) return 1
+        return 0
+      })
+      groups.set(stockKey, {
+        codigo: entry.codigo, descripcion: entry.descripcion, un: entry.un,
+        stock: Math.round(entry.stock * 1000) / 1000,
+        fVencimientoMasProxima: lotsForCode.find(l => l.fVencimiento)?.fVencimiento || '',
+        usuarioPrimerNombre: entry.usuarioPrimerNombre, proveedor: entry.proveedor, codigoInc: entry.codigoInc,
+        lotes: lotsForCode.map(l => ({ fVencimiento: l.fVencimiento, cantidad: Math.round(l.stock * 1000) / 1000 })),
       })
     }
 

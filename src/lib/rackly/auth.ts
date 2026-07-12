@@ -21,10 +21,10 @@ const SERVICE_ROLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
  * Esto permite que los usuarios accedan inmediatamente sin necesitar confirmar
  * su correo por email (Supabase tiene mailer_autoconfirm=false).
  */
-async function confirmarEmailUsuario(userId: string): Promise<void> {
+async function confirmarEmailUsuario(userId: string): Promise<boolean> {
   if (!SERVICE_ROLE_KEY) {
     console.warn('[RACKLY] SERVICE_ROLE_KEY no configurada, no se puede auto-confirmar')
-    return
+    return false
   }
   try {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
@@ -38,11 +38,19 @@ async function confirmarEmailUsuario(userId: string): Promise<void> {
     })
     if (!res.ok) {
       console.error('[RACKLY] Error auto-confirmando email:', res.status, await res.text())
-    } else {
-      console.warn('[RACKLY] Email auto-confirmado para nuevo usuario')
+      return false
     }
+    const data = await res.json()
+    const confirmed = !!data.email_confirmed_at
+    if (confirmed) {
+      console.warn('[RACKLY] Email auto-confirmado para usuario', userId)
+    } else {
+      console.error('[RACKLY] Auto-confirmación no surtió efecto para', userId)
+    }
+    return confirmed
   } catch (err) {
     console.error('[RACKLY] Error en auto-confirmación:', err)
+    return false
   }
 }
 
@@ -61,18 +69,20 @@ export async function signUp(correo: string, password: string, nombre: string) {
   // Si Supabase requiere confirmación de email (no hay sesión),
   // auto-confirmar usando la Admin API para que el usuario pueda acceder de inmediato
   if (!data.session && data.user) {
-    await confirmarEmailUsuario(data.user.id)
-    // Intentar obtener la sesión después de confirmar
-    try {
-      const { data: signInData } = await supabase.auth.signInWithPassword({
-        email: correo,
-        password,
-      })
-      if (signInData.session) {
-        return { ...data, session: signInData.session, user: signInData.user }
+    const confirmed = await confirmarEmailUsuario(data.user.id)
+    if (confirmed) {
+      // Intentar obtener la sesión después de confirmar
+      try {
+        const { data: signInData } = await supabase.auth.signInWithPassword({
+          email: correo,
+          password,
+        })
+        if (signInData.session) {
+          return { ...data, session: signInData.session, user: signInData.user }
+        }
+      } catch {
+        // Si falla el login automático, continuar con el flujo normal
       }
-    } catch {
-      // Si falla el login automático, continuar con el flujo normal
     }
   }
 
@@ -88,8 +98,7 @@ export async function signIn(correo: string, password: string) {
     // Si el error es por email no confirmado, intentar auto-confirmar y reintentar
     const msg = error.message.toLowerCase()
     if (msg.includes('email not confirmed') || msg.includes('not confirmed')) {
-      console.warn('[RACKLY] Intentando auto-confirmar email (usuario sin sesión)')
-      // Obtener el user_id desde admin API
+      console.warn('[RACKLY] Email no confirmado, intentando auto-confirmar vía Admin API...')
       if (SERVICE_ROLE_KEY) {
         try {
           const adminRes = await fetch(
@@ -104,14 +113,23 @@ export async function signIn(correo: string, password: string) {
           const adminData = await adminRes.json()
           const user = adminData.users?.[0]
           if (user?.id) {
-            await confirmarEmailUsuario(user.id)
-            // Reintentar login
-            const retry = await supabase.auth.signInWithPassword({ email: correo, password })
-            if (!retry.error) return retry.data
+            const confirmed = await confirmarEmailUsuario(user.id)
+            if (confirmed) {
+              // Reintentar login después de confirmar
+              const retry = await supabase.auth.signInWithPassword({ email: correo, password })
+              if (!retry.error) return retry.data
+              console.error('[RACKLY] Login reintentado tras confirmar pero falló:', retry.error.message)
+            } else {
+              console.error('[RACKLY] No se pudo confirmar el email de', correo)
+            }
+          } else {
+            console.error('[RACKLY] Usuario no encontrado en Admin API para', correo)
           }
-        } catch {
-          // Si falla, lanzar el error original
+        } catch (confirmErr) {
+          console.error('[RACKLY] Error en auto-confirmación durante login:', confirmErr)
         }
+      } else {
+        console.error('[RACKLY] SERVICE_ROLE_KEY no disponible para auto-confirmar email')
       }
     }
     throw error
@@ -261,11 +279,30 @@ export async function cambiarRol(userId: string, rol: Rol) {
 }
 
 export async function eliminarPerfil(userId: string) {
+  // 1. Eliminar rol
   const { error: delErr } = await dataClient.from('user_roles').delete().eq('user_id', userId)
   if (delErr) throw delErr
+  // 2. Eliminar perfil
   const { error } = await dataClient
     .from('profiles')
     .delete()
     .eq('id', userId)
   if (error) throw error
+  // 3. Eliminar usuario de Supabase Auth para que no pueda volver a loguearse
+  if (SERVICE_ROLE_KEY) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
+        method: 'DELETE',
+        headers: {
+          'apikey': SERVICE_ROLE_KEY,
+          'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
+        },
+      })
+      if (!res.ok) {
+        console.error('[RACKLY] Error eliminando usuario Auth:', res.status, await res.text())
+      }
+    } catch (err) {
+      console.error('[RACKLY] Error eliminando usuario Auth:', err)
+    }
+  }
 }

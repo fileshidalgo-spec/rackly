@@ -108,10 +108,12 @@ export function UsuariosTab() {
 
   async function handleDelete() {
     if (!deleteTarget) return
+    const targetId = deleteTarget.id
+    const targetName = deleteTarget.nombre
+    setDeleteTarget(null)
     try {
-      await eliminarPerfil(deleteTarget.id)
-      toast.success('Perfil eliminado')
-      setDeleteTarget(null)
+      await eliminarPerfil(targetId)
+      toast.success(`Perfil de ${targetName} eliminado`)
       const data = await getTodosLosPerfiles()
       setPerfiles(data)
     } catch (err: unknown) {
@@ -323,15 +325,15 @@ export function UsuariosTab() {
 
       <AlertDialog
         open={!!deleteTarget}
-        onOpenChange={() => setDeleteTarget(null)}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
       >
         <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
           <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar perfil</AlertDialogTitle>
+            <AlertDialogTitle>Eliminar usuario</AlertDialogTitle>
             <AlertDialogDescription>
-              ¿Estás seguro de eliminar el perfil de{' '}
-              <strong>{deleteTarget?.nombre}</strong>? Esta acción no se puede
-              deshacer.
+              ¿Estás seguro de eliminar al usuario{' '}
+              <strong>{deleteTarget?.nombre}</strong>? Se eliminará su perfil, roles y
+              cuenta de acceso. Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

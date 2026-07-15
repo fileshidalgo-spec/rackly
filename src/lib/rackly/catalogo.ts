@@ -14,12 +14,22 @@ let _cacheLoaded = false
 
 export async function fetchCatalogo(): Promise<CatalogoItem[]> {
   try {
-    const { data, error } = await dataClient
-      .from('catalogo')
-      .select('codigo, un, descripcion, stock_big_magic')
-      .order('codigo')
-    if (error) throw error
-    _cache = ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+    const allData: Record<string, unknown>[] = []
+    let from = 0
+    const BATCH = 1000
+    for (let page = 0; page < 50; page++) {
+      const { data, error } = await dataClient
+        .from('catalogo')
+        .select('codigo, un, descripcion, stock_big_magic')
+        .order('codigo')
+        .range(from, from + BATCH - 1)
+      if (error) throw error
+      const rows = data ?? []
+      allData.push(...rows)
+      if (rows.length < BATCH) break
+      from += BATCH
+    }
+    _cache = allData.map((r) => ({
       codigo: String(r.codigo ?? ''),
       un: String(r.un ?? ''),
       descripcion: String(r.descripcion ?? ''),

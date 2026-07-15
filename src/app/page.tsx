@@ -16,6 +16,8 @@ import { SectoresConfigTab } from '@/components/rackly/piso/SectoresTab'
 import { MovimientosTab } from '@/components/rackly/piso/MovimientosTab'
 import { PisoSectoresTab } from '@/components/rackly/piso/PisoSectoresTab'
 import { PisoStockTab } from '@/components/rackly/piso/PisoStockTab'
+import { StockIncTab } from '@/components/rackly/kardex/StockIncTab'
+import { StockIncPisoTab } from '@/components/rackly/piso/StockIncPisoTab'
 import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Button } from '@/components/ui/button'
@@ -199,6 +201,7 @@ function RacklyApp() {
                 { val: 'traslado', icon: ArrowRightLeft, label: 'Traslado', shortLabel: 'Trasl', color: 'from-blue-500 to-indigo-600' },
                 { val: 'kardex', icon: BookOpen, label: 'Catálogo', shortLabel: 'Cat', color: 'from-amber-500 to-orange-600' },
                 { val: 'stock', icon: PackageSearch, label: 'Stock', shortLabel: 'Stock', color: 'from-cyan-500 to-teal-600' },
+                { val: 'stock-inc', icon: TriangleAlert, label: 'Stock INC', shortLabel: 'INC', color: 'from-rose-500 to-amber-600' },
                 { val: 'ocupacion', icon: LayoutGrid, label: 'Ocupación', shortLabel: 'Ocup', color: 'from-violet-500 to-purple-600' },
                 { val: 'descarga', icon: Download, label: 'Descarga', shortLabel: 'Desc', color: 'from-rose-500 to-pink-600' },
                 { val: 'fefo', icon: CalendarClock, label: 'FEFO', shortLabel: 'FEFO', color: 'from-orange-500 to-red-500' },
@@ -496,6 +499,24 @@ function RacklyApp() {
               </Card>
             </TabsContent>
 
+            {/* ═══ STOCK INC ═══ */}
+            <TabsContent value="stock-inc" className="mt-5">
+              <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500 to-amber-600 flex items-center justify-center shadow-md shadow-rose-500/20">
+                      <TriangleAlert className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Stock INC Racks</CardTitle>
+                      <CardDescription>Artículos no conformes en racks. Busca por código, descripción o número INC.</CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent><StockIncTab /></CardContent>
+              </Card>
+            </TabsContent>
+
             {/* ═══ OCUPACIÓN ═══ */}
             <TabsContent value="ocupacion" className="mt-5">
               <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
@@ -582,6 +603,7 @@ function RacklyApp() {
                 { val: 'movimientos', icon: History, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
                 { val: 'sectores', icon: Layers3, label: 'Sectores', shortLabel: 'Sector', color: 'from-sky-500 to-blue-600' },
                 { val: 'stock', icon: PackageSearch, label: 'Stock', shortLabel: 'Stock', color: 'from-cyan-500 to-teal-600' },
+                { val: 'stock-inc', icon: TriangleAlert, label: 'Stock INC', shortLabel: 'INC', color: 'from-rose-500 to-amber-600' },
                 { val: 'config', icon: Settings, label: 'Configuración', shortLabel: 'Config', color: 'from-slate-400 to-slate-600' },
               ].map((tab) => (
                 <TabsTrigger
@@ -631,6 +653,24 @@ function RacklyApp() {
                   </div>
                 </CardHeader>
                 <CardContent><PisoStockTab /></CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* ═══ STOCK INC PISO ═══ */}
+            <TabsContent value="stock-inc" className="mt-5">
+              <Card className="border border-slate-700 shadow-xl shadow-slate-900/30 bg-slate-900">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-500 to-amber-600 flex items-center justify-center shadow-md shadow-rose-500/20">
+                      <TriangleAlert className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg text-white">Stock INC Piso</CardTitle>
+                      <CardDescription className="text-slate-400">Artículos no conformes en piso. Busca por código, descripción o número INC.</CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent><StockIncPisoTab /></CardContent>
               </Card>
             </TabsContent>
 

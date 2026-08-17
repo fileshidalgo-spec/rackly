@@ -1,56 +1,57 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { stockPisoGlobal, type StockPisoItem } from '@/lib/piso/api'
 import { findCatalogoByCodigo, fetchCatalogo, isCatalogoLoaded } from '@/lib/rackly/catalogo'
-// Decoupled: Kardex Piso ya no consulta stock de Kardex Racks
-import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
-import { Search, PackageSearch, Loader2, RefreshCw, MapPin, AlertTriangle } from 'lucide-react'
+import { Search, PackageSearch, Loader2, MapPin, AlertTriangle } from 'lucide-react'
 
 export function PisoStockTab() {
   const [query, setQuery] = useState('')
   const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>('todos')
   const [items, setItems] = useState<StockPisoItem[]>([])
   const [loading, setLoading] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
-
+  const [hasSearched, setHasSearched] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
 
-  const loadStock = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true)
-    else setRefreshing(true)
-    try {
-      if (!isCatalogoLoaded()) await fetchCatalogo().catch(() => {})
-      const data = await stockPisoGlobal()
-      if (mountedRef.current) {
-        setItems(data)
-        setLastRefresh(new Date())
-      }
-    } catch (err) {
-      console.error('Error cargando stock Piso:', err)
-    } finally {
-      if (mountedRef.current) {
-        setLoading(false)
-        setRefreshing(false)
-      }
-    }
-  }, [])
-
+  // Only fetch stock when user types a search term (debounced)
   useEffect(() => {
     mountedRef.current = true
-    loadStock()
-    return () => { mountedRef.current = false }
-  }, [loadStock])
-
-  // Realtime: auto-refresh when piso_movimientos changes
-  const silentRefresh = useCallback(() => loadStock(true), [loadStock])
-  usePisoRealtime(silentRefresh)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    const term = query.trim()
+    if (!term) {
+      setItems([])
+      setHasSearched(false)
+      return
+    }
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true)
+      try {
+        if (!isCatalogoLoaded()) await fetchCatalogo().catch(() => {})
+        const data = await stockPisoGlobal()
+        if (mountedRef.current) {
+          setItems(data)
+          setHasSearched(true)
+          setLastRefresh(new Date())
+        }
+      } catch (err) {
+        console.error('Error cargando stock Piso:', err)
+        if (mountedRef.current) setHasSearched(true)
+      } finally {
+        if (mountedRef.current) setLoading(false)
+      }
+    }, 400)
+    return () => {
+      mountedRef.current = false
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [query])
 
   // Get Big Magic stock for the search term
   const bmItem = query.trim() ? findCatalogoByCodigo(query.trim()) : null
@@ -136,14 +137,7 @@ export function PisoStockTab() {
             className="pl-9 bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
           />
         </div>
-        <button
-          onClick={() => loadStock()}
-          disabled={loading}
-          className="h-9 px-3 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors flex items-center gap-1.5 text-xs font-medium"
-        >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          <span className="hidden sm:inline">Actualizar</span>
-        </button>
+
       </div>
 
       {/* Big Magic card */}
@@ -165,15 +159,38 @@ export function PisoStockTab() {
       )}
 
       {/* Loading */}
-      {loading && items.length === 0 && (
+      {loading && (
         <div className="flex items-center justify-center gap-2 py-12 text-slate-400">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-sm">Cargando stock...</span>
+          <span className="text-sm">Buscando stock...</span>
+        </div>
+      )}
+
+      {/* Empty state: prompt to search */}
+      {!loading && !hasSearched && (
+        <div className="flex flex-col items-center gap-3 py-16 text-slate-500">
+          <div className="w-16 h-16 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center">
+            <Search className="h-7 w-7 text-slate-600" />
+          </div>
+          <div className="text-center">
+            <p className="text-sm font-medium text-slate-400">Busca por codigo o descripcion</p>
+            <p className="text-xs text-slate-600 mt-1">Escribe para consultar el stock de Piso</p>
+          </div>
+        </div>
+      )}
+
+      {/* No results after search */}
+      {!loading && hasSearched && grouped.size === 0 && (
+        <div className="flex flex-col items-center gap-2 py-12 text-slate-500">
+          <PackageSearch className="h-8 w-8" />
+          <span className="text-sm">
+            Sin resultados para &quot;{query}&quot;
+          </span>
         </div>
       )}
 
       {/* Results */}
-      {grouped.size > 0 ? (
+      {!loading && grouped.size > 0 ? (
         <div className="space-y-4">
           {/* Total */}
           <div className="flex items-center justify-between">
@@ -267,15 +284,6 @@ export function PisoStockTab() {
             </Table>
           </div>
 
-        </div>
-      ) : !loading && (query.trim() || items.length === 0) ? (
-        <div className="flex flex-col items-center gap-2 py-12 text-slate-500">
-          <PackageSearch className="h-8 w-8" />
-          <span className="text-sm">
-            {query.trim()
-              ? `Sin resultados para "${query}"`
-              : 'No hay stock registrado en Kardex Piso'}
-          </span>
         </div>
       ) : null}
     </div>

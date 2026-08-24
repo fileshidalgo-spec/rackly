@@ -89,6 +89,14 @@ function RacklyApp() {
   const [filterTipo, setFilterTipo] = useState('todos')
   const [filterUsuario, setFilterUsuario] = useState('todos')
   const [filterCodigo, setFilterCodigo] = useState('')
+  // Tab controlado para navegación programática (Stock/Stock INC → Ocupación)
+  const [racksTab, setRacksTab] = useState('movimientos')
+  const [targetUbicacion, setTargetUbicacion] = useState<{ bloque: string; torre: string; piso: string; posicion: string } | null>(null)
+
+  function gotoUbicacion(bloque: string, torre: string, piso: string, posicion: string) {
+    setTargetUbicacion({ bloque, torre, piso, posicion })
+    setRacksTab('ocupacion')
+  }
 
   useMovimientosRealtime(setMovs)
 
@@ -193,7 +201,7 @@ function RacklyApp() {
       <div className="mx-auto max-w-7xl p-4 md:p-6 relative z-10">
         {/* ═══ KARDEX RACKS VIEW ═══ */}
         {view === 'racks' && (
-          <Tabs defaultValue="movimientos" className="w-full">
+          <Tabs value={racksTab} onValueChange={setRacksTab} className="w-full">
             {/* Nav Tabs */}
             <TabsList className="sticky top-0 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
               {[
@@ -495,7 +503,7 @@ function RacklyApp() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><StockTab /></CardContent>
+                <CardContent><StockTab onGotoUbicacion={gotoUbicacion} /></CardContent>
               </Card>
             </TabsContent>
 
@@ -513,7 +521,7 @@ function RacklyApp() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><StockIncTab /></CardContent>
+                <CardContent><StockIncTab onGotoUbicacion={gotoUbicacion} /></CardContent>
               </Card>
             </TabsContent>
 
@@ -531,7 +539,7 @@ function RacklyApp() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><OcupacionTab /></CardContent>
+                <CardContent><OcupacionTab targetUbicacion={targetUbicacion} /></CardContent>
               </Card>
             </TabsContent>
 

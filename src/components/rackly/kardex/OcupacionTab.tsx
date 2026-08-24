@@ -118,7 +118,7 @@ function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
 
 type DetailMode = 'view' | 'ingreso' | 'salida' | 'transferir' | 'inc'
 
-export function OcupacionTab() {
+export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: string; torre: string; piso: string; posicion: string } | null }) {
   const { perfil } = useAuth()
   const [ocupacion, setOcupacion] = useState<OcupacionCelda[]>([])
   const [bloqueFilter, setBloqueFilter] = useState<string>('all')
@@ -130,6 +130,18 @@ export function OcupacionTab() {
   const [actionBusy, setActionBusy] = useState(false)
   const [dataSource, setDataSource] = useState<string>('')
   const mountedRef = useRef(true)
+  const prevTargetRef = useRef<string>('')
+
+  // ── Auto-navegar a ubicación objetivo (desde Stock/Stock INC) ──
+  useEffect(() => {
+    if (!targetUbicacion) return
+    const key = `${targetUbicacion.bloque}-${targetUbicacion.torre}-${targetUbicacion.piso}-${targetUbicacion.posicion}`
+    if (key === prevTargetRef.current) return
+    prevTargetRef.current = key
+    // Esperar a que la ocupación esté cargada
+    if (ocupacion.length === 0) return
+    handleCellClick(targetUbicacion.bloque, targetUbicacion.torre, targetUbicacion.piso, targetUbicacion.posicion)
+  }, [targetUbicacion, ocupacion.length])
 
   // ── Ingreso state ──
   const [ingTipo, setIngTipo] = useState<'ingreso' | 'devolucion'>('ingreso')

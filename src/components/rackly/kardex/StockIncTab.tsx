@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { fetchIncPorUbicacion, type IncEnCelda } from '@/lib/rackly/kardex'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { TriangleAlert, Search, MapPin, Package, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { TriangleAlert, Search, MapPin, Package, Loader2, AlertCircle, RefreshCw, ExternalLink } from 'lucide-react'
 
 type IncFlatItem = {
   codigo: string
@@ -14,7 +14,18 @@ type IncFlatItem = {
   ubicacion: string
 }
 
-export function StockIncTab() {
+type StockIncTabProps = {
+  onGotoUbicacion?: (bloque: string, torre: string, piso: string, posicion: string) => void
+}
+
+/** Parsea clave 'bloque-torre-piso-posicion' en sus partes */
+function parseUbicacion(key: string): { bloque: string; torre: string; piso: string; posicion: string } | null {
+  const parts = key.split('-')
+  if (parts.length >= 4) return { bloque: parts[0], torre: parts[1], piso: parts[2], posicion: parts[3] }
+  return null
+}
+
+export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
   const [query, setQuery] = useState('')
   const [allItems, setAllItems] = useState<IncFlatItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -71,6 +82,13 @@ export function StockIncTab() {
     return Array.from(map.values()).sort((a, b) => a.codigoInc.localeCompare(b.codigoInc))
   }, [filtered])
 
+  function handleClickUbicacion(ubiKey: string) {
+    const loc = parseUbicacion(ubiKey)
+    if (loc && onGotoUbicacion) {
+      onGotoUbicacion(loc.bloque, loc.torre, loc.piso, loc.posicion)
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* Barra de búsqueda */}
@@ -78,7 +96,7 @@ export function StockIncTab() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
-            placeholder="Buscar por código, descripción o número INC..."
+            placeholder="Buscar por código, descripción o número INC (ej: INC026-1108)..."
             value={query}
             onChange={e => setQuery(e.target.value)}
             className="pl-9"
@@ -153,11 +171,18 @@ export function StockIncTab() {
                   <td className="px-3 py-2.5">
                     <div className="flex flex-wrap gap-1">
                       {g.ubicaciones.map(u => (
-                        <Badge key={u.ubi} variant="outline" className="text-[10px] font-mono text-slate-500 border-slate-200">
-                          <MapPin className="h-2.5 w-2.5 mr-1" />
-                          {u.ubi}
-                          <span className="ml-1 text-slate-400">({u.qty % 1 === 0 ? u.qty : u.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })})</span>
-                        </Badge>
+                        <button
+                          key={u.ubi}
+                          type="button"
+                          onClick={() => handleClickUbicacion(u.ubi)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-200 bg-violet-50 hover:bg-violet-100 hover:border-violet-400 text-[10px] font-mono text-violet-700 transition-colors cursor-pointer"
+                          title={`Ir a Ocupación: ${u.ubi}`}
+                        >
+                          <MapPin className="h-2.5 w-2.5" />
+                          <span>{u.ubi}</span>
+                          <span className="text-violet-400">({u.qty % 1 === 0 ? u.qty : u.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })})</span>
+                          <ExternalLink className="h-2.5 w-2.5 ml-0.5 text-violet-400" />
+                        </button>
                       ))}
                     </div>
                   </td>

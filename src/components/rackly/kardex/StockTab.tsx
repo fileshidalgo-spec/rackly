@@ -30,7 +30,7 @@ import { toast } from 'sonner'
 import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
-export function StockTab() {
+export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string, torre: string, piso: string, posicion: string) => void }) {
   const { perfil } = useAuth()
   const esAdmin = perfil?.rol === 'admin'
   const [movs, setMovs] = useState<Movimiento[]>([])
@@ -511,7 +511,12 @@ export function StockTab() {
             {displayStock.map((s, i) => (
               <div key={i} className="rounded-lg border bg-card p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)}
+                    className="flex items-center gap-1.5 text-xs font-semibold hover:text-violet-700 transition-colors cursor-pointer"
+                    title="Ir a Ocupación"
+                  >
                     <span className="text-muted-foreground">Bloq</span>
                     <span className="font-mono">{s.bloque}</span>
                     <span className="text-muted-foreground mx-0.5">|</span>
@@ -523,7 +528,7 @@ export function StockTab() {
                     <span className="text-muted-foreground mx-0.5">|</span>
                     <span className="text-muted-foreground">Pos</span>
                     <span className="font-mono">{s.posicion}</span>
-                  </div>
+                  </button>
                   <div className="flex items-center gap-2">
                     <Badge variant="default" className="text-sm">{s.stock}</Badge>
                     {esAdmin && (
@@ -591,10 +596,10 @@ export function StockTab() {
               <TableBody>
                 {displayStock.map((s, i) => (
                   <TableRow key={i}>
-                    <TableCell className="font-mono font-medium whitespace-nowrap">{s.bloque}</TableCell>
-                    <TableCell className="whitespace-nowrap">{s.torre}</TableCell>
-                    <TableCell className="font-medium whitespace-nowrap">{s.piso}</TableCell>
-                    <TableCell className="whitespace-nowrap">{s.posicion}</TableCell>
+                    <TableCell onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)} className="font-mono font-medium whitespace-nowrap cursor-pointer hover:text-violet-700 transition-colors" title="Ir a Ocupación">{s.bloque}</TableCell>
+                    <TableCell onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)} className="whitespace-nowrap cursor-pointer hover:text-violet-700 transition-colors">{s.torre}</TableCell>
+                    <TableCell onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)} className="font-medium whitespace-nowrap cursor-pointer hover:text-violet-700 transition-colors">{s.piso}</TableCell>
+                    <TableCell onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)} className="whitespace-nowrap cursor-pointer hover:text-violet-700 transition-colors">{s.posicion}</TableCell>
                     <TableCell className="max-w-[200px] truncate">{s.descripcion}</TableCell>
                     <TableCell className="whitespace-nowrap">{s.un}</TableCell>
                     <TableCell>

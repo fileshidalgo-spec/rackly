@@ -130,17 +130,43 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const [actionBusy, setActionBusy] = useState(false)
   const [dataSource, setDataSource] = useState<string>('')
   const mountedRef = useRef(true)
-  const prevTargetRef = useRef<string>('')
+  const targetPendingRef = useRef<{ bloque: string; torre: string; piso: string; posicion: string } | null>(null)
 
   // ── Auto-navegar a ubicación objetivo (desde Stock/Stock INC) ──
+  // Se usa un ref + timeout para evitar problemas de stale closure con handleCellClick
   useEffect(() => {
     if (!targetUbicacion) return
-    const key = `${targetUbicacion.bloque}-${targetUbicacion.torre}-${targetUbicacion.piso}-${targetUbicacion.posicion}`
-    if (key === prevTargetRef.current) return
-    prevTargetRef.current = key
-    // Esperar a que la ocupación esté cargada
+    targetPendingRef.current = targetUbicacion
+  }, [targetUbicacion])
+
+  // Este efecto se dispara cuando la ocupación termina de cargar y hay un target pendiente
+  useEffect(() => {
+    const target = targetPendingRef.current
+    if (!target) return
     if (ocupacion.length === 0) return
-    handleCellClick(targetUbicacion.bloque, targetUbicacion.torre, targetUbicacion.piso, targetUbicacion.posicion)
+    // Si ya hay un detalle abierto con la misma ubicación, no re-abrir
+    if (detail && detail.bloque === target.bloque && detail.torre === target.torre && detail.piso === target.piso && detail.posicion === target.posicion) {
+      targetPendingRef.current = null
+      return
+    }
+ // Limpiar el target pendiente antes de ejecutar
+    targetPendingRef.current = null
+    // Esperar un tick para que el DOM esté listo
+    const timer = setTimeout(() => {
+      setBloqueFilter(target.bloque)
+      stockEnUbicacion(target.bloque, target.torre, target.piso, target.posicion)
+        .then(stock => {
+          if (!mountedRef.current) return
+          if (stock.length > 0 && '_error' in stock[0] && stock[0]._error) {
+            toast.error('Error al consultar stock de esta ubicación.')
+            return
+          }
+          setDetail({ bloque: target.bloque, torre: target.torre, piso: target.piso, posicion: target.posicion, stock })
+          setDetailMode('view')
+        })
+        .catch(() => toast.error('Error al cargar detalle'))
+    }, 100)
+    return () => clearTimeout(timer)
   }, [targetUbicacion, ocupacion.length])
 
   // ── Ingreso state ──

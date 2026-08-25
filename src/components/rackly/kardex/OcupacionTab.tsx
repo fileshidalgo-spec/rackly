@@ -722,7 +722,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   return (
     <div className="space-y-5">
       {/* ═══ DASHBOARD ═══ */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div className="rounded-xl border border-slate-600/40 bg-gradient-to-br from-slate-800 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-sky-400 to-sky-600 flex items-center justify-center"><BoxSelect className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-sky-400/80 uppercase tracking-widest">Total</p></div>
           <p className="text-2xl font-bold text-slate-100">{total.toLocaleString()}</p>
@@ -737,6 +737,11 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>
           <p className="text-2xl font-bold text-emerald-300">{empty.toLocaleString()}</p>
           <p className="text-[10px] text-sky-600/60 mt-0.5">Disponibles{incOnly > 0 ? ` · ${incOnly} con INC` : ''}</p>
+        </div>
+        <div className="rounded-xl border border-rose-600/30 bg-gradient-to-br from-rose-950/40 to-slate-900 p-4 shadow-md">
+          <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-rose-400 to-pink-600 flex items-center justify-center"><AlertTriangle className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-rose-400/80 uppercase tracking-widest">Con INC</p></div>
+          <p className="text-2xl font-bold text-rose-300">{totalInc}</p>
+          <p className="text-[10px] text-rose-600/60 mt-0.5">{occupiedInc > 0 ? `${occupiedInc} con stock` : ''}{occupiedInc > 0 && incOnly > 0 ? ' · ' : ''}{incOnly > 0 ? `${incOnly} solo INC` : ''}{totalInc === 0 ? 'Sin INC' : ''}</p>
         </div>
         <div className="rounded-xl border border-violet-600/30 bg-gradient-to-br from-violet-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center"><Building2 className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-violet-400/80 uppercase tracking-widest">Ocupación</p></div>
@@ -756,6 +761,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
               <div className="flex justify-center gap-1"><span className="text-[9px] font-bold text-blue-400">{db.occupied}</span><span className="text-[9px] text-slate-600">/</span><span className="text-[9px] font-bold text-emerald-400">{db.empty}</span></div>
               {db.multiLote > 0 && <span className="text-[8px] font-semibold text-yellow-400 bg-yellow-400/10 px-1 py-px rounded">{db.multiLote} lote</span>}
               {db.multi > 0 && <span className="text-[8px] font-semibold text-amber-400 bg-amber-400/10 px-1 py-px rounded">{db.multi} mix</span>}
+              {db.incOnly > 0 && <span className="text-[8px] font-semibold text-rose-400 bg-rose-400/10 px-1 py-px rounded">{db.incOnly} INC</span>}
               <div className="h-1 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-500 transition-all duration-500" style={{ width: `${db.pct}%` }} /></div>
             </button>
           ))}

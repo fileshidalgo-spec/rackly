@@ -50,7 +50,7 @@ export const POLLING_INTERVAL = 8000      // ms — refresco de datos en tiempo 
 export const POLLING_TURNO = 60000        // ms — refresco del turno
 export const POLLING_OCUPACION = 10000    // ms — refresco de ocupación
 export const MAX_ITERATIONS = 100         // Guard para bucles de paginación (admin/bulk)
-export const FETCH_MOV_MAX_PAGES = 30     // Máx páginas para fetchMovimientos (15K filas)
+export const FETCH_MOV_MAX_PAGES = 50     // Máx páginas para fetchMovimientos (25K filas)
 
 // ── Timeouts ──────────────────────────────────────────
 // Timeout para queries de stock por código.

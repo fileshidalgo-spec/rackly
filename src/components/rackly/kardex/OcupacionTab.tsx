@@ -344,8 +344,9 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const multiArt = filtered.filter(o => o.stock > 0 && o.codigos.length > 1).length
   const multiLote = filtered.filter(o => o.stock > 0 && o.codigos.length === 1 && o.lotes > 1).length
   const singleArt = occupied - multiArt - multiLote
+  const incOnly = filtered.filter(o => o.stock === 0 && o.tieneInc && o.incItems.length > 0).length
   const total = bloqueFilter === 'all' ? totalCeldas() : totalPosBloque(bloqueFilter)
-  const empty = total - occupied
+  const empty = total - occupied - incOnly
   const pct = total > 0 ? Math.round((occupied / total) * 100) : 0
 
   // ── Transferir: derived ──
@@ -708,7 +709,8 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
     const bt = totalPosBloque(b), bo = ocupacion.filter(o => o.bloque === b && o.stock > 0).length
     const bm = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length > 1).length
     const bl = ocupacion.filter(o => o.bloque === b && o.stock > 0 && o.codigos.length === 1 && o.lotes > 1).length
-    return { bloque: b, total: bt, occupied: bo, multi: bm, multiLote: bl, empty: bt - bo, pct: bt > 0 ? Math.round((bo / bt) * 100) : 0 }
+    const binc = ocupacion.filter(o => o.bloque === b && o.stock === 0 && o.tieneInc && o.incItems.length > 0).length
+    return { bloque: b, total: bt, occupied: bo, multi: bm, multiLote: bl, incOnly: binc, empty: bt - bo - binc, pct: bt > 0 ? Math.round((bo / bt) * 100) : 0 }
   })
 
   const isView = detailMode === 'view'
@@ -732,7 +734,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         <div className="rounded-xl border border-emerald-600/30 bg-gradient-to-br from-emerald-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>
           <p className="text-2xl font-bold text-emerald-300">{empty.toLocaleString()}</p>
-          <p className="text-[10px] text-sky-600/60 mt-0.5">Disponibles</p>
+          <p className="text-[10px] text-sky-600/60 mt-0.5">Disponibles{incOnly > 0 ? ` · ${incOnly} con INC` : ''}</p>
         </div>
         <div className="rounded-xl border border-violet-600/30 bg-gradient-to-br from-violet-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center"><Building2 className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-violet-400/80 uppercase tracking-widest">Ocupación</p></div>

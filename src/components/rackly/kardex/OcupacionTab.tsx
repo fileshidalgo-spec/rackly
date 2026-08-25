@@ -345,6 +345,8 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const multiLote = filtered.filter(o => o.stock > 0 && o.codigos.length === 1 && o.lotes > 1).length
   const singleArt = occupied - multiArt - multiLote
   const incOnly = filtered.filter(o => o.stock === 0 && o.tieneInc && o.incItems.length > 0).length
+  const totalInc = filtered.filter(o => o.tieneInc && o.incItems.length > 0).length
+  const occupiedInc = totalInc - incOnly
   const total = bloqueFilter === 'all' ? totalCeldas() : totalPosBloque(bloqueFilter)
   const empty = total - occupied - incOnly
   const pct = total > 0 ? Math.round((occupied / total) * 100) : 0
@@ -729,7 +731,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         <div className="rounded-xl border border-blue-600/30 bg-gradient-to-br from-blue-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center"><Layers className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-blue-400/80 uppercase tracking-widest">Ocupadas</p></div>
           <p className="text-2xl font-bold text-blue-300">{occupied}</p>
-          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiLote} multi-lote · {multiArt} mixtas</p>
+          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiLote} multi-lote · {multiArt} mixtas{totalInc > 0 ? ` · ${totalInc} con INC (${occupiedInc} ocupadas + ${incOnly} solo INC)` : ''}</p>
         </div>
         <div className="rounded-xl border border-emerald-600/30 bg-gradient-to-br from-emerald-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>

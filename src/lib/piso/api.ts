@@ -369,25 +369,84 @@ export async function crearBloque(
 }
 
 export async function eliminarBloque(id: string): Promise<Bloque[]> {
-  await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', id)
+  const { error: errAsig } = await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', id)
+  if (errAsig) throw errAsig
   const { error } = await dataClient.from('piso_bloques').delete().eq('id', id)
   if (error) throw error
   return listarBloques()
 }
 
+/**
+ * Reemplaza el catálogo de bloques de Piso con el contenido de un archivo.
+ *
+ * SEGURO (antes era destructivo): hacía DELETE de TODO + INSERT único en una
+ * sola petición; si el insert fallaba (>1000 filas, payload, códigos duplicados),
+ * la tabla quedaba VACÍA. Ahora:
+ *  1) Normaliza y deduplica por código (conserva la última aparición del archivo).
+ *  2) UPSERT por lotes ANTES de borrar nada — si algo falla, el catálogo actual
+ *     queda intacto y se puede reintentar.
+ *  3) Al final, poda SOLO los códigos que ya no vienen en el archivo (por lotes,
+ *     no fatal: si no se pueden podar, el catálogo queda como superset válido).
+ */
 export async function reemplazarCatalogoBloques(
   items: { codigo: string; descripcion: string; unidad: string }[]
-): Promise<Bloque[]> {
-  await dataClient.from('piso_bloques').delete().neq('id', '')
-  if (items.length === 0) return []
-  const rows = items.map((i) => ({
-    codigo: i.codigo.trim().toUpperCase(),
-    descripcion: i.descripcion,
-    unidad: i.unidad,
-  }))
-  const { error } = await dataClient.from('piso_bloques').insert(rows)
-  if (error) throw error
-  return listarBloques()
+): Promise<{ bloques: Bloque[]; cargados: number; eliminados: number; errores: string[] }> {
+  const errores: string[] = []
+  // 1) Normalizar + deduplicar por código
+  const mapa = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
+  for (const i of items) {
+    const codigo = i.codigo.trim().toUpperCase()
+    if (!codigo) continue
+    mapa.set(codigo, { codigo, descripcion: i.descripcion, unidad: i.unidad })
+  }
+  const rows = [...mapa.values()]
+
+  // 2) Snapshot de los códigos actuales (para podar los que ya no vienen)
+  const { data: actuales, error: errActuales } = await dataClient
+    .from('piso_bloques')
+    .select('id, codigo')
+  if (errActuales) throw errActuales
+  const actualesRows = (actuales ?? []) as unknown as { id: string; codigo: string }[]
+
+  // 3) Upsert por lotes ANTES de borrar nada
+  const CHUNK = 500
+  let cargados = 0
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK)
+    const { error } = await dataClient
+      .from('piso_bloques')
+      .upsert(chunk, { onConflict: 'codigo' })
+    if (error) {
+      // Fallback fila por fila para identificar la fila problemática y no perder el resto
+      for (const r of chunk) {
+        const { error: singleErr } = await dataClient
+          .from('piso_bloques')
+          .upsert(r, { onConflict: 'codigo' })
+        if (singleErr) errores.push(`${r.codigo}: ${singleErr.message}`)
+        else cargados++
+      }
+    } else {
+      cargados += chunk.length
+    }
+  }
+
+  // 4) Podar los códigos que ya no vienen en el archivo (por lotes, no fatal)
+  const codigosArchivo = new Set(rows.map((r) => r.codigo))
+  const aPodar = actualesRows.filter((b) => !codigosArchivo.has(b.codigo)).map((b) => b.id)
+  let eliminados = 0
+  for (let i = 0; i < aPodar.length; i += CHUNK) {
+    const chunk = aPodar.slice(i, i + CHUNK)
+    const { error } = await dataClient.from('piso_bloques').delete().in('id', chunk)
+    if (error) {
+      // No fatal: el catálogo nuevo ya está cargado; los obsoletos quedan y se avisan
+      errores.push(`No se pudieron eliminar ${aPodar.length - i} bloque(s) obsoleto(s): ${error.message}`)
+      break
+    }
+    eliminados += chunk.length
+  }
+
+  const bloques = await listarBloques()
+  return { bloques, cargados, eliminados, errores }
 }
 
 // ---- Column-Block assignments ----
@@ -399,9 +458,10 @@ export async function listarBloquesDeColumna(
     .select('bloque_id, piso_bloques(*)')
     .eq('columna_id', columnaId)
   if (error) throw error
-  return ((data ?? []) as unknown as { bloque_id: string; piso_bloques: Bloque }[]).map(
-    (r) => r.piso_bloques
-  )
+  // Filtrar asignaciones huérfanas (piso_bloques null tras podas del catálogo)
+  return ((data ?? []) as unknown as { bloque_id: string; piso_bloques: Bloque | null }[])
+    .map((r) => r.piso_bloques)
+    .filter((b): b is Bloque => b !== null)
 }
 
 export async function asignarBloqueAColumna(
@@ -438,6 +498,9 @@ export async function registrarMovimiento(
     _detalles: detalles,
   })
   if (error) throw error
+  if (!data || (data as unknown[]).length === 0) {
+    throw new Error('La RPC piso_registrar_movimiento no devolvió resultado')
+  }
   const result = data as unknown[]
   return result[0] as PisoMovimiento
 }
@@ -454,6 +517,30 @@ export async function eliminarMovimiento(movimientoId: string): Promise<void> {
     .delete()
     .eq('id', movimientoId)
   if (movErr) throw movErr
+}
+
+/**
+ * Select con filtro .in() por lotes de IDs. Una URL con miles de UUIDs puede
+ * exceder límites del proxy (4xx) y PostgREST trunca a max_rows silenciosamente:
+ * trocear garantiza resultados completos y error visible.
+ */
+async function selectIn<T>(
+  table: string,
+  select: string,
+  idColumn: string,
+  ids: string[],
+  CHUNK = 500
+): Promise<T[]> {
+  const out: T[] = []
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { data, error } = await dataClient
+      .from(table)
+      .select(select)
+      .in(idColumn, ids.slice(i, i + CHUNK))
+    if (error) throw error
+    out.push(...((data ?? []) as T[]))
+  }
+  return out
 }
 
 export async function listarMovimientos(
@@ -515,38 +602,43 @@ export async function listarMovimientos(
 
   // ── Filtro por sectorId (sin columnaId): resolver columnas → subcolumnas → posiciones → niveles → detalles ──
   if (sectorId && !columnaId && !bloqueId) {
-    const { data: colData } = await dataClient
+    const { data: colData, error: colErr } = await dataClient
       .from('piso_columnas')
       .select('id')
       .eq('sector_id', sectorId)
+    if (colErr) throw colErr
     if (!colData || colData.length === 0) return []
     const colIds = (colData as { id: string }[]).map(c => c.id)
 
-    const { data: subData } = await dataClient
+    const { data: subData, error: subErr } = await dataClient
       .from('piso_subcolumnas')
       .select('id')
       .in('columna_id', colIds)
+    if (subErr) throw subErr
     if (!subData || subData.length === 0) return []
     const subIds = new Set((subData as { id: string }[]).map(s => s.id))
 
-    const { data: posData } = await dataClient
+    const { data: posData, error: posErr } = await dataClient
       .from('piso_posiciones')
       .select('id')
       .in('subcolumna_id', [...subIds])
+    if (posErr) throw posErr
     if (!posData || posData.length === 0) return []
     const posIds = new Set((posData as { id: string }[]).map(p => p.id))
 
-    const { data: nivData } = await dataClient
+    const { data: nivData, error: nivErr } = await dataClient
       .from('piso_niveles')
       .select('id')
       .in('posicion_id', [...posIds])
+    if (nivErr) throw nivErr
     if (!nivData || nivData.length === 0) return []
     const nivIds = (nivData as { id: string }[]).map(n => n.id)
 
-    const { data: detFilter } = await dataClient
+    const { data: detFilter, error: detFilterErr } = await dataClient
       .from('piso_movimiento_detalles')
       .select('movimiento_id')
       .in('nivel_id', nivIds)
+    if (detFilterErr) throw detFilterErr
     if (detFilter && detFilter.length > 0) {
       const validMovIds = new Set((detFilter as { movimiento_id: string }[]).map(d => d.movimiento_id))
       all = all.filter(m => validMovIds.has(m.id))
@@ -612,12 +704,9 @@ export async function listarMovimientos(
   if (all.length === 0) return []
 
   const movIds = all.map((m) => m.id)
-  const { data: detData, error: detErr } = await dataClient
-    .from('piso_movimiento_detalles')
-    .select('*')
-    .in('movimiento_id', movIds)
-  if (detErr) throw detErr
-  const detalles = (detData ?? []) as MovimientoDetalle[]
+  // Detalles por lotes: con hasta 5000 cabeceras, una única URL .in() podía
+  // reventar por longitud o truncarse a max_rows (movimientos sin detalles).
+  const detalles = await selectIn<MovimientoDetalle>('piso_movimiento_detalles', '*', 'movimiento_id', movIds)
 
   const detalleMap = new Map<
     string,
@@ -631,30 +720,20 @@ export async function listarMovimientos(
   const blockIds = [...new Set(detalles.map((d) => d.bloque_id))]
   const nivelIds = [...new Set(detalles.map((d) => d.nivel_id))]
 
-  const [bloquesRes, nivelesRes] = await Promise.all([
+  const [bloquesRows, nivelesRows] = await Promise.all([
     blockIds.length > 0
-      ? dataClient
-          .from('piso_bloques')
-          .select('id, codigo')
-          .in('id', blockIds)
-      : Promise.resolve({ data: [], error: null }),
+      ? selectIn<{ id: string; codigo: string }>('piso_bloques', 'id, codigo', 'id', blockIds)
+      : Promise.resolve([] as { id: string; codigo: string }[]),
     nivelIds.length > 0
-      ? dataClient
-          .from('piso_niveles')
-          .select('id, codigo_ubicacion, posicion_id')
-          .in('id', nivelIds)
-      : Promise.resolve({ data: [], error: null }),
+      ? selectIn<{ id: string; codigo_ubicacion: string | null; posicion_id: string }>('piso_niveles', 'id, codigo_ubicacion, posicion_id', 'id', nivelIds)
+      : Promise.resolve([] as { id: string; codigo_ubicacion: string | null; posicion_id: string }[]),
   ])
 
   const bloqueMap = new Map<string, string>()
-  ;((bloquesRes.data ?? []) as { id: string; codigo: string }[]).forEach(
-    (b) => bloqueMap.set(b.id, b.codigo)
-  )
+  bloquesRows.forEach((b) => bloqueMap.set(b.id, b.codigo))
   const nivelMap = new Map<string, string | null>()
   const nivelToPos = new Map<string, string>()
-  ;(
-    (nivelesRes.data ?? []) as { id: string; codigo_ubicacion: string | null; posicion_id: string }[]
-  ).forEach((n) => {
+  nivelesRows.forEach((n) => {
     nivelMap.set(n.id, n.codigo_ubicacion)
     nivelToPos.set(n.id, n.posicion_id)
   })
@@ -663,30 +742,24 @@ export async function listarMovimientos(
   const posIds = [...new Set(nivelToPos.values())]
   let sectorPosMap = new Map<string, { sector_nombre: string; posicion_label: string }>()
   if (posIds.length > 0) {
-    const posRes = await dataClient.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds)
+    const posRows = await selectIn<{ id: string; numero: number; subcolumna_id: string }>('piso_posiciones', 'id, numero, subcolumna_id', 'id', posIds)
     const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
-    ;((posRes.data ?? []) as { id: string; numero: number; subcolumna_id: string }[]).forEach(
-      (p) => posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id })
-    )
+    posRows.forEach((p) => posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id }))
     const subIds = [...new Set([...posMap.values()].map((p) => p.subcolumna_id))]
     if (subIds.length > 0) {
-      const subRes = await dataClient.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds)
+      const subRows = await selectIn<{ id: string; codigo: string; columna_id: string }>('piso_subcolumnas', 'id, codigo, columna_id', 'id', subIds)
       const subMap = new Map<string, { codigo: string; columna_id: string }>()
-      ;((subRes.data ?? []) as { id: string; codigo: string; columna_id: string }[]).forEach(
-        (s) => subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id })
-      )
+      subRows.forEach((s) => subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id }))
       const colIds = [...new Set([...subMap.values()].map((s) => s.columna_id))]
       if (colIds.length > 0) {
-        const colRes = await dataClient.from('piso_columnas').select('id, letra, sector_id').in('id', colIds)
+        const colRows = await selectIn<{ id: string; letra: string; sector_id: string }>('piso_columnas', 'id, letra, sector_id', 'id', colIds)
         const colMap = new Map<string, { letra: string; sector_id: string }>()
-        ;((colRes.data ?? []) as { id: string; letra: string; sector_id: string }[]).forEach(
-          (c) => colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id })
-        )
+        colRows.forEach((c) => colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id }))
         const sIds = [...new Set([...colMap.values()].map((c) => c.sector_id))]
         if (sIds.length > 0) {
-          const secData = await dataClient.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', sIds)
+          const secRows = await selectIn<{ id: string; nombre: string; n_columnas: number; n_subcolumnas: number }>('piso_sectores', 'id, nombre, n_columnas, n_subcolumnas', 'id', sIds)
           const secInfoMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
-          ;((secData.data ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[]).forEach(
+          secRows.forEach(
             (s) => secInfoMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
           )
           // Build final map: nivel_id -> { sector_nombre, posicion_label }

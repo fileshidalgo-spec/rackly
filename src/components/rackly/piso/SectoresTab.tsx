@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { listarSectores, crearSector, eliminarSector, type Sector } from '@/lib/piso/api'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
@@ -30,7 +30,16 @@ export function SectoresConfigTab() {
     }
   }
 
-  if (!loading && sectores.length === 0) load()
+  // Carga inicial en useEffect. Antes se llamaba load() DURANTE el render
+  // (setState en fase de render) y si listarSectores() devolvía vacío, cada
+  // render relanzaba la consulta en bucle infinito.
+  const loadedRef = useRef(false)
+  useEffect(() => {
+    if (!loadedRef.current) {
+      loadedRef.current = true
+      load()
+    }
+  }, [])
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()

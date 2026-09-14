@@ -198,6 +198,9 @@ export function PisoSectoresTab() {
   const [trConfirmOpen, setTrConfirmOpen] = useState(false)
   // Destino ocupado alerta (traslado Piso)
   const [trDestOccupied, setTrDestOccupied] = useState<DetailStock[]>([])
+  // Mapa bloque_id → nivel real en la POSICIÓN DESTINO: atribuye la salida del
+  // stock existente (alerta destino ocupado) al nivel donde realmente está.
+  const [trDestNivelDeBloque, setTrDestNivelDeBloque] = useState<Map<string, string>>(new Map())
   const [trDestAlertOpen, setTrDestAlertOpen] = useState(false)
   const [trSalidaBusy, setTrSalidaBusy] = useState<string | null>(null)
   const [trSalidaCant, setTrSalidaCant] = useState<Record<string, string>>({})
@@ -389,29 +392,35 @@ export function PisoSectoresTab() {
     try { setSectores(await listarSectores()) } catch { /* ok */ }
   }, [])
 
-  // Cargar posiciones del sector seleccionado
+  // Cargar posiciones del sector seleccionado.
+  // Guard generacional: si el usuario cambia de sector mientras una carga anterior
+  // sigue en vuelo, la respuesta vieja NO debe sobreescribir el grid (antes podía
+  // mostrarse el sector A bajo el filtro del sector B).
+  const loadPosicionesGenRef = useRef(0)
   const loadPosiciones = useCallback(async (silent = false) => {
+    const gen = ++loadPosicionesGenRef.current
+    const vigente = () => mountedRef.current && gen === loadPosicionesGenRef.current
     if (!silent) setLoading(true)
     try {
       if (sectorFilter === 'all') {
         const secs = await listarSectores()
-        if (!mountedRef.current) return
+        if (!vigente()) return
         setSectores(secs)
         if (secs.length > 0) {
           const data = await cargarPosicionesSector(secs[0].id)
-          if (mountedRef.current) { setPosiciones(data); setSectorFilter(secs[0].id) }
+          if (vigente()) { setPosiciones(data); setSectorFilter(secs[0].id) }
         } else {
-          if (mountedRef.current) setPosiciones([])
+          if (vigente()) setPosiciones([])
         }
       } else {
         const data = await cargarPosicionesSector(sectorFilter)
-        if (mountedRef.current) setPosiciones(data)
+        if (vigente()) setPosiciones(data)
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error'
-      if (mountedRef.current && !silent) toast.error('Error al cargar posiciones', { description: msg })
+      if (vigente() && !silent) toast.error('Error al cargar posiciones', { description: msg })
     } finally {
-      if (mountedRef.current) setLoading(false)
+      if (vigente()) setLoading(false)
     }
   }, [sectorFilter])
 
@@ -431,7 +440,11 @@ export function PisoSectoresTab() {
   }, [])
 
   useEffect(() => { mountedRef.current = true; loadSectores(); loadPosiciones(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadPosiciones, loadBloques])
-  useEffect(() => { if (sectorFilter !== 'all') { loadPosiciones(); setSelectedColumn(null); setColDetail([]) } }, [sectorFilter, loadPosiciones])
+  useEffect(() => { if (sectorFilter !== 'all') { loadPosiciones(); setSelectedColumn(null); setColDetail([])
+    // Las selecciones de salida masiva apuntan a posiciones del sector ANTERIOR:
+    // mantenerlas procesaría posiciones que el usuario ya no ve.
+    setMassSelected(new Set())
+  } }, [sectorFilter, loadPosiciones])
 
   // Cargar vista de columna cuando se selecciona una
   const loadColumnDetail = useCallback(async (letra: string) => {
@@ -684,6 +697,7 @@ export function PisoSectoresTab() {
     if (!selectedNivelId) { toast.error('Selecciona un nivel primero'); return }
     const nivelId = selectedNivelId
     setBusy(true)
+    let persistidoInc = false // el registro INC ya se guardó en BD
     try {
       // Resolve bloque_id
       const upper = incCodigo.trim().toUpperCase()
@@ -714,6 +728,7 @@ export function PisoSectoresTab() {
         detalles,
         { posicion_id: detail.posicionId, codigo_inc: incCodigoInc.trim() }
       )
+      persistidoInc = true
 
       toast.success('INC registrado')
       setMode('view')
@@ -745,7 +760,11 @@ export function PisoSectoresTab() {
       await loadPosiciones()
       if (selectedColumn) loadColumnDetail(selectedColumn)
     } catch (err: unknown) {
-      toast.error('Error al registrar INC', { description: extractError(err) })
+      if (persistidoInc) {
+        toast.warning('INC registrado, pero falló la actualización de pantalla. NO repita el registro; recargue la vista.', { duration: 10000 })
+      } else {
+        toast.error('Error al registrar INC', { description: extractError(err) })
+      }
     } finally {
       setBusy(false)
     }
@@ -771,21 +790,27 @@ export function PisoSectoresTab() {
     if (!row || row.bloque_id || row.codigo.trim().length < 1) return
     const upper = row.codigo.trim().toUpperCase()
     const updateRows = prefix === 'ing' ? setIngRows : setDevRows
-    // Check if exact code exists
-    const bloque = await buscarBloquePorCodigo(upper)
-    if (bloque) {
-      updateRows((prev) => {
-        const u = [...prev]
-        u[idx] = { ...u[idx], bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad }
-        return u
-      })
-    } else {
-      const virtualId = `manual_${upper}`
-      updateRows((prev) => {
-        const u = [...prev]
-        u[idx] = { ...u[idx], bloque_id: virtualId, codigo: upper, descripcion: 'Articulo nuevo (manual)', unidad: 'KG' }
-        return u
-      })
+    try {
+      // Check if exact code exists
+      const bloque = await buscarBloquePorCodigo(upper)
+      if (bloque) {
+        updateRows((prev) => {
+          const u = [...prev]
+          u[idx] = { ...u[idx], bloque_id: bloque.id, codigo: bloque.codigo, descripcion: bloque.descripcion, unidad: bloque.unidad }
+          return u
+        })
+      } else {
+        const virtualId = `manual_${upper}`
+        updateRows((prev) => {
+          const u = [...prev]
+          u[idx] = { ...u[idx], bloque_id: virtualId, codigo: upper, descripcion: 'Articulo nuevo (manual)', unidad: 'KG' }
+          return u
+        })
+      }
+    } catch (err) {
+      // Antes: fallo de red = unhandled rejection silencioso; el artículo quedaba
+      // sin resolver y podía registrarse con unidad por defecto sin darse cuenta.
+      toast.error('No se pudo verificar el artículo en el catálogo', { description: extractError(err) })
     }
   }
 
@@ -910,6 +935,7 @@ export function PisoSectoresTab() {
       if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad invalida'); return }
     }
     setBusy(true)
+    let persistido = false // marca si el registro YA se guardó en BD (para no inducir reintentos duplicados)
     try {
       // Resolve manual_ IDs before registering
       const resolved = await ensureManualBloqueCreated(validRows)
@@ -922,6 +948,7 @@ export function PisoSectoresTab() {
         lote: r.sin_lote ? undefined : (r.lote.trim() || undefined),
       }))
       await registrarIngresoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
+      persistido = true
       toast.success('Ingreso registrado')
       // Reload everything in parallel for real-time update
       loadBloques()
@@ -951,7 +978,13 @@ export function PisoSectoresTab() {
       // Reload positions grid
       await loadPosiciones()
       if (selectedColumn) loadColumnDetail(selectedColumn)
-    } catch (err: unknown) { toast.error('Error al registrar ingreso', { description: extractError(err) }) } finally { setBusy(false) }
+    } catch (err: unknown) {
+      if (persistido) {
+        toast.warning('Ingreso registrado, pero falló la actualización de pantalla. NO repita el ingreso; recargue la vista.', { duration: 10000 })
+      } else {
+        toast.error('Error al registrar ingreso', { description: extractError(err) })
+      }
+    } finally { setBusy(false) }
   }
 
   async function doSalida() {
@@ -968,13 +1001,30 @@ export function PisoSectoresTab() {
         return
       }
     }
-    // Determinar nivel_id para la salida
+    // Determinar nivel_id para la salida.
+    // En modo 'all' el stock es consolidado de TODOS los niveles: resolver el nivel
+    // REAL de cada fila vía stockByNivel (bloque_id → nivel). Antes todo se registraba
+    // con selectedNivelId y el descuento se atribuía al nivel equivocado (stock
+    // fantasma en el nivel real y negativo en el nivel seleccionado).
+    const nivelDeBloque = new Map<string, string>()
+    for (const [nivId, filas] of Object.entries(stockByNivel)) {
+      for (const ns of filas) {
+        if (!nivelDeBloque.has(ns.bloque_id)) nivelDeBloque.set(ns.bloque_id, nivId)
+      }
+    }
     const nivelId = salNivelTab === 'all' ? selectedNivelId : salNivelTab
     if (!nivelId) { toast.error('No hay nivel seleccionado'); return }
     setBusy(true)
+    let persistido = false
     try {
-      const detalles = validRows.map((r) => ({ nivel_id: nivelId, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
+      const detalles = validRows.map((r) => ({
+        nivel_id: (salNivelTab === 'all' ? nivelDeBloque.get(r.bloque_id) : salNivelTab) || nivelId,
+        bloque_id: r.bloque_id,
+        cantidad: parseFloat(r.cantidad),
+        fecha_vencimiento: r.fecha_vencimiento || null,
+      }))
       await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
+      persistido = true
       toast.success('Salida registrada')
       // Recargar stock y stock por nivel
       const [stock, nivelStocks] = await Promise.all([
@@ -994,7 +1044,13 @@ export function PisoSectoresTab() {
       }
       await loadPosiciones()
       if (selectedColumn) loadColumnDetail(selectedColumn)
-    } catch (err: unknown) { toast.error('Error al registrar salida', { description: extractError(err) }) } finally { setBusy(false) }
+    } catch (err: unknown) {
+      if (persistido) {
+        toast.warning('Salida registrada, pero falló la actualización de pantalla. NO repita la salida; recargue la vista.', { duration: 10000 })
+      } else {
+        toast.error('Error al registrar salida', { description: extractError(err) })
+      }
+    } finally { setBusy(false) }
   }
 
   // Dar salida a un producto desde el alerta de destino ocupado (Piso traslado)
@@ -1009,7 +1065,9 @@ export function PisoSectoresTab() {
     setTrSalidaBusy(itemKey)
     try {
       await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
-        { nivel_id: trDestNivelId, bloque_id: stockItem.bloque_id, cantidad: cantNum, fecha_vencimiento: stockItem.fecha_vencimiento || null },
+        // Atribuir la salida al nivel REAL del bloque en la posición destino
+        // (el stock del alerta es consolidado de todos los niveles).
+        { nivel_id: trDestNivelDeBloque.get(stockItem.bloque_id) || trDestNivelId, bloque_id: stockItem.bloque_id, cantidad: cantNum, fecha_vencimiento: stockItem.fecha_vencimiento || null },
       ])
       toast.success(`Salida de ${cantNum} ${stockItem.bloque_unidad} de ${stockItem.bloque_codigo}`)
       // Refrescar stock del destino
@@ -1033,7 +1091,18 @@ export function PisoSectoresTab() {
     if (!selectedNivelId || !trDestNivelId) { toast.error('Selecciona nivel de origen y destino'); return }
     const origNivelId = selectedNivelId
     const destNivelId = trDestNivelId
+    // Resolver el nivel REAL de origen por fila: trItems viene del stock consolidado
+    // de todos los niveles; atribuir la salida a selectedNivelId movía mercadería
+    // del nivel equivocado. (Mismo criterio que doMassSalida vía stockByNivel.)
+    const nivelDeBloque = new Map<string, string>()
+    for (const [nivId, filas] of Object.entries(stockByNivel)) {
+      for (const ns of filas) {
+        if (!nivelDeBloque.has(ns.bloque_id)) nivelDeBloque.set(ns.bloque_id, nivId)
+      }
+    }
+    const nivelOrigenDe = (bloqueId: string): string => nivelDeBloque.get(bloqueId) || origNivelId
     setBusy(true)
+    let persistido = false
     try {
 
       // Separate items by discrepancy type
@@ -1042,9 +1111,10 @@ export function PisoSectoresTab() {
       const surplusItems = validRows.filter((r) => parseFloat(r.cantidad) > r.stockActual)
 
       // 1) Base transfer for ALL selected items (move the entered amount) — el lote viaja con la mercadería
-      const allDetSal = validRows.map((r) => ({ nivel_id: origNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null, lote: r.lote || undefined }))
+      const allDetSal = validRows.map((r) => ({ nivel_id: nivelOrigenDe(r.bloque_id), bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null, lote: r.lote || undefined }))
       const allDetIng = validRows.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null, lote: r.lote || undefined }))
       await registrarTrasladoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', allDetSal, allDetIng)
+      persistido = true
 
       // 2) For surplus items (qty > stock): create ingreso at destination for the excess
       for (const item of surplusItems) {
@@ -1062,7 +1132,7 @@ export function PisoSectoresTab() {
           const remaining = item.stockActual - parseFloat(item.cantidad)
           if (remaining > 0) {
             await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
-              { nivel_id: origNivelId!, bloque_id: item.bloque_id, cantidad: remaining, fecha_vencimiento: item.fecha_vencimiento || null },
+              { nivel_id: nivelOrigenDe(item.bloque_id), bloque_id: item.bloque_id, cantidad: remaining, fecha_vencimiento: item.fecha_vencimiento || null },
             ])
           }
         }
@@ -1078,7 +1148,13 @@ export function PisoSectoresTab() {
       setTrConfirmOpen(false)
       setTrDestAlertOpen(false)
       if (mountedRef.current) { setDetail(null); setTrDestPos(null); loadPosiciones(); if (selectedColumn) loadColumnDetail(selectedColumn) }
-    } catch (err: unknown) { toast.error('Error al trasladar', { description: extractError(err) }) } finally { setBusy(false) }
+    } catch (err: unknown) {
+      if (persistido) {
+        toast.warning('Traslado registrado (posiblemente parcial), pero falló un paso posterior. NO repita el traslado; revise el stock y recargue la vista.', { duration: 12000 })
+      } else {
+        toast.error('Error al trasladar', { description: extractError(err) })
+      }
+    } finally { setBusy(false) }
   }
 
   async function doTraslado() {
@@ -1092,6 +1168,19 @@ export function PisoSectoresTab() {
     try {
       const destStock = await stockDetallePosicion(trDestPos.posicionId)
       if (destStock.length > 0) {
+        // Mapa bloque_id → nivel real en el destino, para que la salida del stock
+        // existente (desde el alerta) se atribuya al nivel donde realmente está.
+        try {
+          const nivs = await obtenerNivelesPosicion(trDestPos.posicionId, trDestPos.columnaLetra)
+          const nivelStocks = await Promise.all(nivs.map((n) => stockDetalleNivel(n.id)))
+          const mapa: Map<string, string> = new Map()
+          nivs.forEach((n, i) => {
+            for (const ns of nivelStocks[i] ?? []) {
+              if (!mapa.has(ns.bloque_id)) mapa.set(ns.bloque_id, n.id)
+            }
+          })
+          setTrDestNivelDeBloque(mapa)
+        } catch { setTrDestNivelDeBloque(new Map()) }
         setTrDestOccupied(destStock)
         setTrSalidaCant({})
         setTrSalidaTotalFlags({})
@@ -1118,6 +1207,7 @@ export function PisoSectoresTab() {
       if (parseFloat(r.cantidad) <= 0 || isNaN(parseFloat(r.cantidad))) { toast.error('Cantidad invalida'); return }
     }
     setBusy(true)
+    let persistido = false
     try {
       // Resolve manual_ IDs before registering
       const resolved = await ensureManualBloqueCreated(validRows)
@@ -1130,6 +1220,7 @@ export function PisoSectoresTab() {
         lote: r.sin_lote ? undefined : (r.lote.trim() || undefined),
       }))
       await registrarDevolucionPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
+      persistido = true
       toast.success('Devolucion registrada')
       loadBloques()
       const [stock, nivelStocks] = await Promise.all([
@@ -1151,7 +1242,13 @@ export function PisoSectoresTab() {
       }
       await loadPosiciones()
       if (selectedColumn) loadColumnDetail(selectedColumn)
-    } catch (err: unknown) { toast.error('Error al registrar devolución', { description: extractError(err) }) } finally { setBusy(false) }
+    } catch (err: unknown) {
+      if (persistido) {
+        toast.warning('Devolución registrada, pero falló la actualización de pantalla. NO repita la devolución; recargue la vista.', { duration: 10000 })
+      } else {
+        toast.error('Error al registrar devolución', { description: extractError(err) })
+      }
+    } finally { setBusy(false) }
   }
 
   // ═══ SALIDA EN MASA ═══

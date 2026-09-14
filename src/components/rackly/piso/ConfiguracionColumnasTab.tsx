@@ -49,13 +49,18 @@ export function ConfiguracionColumnasTab() {
   useEffect(() => {
     let cancelled = false
     async function init() {
-      const [sectoresData, bloquesData] = await Promise.all([
-        loadSectores(),
-        listarBloques(),
-      ]).catch(() => [[], []]) as [Sector[], Bloque[]]
-      if (cancelled) return
-      setSectores(sectoresData)
-      setBloques(bloquesData)
+      try {
+        const [sectoresData, bloquesData] = await Promise.all([
+          loadSectores(),
+          listarBloques(),
+        ]) as [Sector[], Bloque[]]
+        if (cancelled) return
+        setSectores(sectoresData)
+        setBloques(bloquesData)
+      } catch (err: unknown) {
+        // Antes: catch(() => [[],[]]) mostraba pantalla vacía sin aviso
+        if (!cancelled) toast.error('Error al cargar la configuración', { description: err instanceof Error ? err.message : 'Error' })
+      }
     }
     init()
     return () => { cancelled = true }
@@ -79,7 +84,11 @@ export function ConfiguracionColumnasTab() {
       setColBloques(new Map(results))
       setLoading(false)
     }
-    loadCols().catch(() => setLoading(false))
+    loadCols().catch((err: unknown) => {
+      // Antes: solo setLoading(false) — el usuario veía columnas vacías sin aviso
+      if (!cancelled) toast.error('Error al cargar columnas', { description: err instanceof Error ? err.message : 'Error' })
+      setLoading(false)
+    })
     return () => { cancelled = true }
   }, [sectorId])
 

@@ -5,6 +5,7 @@ import {
   type Movimiento,
   eliminarUbicacion,
   fetchStockPorCodigoRPC,
+  calcularLotesRemanentes,
 } from '@/lib/rackly/kardex'
 // Decoupled: Kardex Racks ya no consulta stock de Kardex Piso
 import {
@@ -27,7 +28,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { toast } from 'sonner'
-import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle } from 'lucide-react'
+import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle, MapPin, ExternalLink } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 
 export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string, torre: string, piso: string, posicion: string) => void }) {
@@ -87,13 +88,96 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
     return findCatalogoByCodigo(selectedCodigo)
   }, [selectedCodigo])
 
+  // Info FEFO por posición (fecha + lotes) calculada con el MISMO algoritmo que
+  // Ocupación y la pestaña FEFO: lotes remanentes (salida dirigida al lote elegido
+  // + desborde FEFO). Así la fecha mostrada en Stock es la del PRIMER LOTE REAL
+  // disponible, no una fecha histórica de un lote ya agotado.
+  const remInfoByPos = useMemo(() => {
+    const info = new Map<string, { fVencimiento: string; lotesInfo: string }>()
+    if (!selectedCodigo) return info
+    const code = selectedCodigo.trim().toUpperCase()
+    const isIncMode = stockFilter === 'inc'
+    const ENTRADAS = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
+    const fmtInfo = (rem: { venc: string; cantidad: number }[]) => ({
+      fVencimiento: rem[0]?.venc || '',
+      lotesInfo: rem.map(l => `${l.venc || 'S/F'}: ${Math.round(l.cantidad * 1000) / 1000}`).join(' | '),
+    })
+
+    if (isIncMode) {
+      // INC: pools por (posición + codigoInc); salidas dirigidas dentro de su INC;
+      // remanentes combinados por posición para el desglose informativo.
+      type Pool = { ing: Map<string, number>; sal: Array<{ venc: string; qty: number; ts: string; id: string }> }
+      const pools = new Map<string, Pool>()
+      for (const m of movs) {
+        if (!m.codigoInc) continue
+        if (m.codigo.trim().toUpperCase() !== code) continue
+        const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+        const key = `${posKey}||${m.codigoInc}`
+        let p = pools.get(key)
+        if (!p) { p = { ing: new Map(), sal: [] }; pools.set(key, p) }
+        const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
+        if (!(qty > 0)) continue
+        const venc = m.fVencimiento || ''
+        if (ENTRADAS.includes(m.tipo)) p.ing.set(venc, (p.ing.get(venc) ?? 0) + qty)
+        else p.sal.push({ venc, qty, ts: m.fModificacion, id: m.id })
+      }
+      const merged = new Map<string, Map<string, number>>() // posKey → (venc → qty)
+      for (const [key, p] of pools) {
+        const posKey = key.split('||')[0]
+        const sal = p.sal.sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+        const rem = calcularLotesRemanentes(p.ing, sal)
+        let mm = merged.get(posKey)
+        if (!mm) { mm = new Map(); merged.set(posKey, mm) }
+        for (const l of rem) mm.set(l.venc, (mm.get(l.venc) ?? 0) + l.cantidad)
+      }
+      for (const [posKey, mm] of merged) {
+        const rem = [...mm.entries()].map(([venc, cantidad]) => ({ venc, cantidad }))
+        rem.sort((a, b) => {
+          if (a.venc && b.venc) return a.venc.localeCompare(b.venc)
+          if (a.venc && !b.venc) return -1
+          if (!a.venc && b.venc) return 1
+          return 0
+        })
+        info.set(posKey, fmtInfo(rem))
+      }
+    } else {
+      const ing = new Map<string, Map<string, number>>() // posKey → (fv → qty)
+      const sal = new Map<string, Array<{ venc: string; qty: number; ts: string; id: string }>>()
+      for (const m of movs) {
+        if (m.codigoInc) continue
+        if (m.codigo.trim().toUpperCase() !== code) continue
+        const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
+        const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
+        if (!(qty > 0)) continue
+        const venc = m.fVencimiento || ''
+        if (ENTRADAS.includes(m.tipo)) {
+          const pool = ing.get(posKey) ?? new Map<string, number>()
+          pool.set(venc, (pool.get(venc) ?? 0) + qty)
+          ing.set(posKey, pool)
+        } else {
+          const list = sal.get(posKey) ?? []
+          list.push({ venc, qty, ts: m.fModificacion, id: m.id })
+          sal.set(posKey, list)
+        }
+      }
+      for (const [posKey, pool] of ing) {
+        const s = (sal.get(posKey) ?? []).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+        const rem = calcularLotesRemanentes(pool, s)
+        if (rem.length === 0) continue
+        info.set(posKey, fmtInfo(rem))
+      }
+    }
+    return info
+  }, [selectedCodigo, movs, stockFilter])
+
   // Calcular stock por ubicación para el código seleccionado.
   // LÓGICA IDÉNTICA a calcularOcupacion() en OcupacionTab:
   //   - Agrupa por posición + código
   //   - Excluye INC
   //   - Suma delta (ingreso/devolucion/traslado = +, salida = -)
   //   - Ignora f_vencimiento para el cálculo de stock
-  // Luego filtra por el código seleccionado y agrega info FEFO como datos extras.
+  // Luego filtra por el código seleccionado y agrega info FEFO (lotes remanentes,
+  // misma fuente que Ocupación y pestaña FEFO) como datos extras.
   const stockData = useMemo(() => {
     if (!selectedCodigo || movs.length === 0) return []
     const code = selectedCodigo.trim().toUpperCase()
@@ -101,7 +185,6 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
 
     // PASO 1: Calcular stock neto por (posición, código) — IDÉNTICO a calcularOcupacion
     const cellMap = new Map<string, Map<string, number>>() // posKey → (codigo → stock)
-    const fvMap = new Map<string, Map<string, Map<string, number>>>() // posKey → (codigo → (fv → qty))
     const descMap = new Map<string, { descripcion: string; un: string; proveedor?: string }>()
 
     for (const m of movs) {
@@ -113,15 +196,6 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
       const current = codeMap.get(mCode) ?? 0
       codeMap.set(mCode, current + delta)
-
-      // Rastrear fechas de vencimiento para info FEFO (solo informativo)
-      if (m.fVencimiento && ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo)) {
-        let fvCodeMap = fvMap.get(posKey)
-        if (!fvCodeMap) { fvCodeMap = new Map(); fvMap.set(posKey, fvCodeMap) }
-        let fvQtyMap = fvCodeMap.get(mCode)
-        if (!fvQtyMap) { fvQtyMap = new Map(); fvCodeMap.set(mCode, fvQtyMap) }
-        fvQtyMap.set(m.fVencimiento, (fvQtyMap.get(m.fVencimiento) ?? 0) + m.cantidad)
-      }
 
       if (!descMap.has(posKey)) {
         descMap.set(posKey, { descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined })
@@ -157,10 +231,11 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         const desc = descMap.get(posKey)
         if (!desc) continue
         const [bloque, torre, piso, posicion] = posKey.split('-')
+        const remInfo = remInfoByPos.get(posKey)
         result.push({
           bloque, torre, piso, posicion, stock,
           descripcion: desc.descripcion, un: desc.un, proveedor: desc.proveedor,
-          fVencimiento: '', lotesInfo: '', codigoInc: code,
+          fVencimiento: remInfo?.fVencimiento ?? '', lotesInfo: remInfo?.lotesInfo ?? '', codigoInc: code,
         })
       }
     } else {
@@ -172,15 +247,10 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         if (!desc) continue
         const [bloque, torre, piso, posicion] = posKey.split('-')
 
-        // Info FEFO: fecha más próxima del código en esta posición
-        const fvCodeMap = fvMap.get(posKey)?.get(code)
-        let fVencimiento = ''
-        let lotesInfo = ''
-        if (fvCodeMap && fvCodeMap.size > 0) {
-          const sorted = [...fvCodeMap.entries()].sort(([a], [b]) => a.localeCompare(b))
-          fVencimiento = sorted[0][0] // fecha más próxima
-          lotesInfo = sorted.map(([fv, qty]) => `${fv}: ${qty}`).join(' | ')
-        }
+        // Info FEFO: lotes remanentes (mismo algoritmo que Ocupación y pestaña FEFO)
+        const remInfo = remInfoByPos.get(posKey)
+        const fVencimiento = remInfo?.fVencimiento ?? ''
+        const lotesInfo = remInfo?.lotesInfo ?? ''
 
         result.push({
           bloque, torre, piso, posicion, stock: posStock,
@@ -204,7 +274,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       const bPos = parseInt(b.posicion, 10) || 0
       return aPos - bPos
       })
-  }, [selectedCodigo, movs, stockFilter])
+  }, [selectedCodigo, movs, stockFilter, remInfoByPos])
 
   useEffect(() => {
     setStock(stockData)
@@ -244,6 +314,16 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
           lotesInfo: '', // Server-side no calcula lotesInfo por ahora
           codigoInc: r.codigoInc || undefined,
         }))
+        // Enriquecer con la info FEFO de lotes remanentes (misma fuente que
+        // Ocupación y pestaña FEFO) para que las 3 pestañas muestren lo mismo
+        for (const row of mapped) {
+          const key = `${row.bloque}-${row.torre}-${row.piso}-${row.posicion}`
+          const remInfo = remInfoByPos.get(key)
+          if (remInfo) {
+            row.fVencimiento = remInfo.fVencimiento || row.fVencimiento || ''
+            row.lotesInfo = remInfo.lotesInfo || ''
+          }
+        }
         // Ordenar por bloque, torre, piso, posición
         mapped.sort((a, b) => {
           const aB = parseInt(a.bloque, 10) || 0; const bB = parseInt(b.bloque, 10) || 0
@@ -260,7 +340,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       .catch(() => {
         if (mountedRef.current) { setServerLoading(false); setServerStock(null) }
       })
-  }, [selectedCodigo, stockFilter])
+  }, [selectedCodigo, stockFilter, remInfoByPos])
 
   // useRef para evitar setStock en componentes desmontados
   const mountedRef = useRef(true)
@@ -476,7 +556,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
           <Warehouse className="h-3.5 w-3.5" />
-          {displayStock.length > 0 ? 'Stock por ubicación en RACKLY' : 'Sin stock en ubicaciones de RACKLY'}
+          {displayStock.length > 0 ? 'Stock por ubicación en RACKLY · toca la ubicación para ir a Ocupación' : 'Sin stock en ubicaciones de RACKLY'}
         </p>
       </div>
       <div className="flex gap-2">
@@ -514,20 +594,12 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                   <button
                     type="button"
                     onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)}
-                    className="flex items-center gap-1.5 text-xs font-semibold hover:text-violet-700 transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-300 bg-violet-50 hover:bg-violet-100 hover:border-violet-500 text-[10px] font-mono font-semibold text-violet-700 transition-colors cursor-pointer shadow-sm hover:shadow-md dark:border-violet-700 dark:bg-violet-950/40 dark:text-violet-300"
                     title="Ir a Ocupación"
                   >
-                    <span className="text-muted-foreground">Bloq</span>
-                    <span className="font-mono">{s.bloque}</span>
-                    <span className="text-muted-foreground mx-0.5">|</span>
-                    <span className="text-muted-foreground">Tor</span>
-                    <span className="font-mono">{s.torre}</span>
-                    <span className="text-muted-foreground mx-0.5">|</span>
-                    <span className="text-muted-foreground">Pis</span>
-                    <span className="font-mono">{s.piso}</span>
-                    <span className="text-muted-foreground mx-0.5">|</span>
-                    <span className="text-muted-foreground">Pos</span>
-                    <span className="font-mono">{s.posicion}</span>
+                    <MapPin className="h-3 w-3 text-violet-500" />
+                    {s.bloque}-{s.torre}-{s.piso}-{s.posicion}
+                    <ExternalLink className="h-2.5 w-2.5 text-violet-400" />
                   </button>
                   <div className="flex items-center gap-2">
                     <Badge variant="default" className="text-sm">{s.stock}</Badge>
@@ -556,6 +628,10 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                   {s.fVencimiento ? (
                     <Badge variant="outline" className={`text-[10px] px-1.5 py-0 font-semibold ${getBadgeClass(s.fVencimiento)}`} title={s.lotesInfo}>
                       {s.fVencimiento}
+                    </Badge>
+                  ) : s.lotesInfo ? (
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-semibold bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-700" title={s.lotesInfo}>
+                      S/F
                     </Badge>
                   ) : (
                     <span className="text-muted-foreground">Venc: —</span>
@@ -596,7 +672,12 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
               <TableBody>
                 {displayStock.map((s, i) => (
                   <TableRow key={i}>
-                    <TableCell onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)} className="font-mono font-medium whitespace-nowrap cursor-pointer hover:text-violet-700 transition-colors" title="Ir a Ocupación">{s.bloque}</TableCell>
+                    <TableCell onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)} className="font-mono font-medium whitespace-nowrap cursor-pointer hover:text-violet-700 dark:hover:text-violet-300 transition-colors" title="Ir a Ocupación">
+                      <span className="inline-flex items-center gap-1">
+                        <MapPin className="h-3 w-3 text-violet-500" />
+                        {s.bloque}
+                      </span>
+                    </TableCell>
                     <TableCell onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)} className="whitespace-nowrap cursor-pointer hover:text-violet-700 transition-colors">{s.torre}</TableCell>
                     <TableCell onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)} className="font-medium whitespace-nowrap cursor-pointer hover:text-violet-700 transition-colors">{s.piso}</TableCell>
                     <TableCell onClick={() => onGotoUbicacion?.(s.bloque, s.torre, s.piso, s.posicion)} className="whitespace-nowrap cursor-pointer hover:text-violet-700 transition-colors">{s.posicion}</TableCell>
@@ -620,6 +701,10 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                               (+{s.lotesInfo.split('|').length - 1})
                             </span>
                           )}
+                        </Badge>
+                      ) : s.lotesInfo ? (
+                        <Badge variant="outline" className="font-semibold bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-700" title={s.lotesInfo}>
+                          S/F
                         </Badge>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>

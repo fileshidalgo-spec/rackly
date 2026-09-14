@@ -113,6 +113,8 @@ function IngresoForm({
   const [cantidad, setCantidad] = useState('')
   const [fVencimiento, setFVencimiento] = useState('')
   const [sinVencimiento, setSinVencimiento] = useState(false)
+  // Código de lote FÍSICO digitado manualmente (ej: AP-304501210021). Trazabilidad.
+  const [lote, setLote] = useState('')
   const [proveedor, setProveedor] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmData, setConfirmData] = useState<StockEnUbicacion[] | null>(null)
@@ -178,6 +180,8 @@ function IngresoForm({
         usuarioNombre: perfil.nombre,
         usuarioCorreo: perfil.correo,
         proveedor: proveedor || undefined,
+        // Lote físico digitado (si la BD aún no tiene la columna, se reintenta sin él)
+        lote: lote.trim() || undefined,
       })
       toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
       setCodigo('')
@@ -185,6 +189,7 @@ function IngresoForm({
       setUn('')
       setCantidad('')
       setFVencimiento('')
+      setLote('')
       setProveedor('')
       onCreated(movs)
     } catch (err: unknown) {
@@ -360,6 +365,10 @@ function IngresoForm({
               <Checkbox checked={sinVencimiento} onCheckedChange={(v) => setSinVencimiento(!!v)} />
             </div>
           </div>
+          <div className="space-y-1 col-span-2 sm:col-span-1">
+            <Label className="text-xs text-muted-foreground">Lote</Label>
+            <Input value={lote} onChange={(e) => setLote(e.target.value)} placeholder="Ej: AP-304501210021" className="h-10" autoComplete="off" />
+          </div>
           {requiereProveedor(descripcion) && (
             <div className="space-y-1 col-span-2">
               <Label className="text-xs text-muted-foreground font-medium">Proveedor <span className="text-red-500">*</span></Label>
@@ -439,6 +448,9 @@ function IngresoForm({
                 )}
                 {fVencimiento && !sinVencimiento && (
                   <p className="text-[10px] text-muted-foreground">Venc: {fVencimiento}</p>
+                )}
+                {lote.trim() && (
+                  <p className="text-[10px] text-muted-foreground">Lote: {lote.trim()}</p>
                 )}
               </div>
             </div>
@@ -702,7 +714,7 @@ function SalidaForm({
       return
     }
     try {
-      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string; codigoInc?: string }>
+      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string; codigoInc?: string; lote?: string }>
       try {
         // Intentar obtener del servidor - consulta optimizada por código
         const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
@@ -717,6 +729,7 @@ function SalidaForm({
         codigo: string; descripcion: string; un: string; proveedor?: string;
         ingresos: Map<string, number>
         salidas: Array<{ venc: string; qty: number }>
+        lotesFis: Map<string, Set<string>>  // códigos de lote físicos por fecha (trazabilidad)
       }>()
       // EXCLUIR movimientos INC de la vista de salidas normales
       const relevant = movs.filter((m) => m.codigo === upperCode && !m.codigoInc)
@@ -734,7 +747,7 @@ function SalidaForm({
           cur = {
             bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
             codigo: m.codigo, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor,
-            ingresos: new Map(), salidas: [],
+            ingresos: new Map(), salidas: [], lotesFis: new Map(),
           }
           locMap.set(key, cur)
         }
@@ -742,6 +755,12 @@ function SalidaForm({
         const venc = m.fVencimiento || ''
         if (POS_TYPES.includes(m.tipo)) {
           cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
+          // Registrar el código de lote físico si el ingreso lo trajo
+          if (m.lote) {
+            const set = cur.lotesFis.get(venc) ?? new Set<string>()
+            set.add(m.lote)
+            cur.lotesFis.set(venc, set)
+          }
         } else {
           cur.salidas.push({ venc, qty })
         }
@@ -752,11 +771,13 @@ function SalidaForm({
       for (const lp of locMap.values()) {
         const remanentes = calcularLotesRemanentes(lp.ingresos, lp.salidas)
         for (const lote of remanentes) {
+          const fis = lp.lotesFis.get(lote.venc)
           results.push({
             bloque: lp.bloque, torre: lp.torre, piso: lp.piso, posicion: lp.posicion,
             codigo: lp.codigo, descripcion: lp.descripcion, un: lp.un,
             stock: Math.round(lote.cantidad * 1000) / 1000,
             fVencimiento: lote.venc || undefined,
+            loteFisico: fis && fis.size > 0 ? Array.from(fis).sort().join(', ') : undefined,
             proveedor: lp.proveedor,
           })
         }
@@ -1009,7 +1030,8 @@ function SalidaForm({
                       <MapPin className="h-3.5 w-3.5" />
                       <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
                     </div>
-                    {loc.fVencimiento && <Badge variant="outline" className="text-[10px] px-1.5 py-0">Lote {formatDate(loc.fVencimiento)}</Badge>}
+                    {loc.fVencimiento && <Badge variant="outline" className="text-[10px] px-1.5 py-0">Vence {formatDate(loc.fVencimiento)}</Badge>}
+                    {loc.loteFisico && <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-cyan-300 text-cyan-700 dark:border-cyan-700 dark:text-cyan-300" title="Código de lote físico">Lote: {loc.loteFisico}</Badge>}
                   </div>
 
                   {/* Stock */}
@@ -1028,6 +1050,14 @@ function SalidaForm({
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </div>
+
+                  {/* Código de lote físico */}
+                  {loc.loteFisico && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">Lote:</span>
+                      <span className="text-xs font-semibold text-cyan-700 dark:text-cyan-300">{loc.loteFisico}</span>
+                    </div>
+                  )}
 
                   {/* Proveedor */}
                   <div className="flex items-center gap-2">
@@ -1122,6 +1152,9 @@ function SalidaForm({
                           <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{formatDate(loc.fVencimiento)}</span>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                        {loc.loteFisico && (
+                          <div className="text-[10px] font-semibold text-cyan-700 dark:text-cyan-300" title="Código de lote físico">Lote: {loc.loteFisico}</div>
                         )}
                       </TableCell>
                       <TableCell>
@@ -1234,6 +1267,12 @@ function SalidaForm({
                         </span>
                       </div>
                     )}
+                    {confirmState.loc.loteFisico && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Lote:</span>
+                        <span className="font-medium text-cyan-700 dark:text-cyan-300">{confirmState.loc.loteFisico}</span>
+                      </div>
+                    )}
                     {confirmState.loc.proveedor && (
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Proveedor:</span>
@@ -1333,6 +1372,7 @@ function SalidaForm({
                           <span>Stock: <b className="text-slate-700 dark:text-slate-300">{loc.stock} {loc.un}</b></span>
                           <span className="text-red-600 font-semibold">→ Retirar: {isNaN(qtyNum) ? loc.stock : Math.min(qtyNum, loc.stock)} {loc.un}</span>
                           {loc.fVencimiento && <span>Venc: {loc.fVencimiento}</span>}
+                          {loc.loteFisico && <span>Lote: {loc.loteFisico}</span>}
                           {loc.proveedor && <span>Prov: {loc.proveedor}</span>}
                         </div>
                       </div>
@@ -1447,7 +1487,7 @@ function SalidaIncForm({
       return
     }
     try {
-      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string; codigoInc?: string }>
+      let movs: Array<{ tipo: string; bloque: string; torre: string; piso: string; posicion: string; codigo: string; descripcion: string; un: string; cantidad: number; fVencimiento?: string; proveedor?: string; codigoInc?: string; lote?: string }>
       try {
         const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
         movs = await fetchMovimientosByCodigo(code)
@@ -1462,6 +1502,7 @@ function SalidaIncForm({
         codigo: string; descripcion: string; un: string; proveedor?: string; codigoInc: string;
         ingresos: Map<string, number>
         salidas: Array<{ venc: string; qty: number }>
+        lotesFis: Map<string, Set<string>>  // códigos de lote físicos por fecha (trazabilidad)
       }>()
       // SOLO movimientos INC — invertir el filtro de salidas normales
       const relevant = movs.filter((m) => m.codigo === upperCode && !!m.codigoInc)
@@ -1479,7 +1520,7 @@ function SalidaIncForm({
           cur = {
             bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
             codigo: m.codigo, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor,
-            codigoInc: m.codigoInc || '', ingresos: new Map(), salidas: [],
+            codigoInc: m.codigoInc || '', ingresos: new Map(), salidas: [], lotesFis: new Map(),
           }
           locMap.set(key, cur)
         }
@@ -1487,6 +1528,12 @@ function SalidaIncForm({
         const venc = m.fVencimiento || ''
         if (POS_TYPES_INC.includes(m.tipo)) {
           cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
+          // Registrar el código de lote físico si el ingreso lo trajo
+          if (m.lote) {
+            const set = cur.lotesFis.get(venc) ?? new Set<string>()
+            set.add(m.lote)
+            cur.lotesFis.set(venc, set)
+          }
         } else {
           // Las salidas conservan su orden temporal (fetchMovimientosByCodigo ordena por f_modificacion DESC;
           // calcularLotesRemanentes procesa dirigido + desborde FEFO, sin dejar lotes negativos)
@@ -1499,11 +1546,13 @@ function SalidaIncForm({
       for (const lp of locMap.values()) {
         const remanentes = calcularLotesRemanentes(lp.ingresos, lp.salidas)
         for (const lote of remanentes) {
+          const fis = lp.lotesFis.get(lote.venc)
           results.push({
             bloque: lp.bloque, torre: lp.torre, piso: lp.piso, posicion: lp.posicion,
             codigo: lp.codigo, descripcion: lp.descripcion, un: lp.un,
             stock: Math.round(lote.cantidad * 1000) / 1000,
             fVencimiento: lote.venc || undefined,
+            loteFisico: fis && fis.size > 0 ? Array.from(fis).sort().join(', ') : undefined,
             proveedor: lp.proveedor,
             codigoInc: lp.codigoInc,
           })
@@ -1814,8 +1863,9 @@ function SalidaIncForm({
                       <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
                     </div>
                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-rose-200 text-rose-600 dark:border-rose-800 dark:text-rose-400">
-                      {loc.fVencimiento ? `Lote ${formatDate(loc.fVencimiento)}` : 'Lote S/F'}
+                      {loc.fVencimiento ? `Vence ${formatDate(loc.fVencimiento)}` : 'Sin fecha (S/F)'}
                     </Badge>
+                    {loc.loteFisico && <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-cyan-300 text-cyan-700 dark:border-cyan-700 dark:text-cyan-300" title="Código de lote físico">Lote: {loc.loteFisico}</Badge>}
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-rose-700 dark:text-rose-300">Stock INC: {loc.stock} {loc.un}</span>
@@ -1831,6 +1881,12 @@ function SalidaIncForm({
                       <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
                         {formatDate(loc.fVencimiento)}
                       </span>
+                    </div>
+                  )}
+                  {loc.loteFisico && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">Lote:</span>
+                      <span className="text-xs font-semibold text-cyan-700 dark:text-cyan-300">{loc.loteFisico}</span>
                     </div>
                   )}
                   <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
@@ -1921,6 +1977,9 @@ function SalidaIncForm({
                           <span className={`text-sm font-medium ${isExpired(loc.fVencimiento) ? 'text-red-600 dark:text-red-400 font-semibold' : isExpiringSoon(loc.fVencimiento) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{formatDate(loc.fVencimiento)}</span>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                        {loc.loteFisico && (
+                          <div className="text-[10px] font-semibold text-cyan-700 dark:text-cyan-300" title="Código de lote físico">Lote: {loc.loteFisico}</div>
                         )}
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
@@ -2160,6 +2219,8 @@ function IncForm({
   const [codigoInc, setCodigoInc] = useState('')
   const [fVencimiento, setFVencimiento] = useState('')
   const [sinVencimiento, setSinVencimiento] = useState(false)
+  // Código de lote FÍSICO digitado manualmente (trazabilidad para revalidación)
+  const [lote, setLote] = useState('')
   const [busy, setBusy] = useState(false)
 
   const torres = torresDeBloque(bloque)
@@ -2200,6 +2261,8 @@ function IncForm({
         usuarioNombre: perfil.nombre,
         usuarioCorreo: perfil.correo,
         codigoInc: codigoInc.trim(),
+        // Lote físico digitado (si la BD aún no tiene la columna, se reintenta sin él)
+        lote: lote.trim() || undefined,
       })
       toast.success('Insumo No Conforme registrado')
       // Limpiar formulario
@@ -2210,6 +2273,7 @@ function IncForm({
       setCodigoInc('')
       setFVencimiento('')
       setSinVencimiento(false)
+      setLote('')
       onCreated(movs)
     } catch (err: unknown) {
       const message = extractError(err)
@@ -2340,6 +2404,10 @@ function IncForm({
               <Input type="date" value={fVencimiento} onChange={(e) => setFVencimiento(e.target.value)} disabled={sinVencimiento} className="h-10 [color-scheme:dark]" />
               <Checkbox checked={sinVencimiento} onCheckedChange={(v) => setSinVencimiento(!!v)} />
             </div>
+          </div>
+          <div className="space-y-1 col-span-2 sm:col-span-1">
+            <Label className="text-xs text-muted-foreground">Lote</Label>
+            <Input value={lote} onChange={(e) => setLote(e.target.value)} placeholder="Ej: AP-304501210021" className="h-10" autoComplete="off" />
           </div>
         </div>
 

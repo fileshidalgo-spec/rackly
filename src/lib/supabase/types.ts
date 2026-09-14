@@ -459,6 +459,7 @@ export type Database = {
           p_proveedor: string | null
           p_uuid_sync: string | null
           p_codigo_inc: string | null
+          p_lote: string | null
         }
         Returns: {
           success: boolean
@@ -490,6 +491,7 @@ export type Database = {
           p_cantidad_ajuste: number
           p_codigo_inc: string | null
           p_uuid_sync: string | null
+          p_lote: string | null
         }
         Returns: {
           success: boolean

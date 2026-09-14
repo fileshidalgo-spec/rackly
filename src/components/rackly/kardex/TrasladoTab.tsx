@@ -63,6 +63,8 @@ type LocStock = {
   codigo: string
   proveedor?: string
   codigoInc?: string
+  /** Código de lote físico (trazabilidad) de este grupo de fecha, si es único/se lista */
+  loteFisico?: string
   /** Stock TOTAL de la posición (todos los lotes). Solo se llena en la primera fila de cada posición. */
   stockTotalPos?: number
 }
@@ -119,6 +121,7 @@ export function TrasladoTab() {
       codigo: string; descripcion: string; un: string; proveedor?: string;
       ingresos: Map<string, number>
       salidas: Array<{ venc: string; qty: number }>
+      lotesFis: Map<string, Set<string>>  // códigos de lote físicos por fecha (trazabilidad)
     }>()
     const relevant = movs.filter((m) => m.codigo === code && !m.codigoInc)
     const POS_TYPES = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
@@ -131,7 +134,7 @@ export function TrasladoTab() {
         cur = {
           bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
           codigo: m.codigo, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor,
-          ingresos: new Map(), salidas: [],
+          ingresos: new Map(), salidas: [], lotesFis: new Map(),
         }
         locMap.set(posKey, cur)
       }
@@ -139,6 +142,12 @@ export function TrasladoTab() {
       const venc = m.fVencimiento || ''
       if (POS_TYPES.includes(m.tipo)) {
         cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
+        // Registrar el código de lote físico si el ingreso lo trajo
+        if (m.lote) {
+          const set = cur.lotesFis.get(venc) ?? new Set<string>()
+          set.add(m.lote)
+          cur.lotesFis.set(venc, set)
+        }
       } else {
         cur.salidas.push({ venc, qty })
       }
@@ -148,11 +157,13 @@ export function TrasladoTab() {
       const remanentes = calcularLotesRemanentes(lp.ingresos, lp.salidas)
       const totalPos = remanentes.reduce((s, l) => s + l.cantidad, 0)
       for (const lote of remanentes) {
+        const fis = lp.lotesFis.get(lote.venc)
         rows.push({
           bloque: lp.bloque, torre: lp.torre, piso: lp.piso, posicion: lp.posicion,
           codigo: lp.codigo, descripcion: lp.descripcion, un: lp.un,
           stock: Math.round(lote.cantidad * 1000) / 1000,
           fVencimiento: lote.venc || '',
+          loteFisico: fis && fis.size > 0 ? Array.from(fis).sort().join(', ') : undefined,
           proveedor: lp.proveedor,
           stockTotalPos: Math.round(totalPos * 1000) / 1000,
         })
@@ -303,6 +314,8 @@ export function TrasladoTab() {
         fVencimiento: origin.fVencimiento,
         proveedor: origin.proveedor,
         codigoInc: origin.codigoInc,
+        // Código de lote físico: solo si es inequívoco (un solo código en el lote elegido)
+        lote: origin.loteFisico && !origin.loteFisico.includes(',') ? origin.loteFisico : undefined,
         // Se genera ajuste automático solo si aplica: qty > stock o (qty < stock y el usuario elige corregir)
         cantidadAjuste: ajusteActivo ? diferencia : undefined,
       })
@@ -462,6 +475,11 @@ export function TrasladoTab() {
                         <AlertTriangle className="w-3 h-3" /> {loc.codigoInc}
                       </span>
                     )}
+                    {loc.loteFisico && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800" title="Código de lote físico">
+                        Lote: {loc.loteFisico}
+                      </span>
+                    )}
                     {!loc.fVencimiento && !loc.proveedor && !loc.codigoInc && (
                       <span className="text-[10px] text-slate-400">Sin vencimiento · Sin proveedor</span>
                     )}
@@ -565,6 +583,9 @@ export function TrasladoTab() {
                           }`}>{formatDate(loc.fVencimiento)}</span>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                        {loc.loteFisico && (
+                          <div className="text-[10px] font-semibold text-cyan-700 dark:text-cyan-300" title="Código de lote físico">Lote: {loc.loteFisico}</div>
                         )}
                       </TableCell>
                       <TableCell className="hidden lg:table-cell">
@@ -702,6 +723,7 @@ export function TrasladoTab() {
           <div className="rounded-lg border border-amber-200 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20 p-2.5 flex items-center justify-between gap-2">
             <span className="text-xs text-amber-700 dark:text-amber-300 font-medium">
               Lote en origen: {origin.fVencimiento ? `Venc ${formatDate(origin.fVencimiento)}` : 'Sin fecha (S/F)'}
+              {origin.loteFisico && <span className="text-cyan-700 dark:text-cyan-300"> · Lote: {origin.loteFisico}</span>}
             </span>
             <span className="text-xs text-slate-600 dark:text-slate-300">
               Stock del lote: <strong>{origin.stock} {origin.un}</strong>
@@ -1054,6 +1076,7 @@ export function TrasladoTab() {
                           <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
                             <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{s.stock} {s.un}</span>
                             {s.fVencimiento && !s.lotes && <span>Venc: {s.fVencimiento}</span>}
+                            {s.loteFisico && <span className="font-semibold text-cyan-700 dark:text-cyan-300">Lote: {s.loteFisico}</span>}
                             {s.lotes && s.lotes.length > 1 && (
                               <span className="text-amber-600 dark:text-amber-400 font-medium">
                                 {s.lotes.length} lotes: {s.lotes.map(l => l.fVencimiento || 'S/F').join(', ')}

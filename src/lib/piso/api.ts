@@ -995,38 +995,119 @@ export async function cargarPosicionesSector(
 }
 
 /**
+ * Calcula los lotes restantes por bloque con el algoritmo ACORDADO con operación:
+ *  - Una SALIDA con fecha F descuenta PRIMERO del lote con fecha F (lote elegido por el usuario).
+ *  - Una SALIDA sin fecha descuenta PRIMERO del lote sin fecha (material sin vencimiento).
+ *  - Si el lote dirigido no alcanza, el remanente desborda en orden FEFO
+ *    (fechas más antiguas primero, lote sin fecha al final).
+ * Ningún lote queda en negativo y el stock total (suma de remanentes) siempre
+ * es igual a ingresos - salidas. Igual que calcularLotesRemanentes() en Racks.
+ */
+type PisoDetalleRow = {
+  bloque_id: string
+  cantidad: unknown
+  fecha_vencimiento?: string | null
+  tipo: string | null
+  fechaMov?: string | null
+}
+
+function lotesRestantesPorBloque(
+  detalles: PisoDetalleRow[]
+): Map<string, { fecha: string; qty: number }[]> {
+  const isIngresoType = (tipo: string) =>
+    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+  const toQty = (c: unknown) => (typeof c === 'number' ? c : parseFloat(String(c ?? '0')) || 0)
+  const toVenc = (fv: unknown) => (typeof fv === 'string' && fv ? fv : '')
+
+  const ingresos = new Map<string, Map<string, number>>()
+  const salidas = new Map<string, Array<{ venc: string; qty: number }>>()
+  for (const d of detalles) {
+    if (!d.tipo) continue
+    const qty = toQty(d.cantidad)
+    if (!(qty > 0)) continue
+    if (isIngresoType(d.tipo)) {
+      const fv = toVenc(d.fecha_vencimiento)
+      const pool = ingresos.get(d.bloque_id) ?? new Map<string, number>()
+      pool.set(fv, (pool.get(fv) ?? 0) + qty)
+      ingresos.set(d.bloque_id, pool)
+    } else {
+      const list = salidas.get(d.bloque_id) ?? []
+      list.push({ venc: toVenc(d.fecha_vencimiento), qty })
+      salidas.set(d.bloque_id, list)
+    }
+  }
+
+  const resultado = new Map<string, { fecha: string; qty: number }[]>()
+  for (const [bloqueId, pool] of ingresos) {
+    const rem = new Map(pool)
+    // Orden FEFO: fechas ascendentes primero, lote sin fecha ('') al final
+    const ordenFefo = Array.from(rem.keys()).sort((a, b) => {
+      if (a && b) return a.localeCompare(b)
+      if (a && !b) return -1
+      if (!a && b) return 1
+      return 0
+    })
+    const descontarDe = (venc: string, pend: number): number => {
+      const disp = rem.get(venc) ?? 0
+      if (disp <= 0) return pend
+      const tomar = Math.min(pend, disp)
+      rem.set(venc, disp - tomar)
+      return pend - tomar
+    }
+    for (const s of (salidas.get(bloqueId) ?? [])) {
+      let pend = s.qty
+      if (!(pend > 0)) continue
+      if (s.venc && (rem.get(s.venc) ?? 0) > 0) {
+        pend = descontarDe(s.venc, pend)
+      } else if (!s.venc && (rem.get('') ?? 0) > 0) {
+        pend = descontarDe('', pend)
+      }
+      if (pend > 0) {
+        for (const v of ordenFefo) {
+          if (pend <= 0) break
+          pend = descontarDe(v, pend)
+        }
+      }
+    }
+    const restantes = Array.from(rem.entries())
+      .filter(([, q]) => q > 0)
+      .map(([fecha, qty]) => ({ fecha, qty }))
+      .sort((a, b) => {
+        if (a.fecha && b.fecha) return a.fecha.localeCompare(b.fecha)
+        if (a.fecha && !b.fecha) return -1
+        if (!a.fecha && b.fecha) return 1
+        return 0
+      })
+    if (restantes.length > 0) resultado.set(bloqueId, restantes)
+  }
+  return resultado
+}
+
+/** Normaliza la relación piso_movimientos (objeto o array) a su tipo. */
+function pisoDetalleTipo(pm: unknown): string | null {
+  if (!pm) return null
+  if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { tipo: string }).tipo : null
+  return (pm as { tipo: string }).tipo
+}
+/** Normaliza la relación piso_movimientos (objeto o array) a su fecha. */
+function pisoDetalleFecha(pm: unknown): string | null {
+  if (!pm) return null
+  if (Array.isArray(pm)) return pm.length > 0 ? ((pm[0] as { fecha?: string }).fecha ?? null) : null
+  return (pm as { fecha?: string }).fecha ?? null
+}
+
+/**
  * Obtiene el stock detallado de una posición específica (todos los bloques y cantidades).
- * Usa el RPC server-side `piso_stock_detalle_posicion` para cálculo FEFO robusto.
- * Fallback: cálculo client-side si el RPC no existe aún.
+ * Cálculo client-side con el algoritmo dirigido + desborde FEFO (respeta el lote elegido).
  */
 export async function stockDetallePosicion(
   posicionId: string
 ): Promise<{ bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[]> {
-  // ═══ MÉTODO PRINCIPAL: RPC server-side (JHIA-57b) ═══
-  try {
-    const { data, error } = await dataClient.rpc('piso_stock_detalle_posicion', {
-      _posicion_id: posicionId,
-    })
-    if (!error && data) {
-      return (data as unknown as {
-        bloque_id: string; bloque_codigo: string; bloque_descripcion: string;
-        bloque_unidad: string; cantidad: unknown; fecha_vencimiento: string | null;
-      }[]).map((r) => ({
-        bloque_id: r.bloque_id,
-        bloque_codigo: r.bloque_codigo,
-        bloque_descripcion: r.bloque_descripcion ?? '',
-        bloque_unidad: r.bloque_unidad || 'KG',
-        cantidad: Math.round((typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0) * 1000) / 1000,
-        fecha_vencimiento: r.fecha_vencimiento ?? '',
-      }))
-    }
-    // Si el RPC no existe (error 428P01), caer al fallback
-    console.warn('[Piso] RPC piso_stock_detalle_posicion no disponible, usando fallback client-side')
-  } catch (rpcErr) {
-    console.warn('[Piso] Error RPC piso_stock_detalle_posicion:', rpcErr)
-  }
-
-  // ═══ FALLBACK: Cálculo client-side FEFO ═══
+  // ═══ CÁLCULO CLIENT-SIDE: salida dirigida al lote elegido + desborde FEFO ═══
+  // NOTA: la RPC piso_stock_detalle_posicion actual descuenta las salidas FEFO
+  // ignorando la fecha registrada en cada salida (rompe la selección de lote).
+  // Se usa el cálculo client-side corregido; para volver a RPC server-side aplicar
+  // download/rackly_fefo_dirigido.sql (misma semántica) y reactivar la llamada RPC.
   const { data: nivData, error: nivErr } = await dataClient
     .from('piso_niveles')
     .select('id')
@@ -1040,72 +1121,36 @@ export async function stockDetallePosicion(
     // Intento 1: con fecha_vencimiento
     const { data: d1, error: e1 } = await dataClient
       .from('piso_movimiento_detalles')
-      .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
+      .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, fecha)')
       .in('nivel_id', nivelIds)
     if (!e1) return d1 as unknown[]
     // Intento 2: sin fecha_vencimiento (columna no existe en la DB)
     console.warn('[Piso] fallback: fecha_vencimiento no disponible, calculando sin FEFO')
     const { data: d2, error: e2 } = await dataClient
       .from('piso_movimiento_detalles')
-      .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+      .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo, fecha)')
       .in('nivel_id', nivelIds)
     if (e2) throw e2
     return d2 as unknown[]
   }
   const rawDetalles = await getDetalles()
 
-  type DetRow = { bloque_id: string; cantidad: unknown; fecha_vencimiento?: string | null; piso_movimientos: { tipo: string } | null | { tipo: string }[] }
-  const detalles = (rawDetalles ?? []) as DetRow[]
-
-  const isIngresoType = (tipo: string) =>
-    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
-  const getTipo = (pm: DetRow['piso_movimientos']): string | null => {
-    if (!pm) return null
-    if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo : null
-    return pm.tipo
-  }
-
-  // Pool de lotes por ingreso
-  const ingresoPools = new Map<string, Map<string, number>>()
-  for (const d of detalles) {
-    const tipo = getTipo(d.piso_movimientos)
-    if (!tipo || !isIngresoType(tipo)) continue
-    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
-    if (qty <= 0) continue
-    const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
-    const pool = ingresoPools.get(d.bloque_id) ?? new Map<string, number>()
-    pool.set(fv, (pool.get(fv) ?? 0) + qty)
-    ingresoPools.set(d.bloque_id, pool)
-  }
-
-  // Sumar salidas por bloque_id (sin importar fecha)
-  const salidasPorBloque = new Map<string, number>()
-  for (const d of detalles) {
-    const tipo = getTipo(d.piso_movimientos)
-    if (!tipo || isIngresoType(tipo)) continue
-    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
-    if (qty <= 0) continue
-    salidasPorBloque.set(d.bloque_id, (salidasPorBloque.get(d.bloque_id) ?? 0) + qty)
-  }
-
-  // FEFO: descontar salidas del pool
-  const lotesRestantes = new Map<string, { fecha: string; qty: number }[]>()
-  for (const [bloqueId, pool] of ingresoPools) {
-    const sortedLots = [...pool.entries()].sort(([a], [b]) => {
-      if (!a && b) return 1
-      if (a && !b) return -1
-      return a.localeCompare(b)
-    })
-    const totalSalida = salidasPorBloque.get(bloqueId) ?? 0
-    let pendiente = totalSalida
-    const restantes: { fecha: string; qty: number }[] = []
-    for (const [fecha, qty] of sortedLots) {
-      if (pendiente <= 0) { restantes.push({ fecha, qty }) }
-      else if (qty <= pendiente) { pendiente -= qty }
-      else { restantes.push({ fecha, qty: qty - pendiente }); pendiente = 0 }
+  const detalles: PisoDetalleRow[] = (rawDetalles ?? []).map((d) => {
+    const r = d as Record<string, unknown>
+    const pm = r.piso_movimientos
+    return {
+      bloque_id: r.bloque_id as string,
+      cantidad: r.cantidad,
+      fecha_vencimiento: (r.fecha_vencimiento as string | null) ?? null,
+      tipo: pisoDetalleTipo(pm),
+      fechaMov: pisoDetalleFecha(pm),
     }
-    if (restantes.length > 0) lotesRestantes.set(bloqueId, restantes)
-  }
+  })
+  // Procesar salidas en orden temporal (misma semántica que la vista de lotes de Racks)
+  detalles.sort((a, b) => (a.fechaMov ?? '').localeCompare(b.fechaMov ?? ''))
+
+  // Lotes restantes: salida dirigida al lote elegido + desborde FEFO (sin negativos)
+  const lotesRestantes = lotesRestantesPorBloque(detalles)
 
   if (lotesRestantes.size === 0) return []
 
@@ -1149,8 +1194,8 @@ export async function stockDetallePosicion(
 
 /**
  * Obtiene el stock detallado de un NIVEL específico (para vista por niveles).
- * Usa cálculo client-side FEFO idéntico al fallback de stockDetallePosicion
- * pero filtrado a un solo nivel_id.
+ * Cálculo client-side con el algoritmo dirigido + desborde FEFO (respeta el lote elegido),
+ * filtrado a un solo nivel_id.
  */
 export async function stockDetalleNivel(
   nivelId: string
@@ -1159,70 +1204,34 @@ export async function stockDetalleNivel(
   const getDetalles = async () => {
     const { data: d1, error: e1 } = await dataClient
       .from('piso_movimiento_detalles')
-      .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo)')
+      .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, fecha)')
       .eq('nivel_id', nivelId)
     if (!e1) return d1 as unknown[]
     const { data: d2, error: e2 } = await dataClient
       .from('piso_movimiento_detalles')
-      .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
+      .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo, fecha)')
       .eq('nivel_id', nivelId)
     if (e2) throw e2
     return d2 as unknown[]
   }
   const rawDetalles = await getDetalles()
 
-  type DetRow = { bloque_id: string; cantidad: unknown; fecha_vencimiento?: string | null; piso_movimientos: { tipo: string } | null | { tipo: string }[] }
-  const detalles = (rawDetalles ?? []) as DetRow[]
-
-  const isIngresoType = (tipo: string) =>
-    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
-  const getTipo = (pm: DetRow['piso_movimientos']): string | null => {
-    if (!pm) return null
-    if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo : null
-    return pm.tipo
-  }
-
-  // Pool de lotes por ingreso
-  const ingresoPools = new Map<string, Map<string, number>>()
-  for (const d of detalles) {
-    const tipo = getTipo(d.piso_movimientos)
-    if (!tipo || !isIngresoType(tipo)) continue
-    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
-    if (qty <= 0) continue
-    const fv = (typeof d.fecha_vencimiento === 'string' && d.fecha_vencimiento) ? d.fecha_vencimiento : ''
-    const pool = ingresoPools.get(d.bloque_id) ?? new Map<string, number>()
-    pool.set(fv, (pool.get(fv) ?? 0) + qty)
-    ingresoPools.set(d.bloque_id, pool)
-  }
-
-  // Sumar salidas por bloque_id
-  const salidasPorBloque = new Map<string, number>()
-  for (const d of detalles) {
-    const tipo = getTipo(d.piso_movimientos)
-    if (!tipo || isIngresoType(tipo)) continue
-    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
-    if (qty <= 0) continue
-    salidasPorBloque.set(d.bloque_id, (salidasPorBloque.get(d.bloque_id) ?? 0) + qty)
-  }
-
-  // FEFO: descontar salidas del pool
-  const lotesRestantes = new Map<string, { fecha: string; qty: number }[]>()
-  for (const [bloqueId, pool] of ingresoPools) {
-    const sortedLots = [...pool.entries()].sort(([a], [b]) => {
-      if (!a && b) return 1
-      if (a && !b) return -1
-      return a.localeCompare(b)
-    })
-    const totalSalida = salidasPorBloque.get(bloqueId) ?? 0
-    let pendiente = totalSalida
-    const restantes: { fecha: string; qty: number }[] = []
-    for (const [fecha, qty] of sortedLots) {
-      if (pendiente <= 0) { restantes.push({ fecha, qty }) }
-      else if (qty <= pendiente) { pendiente -= qty }
-      else { restantes.push({ fecha, qty: qty - pendiente }); pendiente = 0 }
+  const detalles: PisoDetalleRow[] = (rawDetalles ?? []).map((d) => {
+    const r = d as Record<string, unknown>
+    const pm = r.piso_movimientos
+    return {
+      bloque_id: r.bloque_id as string,
+      cantidad: r.cantidad,
+      fecha_vencimiento: (r.fecha_vencimiento as string | null) ?? null,
+      tipo: pisoDetalleTipo(pm),
+      fechaMov: pisoDetalleFecha(pm),
     }
-    if (restantes.length > 0) lotesRestantes.set(bloqueId, restantes)
-  }
+  })
+  // Procesar salidas en orden temporal (misma semántica que la vista de lotes de Racks)
+  detalles.sort((a, b) => (a.fechaMov ?? '').localeCompare(b.fechaMov ?? ''))
+
+  // Lotes restantes: salida dirigida al lote elegido + desborde FEFO (sin negativos)
+  const lotesRestantes = lotesRestantesPorBloque(detalles)
 
   if (lotesRestantes.size === 0) return []
 

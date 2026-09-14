@@ -183,6 +183,18 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const [salidaIdx, setSalidaIdx] = useState(0)
   const [salidaCantidad, setSalidaCantidad] = useState('')
   const [salidaTotal, setSalidaTotal] = useState(false)
+  // Fecha del lote elegido para la salida ('' = lote sin fecha). FEFO pre-marcado, editable.
+  const [salLoteFV, setSalLoteFV] = useState('')
+
+  // Lote inicial sugerido de un item: el primero (FEFO) si hay desglose; si no, su fecha propia
+  function loteInicialFV(s: StockEnUbicacion): string {
+    return s.lotes?.length ? (s.lotes[0].fVencimiento || '') : (s.fVencimiento || '')
+  }
+  // Stock disponible del lote elegido dentro de un item
+  function stockDeLote(s: StockEnUbicacion, fv: string): number {
+    if (!s.lotes?.length) return s.stock
+    return s.lotes.find(l => (l.fVencimiento || '') === fv)?.cantidad ?? s.lotes[0].cantidad
+  }
 
 // ── Historial state ──
   type HistorialItem = {
@@ -391,8 +403,11 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
 
   function openSalida(idx: number, total: boolean) {
     if (!detail?.stock[idx]) return
-    setSalidaIdx(idx); setSalidaTotal(total)
-    setSalidaCantidad(total ? String(detail.stock[idx].stock) : '')
+    const item = detail.stock[idx]
+    const loteFV = loteInicialFV(item)
+    setSalidaIdx(idx); setSalidaTotal(total); setSalLoteFV(loteFV)
+    // Salida total = TODO el lote seleccionado (FEFO por defecto)
+    setSalidaCantidad(total ? String(stockDeLote(item, loteFV)) : '')
     setDetailMode('salida')
   }
 
@@ -520,11 +535,18 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
     if (!item) return
     const qty = parseFloat(salidaCantidad)
     if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
-    // Las salidas normales NO pueden exceder stock. Las salidas INC sí permiten exceder (autoajuste).
-    // La validacion debe usar el stock TOTAL del codigo en esta ubicacion (igual que la RPC
-    // registrar_movimiento_kardex), NO el stock por lote individual. La UI agrupa por lote
-    // (f_vencimiento) pero la RPC suma TODOS los movimientos del codigo sin distinguir lotes.
+    // Lote ELEGIDO por el usuario (FEFO pre-marcado). La salida descuenta EXACTAMENTE ese lote:
+    // se registra con su f_vencimiento, que es como la vista de lotes lo reparte.
+    const loteElegido = item.lotes?.length
+      ? (item.lotes.find(l => (l.fVencimiento || '') === salLoteFV) ?? item.lotes[0])
+      : { fVencimiento: item.fVencimiento || '', cantidad: item.stock }
+    // Las salidas normales NO pueden exceder el stock del lote elegido (ni el total del código).
+    // Las salidas INC sí permiten exceder (autoajuste).
     if (!item.codigoInc) {
+      if (qty > loteElegido.cantidad + 1e-9) {
+        toast.error(`Stock insuficiente en el lote ${loteElegido.fVencimiento || 'S/F'}. Disponible: ${loteElegido.cantidad} ${item.un}`)
+        return
+      }
       const totalStockForCodigo = detail.stock
         .filter(s => s.codigo === item.codigo)
         .reduce((sum, s) => sum + s.stock, 0)
@@ -535,7 +557,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
       await addMovimiento({
         tipo: 'salida', bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
         codigo: item.codigo, descripcion: item.descripcion, un: item.un, cantidad: qty,
-        fVencimiento: item.fVencimiento ?? '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+        fVencimiento: loteElegido.fVencimiento, turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
         codigoInc: item.codigoInc || undefined,
       })
@@ -1248,7 +1270,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                     <p className="text-[10px] text-slate-400 mb-1.5 font-medium">Selecciona el artículo a dar salida:</p>
                     <div className="space-y-1">
                       {detail.stock.map((s, i) => (
-                        <button key={i} onClick={() => { setSalidaIdx(i); setSalidaCantidad(salidaTotal ? String(s.stock) : ''); }}
+                        <button key={i} onClick={() => { setSalidaIdx(i); setSalLoteFV(loteInicialFV(s)); setSalidaCantidad(salidaTotal ? String(stockDeLote(s, loteInicialFV(s))) : ''); }}
                           className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${i === salidaIdx ? 'bg-red-500/15 border border-red-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>
                           <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0" style={{ borderColor: i === salidaIdx ? '#f87171' : '#475569', backgroundColor: i === salidaIdx ? '#ef4444' : 'transparent' }}>
                             {i === salidaIdx && <div className="w-2 h-2 rounded-full bg-white" />}
@@ -1278,22 +1300,65 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                     <span className="text-[10px] text-rose-300 font-medium">INC — {salItem.codigoInc} — La salida puede exceder el stock</span>
                   </div>
                 )}
-                {salItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className={salItem.fVencimiento < new Date().toISOString().slice(0, 10) ? 'text-red-400 font-semibold' : 'text-slate-300'}>{salItem.fVencimiento}</span></div>}
-                  {!salItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className="text-slate-500 italic">Sin fecha</span></div>}
-                  <div className="flex justify-between text-xs"><span className="text-slate-400">Stock actual:</span><span className={`font-bold ${salItem.codigoInc ? 'text-rose-300' : 'text-emerald-400'}`}>{salItem.stock} {salItem.un}</span></div>
+                  {(() => {
+                    const multiLote = !!salItem.lotes && salItem.lotes.length > 1
+                    const stockLote = salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock
+                    const fvLote = salItem.lotes?.length ? salLoteFV : (salItem.fVencimiento || '')
+                    const hoy = new Date().toISOString().slice(0, 10)
+                    return (
+                      <>
+                        {fvLote
+                          ? <div className="flex justify-between text-xs"><span className="text-slate-400">F. Venc. (lote elegido):</span><span className={fvLote < hoy ? 'text-red-400 font-semibold' : 'text-slate-300'}>{fvLote}</span></div>
+                          : <div className="flex justify-between text-xs"><span className="text-slate-400">F. Venc. (lote elegido):</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+                        <div className="flex justify-between text-xs"><span className="text-slate-400">Stock del lote:</span><span className={`font-bold ${salItem.codigoInc ? 'text-rose-300' : 'text-emerald-400'}`}>{stockLote} {salItem.un}</span></div>
+                        {multiLote && <div className="flex justify-between text-xs"><span className="text-slate-400">Stock total código:</span><span className="text-slate-300">{salItem.stock} {salItem.un}</span></div>}
+                      </>
+                    )
+                  })()}
                 </div>
+
+                {/* Selector de LOTE: FEFO pre-marcado; el usuario puede elegir otro lote */}
+                {salItem.lotes && salItem.lotes.length > 1 && (
+                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2">
+                    <p className="text-[10px] text-amber-300/90 mb-1.5 font-medium">Lote a descontar (FEFO pre-seleccionado — puedes cambiarlo):</p>
+                    <div className="space-y-1">
+                      {salItem.lotes.map((l, li) => {
+                        const fv = l.fVencimiento || ''
+                        const activo = salLoteFV === fv
+                        const hoy = new Date().toISOString().slice(0, 10)
+                        return (
+                          <button key={`${fv || 'SF'}-${li}`} onClick={() => { setSalLoteFV(fv); if (salidaTotal) setSalidaCantidad(String(l.cantidad)) }}
+                            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${activo ? 'bg-amber-500/15 border border-amber-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>
+                            <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0" style={{ borderColor: activo ? '#fbbf24' : '#475569', backgroundColor: activo ? '#f59e0b' : 'transparent' }}>
+                              {activo && <div className="w-2 h-2 rounded-full bg-white" />}
+                            </div>
+                            <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                              <span className={`text-xs font-medium ${fv && fv < hoy ? 'text-red-400' : 'text-slate-200'}`}>{fv ? `Venc: ${fv}` : 'Sin fecha (S/F)'}</span>
+                              {li === 0 && fv && <span className="text-[8px] font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-1 py-px rounded">FEFO</span>}
+                            </div>
+                            <span className="font-bold text-xs text-emerald-400 flex-shrink-0">{l.cantidad} <span className="text-slate-500 font-normal">{salItem.un}</span></span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-1">
                   <Label className="text-[10px] text-slate-400">
-                    {salidaTotal ? 'Salida total' : 'Cantidad a salir'} *
-                    {!salidaTotal && !salItem.codigoInc && <span className="text-slate-600 ml-1">(máx: {salItem.stock})</span>}
+                    {salidaTotal ? 'Salida total del lote' : 'Cantidad a salir'} *
+                    {!salidaTotal && !salItem.codigoInc && <span className="text-slate-600 ml-1">(máx lote: {salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock})</span>}
                   </Label>
-                  <Input type="number" step="any" min="0.001" max={salItem.codigoInc ? undefined : salItem.stock} value={salidaCantidad}
+                  <Input type="number" step="any" min="0.001" max={salItem.codigoInc ? undefined : (salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock)} value={salidaCantidad}
                     onChange={e => setSalidaCantidad(e.target.value)}
                     disabled={salidaTotal}
                     className={`h-8 bg-slate-700/50 text-slate-200 text-xs disabled:opacity-50 ${salItem.codigoInc ? 'border-rose-500/30 focus:border-rose-400/50' : 'border-slate-600/40 focus:border-red-500/50'}`} />
                 </div>
+                {!salidaTotal && salItem.lotes && salItem.lotes.length > 1 && (
+                  <p className="text-[10px] text-amber-400/80">Se descontará del lote {salLoteFV || 'S/F'} seleccionado arriba.</p>
+                )}
                 {!salidaTotal && (
-                  <p className="text-[10px] text-slate-500">Saldrán {salidaCantidad || '0'} de {salItem.stock} {salItem.un} — quedarán {Math.max(0, salItem.stock - (parseFloat(salidaCantidad) || 0))} {salItem.un}</p>
+                  <p className="text-[10px] text-slate-500">Saldrán {salidaCantidad || '0'} de {salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock} {salItem.un} del lote — quedarán {Math.max(0, (salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock) - (parseFloat(salidaCantidad) || 0))} {salItem.un}</p>
                 )}
                 <div className="flex gap-2 pt-1">
                   <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>

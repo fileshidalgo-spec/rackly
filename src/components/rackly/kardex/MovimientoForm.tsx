@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   addMovimiento,
   stockEnUbicacion,
+  calcularLotesRemanentes,
   type Movimiento,
   type TipoMovimiento,
   type StockEnUbicacion,
@@ -540,6 +541,12 @@ function IngresoForm({
    ═══════════════════════════════════════════ */
 type LocWithKey = StockEnUbicacion & { bloque: string; torre: string; piso: string; posicion: string }
 
+/** Clave estable de una fila de salida (ubicación + LOTE): dos lotes de la misma
+ *  posición son filas distintas, cada una con su fecha real de vencimiento. */
+function makeLocKey(l: { bloque: string; torre: string; piso: string; posicion: string; fVencimiento?: string }): string {
+  return `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}::${l.fVencimiento || 'SF'}`
+}
+
 function SalidaForm({
   turno,
   onCreated,
@@ -620,7 +627,7 @@ function SalidaForm({
       const qtySnap = { ...qtyMapRef.current }
 
       for (const key of selectedKeys) {
-        const loc = locsSnap.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === key)
+        const loc = locsSnap.find((l) => makeLocKey(l) === key)
         if (!loc) {
           errorDetails.push(`Ubicación ${key} no encontrada`)
           totalErrors++
@@ -706,44 +713,55 @@ function SalidaForm({
         movs = []
       }
       const upperCode = code.toUpperCase()
-      const locMap = new Map<string, LocWithKey>()
+      const locMap = new Map<string, {
+        bloque: string; torre: string; piso: string; posicion: string;
+        codigo: string; descripcion: string; un: string; proveedor?: string;
+        ingresos: Map<string, number>
+        salidas: Array<{ venc: string; qty: number }>
+      }>()
       // EXCLUIR movimientos INC de la vista de salidas normales
       const relevant = movs.filter((m) => m.codigo === upperCode && !m.codigoInc)
       let desc = ''
       let un = ''
+      const POS_TYPES = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
       for (const m of relevant) {
         if (!desc && m.descripcion) desc = m.descripcion
         if (!un && m.un) un = m.un
-        const impact = impactoStock(m.tipo, m.cantidad)
-        if (isNaN(impact) || !isFinite(impact)) continue
-        // Agrupar por ubicación SOLAMENTE — f_vencimiento NO participa.
-        // Se rastrea la fecha más próxima (FEFO) para pasar en la salida.
+        const qty = m.cantidad
+        if (isNaN(qty) || !isFinite(qty) || qty <= 0) continue
         const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-        const current = locMap.get(key)
-        if (current) {
-          current.stock += impact
-          // Rastrear f_vencimiento más próxima para FEFO
-          if (m.fVencimiento) {
-            if (!current.fVencimiento || m.fVencimiento < current.fVencimiento) {
-              current.fVencimiento = m.fVencimiento
-            }
+        let cur = locMap.get(key)
+        if (!cur) {
+          cur = {
+            bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
+            codigo: m.codigo, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor,
+            ingresos: new Map(), salidas: [],
           }
+          locMap.set(key, cur)
+        }
+        if (!cur.proveedor && m.proveedor) cur.proveedor = m.proveedor
+        const venc = m.fVencimiento || ''
+        if (POS_TYPES.includes(m.tipo)) {
+          cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
         } else {
-          locMap.set(key, {
-            bloque: m.bloque,
-            torre: m.torre,
-            piso: m.piso,
-            posicion: m.posicion,
-            codigo: m.codigo,
-            descripcion: m.descripcion,
-            un: m.un,
-            stock: impact,
-            fVencimiento: m.fVencimiento || undefined,
-            proveedor: m.proveedor,
+          cur.salidas.push({ venc, qty })
+        }
+      }
+      // UNA FILA POR LOTE con su fecha real: la salida descuenta EXACTAMENTE el lote
+      // elegido (no se usa más la "fecha más próxima histórica" de la ubicación).
+      const results: LocWithKey[] = []
+      for (const lp of locMap.values()) {
+        const remanentes = calcularLotesRemanentes(lp.ingresos, lp.salidas)
+        for (const lote of remanentes) {
+          results.push({
+            bloque: lp.bloque, torre: lp.torre, piso: lp.piso, posicion: lp.posicion,
+            codigo: lp.codigo, descripcion: lp.descripcion, un: lp.un,
+            stock: Math.round(lote.cantidad * 1000) / 1000,
+            fVencimiento: lote.venc || undefined,
+            proveedor: lp.proveedor,
           })
         }
       }
-      const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
       // Ordenar: FEFO primero (con fecha de vencimiento), luego sin fecha por bloque (1→7)
       results.sort((a, b) => {
         const aHasDate = !!a.fVencimiento
@@ -765,8 +783,8 @@ function SalidaForm({
         const bPos = parseInt(b.posicion, 10) || 0
         return aPos - bPos
       })
-      // Limpiar selecciones de ubicaciones que ya no tienen stock
-      const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`))
+      // Limpiar selecciones de ubicaciones/lotes que ya no tienen stock
+      const newKeys = new Set(results.map((l) => makeLocKey(l)))
       setSelected((prev) => {
         const cleaned = new Set<string>()
         for (const k of prev) {
@@ -810,7 +828,7 @@ function SalidaForm({
   }, [searchCode, refreshLocations])
 
   async function handleSalidaParcial(locKey: string) {
-    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
+    const loc = locations.find((l) => makeLocKey(l) === locKey)
     if (!loc) return
     const qtyVal = qtyMap[locKey] || ''
     const qtyNum = parseFloat(qtyVal)
@@ -826,7 +844,7 @@ function SalidaForm({
   }
 
   function handleRetirarTodo(locKey: string) {
-    const loc = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === locKey)
+    const loc = locations.find((l) => makeLocKey(l) === locKey)
     if (!loc) return
     setConfirmState({ loc, qtyNum: loc.stock, full: true })
   }
@@ -970,7 +988,7 @@ function SalidaForm({
           {/* ───── Vista móvil: tarjetas ───── */}
           <div className="md:hidden space-y-3">
             {locations.map((loc) => {
-              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+              const key = makeLocKey(loc)
               const isSelected = selected.has(key)
               return (
                 <div
@@ -982,7 +1000,7 @@ function SalidaForm({
                       : 'border bg-card'
                   }`}
                 >
-                  {/* Checkbox + Ubicación */}
+                  {/* Checkbox + Ubicación + Lote */}
                   <div className="flex items-center gap-2">
                     <Checkbox
                       checked={isSelected}
@@ -992,6 +1010,7 @@ function SalidaForm({
                       <MapPin className="h-3.5 w-3.5" />
                       <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
                     </div>
+                    {loc.fVencimiento && <Badge variant="outline" className="text-[10px] px-1.5 py-0">Lote {formatDate(loc.fVencimiento)}</Badge>}
                   </div>
 
                   {/* Stock */}
@@ -1083,7 +1102,7 @@ function SalidaForm({
               </TableHeader>
               <TableBody>
                 {locations.map((loc) => {
-                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+                  const key = makeLocKey(loc)
                   const isSelected = selected.has(key)
                   return (
                     <TableRow

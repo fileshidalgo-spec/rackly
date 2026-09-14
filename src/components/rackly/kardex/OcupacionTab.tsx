@@ -55,6 +55,7 @@ import {
   TriangleAlert,
   MapPin,
   Warehouse,
+  CircleSlash,
 } from 'lucide-react'
 
 // Calcula días restantes hasta vencimiento (negativo si ya venció)
@@ -179,6 +180,8 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const [ingSinFecha, setIngSinFecha] = useState(false)
   // Código de lote FÍSICO digitado manualmente (ej: AP-304501210021). Trazabilidad.
   const [ingLote, setIngLote] = useState('')
+  // Opción explícita "Sin lote": deshabilita el campo y garantiza que NO viaja lote.
+  const [ingSinLote, setIngSinLote] = useState(false)
   const [ingProveedor, setIngProveedor] = useState('')
 
   // ── Salida state ──
@@ -256,6 +259,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const [incSinFecha, setIncSinFecha] = useState(false)
   // Código de lote FÍSICO del INC (trazabilidad para revalidación de Calidad)
   const [incLote, setIncLote] = useState('')
+  const [incSinLote, setIncSinLote] = useState(false)
 
   // ── Helper: construir celdaMap con merge de INC ──
   function buildCellMap(
@@ -410,7 +414,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
     setIngTipo(tipo ?? 'ingreso')
     setIngCodigo(''); setIngDescripcion(''); setIngUn('')
     setIngCantidad(''); setIngFVenc('')
-    setIngSinFecha(false); setIngProveedor(''); setIngLote('')
+    setIngSinFecha(false); setIngProveedor(''); setIngLote(''); setIngSinLote(false)
     setDetailMode('ingreso')
   }
 
@@ -516,8 +520,9 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         fVencimiento: ingSinFecha ? '' : ingFVenc,
         turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         proveedor: showProveedor ? ingProveedor : undefined,
-        // Lote físico digitado (si la BD aún no tiene la columna, se reintenta sin él)
-        lote: ingLote.trim() || undefined,
+        // Lote físico digitado; si se marcó "Sin lote" (o va vacío) NO viaja lote.
+        // Si la BD aún no tiene la columna, addMovimiento reintenta sin él.
+        lote: ingSinLote ? undefined : (ingLote.trim() || undefined),
       })
       toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
@@ -527,7 +532,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   function openInc() {
     setIncCodigo(''); setIncDescripcion(''); setIncUn('')
     setIncCantidad(''); setIncCodigoInc('')
-    setIncFVenc(''); setIncSinFecha(false); setIncLote('')
+    setIncFVenc(''); setIncSinFecha(false); setIncLote(''); setIncSinLote(false)
     setDetailMode('inc')
   }
 
@@ -545,7 +550,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         fVencimiento: incSinFecha ? '' : incFVenc,
         turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         codigoInc: incCodigoInc.trim(),
-        lote: incLote.trim() || undefined,
+        lote: incSinLote ? undefined : (incLote.trim() || undefined),
       })
       toast.success('INC registrado')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
@@ -1239,7 +1244,29 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                 {/* Código de lote físico — digitación manual (trazabilidad Calidad) */}
                 <div className="space-y-1">
                   <Label className="text-[10px] text-slate-400">Lote</Label>
-                  <Input value={incLote} onChange={e => setIncLote(e.target.value)} placeholder="Ej: AP-304501210021" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs placeholder:text-slate-500 focus:border-sky-500/50" autoComplete="off" />
+                  <div className="flex gap-2">
+                    <Input
+                      value={incLote}
+                      onChange={e => { setIncLote(e.target.value); if (e.target.value) setIncSinLote(false) }}
+                      disabled={incSinLote}
+                      placeholder={incSinLote ? 'Sin lote' : 'Ej: AP-304501210021'}
+                      className="flex-1 h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs placeholder:text-slate-500 focus:border-sky-500/50 disabled:opacity-40"
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { setIncSinLote(!incSinLote); if (!incSinLote) setIncLote('') }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all border flex-shrink-0 ${
+                        incSinLote
+                          ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                          : 'bg-slate-700/30 border-slate-600/30 text-slate-400 hover:text-slate-300 hover:border-slate-500/40'
+                      }`}
+                    >
+                      <CircleSlash className="w-3.5 h-3.5" />
+                      Sin lote
+                    </button>
+                  </div>
+                  {incSinLote && <p className="text-[10px] text-cyan-400/80 italic">El artículo se registrará SIN código de lote</p>}
                 </div>
 
                 {/* Botones */}
@@ -1337,7 +1364,29 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                 {/* Código de lote físico — digitación manual */}
                 <div className="space-y-1">
                   <Label className="text-[10px] text-slate-400">Lote</Label>
-                  <Input value={ingLote} onChange={e => setIngLote(e.target.value)} placeholder="Ej: AP-304501210021" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs placeholder:text-slate-500 focus:border-sky-500/50" autoComplete="off" />
+                  <div className="flex gap-2">
+                    <Input
+                      value={ingLote}
+                      onChange={e => { setIngLote(e.target.value); if (e.target.value) setIngSinLote(false) }}
+                      disabled={ingSinLote}
+                      placeholder={ingSinLote ? 'Sin lote' : 'Ej: AP-304501210021'}
+                      className="flex-1 h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs placeholder:text-slate-500 focus:border-sky-500/50 disabled:opacity-40"
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { setIngSinLote(!ingSinLote); if (!ingSinLote) setIngLote('') }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all border flex-shrink-0 ${
+                        ingSinLote
+                          ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                          : 'bg-slate-700/30 border-slate-600/30 text-slate-400 hover:text-slate-300 hover:border-slate-500/40'
+                      }`}
+                    >
+                      <CircleSlash className="w-3.5 h-3.5" />
+                      Sin lote
+                    </button>
+                  </div>
+                  {ingSinLote && <p className="text-[10px] text-cyan-400/80 italic">El artículo se registrará SIN código de lote</p>}
                 </div>
 
                 {/* Proveedor — solo si es LÁMINA o STRETCH (excepto ETIQUETA LAMINA) */}

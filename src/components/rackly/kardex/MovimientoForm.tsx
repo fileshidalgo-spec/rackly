@@ -115,6 +115,8 @@ function IngresoForm({
   const [sinVencimiento, setSinVencimiento] = useState(false)
   // Código de lote FÍSICO digitado manualmente (ej: AP-304501210021). Trazabilidad.
   const [lote, setLote] = useState('')
+  // Opción explícita "Sin lote": deshabilita el campo y garantiza que NO viaja lote.
+  const [sinLote, setSinLote] = useState(false)
   const [proveedor, setProveedor] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmData, setConfirmData] = useState<StockEnUbicacion[] | null>(null)
@@ -180,8 +182,9 @@ function IngresoForm({
         usuarioNombre: perfil.nombre,
         usuarioCorreo: perfil.correo,
         proveedor: proveedor || undefined,
-        // Lote físico digitado (si la BD aún no tiene la columna, se reintenta sin él)
-        lote: lote.trim() || undefined,
+        // Lote físico digitado; si se marcó "Sin lote" (o va vacío) NO viaja lote.
+        // Si la BD aún no tiene la columna, addMovimiento reintenta sin él.
+        lote: sinLote ? undefined : (lote.trim() || undefined),
       })
       toast.success(tipo === 'devolucion' ? 'Devolución registrada' : 'Ingreso registrado')
       setCodigo('')
@@ -190,6 +193,7 @@ function IngresoForm({
       setCantidad('')
       setFVencimiento('')
       setLote('')
+      setSinLote(false)
       setProveedor('')
       onCreated(movs)
     } catch (err: unknown) {
@@ -367,7 +371,11 @@ function IngresoForm({
           </div>
           <div className="space-y-1 col-span-2 sm:col-span-1">
             <Label className="text-xs text-muted-foreground">Lote</Label>
-            <Input value={lote} onChange={(e) => setLote(e.target.value)} placeholder="Ej: AP-304501210021" className="h-10" autoComplete="off" />
+            <div className="flex items-center gap-1.5">
+              <Input value={lote} onChange={(e) => setLote(e.target.value)} placeholder={sinLote ? 'Sin lote' : 'Ej: AP-304501210021'} disabled={sinLote} className="h-10" autoComplete="off" />
+              <Checkbox checked={sinLote} onCheckedChange={(v) => { setSinLote(!!v); if (v) setLote('') }} aria-label="Sin lote" title="Registrar sin lote" />
+            </div>
+            <p className="text-[10px] text-muted-foreground italic">{sinLote ? 'Se registrará SIN lote' : 'Vacío o casilla marcada = SIN lote'}</p>
           </div>
           {requiereProveedor(descripcion) && (
             <div className="space-y-1 col-span-2">
@@ -2221,6 +2229,8 @@ function IncForm({
   const [sinVencimiento, setSinVencimiento] = useState(false)
   // Código de lote FÍSICO digitado manualmente (trazabilidad para revalidación)
   const [lote, setLote] = useState('')
+  // Opción explícita "Sin lote": deshabilita el campo y garantiza que NO viaja lote.
+  const [sinLote, setSinLote] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const torres = torresDeBloque(bloque)
@@ -2261,8 +2271,8 @@ function IncForm({
         usuarioNombre: perfil.nombre,
         usuarioCorreo: perfil.correo,
         codigoInc: codigoInc.trim(),
-        // Lote físico digitado (si la BD aún no tiene la columna, se reintenta sin él)
-        lote: lote.trim() || undefined,
+        // Lote físico digitado; si se marcó "Sin lote" (o va vacío) NO viaja lote.
+        lote: sinLote ? undefined : (lote.trim() || undefined),
       })
       toast.success('Insumo No Conforme registrado')
       // Limpiar formulario
@@ -2274,6 +2284,7 @@ function IncForm({
       setFVencimiento('')
       setSinVencimiento(false)
       setLote('')
+      setSinLote(false)
       onCreated(movs)
     } catch (err: unknown) {
       const message = extractError(err)
@@ -2407,7 +2418,11 @@ function IncForm({
           </div>
           <div className="space-y-1 col-span-2 sm:col-span-1">
             <Label className="text-xs text-muted-foreground">Lote</Label>
-            <Input value={lote} onChange={(e) => setLote(e.target.value)} placeholder="Ej: AP-304501210021" className="h-10" autoComplete="off" />
+            <div className="flex items-center gap-1.5">
+              <Input value={lote} onChange={(e) => setLote(e.target.value)} placeholder={sinLote ? 'Sin lote' : 'Ej: AP-304501210021'} disabled={sinLote} className="h-10" autoComplete="off" />
+              <Checkbox checked={sinLote} onCheckedChange={(v) => { setSinLote(!!v); if (v) setLote('') }} aria-label="Sin lote" title="Registrar sin lote" />
+            </div>
+            <p className="text-[10px] text-muted-foreground italic">{sinLote ? 'Se registrará SIN lote' : 'Vacío o casilla marcada = SIN lote'}</p>
           </div>
         </div>
 

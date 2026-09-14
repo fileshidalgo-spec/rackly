@@ -29,6 +29,7 @@ type FefoItem = {
   fVencimiento: string
   un: string
   proveedor?: string
+  loteFisico?: string
   status: 'vigente' | 'proximo' | 'urgente' | 'vencido' | 'sin_fecha'
 }
 
@@ -119,6 +120,8 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
     // Pools por (ubicación + código), excluyendo INC (igual que Stock/Ocupación)
     const ingresosMap = new Map<string, Map<string, number>>() // key → (fv → qty)
     const salidasMap = new Map<string, Array<{ venc: string; qty: number; ts: string; id: string }>>()
+    // Códigos de lote FÍSICOS (digitados en ingresos) por key → (fv → Set): trazabilidad
+    const lotesFisMap = new Map<string, Map<string, Set<string>>>()
     const metaMap = new Map<string, { posKey: string; code: string; descripcion: string; un: string; proveedor?: string }>()
 
     for (const m of movs) {
@@ -136,6 +139,13 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
         const pool = ingresosMap.get(key) ?? new Map<string, number>()
         pool.set(venc, (pool.get(venc) ?? 0) + qty)
         ingresosMap.set(key, pool)
+        if (m.lote) {
+          let porKey = lotesFisMap.get(key)
+          if (!porKey) { porKey = new Map(); lotesFisMap.set(key, porKey) }
+          const set = porKey.get(venc) ?? new Set<string>()
+          set.add(m.lote)
+          porKey.set(venc, set)
+        }
       } else {
         const list = salidasMap.get(key) ?? []
         list.push({ venc, qty, ts: m.fModificacion, id: m.id })
@@ -157,6 +167,7 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
       if (total <= 0) continue // igual que Stock/Ocupación: solo stock neto > 0
 
       const [bloque, torre, piso, posicion] = meta.posKey.split('-')
+      const porVenc = lotesFisMap.get(key)
       for (const lote of remanentes) {
         const fv = lote.venc
         let status: FefoStatus = 'sin_fecha'
@@ -166,11 +177,14 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
           dias = Math.round((vencDate.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24))
           status = dias < 0 ? 'vencido' : dias <= 15 ? 'urgente' : dias <= 30 ? 'proximo' : 'vigente'
         }
+        const fis = porVenc?.get(fv)
         items.push({
           codigo: meta.code, descripcion: meta.descripcion,
           bloque, torre, piso, posicion,
           stock: round3(lote.cantidad), diasRestantes: dias, fVencimiento: fv,
-          un: meta.un, proveedor: meta.proveedor, status,
+          un: meta.un, proveedor: meta.proveedor,
+          loteFisico: fis && fis.size > 0 ? Array.from(fis).sort().join(', ') : undefined,
+          status,
         })
       }
     }
@@ -219,6 +233,7 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
         Piso: i.piso, Posición: i.posicion, UN: i.un, Stock: i.stock,
         'Días restantes': i.status === 'sin_fecha' ? '' : i.diasRestantes,
         'F. Vencimiento': i.fVencimiento || 'S/F',
+        'Lote': i.loteFisico || '',
         Estado: STATUS_LABEL[i.status],
       }))
       const ws = XLSX.utils.json_to_sheet(data)
@@ -372,6 +387,11 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
                       {item.proveedor}
                     </Badge>
                   ) : null}
+                  {item.loteFisico ? (
+                    <Badge variant="outline" className="bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800 text-[10px] px-1.5 py-0 font-semibold" title="Código de lote físico">
+                      Lote: {item.loteFisico}
+                    </Badge>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -420,6 +440,9 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
                         </Badge>
                       ) : (
                         <span className="text-xs text-muted-foreground">S/F</span>
+                      )}
+                      {item.loteFisico && (
+                        <div className="text-[10px] font-semibold text-cyan-700 dark:text-cyan-300" title="Código de lote físico">Lote: {item.loteFisico}</div>
                       )}
                     </TableCell>
                     <TableCell className={`text-right font-bold ${DIAS_COLOR[item.status]}`}>

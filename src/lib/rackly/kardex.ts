@@ -26,6 +26,7 @@ export type Movimiento = {
   usuarioCorreo?: string
   proveedor?: string
   codigoInc?: string // maps from codigo_inc column
+  lote?: string // Código de lote FÍSICO digitado en ingresos/devoluciones (ej: AP-304501210021). Informativo: no afecta stock ni FEFO.
 }
 
 export type IncEnCelda = {
@@ -75,6 +76,8 @@ function fromRow(r: Record<string, unknown>): Movimiento {
     usuarioCorreo: (r.usuario_correo as string) ?? undefined,
     proveedor: (r.proveedor as string) ?? undefined,
     codigoInc: (r.codigo_inc as string) ?? undefined,
+    // Si la columna aún no existe (migración SQL pendiente), r.lote es undefined -> queda undefined.
+    lote: ((r.lote as string) || '').trim() || undefined,
   }
 }
 
@@ -210,7 +213,7 @@ async function addMovimientoFallback(
     }
   }
 
-  const { error } = await dataClient.from('movimientos').insert({
+  const payload: Record<string, unknown> = {
     tipo: m.tipo,
     bloque: m.bloque,
     torre: m.torre,
@@ -228,8 +231,24 @@ async function addMovimientoFallback(
     proveedor: m.proveedor ? m.proveedor : null,
     uuid_sync: uuidSync || null,
     codigo_inc: m.codigoInc || null,
-  })
-  if (error) throw error
+  }
+  // Lote físico: solo se envía si el usuario digitó uno. Si la columna aún no existe
+  // (migración pendiente) se reintenta SIN lote para que el movimiento nunca falle.
+  const loteClean = (m.lote || '').trim()
+  if (loteClean) payload.lote = loteClean
+
+  let insErr: unknown = null
+  {
+    const res = await dataClient.from('movimientos').insert(payload)
+    insErr = res.error
+    if (insErr && loteClean && isLoteUnsupportedError(insErr)) {
+      console.warn('[addMovimientoFallback] Columna lote no existe aún — insertando SIN lote. Ejecutar rackly_lote.sql en Supabase.')
+      const { lote: _omit, ...sinLote } = payload
+      const retry = await dataClient.from('movimientos').insert(sinLote)
+      insErr = retry.error
+    }
+  }
+  if (insErr) throw insErr
   try {
     return await fetchMovimientos()
   } catch (fetchErr) {
@@ -269,33 +288,41 @@ export async function addMovimiento(
     }
   }
 
-  // NOTA: Los movimientos INC ahora pasan por la RPC como cualquier otro movimiento.
-  // La RPC registrar_movimiento_kardex ya tiene p_codigo_inc (migration 20260611).
-  // Esto garantiza advisory lock y validación atómica para TODOS los movimientos.
-
   // Usar RPC atómica con advisory lock para evitar race conditions.
   // La RPC maneja TODOS los tipos de movimiento incluyendo INC.
   // INC items son tipo 'ingreso' así que no pasan validación de stock negativo.
+  // p_lote SOLO se envía si el usuario digitó un lote; si la RPC aún no lo soporta
+  // (firma vieja) se reintenta SIN lote para conservar la atomicidad de la RPC.
+  const loteClean = (m.lote || '').trim()
+  const rpcArgs: Record<string, unknown> = {
+    p_tipo: m.tipo,
+    p_bloque: m.bloque,
+    p_torre: m.torre,
+    p_piso: m.piso,
+    p_posicion: m.posicion,
+    p_codigo: m.codigo.trim().toUpperCase(),
+    p_descripcion: m.descripcion,
+    p_un: m.un,
+    p_cantidad: m.cantidad,
+    p_f_vencimiento: m.fVencimiento || null,
+    p_turno: m.turno,
+    p_usuario_id: m.usuarioId,
+    p_usuario_nombre: m.usuarioNombre ?? null,
+    p_usuario_correo: m.usuarioCorreo ?? null,
+    p_proveedor: m.proveedor ? m.proveedor : null,
+    p_uuid_sync: uuidSync || null,
+    p_codigo_inc: m.codigoInc || null,
+  }
+  if (loteClean) rpcArgs.p_lote = loteClean
+
   try {
-    const { data, error } = await dataClient.rpc('registrar_movimiento_kardex', {
-      p_tipo: m.tipo,
-      p_bloque: m.bloque,
-      p_torre: m.torre,
-      p_piso: m.piso,
-      p_posicion: m.posicion,
-      p_codigo: m.codigo.trim().toUpperCase(),
-      p_descripcion: m.descripcion,
-      p_un: m.un,
-      p_cantidad: m.cantidad,
-      p_f_vencimiento: m.fVencimiento || null,
-      p_turno: m.turno,
-      p_usuario_id: m.usuarioId,
-      p_usuario_nombre: m.usuarioNombre ?? null,
-      p_usuario_correo: m.usuarioCorreo ?? null,
-      p_proveedor: m.proveedor ? m.proveedor : null,
-      p_uuid_sync: uuidSync || null,
-      p_codigo_inc: m.codigoInc || null,
-    })
+    let res = await dataClient.rpc('registrar_movimiento_kardex', rpcArgs)
+    if (res.error && loteClean && isLoteUnsupportedError(res.error)) {
+      console.warn('[addMovimiento] RPC sin soporte p_lote — reintentando SIN lote (ejecutar rackly_lote.sql para guardarlo).')
+      const { p_lote: _omit, ...sinLote } = rpcArgs
+      res = await dataClient.rpc('registrar_movimiento_kardex', sinLote)
+    }
+    const { data, error } = res
     // Stock insuficiente es un error controlado — NUNCA bypassear la decisión del RPC.
     // El RPC tiene advisory lock y calcula stock de forma atómica; es la fuente de verdad.
     if (error) {
@@ -379,6 +406,9 @@ export async function calcularStockUbicacion(
 export type LoteInfo = {
   fVencimiento: string
   cantidad: number
+  /** Códigos de lote FÍSICOS (digitados en ingresos) presentes en este grupo de fecha.
+   *  Solo trazabilidad: no participa en el descuento ni en el orden FEFO. */
+  lotesFisicos?: string[]
 }
 
 /**
@@ -453,9 +483,24 @@ export type StockEnUbicacion = {
   stock: number
   fVencimiento?: string  // FEFO: fecha más próxima (para compatibilidad)
   lotes?: LoteInfo[]    // Desglose por fecha de vencimiento individual
+  /** Código de lote físico del primer lote (FEFO) cuando es único.
+   *  Para ver el detalle por lote usar `lotes[].lotesFisicos`. */
+  loteFisico?: string
   usuarioPrimerNombre?: string
   proveedor?: string
   codigoInc?: string
+}
+
+/** Detecta si un error se debe a que la columna/parámetro `lote` aún no existe en la BD
+ *  (migración rackly_lote.sql pendiente de ejecutar). Permite reintentar sin lote
+ *  para que el movimiento NUNCA falle por el campo nuevo. */
+export function isLoteUnsupportedError(err: unknown): boolean {
+  const code = err instanceof Error ? ((err as unknown as Record<string, string>).code || '') : ''
+  const msg = err instanceof Error ? err.message : String(err ?? '')
+  if (code === '42703' || code === 'PGRST204') return true // columna no existe
+  // Parámetro no reconocido por una RPC con firma vieja (PGRST202 / 'Could not find the function')
+  if ((code === 'PGRST202' || code === '42883' || msg.includes('Could not find')) && msg.toLowerCase().includes('lote')) return true
+  return false
 }
 
 export async function stockEnUbicacion(
@@ -494,6 +539,8 @@ export async function stockEnUbicacion(
     // ── Paso 1: Pools de INGRESOS por lote y SALIDAS dirigidas por (codigo, codigo_inc) ──
     const ingresosMap = new Map<string, Map<string, number>>()   // key -> (venc -> qty)
     const salidasMap = new Map<string, Array<{ venc: string; qty: number }>>()
+    // Códigos de lote FÍSICOS (digitados en ingresos) por (key -> venc): solo trazabilidad
+    const lotesFisMap = new Map<string, Map<string, Set<string>>>()
     const metaMap = new Map<string, {
       codigo: string; descripcion: string; un: string;
       usuarioPrimerNombre: string; proveedor: string; codigoInc: string;
@@ -524,6 +571,14 @@ export async function stockEnUbicacion(
         const pool = ingresosMap.get(key) ?? new Map<string, number>()
         pool.set(venc, (pool.get(venc) ?? 0) + qty)
         ingresosMap.set(key, pool)
+        // Registrar el código de lote físico si el ingreso lo trajo
+        if (m.lote) {
+          let porKey = lotesFisMap.get(key)
+          if (!porKey) { porKey = new Map(); lotesFisMap.set(key, porKey) }
+          const set = porKey.get(venc) ?? new Set<string>()
+          set.add(m.lote)
+          porKey.set(venc, set)
+        }
       } else {
         // Las salidas conservan su orden temporal (allRows viene ordenado por f_modificacion ASC)
         const list = salidasMap.get(key) ?? []
@@ -539,7 +594,7 @@ export async function stockEnUbicacion(
       codigo: string; descripcion: string; un: string;
       stock: number; fVencimientoMasProxima: string;
       usuarioPrimerNombre: string; proveedor: string; codigoInc: string;
-      lotes: LoteInfo[];
+      lotes: LoteInfo[]; loteFisico?: string;
     }>()
 
     for (const [key, pool] of ingresosMap) {
@@ -548,12 +603,20 @@ export async function stockEnUbicacion(
       const remanentes = calcularLotesRemanentes(pool, salidasMap.get(key) ?? [])
       const stockTotal = remanentes.reduce((s, l) => s + l.cantidad, 0)
       if (stockTotal <= 0) continue
+      const porVenc = lotesFisMap.get(key)
+      const lotesConFisico: LoteInfo[] = remanentes.map(l => {
+        const codigos = porVenc?.get(l.venc)
+        const fisicos = codigos && codigos.size > 0 ? Array.from(codigos).sort() : undefined
+        return fisicos ? { fVencimiento: l.venc, cantidad: Math.round(l.cantidad * 1000) / 1000, lotesFisicos: fisicos } : { fVencimiento: l.venc, cantidad: Math.round(l.cantidad * 1000) / 1000 }
+      })
+      const fefoFisicos = lotesConFisico[0]?.lotesFisicos
       groups.set(key, {
         codigo: meta.codigo, descripcion: meta.descripcion, un: meta.un,
         stock: Math.round(stockTotal * 1000) / 1000,
         fVencimientoMasProxima: remanentes.find(l => l.venc)?.venc || '',
         usuarioPrimerNombre: meta.usuarioPrimerNombre, proveedor: meta.proveedor, codigoInc: meta.codigoInc,
-        lotes: remanentes.map(l => ({ fVencimiento: l.venc, cantidad: Math.round(l.cantidad * 1000) / 1000 })),
+        lotes: lotesConFisico,
+        loteFisico: fefoFisicos && fefoFisicos.length > 0 ? fefoFisicos.join(', ') : undefined,
       })
     }
 
@@ -573,6 +636,7 @@ export async function stockEnUbicacion(
       stock: Math.round(g.stock * 1000) / 1000,
       fVencimiento: g.fVencimientoMasProxima || undefined,
       lotes: g.lotes.length > 1 ? g.lotes : undefined,
+      loteFisico: g.loteFisico || undefined,
       usuarioPrimerNombre: g.usuarioPrimerNombre || undefined,
       proveedor: g.proveedor || undefined,
       codigoInc: g.codigoInc || undefined,
@@ -768,6 +832,8 @@ export type TrasladoInput = {
   fVencimiento?: string
   proveedor?: string
   codigoInc?: string
+  /** Código de lote físico del material trasladado (se conserva en destino). Solo si es inequívoco. */
+  lote?: string
   /** Cantidad de ajuste en origen. Positivo = ingreso (qty > stock), Negativo = salida (qty < stock) */
   cantidadAjuste?: number
   /** UUID de idempotencia para reintentos offline y prevención de duplicados */
@@ -819,9 +885,14 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
     proveedor: t.proveedor ? t.proveedor : null,
     codigo_inc: t.codigoInc || null,
   }
+  // Lote físico del material: solo si el usuario/origen lo aporta. Si la columna aún no
+  // existe (migración pendiente) se reintenta SIN lote para que el traslado nunca falle.
+  const loteClean = (t.lote || '').trim()
+  const baseAny = base as Record<string, unknown>
+  if (loteClean) baseAny.lote = loteClean
   const ajuste = (t.cantidadAjuste ?? 0) !== 0
     ? [{
-        ...base,
+        ...baseAny,
         tipo: (t.cantidadAjuste ?? 0) > 0 ? 'ingreso' as const : 'salida' as const,
         bloque: t.origen.bloque,
         torre: t.origen.torre,
@@ -831,11 +902,11 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
         uuid_sync: t.uuidSync || null, // uuid_sync solo en la primera fila (ajuste o salida)
       }]
     : []
-  const { error } = await dataClient.from('movimientos').insert([
+  const filas = [
     ...ajuste,
     {
-      ...base,
-      tipo: 'salida',
+      ...baseAny,
+      tipo: 'salida' as const,
       bloque: t.origen.bloque,
       torre: t.origen.torre,
       piso: t.origen.piso,
@@ -845,16 +916,30 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
       uuid_sync: ajuste.length === 0 ? (t.uuidSync || null) : null,
     },
     {
-      ...base,
-      tipo: 'traslado',
+      ...baseAny,
+      tipo: 'traslado' as const,
       bloque: t.destino.bloque,
       torre: t.destino.torre,
       piso: t.destino.piso,
       posicion: t.destino.posicion,
       cantidad: t.cantidad,
     },
-  ])
-  if (error) throw error
+  ]
+  let insErr: unknown = null
+  {
+    const res = await dataClient.from('movimientos').insert(filas)
+    insErr = res.error
+    if (insErr && loteClean && isLoteUnsupportedError(insErr)) {
+      console.warn('[trasladarMovimientoFallback] Columna lote no existe aún — insertando SIN lote. Ejecutar rackly_lote.sql en Supabase.')
+      const filasSinLote = filas.map((f) => {
+        const { lote: _omit, ...resto } = f as Record<string, unknown>
+        return resto
+      })
+      const retry = await dataClient.from('movimientos').insert(filasSinLote)
+      insErr = retry.error
+    }
+  }
+  if (insErr) throw insErr
   try {
     return await fetchMovimientos()
   } catch (fetchErr) {
@@ -865,30 +950,42 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
 
 export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[]> {
   // Usar RPC atómica con advisory locks en origen Y destino
+  // p_lote SOLO se envía si el traslado aporta un lote inequívoco; si la RPC aún no
+  // lo soporta (firma vieja) se reintenta SIN lote para conservar la atomicidad.
+  const loteClean = (t.lote || '').trim()
+  const rpcArgs: Record<string, unknown> = {
+    p_codigo: t.codigo,
+    p_descripcion: t.descripcion,
+    p_un: t.un,
+    p_cantidad: t.cantidad,
+    p_orig_bloque: t.origen.bloque,
+    p_orig_torre: t.origen.torre,
+    p_orig_piso: t.origen.piso,
+    p_orig_pos: t.origen.posicion,
+    p_dest_bloque: t.destino.bloque,
+    p_dest_torre: t.destino.torre,
+    p_dest_piso: t.destino.piso,
+    p_dest_pos: t.destino.posicion,
+    p_turno: t.turno,
+    p_usuario_id: t.usuarioId,
+    p_usuario_nombre: t.usuarioNombre ?? null,
+    p_usuario_correo: t.usuarioCorreo ?? null,
+    p_f_vencimiento: t.fVencimiento || null,
+    p_proveedor: t.proveedor ? t.proveedor : null,
+    p_cantidad_ajuste: t.cantidadAjuste ?? 0,
+    p_codigo_inc: t.codigoInc || null,
+    p_uuid_sync: t.uuidSync || null,
+  }
+  if (loteClean) rpcArgs.p_lote = loteClean
+
   try {
-    const { data, error } = await dataClient.rpc('registrar_traslado_kardex', {
-      p_codigo: t.codigo,
-      p_descripcion: t.descripcion,
-      p_un: t.un,
-      p_cantidad: t.cantidad,
-      p_orig_bloque: t.origen.bloque,
-      p_orig_torre: t.origen.torre,
-      p_orig_piso: t.origen.piso,
-      p_orig_pos: t.origen.posicion,
-      p_dest_bloque: t.destino.bloque,
-      p_dest_torre: t.destino.torre,
-      p_dest_piso: t.destino.piso,
-      p_dest_pos: t.destino.posicion,
-      p_turno: t.turno,
-      p_usuario_id: t.usuarioId,
-      p_usuario_nombre: t.usuarioNombre ?? null,
-      p_usuario_correo: t.usuarioCorreo ?? null,
-      p_f_vencimiento: t.fVencimiento || null,
-      p_proveedor: t.proveedor ? t.proveedor : null,
-      p_cantidad_ajuste: t.cantidadAjuste ?? 0,
-      p_codigo_inc: t.codigoInc || null,
-      p_uuid_sync: t.uuidSync || null,
-    })
+    let res = await dataClient.rpc('registrar_traslado_kardex', rpcArgs)
+    if (res.error && loteClean && isLoteUnsupportedError(res.error)) {
+      console.warn('[trasladarMovimiento] RPC sin soporte p_lote — reintentando SIN lote (ejecutar rackly_lote.sql para guardarlo).')
+      const { p_lote: _omit, ...sinLote } = rpcArgs
+      res = await dataClient.rpc('registrar_traslado_kardex', sinLote)
+    }
+    const { data, error } = res
     // Stock insuficiente en origen — NUNCA bypassear la decisión del RPC.
     // El RPC tiene advisory locks en origen Y destino; es la fuente de verdad.
     if (error) {

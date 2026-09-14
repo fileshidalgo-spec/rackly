@@ -177,6 +177,8 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const [ingCantidad, setIngCantidad] = useState('')
   const [ingFVenc, setIngFVenc] = useState('')
   const [ingSinFecha, setIngSinFecha] = useState(false)
+  // Código de lote FÍSICO digitado manualmente (ej: AP-304501210021). Trazabilidad.
+  const [ingLote, setIngLote] = useState('')
   const [ingProveedor, setIngProveedor] = useState('')
 
   // ── Salida state ──
@@ -209,6 +211,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
     cantidad: number
     f_vencimiento: string | null
     codigo_inc: string
+    lote: string
   }
   const [historialOpen, setHistorialOpen] = useState(false)
   const [historialData, setHistorialData] = useState<HistorialItem[]>([])
@@ -251,6 +254,8 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   // Fecha de vencimiento del INC (para revalidación de productos por Calidad)
   const [incFVenc, setIncFVenc] = useState('')
   const [incSinFecha, setIncSinFecha] = useState(false)
+  // Código de lote FÍSICO del INC (trazabilidad para revalidación de Calidad)
+  const [incLote, setIncLote] = useState('')
 
   // ── Helper: construir celdaMap con merge de INC ──
   function buildCellMap(
@@ -405,7 +410,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
     setIngTipo(tipo ?? 'ingreso')
     setIngCodigo(''); setIngDescripcion(''); setIngUn('')
     setIngCantidad(''); setIngFVenc('')
-    setIngSinFecha(false); setIngProveedor('')
+    setIngSinFecha(false); setIngProveedor(''); setIngLote('')
     setDetailMode('ingreso')
   }
 
@@ -440,7 +445,9 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
     try {
       const { data, error } = await dataClient
         .from('movimientos')
-        .select('id, tipo, turno, f_modificacion, usuario_nombre, codigo, descripcion, un, cantidad, f_vencimiento, codigo_inc')
+        // select('*') en vez de columnas explícitas: si la columna lote aún no existe
+        // (migración rackly_lote.sql pendiente), la consulta NO falla — lote queda ''.
+        .select('*')
         .eq('bloque', detail.bloque)
         .eq('torre', detail.torre)
         .eq('piso', detail.piso)
@@ -460,6 +467,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         cantidad: r.cantidad,
         f_vencimiento: r.f_vencimiento || '',
         codigo_inc: r.codigo_inc || '',
+        lote: (r.lote as string) || '',
       }))
       setHistorialHasMore(items.length > 5)
       const trimmed = items.slice(0, 5)
@@ -508,6 +516,8 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         fVencimiento: ingSinFecha ? '' : ingFVenc,
         turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         proveedor: showProveedor ? ingProveedor : undefined,
+        // Lote físico digitado (si la BD aún no tiene la columna, se reintenta sin él)
+        lote: ingLote.trim() || undefined,
       })
       toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
@@ -517,7 +527,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   function openInc() {
     setIncCodigo(''); setIncDescripcion(''); setIncUn('')
     setIncCantidad(''); setIncCodigoInc('')
-    setIncFVenc(''); setIncSinFecha(false)
+    setIncFVenc(''); setIncSinFecha(false); setIncLote('')
     setDetailMode('inc')
   }
 
@@ -535,6 +545,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         fVencimiento: incSinFecha ? '' : incFVenc,
         turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         codigoInc: incCodigoInc.trim(),
+        lote: incLote.trim() || undefined,
       })
       toast.success('INC registrado')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
@@ -654,6 +665,16 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         // LOTE ELEGIDO por el usuario (FEFO pre-marcado): el traslado descuenta de ese lote
         // en origen y el material llega al destino con la MISMA fecha (no fechas fantasma).
         fVencimiento: trLoteFV || trItem.fVencimiento || '',
+        // Código de lote físico del material: solo si es inequívoco (un solo código en el lote elegido)
+        lote: (() => {
+          if (trItem.lotes?.length) {
+            const sel = trItem.lotes.find(l => (l.fVencimiento || '') === (trLoteFV || trItem.fVencimiento || ''))
+            const fis = sel?.lotesFisicos ?? []
+            return fis.length === 1 ? fis[0] : undefined
+          }
+          const fis = trItem.loteFisico || ''
+          return fis && !fis.includes(',') ? fis : undefined
+        })(),
         cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
         codigoInc: trItem.codigoInc || undefined,
       }
@@ -1043,6 +1064,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                                         </span>
                                       )}
                                       {!s.fVencimiento && !s.lotes && <span className="italic text-slate-500">Sin fecha de vencimiento</span>}
+                                      {s.loteFisico && <span className="px-1.5 py-px rounded border border-cyan-500/25 text-cyan-300" title="Código de lote físico">Lote: {s.loteFisico}</span>}
                                       {s.usuarioPrimerNombre && <span className="text-slate-500">Ing: {s.usuarioPrimerNombre}</span>}
                                     </div>
                                   </div>
@@ -1098,6 +1120,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                                             </span>
                                           )}
                                           {!s.fVencimiento && !s.lotes && <span className="italic text-slate-500">Sin fecha de vencimiento</span>}
+                                          {s.loteFisico && <span className="px-1.5 py-px rounded border border-cyan-500/25 text-cyan-300" title="Código de lote físico">Lote: {s.loteFisico}</span>}
                                         </div>
                                       </div>
                                       <div className="text-right flex-shrink-0">
@@ -1213,6 +1236,12 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                   </p>
                 </div>
 
+                {/* Código de lote físico — digitación manual (trazabilidad Calidad) */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-slate-400">Lote</Label>
+                  <Input value={incLote} onChange={e => setIncLote(e.target.value)} placeholder="Ej: AP-304501210021" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs placeholder:text-slate-500 focus:border-sky-500/50" autoComplete="off" />
+                </div>
+
                 {/* Botones */}
                 <div className="flex gap-2">
                   <button onClick={() => setDetailMode('view')} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold border border-slate-600/40 text-slate-400 hover:bg-slate-700/40 hover:text-slate-200 transition-colors">← Cancelar</button>
@@ -1305,6 +1334,12 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                   {ingSinFecha && <p className="text-[10px] text-purple-400/80 italic">El artículo no tiene fecha de vencimiento</p>}
                 </div>
 
+                {/* Código de lote físico — digitación manual */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-slate-400">Lote</Label>
+                  <Input value={ingLote} onChange={e => setIngLote(e.target.value)} placeholder="Ej: AP-304501210021" className="h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs placeholder:text-slate-500 focus:border-sky-500/50" autoComplete="off" />
+                </div>
+
                 {/* Proveedor — solo si es LÁMINA o STRETCH (excepto ETIQUETA LAMINA) */}
                 {showProveedor && (
                   <div className="space-y-1">
@@ -1372,12 +1407,17 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                     const multiLote = !!salItem.lotes && salItem.lotes.length > 1
                     const stockLote = salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock
                     const fvLote = salItem.lotes?.length ? salLoteFV : (salItem.fVencimiento || '')
+                    // Código de lote físico del lote elegido (trazabilidad)
+                    const loteFisElegido = salItem.lotes?.length
+                      ? ((salItem.lotes.find(l => (l.fVencimiento || '') === salLoteFV)?.lotesFisicos ?? []).join(', ') || undefined)
+                      : salItem.loteFisico
                     const hoy = new Date().toISOString().slice(0, 10)
                     return (
                       <>
                         {fvLote
                           ? <div className="flex justify-between text-xs"><span className="text-slate-400">F. Venc. (lote elegido):</span><span className={fvLote < hoy ? 'text-red-400 font-semibold' : 'text-slate-300'}>{fvLote}</span></div>
                           : <div className="flex justify-between text-xs"><span className="text-slate-400">F. Venc. (lote elegido):</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+                        {loteFisElegido && <div className="flex justify-between text-xs"><span className="text-slate-400">Lote (código):</span><span className="text-cyan-300 font-medium">{loteFisElegido}</span></div>}
                         <div className="flex justify-between text-xs"><span className="text-slate-400">Stock del lote:</span><span className={`font-bold ${salItem.codigoInc ? 'text-rose-300' : 'text-emerald-400'}`}>{stockLote} {salItem.un}</span></div>
                         {multiLote && <div className="flex justify-between text-xs"><span className="text-slate-400">Stock total código:</span><span className="text-slate-300">{salItem.stock} {salItem.un}</span></div>}
                       </>
@@ -1403,6 +1443,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                             <div className="flex-1 min-w-0 flex items-center gap-1.5">
                               <span className={`text-xs font-medium ${fv && fv < hoy ? 'text-red-400' : 'text-slate-200'}`}>{fv ? `Venc: ${fv}` : 'Sin fecha (S/F)'}</span>
                               {li === 0 && fv && <span className="text-[8px] font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-1 py-px rounded">FEFO</span>}
+                              {l.lotesFisicos && l.lotesFisicos.length > 0 && <span className="text-[8px] font-semibold text-cyan-300 bg-cyan-400/10 border border-cyan-400/20 px-1 py-px rounded" title="Código de lote físico">Lote: {l.lotesFisicos.join(', ')}</span>}
                             </div>
                             <span className="font-bold text-xs text-emerald-400 flex-shrink-0">{l.cantidad} <span className="text-slate-500 font-normal">{salItem.un}</span></span>
                           </button>
@@ -1449,11 +1490,15 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                     const fvLote = trItem.lotes?.length ? trLoteFV : (trItem.fVencimiento || '')
                     const hoy = new Date().toISOString().slice(0, 10)
                     const stockLote = trItem.lotes?.length ? stockDeLote(trItem, trLoteFV) : trItem.stock
+                    const loteFisElegido = trItem.lotes?.length
+                      ? ((trItem.lotes.find(l => (l.fVencimiento || '') === trLoteFV)?.lotesFisicos ?? []).join(', ') || undefined)
+                      : trItem.loteFisico
                     return (
                       <>
                         {fvLote
                           ? <div className="flex justify-between text-xs"><span className="text-slate-400">F. Venc. (lote elegido):</span><span className={fvLote < hoy ? 'text-red-400 font-semibold' : 'text-slate-300'}>{fvLote}</span></div>
                           : <div className="flex justify-between text-xs"><span className="text-slate-400">F. Venc. (lote elegido):</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+                        {loteFisElegido && <div className="flex justify-between text-xs"><span className="text-slate-400">Lote (código):</span><span className="text-cyan-300 font-medium">{loteFisElegido}</span></div>}
                         <div className="flex justify-between text-xs"><span className="text-slate-400">Stock del lote:</span><span className="text-emerald-400 font-bold">{stockLote} {trItem.un}</span></div>
                         {trItem.lotes && trItem.lotes.length > 1 && (
                           <div className="flex justify-between text-xs"><span className="text-slate-400">Stock total código:</span><span className="text-slate-300">{trItem.stock} {trItem.un}</span></div>
@@ -1481,6 +1526,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                             <div className="flex-1 min-w-0 flex items-center gap-1.5">
                               <span className={`text-xs font-medium ${fv && fv < hoy ? 'text-red-400' : 'text-slate-200'}`}>{fv ? `Venc: ${fv}` : 'Sin fecha (S/F)'}</span>
                               {li === 0 && fv && <span className="text-[8px] font-bold text-sky-300 bg-sky-400/10 border border-sky-400/20 px-1 py-px rounded">FEFO</span>}
+                              {l.lotesFisicos && l.lotesFisicos.length > 0 && <span className="text-[8px] font-semibold text-cyan-300 bg-cyan-400/10 border border-cyan-400/20 px-1 py-px rounded" title="Código de lote físico">Lote: {l.lotesFisicos.join(', ')}</span>}
                             </div>
                             <span className="font-bold text-xs text-emerald-400 flex-shrink-0">{l.cantidad} <span className="text-slate-500 font-normal">{trItem.un}</span></span>
                           </button>
@@ -1702,6 +1748,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                           <div className="mt-0.5">
                             Cantidad: <span className={`font-bold font-mono ${esPositivo ? 'text-emerald-400' : 'text-red-400'}`}>{esPositivo ? '+' : '-'}{Math.abs(item.cantidad).toFixed(2)} {item.un}</span>
                             {item.f_vencimiento && <span className="text-slate-500 ml-1.5">· Venc: {item.f_vencimiento}</span>}
+                            {item.lote && <span className="text-cyan-300 ml-1.5">· Lote: {item.lote}</span>}
                           </div>
                           {esRotacion && (
                             <span className="inline-flex items-center gap-1 mt-1 text-[8px] font-semibold text-violet-400 bg-violet-500/10 border border-violet-500/15 px-1.5 py-0.5 rounded-md">
@@ -1824,6 +1871,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                             <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
                               <span className="font-bold text-slate-700 dark:text-slate-300 text-sm">{s.stock} {s.un}</span>
                               {s.fVencimiento && !s.lotes && <span>Venc: {s.fVencimiento}</span>}
+                              {s.loteFisico && <span className="font-semibold text-cyan-700 dark:text-cyan-300">Lote: {s.loteFisico}</span>}
                               {s.lotes && s.lotes.length > 1 && (
                                 <span className="text-amber-600 dark:text-amber-400 font-medium">
                                   {s.lotes.length} lotes: {s.lotes.map(l => l.fVencimiento || 'S/F').join(', ')}
@@ -1845,7 +1893,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                                   >
                                     {s.lotes.map((l, li) => (
                                       <option key={li} value={l.fVencimiento || ''}>
-                                        {l.fVencimiento ? `Venc: ${l.fVencimiento} (${l.cantidad})` : `Sin fecha (${l.cantidad})`}
+                                        {l.fVencimiento ? `Venc: ${l.fVencimiento}${l.lotesFisicos?.length === 1 ? ` · Lote: ${l.lotesFisicos[0]}` : ''} (${l.cantidad})` : `Sin fecha (${l.cantidad})`}
                                       </option>
                                     ))}
                                   </select>

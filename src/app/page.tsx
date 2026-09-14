@@ -412,7 +412,10 @@ function RacklyApp() {
                               <Badge variant="secondary" className="font-medium">{m.un}</Badge>
                             </TableCell>
                             <TableCell className="text-right font-bold text-slate-800">{fmtCantidad(m.cantidad)}</TableCell>
-                            <TableCell className="hidden md:table-cell text-slate-500">{m.fVencimiento || '—'}</TableCell>
+                            <TableCell className="hidden md:table-cell text-slate-500">
+                              {m.fVencimiento || '—'}
+                              {m.lote && <div className="text-[10px] font-semibold text-cyan-700 dark:text-cyan-300" title="Código de lote físico">Lote: {m.lote}</div>}
+                            </TableCell>
                             <TableCell className="hidden md:table-cell whitespace-nowrap text-muted-foreground text-xs">
                               {formatDateTime(m.fModificacion)}
                             </TableCell>

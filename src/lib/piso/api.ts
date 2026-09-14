@@ -2,6 +2,7 @@
 
 import { dataClient } from '@/lib/supabase/client'
 import { QUERY_TIMEOUT_MS } from '@/lib/rackly/constants'
+import { isLoteUnsupportedError } from '@/lib/rackly/kardex'
 
 /** Genera un UUID v4 simple (no requiere crypto.randomUUID que no está en todos los browsers) */
 function generateUuidSync(): string {
@@ -29,6 +30,56 @@ async function rollbackDetalles(movIds: string[], tag: string): Promise<void> {
       console.error(`[${tag}] rollback de detalles ${movId} falló:`, rbErr)
     })
   }
+}
+
+/** Normaliza el lote físico digitado: TRIM; vacío => no viaja (queda NULL en BD). */
+function loteLimpio(lote?: string | null): string {
+  return (lote || '').trim()
+}
+
+/** Construye las filas de piso_movimiento_detalles para un movimiento ya creado.
+ *  Incluye `lote` SOLO en las filas que lo traen (como fecha_vencimiento):
+ *  un ingreso multilínea puede llevar lotes distintos por artículo. */
+function buildDetRows(
+  movimientoId: string,
+  detalles: DetalleInput[]
+): { rows: Record<string, unknown>[]; tieneLote: boolean } {
+  let tieneLote = false
+  const rows = detalles.map((d) => {
+    const lote = loteLimpio(d.lote)
+    if (lote) tieneLote = true
+    return {
+      movimiento_id: movimientoId,
+      nivel_id: d.nivel_id,
+      bloque_id: d.bloque_id,
+      cantidad: d.cantidad,
+      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
+      ...(lote ? { lote } : {}),
+    }
+  })
+  return { rows, tieneLote }
+}
+
+/** Inserta filas en piso_movimiento_detalles; si la columna `lote` aún no existe
+ *  en la BD (migración 20260915_piso_detalles_lote.sql pendiente), reintenta SIN
+ *  lote para que el movimiento NUNCA falle por el campo nuevo (mismo patrón
+ *  defensivo que kardex.ts en Racks). El insert es atómico (todo-o-nada), por lo
+ *  que el reintento no duplica filas. */
+async function insertDetallesPiso(
+  rows: Record<string, unknown>[],
+  tieneLote: boolean,
+  tag: string
+): Promise<void> {
+  if (rows.length === 0) return
+  const { error } = await dataClient.from('piso_movimiento_detalles').insert(rows)
+  if (error && tieneLote && isLoteUnsupportedError(error)) {
+    console.warn(`[${tag}] Columna lote no existe aún — insertando SIN lote. Ejecutar 20260915_piso_detalles_lote.sql.`)
+    const sinLote = rows.map((r) => { const { lote: _omit, ...rest } = r; return rest })
+    const retry = await dataClient.from('piso_movimiento_detalles').insert(sinLote)
+    if (retry.error) throw retry.error
+    return
+  }
+  if (error) throw error
 }
 
 /** Limpia el prefijo del sector del código de subcolumna.
@@ -180,6 +231,8 @@ export type MovimientoDetalle = {
   bloque_id: string
   cantidad: number
   fecha_vencimiento?: string | null
+  /** Código de lote FÍSICO digitado en ingresos/devoluciones (trazabilidad, informativo). */
+  lote?: string | null
 }
 
 export type MovimientoConDetalles = PisoMovimiento & {
@@ -196,6 +249,9 @@ export type DetalleInput = {
   bloque_id: string
   cantidad: number
   fecha_vencimiento?: string | null
+  /** Código de lote FÍSICO digitado (ej: AP-304501210021). Informativo: no afecta
+   *  stock ni FEFO. Se persiste en piso_movimiento_detalles.lote (NULL si vacío). */
+  lote?: string | null
 }
 
 // ---- Sector CRUD ----
@@ -1007,15 +1063,31 @@ type PisoDetalleRow = {
   bloque_id: string
   cantidad: unknown
   fecha_vencimiento?: string | null
+  lote?: string | null
   tipo: string | null
   fechaMov?: string | null
+}
+
+/** Tipos de movimiento que SUMAN stock en Piso (los lotes físicos provienen de estos). */
+const PISO_TIPOS_INGRESO: ReadonlySet<string> = new Set(['ingreso', 'devolucion', 'stock_inicial'])
+
+/** Fila de stock detallado de una posición o nivel. `lote` = código(s) de lote físico
+ *  del ingreso asociado a ese (bloque, fecha de vencimiento) — informativo, igual que
+ *  en Racks; puede unir varios códigos con ", ". No afecta stock ni FEFO. */
+export type StockDetalleFila = {
+  bloque_id: string
+  bloque_codigo: string
+  bloque_descripcion: string
+  bloque_unidad: string
+  cantidad: number
+  fecha_vencimiento: string
+  lote?: string
 }
 
 function lotesRestantesPorBloque(
   detalles: PisoDetalleRow[]
 ): Map<string, { fecha: string; qty: number }[]> {
-  const isIngresoType = (tipo: string) =>
-    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
+  const isIngresoType = (tipo: string) => PISO_TIPOS_INGRESO.has(tipo)
   const toQty = (c: unknown) => (typeof c === 'number' ? c : parseFloat(String(c ?? '0')) || 0)
   const toVenc = (fv: unknown) => (typeof fv === 'string' && fv ? fv : '')
 
@@ -1096,13 +1168,31 @@ function pisoDetalleFecha(pm: unknown): string | null {
   return (pm as { fecha?: string }).fecha ?? null
 }
 
+/** Construye el mapa de códigos de lote físico por (bloque_id, fecha de vencimiento)
+ *  a partir de los detalles de tipo ingreso/devolución — igual que `lotesFis` en Racks.
+ *  Informativo: NO altera cantidades. */
+function lotesFisicosPorFecha(detalles: PisoDetalleRow[]): Map<string, Map<string, Set<string>>> {
+  const mapa = new Map<string, Map<string, Set<string>>>()
+  for (const d of detalles) {
+    const lote = (d.lote || '').trim()
+    if (!lote || !d.tipo || !PISO_TIPOS_INGRESO.has(d.tipo)) continue
+    const venc = d.fecha_vencimiento ?? ''
+    const porFecha = mapa.get(d.bloque_id) ?? new Map<string, Set<string>>()
+    const set = porFecha.get(venc) ?? new Set<string>()
+    set.add(lote)
+    porFecha.set(venc, set)
+    mapa.set(d.bloque_id, porFecha)
+  }
+  return mapa
+}
+
 /**
  * Obtiene el stock detallado de una posición específica (todos los bloques y cantidades).
  * Cálculo client-side con el algoritmo dirigido + desborde FEFO (respeta el lote elegido).
  */
 export async function stockDetallePosicion(
   posicionId: string
-): Promise<{ bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[]> {
+): Promise<StockDetalleFila[]> {
   // ═══ CÁLCULO CLIENT-SIDE: salida dirigida al lote elegido + desborde FEFO ═══
   // NOTA: la RPC piso_stock_detalle_posicion actual descuenta las salidas FEFO
   // ignorando la fecha registrada en cada salida (rompe la selección de lote).
@@ -1116,22 +1206,28 @@ export async function stockDetallePosicion(
   const nivelIds = ((nivData ?? []) as { id: string }[]).map((n) => n.id)
   if (nivelIds.length === 0) return []
 
-  // Intentar select con fecha_vencimiento primero; si falla (columna no existe), reintentar sin ella
+  // Intentar select con fecha_vencimiento + lote; degradar si alguna columna no existe aún
   const getDetalles = async () => {
-    // Intento 1: con fecha_vencimiento
+    // Intento 1: con fecha_vencimiento y lote
     const { data: d1, error: e1 } = await dataClient
+      .from('piso_movimiento_detalles')
+      .select('bloque_id, cantidad, fecha_vencimiento, lote, movimiento_id, piso_movimientos(tipo, fecha)')
+      .in('nivel_id', nivelIds)
+    if (!e1) return d1 as unknown[]
+    // Intento 2: con fecha_vencimiento, sin lote (migración de lote pendiente)
+    const { data: d2, error: e2 } = await dataClient
       .from('piso_movimiento_detalles')
       .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, fecha)')
       .in('nivel_id', nivelIds)
-    if (!e1) return d1 as unknown[]
-    // Intento 2: sin fecha_vencimiento (columna no existe en la DB)
+    if (!e2) return d2 as unknown[]
+    // Intento 3: sin fecha_vencimiento ni lote (DB antigua)
     console.warn('[Piso] fallback: fecha_vencimiento no disponible, calculando sin FEFO')
-    const { data: d2, error: e2 } = await dataClient
+    const { data: d3, error: e3 } = await dataClient
       .from('piso_movimiento_detalles')
       .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo, fecha)')
       .in('nivel_id', nivelIds)
-    if (e2) throw e2
-    return d2 as unknown[]
+    if (e3) throw e3
+    return d3 as unknown[]
   }
   const rawDetalles = await getDetalles()
 
@@ -1142,6 +1238,7 @@ export async function stockDetallePosicion(
       bloque_id: r.bloque_id as string,
       cantidad: r.cantidad,
       fecha_vencimiento: (r.fecha_vencimiento as string | null) ?? null,
+      lote: (r.lote as string | null) ?? null,
       tipo: pisoDetalleTipo(pm),
       fechaMov: pisoDetalleFecha(pm),
     }
@@ -1153,6 +1250,9 @@ export async function stockDetallePosicion(
   const lotesRestantes = lotesRestantesPorBloque(detalles)
 
   if (lotesRestantes.size === 0) return []
+
+  // Códigos de lote físico por (bloque, fecha) para mostrar junto a cada lote restante
+  const loteFisMap = lotesFisicosPorFecha(detalles)
 
   // Info de bloques
   const bloqueIds = [...lotesRestantes.keys()]
@@ -1171,15 +1271,17 @@ export async function stockDetallePosicion(
       bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
   }
 
-  const results: { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[] = []
+  const results: StockDetalleFila[] = []
   for (const [bloqueId, lots] of lotesRestantes) {
     const info = bloqueInfoMap.get(bloqueId)
     if (!info) continue
     for (const lot of lots) {
       if (lot.qty <= 0) continue
+      const fis = loteFisMap.get(bloqueId)?.get(lot.fecha)
       results.push({
         bloque_id: bloqueId, bloque_codigo: info.codigo, bloque_descripcion: info.descripcion,
         bloque_unidad: info.unidad || 'KG', cantidad: Math.round(lot.qty * 1000) / 1000, fecha_vencimiento: lot.fecha,
+        ...(fis && fis.size > 0 ? { lote: Array.from(fis).sort().join(', ') } : {}),
       })
     }
   }
@@ -1199,20 +1301,30 @@ export async function stockDetallePosicion(
  */
 export async function stockDetalleNivel(
   nivelId: string
-): Promise<{ bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[]> {
+): Promise<StockDetalleFila[]> {
   // Obtener detalles de movimiento para este nivel específico
+  // Intentar select con fecha_vencimiento + lote; degradar si alguna columna no existe aún
   const getDetalles = async () => {
+    // Intento 1: con fecha_vencimiento y lote
     const { data: d1, error: e1 } = await dataClient
+      .from('piso_movimiento_detalles')
+      .select('bloque_id, cantidad, fecha_vencimiento, lote, movimiento_id, piso_movimientos(tipo, fecha)')
+      .eq('nivel_id', nivelId)
+    if (!e1) return d1 as unknown[]
+    // Intento 2: con fecha_vencimiento, sin lote (migración de lote pendiente)
+    const { data: d2, error: e2 } = await dataClient
       .from('piso_movimiento_detalles')
       .select('bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, fecha)')
       .eq('nivel_id', nivelId)
-    if (!e1) return d1 as unknown[]
-    const { data: d2, error: e2 } = await dataClient
+    if (!e2) return d2 as unknown[]
+    // Intento 3: sin fecha_vencimiento ni lote (DB antigua)
+    console.warn('[Piso] fallback: fecha_vencimiento no disponible, calculando sin FEFO')
+    const { data: d3, error: e3 } = await dataClient
       .from('piso_movimiento_detalles')
       .select('bloque_id, cantidad, movimiento_id, piso_movimientos(tipo, fecha)')
       .eq('nivel_id', nivelId)
-    if (e2) throw e2
-    return d2 as unknown[]
+    if (e3) throw e3
+    return d3 as unknown[]
   }
   const rawDetalles = await getDetalles()
 
@@ -1223,6 +1335,7 @@ export async function stockDetalleNivel(
       bloque_id: r.bloque_id as string,
       cantidad: r.cantidad,
       fecha_vencimiento: (r.fecha_vencimiento as string | null) ?? null,
+      lote: (r.lote as string | null) ?? null,
       tipo: pisoDetalleTipo(pm),
       fechaMov: pisoDetalleFecha(pm),
     }
@@ -1234,6 +1347,9 @@ export async function stockDetalleNivel(
   const lotesRestantes = lotesRestantesPorBloque(detalles)
 
   if (lotesRestantes.size === 0) return []
+
+  // Códigos de lote físico por (bloque, fecha) para mostrar junto a cada lote restante
+  const loteFisMap = lotesFisicosPorFecha(detalles)
 
   // Info de bloques
   const bloqueIds = [...lotesRestantes.keys()]
@@ -1258,15 +1374,17 @@ export async function stockDetalleNivel(
     }
   }
 
-  const results: { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }[] = []
+  const results: StockDetalleFila[] = []
   for (const [bloqueId, lots] of lotesRestantes) {
     const info = bloqueInfoMap.get(bloqueId)
     if (!info) continue
     for (const lot of lots) {
       if (lot.qty <= 0) continue
+      const fis = loteFisMap.get(bloqueId)?.get(lot.fecha)
       results.push({
         bloque_id: bloqueId, bloque_codigo: info.codigo, bloque_descripcion: info.descripcion,
         bloque_unidad: info.unidad || 'KG', cantidad: Math.round(lot.qty * 1000) / 1000, fecha_vencimiento: lot.fecha,
+        ...(fis && fis.size > 0 ? { lote: Array.from(fis).sort().join(', ') } : {}),
       })
     }
   }
@@ -1291,7 +1409,7 @@ export async function registrarIngresoPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[],
+  detalles: DetalleInput[],
   opts?: { posicion_id?: string; codigo_inc?: string }
 ): Promise<void> {
   const uuidSync = generateUuidSync()
@@ -1324,21 +1442,14 @@ export async function registrarIngresoPosicion(
   if (movErr) throw movErr
   const movimientoId = (movData as { id: string }).id
 
-  // Crear detalles
-  if (detalles.length > 0) {
-    const detRows = detalles.map((d) => ({
-      movimiento_id: movimientoId,
-      nivel_id: d.nivel_id,
-      bloque_id: d.bloque_id,
-      cantidad: d.cantidad,
-      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
-    }))
-    const { error: detErr } = await dataClient
-      .from('piso_movimiento_detalles')
-      .insert(detRows)
-    if (detErr) {
+  // Crear detalles (con lote físico si se digitó; fallback sin lote si la columna no existe)
+  const { rows: detRows, tieneLote } = buildDetRows(movimientoId, detalles)
+  if (detRows.length > 0) {
+    try {
+      await insertDetallesPiso(detRows, tieneLote, 'registrarIngresoPosicion')
+    } catch (detErr) {
       // Rollback: eliminar cabecera huérfana
-      console.error('[registrarIngresoPosicion] Error insertando detalles, haciendo rollback:', detErr.message)
+      console.error('[registrarIngresoPosicion] Error insertando detalles, haciendo rollback:', (detErr as { message?: string }).message)
       await rollbackCabeceras([movimientoId], 'registrarIngresoPosicion')
       throw detErr
     }
@@ -1355,7 +1466,7 @@ export async function registrarSalidaPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
+  detalles: DetalleInput[]
 ): Promise<void> {
   const uuidSync = generateUuidSync()
 
@@ -1375,19 +1486,12 @@ export async function registrarSalidaPosicion(
   if (movErr) throw movErr
   const movimientoId = (movData as { id: string }).id
 
-  if (detalles.length > 0) {
-    const detRows = detalles.map((d) => ({
-      movimiento_id: movimientoId,
-      nivel_id: d.nivel_id,
-      bloque_id: d.bloque_id,
-      cantidad: d.cantidad,
-      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
-    }))
-    const { error: detErr } = await dataClient
-      .from('piso_movimiento_detalles')
-      .insert(detRows)
-    if (detErr) {
-      console.error('[registrarSalidaPosicion] Error insertando detalles, haciendo rollback:', detErr.message)
+  const { rows: detRows, tieneLote } = buildDetRows(movimientoId, detalles)
+  if (detRows.length > 0) {
+    try {
+      await insertDetallesPiso(detRows, tieneLote, 'registrarSalidaPosicion')
+    } catch (detErr) {
+      console.error('[registrarSalidaPosicion] Error insertando detalles, haciendo rollback:', (detErr as { message?: string }).message)
       await rollbackCabeceras([movimientoId], 'registrarSalidaPosicion')
       throw detErr
     }
@@ -1405,7 +1509,7 @@ export async function registrarDevolucionPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detalles: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
+  detalles: DetalleInput[]
 ): Promise<void> {
   const uuidSync = generateUuidSync()
 
@@ -1425,19 +1529,12 @@ export async function registrarDevolucionPosicion(
   if (movErr) throw movErr
   const movimientoId = (movData as { id: string }).id
 
-  if (detalles.length > 0) {
-    const detRows = detalles.map((d) => ({
-      movimiento_id: movimientoId,
-      nivel_id: d.nivel_id,
-      bloque_id: d.bloque_id,
-      cantidad: d.cantidad,
-      ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
-    }))
-    const { error: detErr } = await dataClient
-      .from('piso_movimiento_detalles')
-      .insert(detRows)
-    if (detErr) {
-      console.error('[registrarDevolucionPosicion] Error insertando detalles, haciendo rollback:', detErr.message)
+  const { rows: detRows, tieneLote } = buildDetRows(movimientoId, detalles)
+  if (detRows.length > 0) {
+    try {
+      await insertDetallesPiso(detRows, tieneLote, 'registrarDevolucionPosicion')
+    } catch (detErr) {
+      console.error('[registrarDevolucionPosicion] Error insertando detalles, haciendo rollback:', (detErr as { message?: string }).message)
       await rollbackCabeceras([movimientoId], 'registrarDevolucionPosicion')
       throw detErr
     }
@@ -1455,8 +1552,8 @@ export async function registrarTrasladoPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detallesSalida: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[],
-  detallesIngreso: { nivel_id: string; bloque_id: string; cantidad: number; fecha_vencimiento?: string | null }[]
+  detallesSalida: DetalleInput[],
+  detallesIngreso: DetalleInput[]
 ): Promise<void> {
   const uuidSync = generateUuidSync()
 
@@ -1498,38 +1595,26 @@ export async function registrarTrasladoPosicion(
   }
   const ingId = (ingData as { id: string }).id
 
-  // Insertar detalles de salida
-  if (detallesSalida.length > 0) {
-    const { error: salDetErr } = await dataClient.from('piso_movimiento_detalles').insert(
-      detallesSalida.map((d) => ({
-        movimiento_id: salId,
-        nivel_id: d.nivel_id,
-        bloque_id: d.bloque_id,
-        cantidad: d.cantidad,
-        ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
-      }))
-    )
-    if (salDetErr) {
-      console.error('[registrarTrasladoPosicion] Error en detalles salida, rollback completo:', salDetErr.message)
+  // Insertar detalles de salida (con lote si se digitó; el traslado lo propaga al destino)
+  const salRows = buildDetRows(salId, detallesSalida)
+  if (salRows.rows.length > 0) {
+    try {
+      await insertDetallesPiso(salRows.rows, salRows.tieneLote, 'registrarTrasladoPosicion')
+    } catch (salDetErr) {
+      console.error('[registrarTrasladoPosicion] Error en detalles salida, rollback completo:', (salDetErr as { message?: string }).message)
       await rollbackDetalles([salId, ingId], 'registrarTrasladoPosicion')
       await rollbackCabeceras([salId, ingId], 'registrarTrasladoPosicion')
       throw salDetErr
     }
   }
 
-  // Insertar detalles de ingreso
-  if (detallesIngreso.length > 0) {
-    const { error: ingDetErr } = await dataClient.from('piso_movimiento_detalles').insert(
-      detallesIngreso.map((d) => ({
-        movimiento_id: ingId,
-        nivel_id: d.nivel_id,
-        bloque_id: d.bloque_id,
-        cantidad: d.cantidad,
-        ...(d.fecha_vencimiento ? { fecha_vencimiento: d.fecha_vencimiento } : {}),
-      }))
-    )
-    if (ingDetErr) {
-      console.error('[registrarTrasladoPosicion] Error en detalles ingreso, rollback completo:', ingDetErr.message)
+  // Insertar detalles de ingreso (destino)
+  const ingRows = buildDetRows(ingId, detallesIngreso)
+  if (ingRows.rows.length > 0) {
+    try {
+      await insertDetallesPiso(ingRows.rows, ingRows.tieneLote, 'registrarTrasladoPosicion')
+    } catch (ingDetErr) {
+      console.error('[registrarTrasladoPosicion] Error en detalles ingreso, rollback completo:', (ingDetErr as { message?: string }).message)
       await rollbackDetalles([salId, ingId], 'registrarTrasladoPosicion')
       await rollbackCabeceras([salId, ingId], 'registrarTrasladoPosicion')
       throw ingDetErr

@@ -47,7 +47,7 @@ import {
   Clock, RotateCwIcon, TriangleAlert, MapPin,
 } from 'lucide-react'
 
-type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string }
+type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string; lote?: string }
 type SalItem = {
   bloque_id: string
   bloque_codigo: string
@@ -56,6 +56,7 @@ type SalItem = {
   cantidad: string
   stockActual: number
   fecha_vencimiento: string
+  lote?: string
   selected: boolean
 }
 type BloqueOption = { id: string; codigo: string; descripcion: string; unidad: string }
@@ -69,9 +70,13 @@ type RowEntry = {
   cantidad: string
   fecha_vencimiento: string
   sin_vencimiento: boolean
+  /** Código de lote FÍSICO digitado (trazabilidad) — igual que en Racks. */
+  lote: string
+  /** Opción explícita "Sin lote": deshabilita el campo y garantiza que NO viaja lote. */
+  sin_lote: boolean
 }
 
-const EMPTY_ROW: RowEntry = { bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '', fecha_vencimiento: '', sin_vencimiento: false }
+const EMPTY_ROW: RowEntry = { bloque_id: '', codigo: '', descripcion: '', unidad: '', cantidad: '', fecha_vencimiento: '', sin_vencimiento: false, lote: '', sin_lote: false }
 
 // ═══════════════════════════════════════════════
 //  ANIMATED COUNTER HOOK
@@ -186,6 +191,7 @@ export function PisoSectoresTab() {
     selected: boolean
     saldoMode: 'saldo' | 'ajustar'
     fecha_vencimiento: string
+    lote?: string
   }
   const [trDestPos, setTrDestPos] = useState<PosicionConStock | null>(null)
   const [trItems, setTrItems] = useState<TrItem[]>([])
@@ -214,6 +220,7 @@ export function PisoSectoresTab() {
     bloque_unidad: string
     cantidad: number
     fecha_vencimiento: string | null
+    lote: string | null
     codigo_inc: string
   }
   const [historialOpen, setHistorialOpen] = useState(false)
@@ -310,7 +317,7 @@ export function PisoSectoresTab() {
       // 3) Obtener todos los detalles de estos movimientos en estos niveles
       const { data: detData, error: detErr } = await dataClient
         .from('piso_movimiento_detalles')
-        .select('movimiento_id, cantidad, fecha_vencimiento, bloque_id, nivel_id')
+        .select('movimiento_id, cantidad, fecha_vencimiento, lote, bloque_id, nivel_id')
         .in('movimiento_id', allMovIds)
         .in('nivel_id', nivelIds)
       if (detErr) throw detErr
@@ -341,6 +348,7 @@ export function PisoSectoresTab() {
             bloque_unidad: bloq.unidad,
             cantidad: d.cantidad,
             fecha_vencimiento: d.fecha_vencimiento,
+            lote: ((d as Record<string, unknown>).lote as string | null) ?? null,
             codigo_inc: mov.codigo_inc || '',
           })
         }
@@ -568,6 +576,7 @@ export function PisoSectoresTab() {
         cantidad: String(s.cantidad),
         stockActual: s.cantidad,
         fecha_vencimiento: s.fecha_vencimiento || '',
+        lote: s.lote,
         selected: false,
       })))
       setSalItems([])
@@ -581,6 +590,7 @@ export function PisoSectoresTab() {
         cantidad: String(s.cantidad),
         stockActual: s.cantidad,
         fecha_vencimiento: s.fecha_vencimiento || '',
+        lote: s.lote,
         selected: false,
       })))
       setSalItemsByNivel([])
@@ -598,6 +608,7 @@ export function PisoSectoresTab() {
       cantidad: String(s.cantidad),
       stockActual: s.cantidad,
       fecha_vencimiento: s.fecha_vencimiento || '',
+      lote: s.lote,
       selected: false,
     }))
   }
@@ -617,6 +628,7 @@ export function PisoSectoresTab() {
       selected: false,
       saldoMode: 'saldo',
       fecha_vencimiento: s.fecha_vencimiento || '',
+      lote: s.lote,
     })))
     setMode('traslado')
   }
@@ -837,6 +849,16 @@ export function PisoSectoresTab() {
       return updated
     })
   }
+  function updateIngresoLote(i: number, value: string) {
+    setIngRows(prev => { const u = [...prev]; u[i] = { ...u[i], lote: value }; return u })
+  }
+  function toggleIngresoSinLote(i: number) {
+    setIngRows(prev => {
+      const updated = [...prev]
+      updated[i] = { ...updated[i], sin_lote: !updated[i].sin_lote, lote: '' }
+      return updated
+    })
+  }
 
   function addDevRow() { setDevRows(prev => [...prev, { ...EMPTY_ROW }]) }
   function removeDevRow(i: number) { setDevRows(prev => prev.filter((_, idx) => idx !== i)) }
@@ -854,6 +876,16 @@ export function PisoSectoresTab() {
     setDevRows(prev => {
       const updated = [...prev]
       updated[i] = { ...updated[i], sin_vencimiento: !updated[i].sin_vencimiento, fecha_vencimiento: '' }
+      return updated
+    })
+  }
+  function updateDevLote(i: number, value: string) {
+    setDevRows(prev => { const u = [...prev]; u[i] = { ...u[i], lote: value }; return u })
+  }
+  function toggleDevSinLote(i: number) {
+    setDevRows(prev => {
+      const updated = [...prev]
+      updated[i] = { ...updated[i], sin_lote: !updated[i].sin_lote, lote: '' }
       return updated
     })
   }
@@ -877,6 +909,8 @@ export function PisoSectoresTab() {
         bloque_id: r.bloque_id,
         cantidad: parseFloat(r.cantidad),
         fecha_vencimiento: r.sin_vencimiento ? '' : r.fecha_vencimiento,
+        // Lote físico digitado; si se marcó "Sin lote" (o va vacío) NO viaja lote.
+        lote: r.sin_lote ? undefined : (r.lote.trim() || undefined),
       }))
       await registrarIngresoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Ingreso registrado')
@@ -998,9 +1032,9 @@ export function PisoSectoresTab() {
       const deficitItems = validRows.filter((r) => parseFloat(r.cantidad) < r.stockActual)
       const surplusItems = validRows.filter((r) => parseFloat(r.cantidad) > r.stockActual)
 
-      // 1) Base transfer for ALL selected items (move the entered amount)
-      const allDetSal = validRows.map((r) => ({ nivel_id: origNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
-      const allDetIng = validRows.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null }))
+      // 1) Base transfer for ALL selected items (move the entered amount) — el lote viaja con la mercadería
+      const allDetSal = validRows.map((r) => ({ nivel_id: origNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null, lote: r.lote || undefined }))
+      const allDetIng = validRows.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null, lote: r.lote || undefined }))
       await registrarTrasladoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', allDetSal, allDetIng)
 
       // 2) For surplus items (qty > stock): create ingreso at destination for the excess
@@ -1008,7 +1042,7 @@ export function PisoSectoresTab() {
         const excess = parseFloat(item.cantidad) - item.stockActual
         if (excess > 0) {
           await registrarIngresoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', [
-            { nivel_id: destNivelId!, bloque_id: item.bloque_id, cantidad: excess, fecha_vencimiento: item.fecha_vencimiento || '' },
+            { nivel_id: destNivelId!, bloque_id: item.bloque_id, cantidad: excess, fecha_vencimiento: item.fecha_vencimiento || '', lote: item.lote || undefined },
           ])
         }
       }
@@ -1083,6 +1117,8 @@ export function PisoSectoresTab() {
         bloque_id: r.bloque_id,
         cantidad: parseFloat(r.cantidad),
         fecha_vencimiento: r.sin_vencimiento ? '' : r.fecha_vencimiento,
+        // Lote físico digitado; si se marcó "Sin lote" (o va vacío) NO viaja lote.
+        lote: r.sin_lote ? undefined : (r.lote.trim() || undefined),
       }))
       await registrarDevolucionPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
       toast.success('Devolucion registrada')
@@ -2132,6 +2168,11 @@ export function PisoSectoresTab() {
                                               <CalendarOff className="h-2.5 w-2.5" /> Sin fecha
                                             </span>
                                           )}
+                                          {s.lote && (
+                                            <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/20" title="Código de lote físico">
+                                              Lote: {s.lote}
+                                            </span>
+                                          )}
                                         </div>
                                         <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
                                       </div>
@@ -2168,6 +2209,11 @@ export function PisoSectoresTab() {
                                 {!s.fecha_vencimiento && (
                                   <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-slate-700/40 text-slate-400 border border-slate-600/30 flex items-center gap-0.5">
                                     <CalendarOff className="h-2.5 w-2.5" /> Sin fecha
+                                  </span>
+                                )}
+                                {s.lote && (
+                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/20" title="Código de lote físico">
+                                    Lote: {s.lote}
                                   </span>
                                 )}
                               </div>
@@ -2276,6 +2322,21 @@ export function PisoSectoresTab() {
 
                       {/* Fecha de vencimiento */}
                       <FechaVencimientoField value={row.fecha_vencimiento} disabled={row.sin_vencimiento} variant="ing" onChange={(val) => updateIngresoFecha(i, val)} onToggleSin={() => toggleIngresoSinVencimiento(i)} />
+
+                      {/* Lote físico — igual que en Racks: informativo, opcional */}
+                      <div className="space-y-1">
+                        <Label className="text-[10px] text-cyan-400 font-semibold">Lote</Label>
+                        <div className="flex items-center gap-2">
+                          <input type="text" value={row.lote} onChange={(e) => updateIngresoLote(i, e.target.value)} disabled={row.sin_lote}
+                            placeholder={row.sin_lote ? 'Sin lote' : 'Ej: AP-304501210021'} autoComplete="off"
+                            className={`flex-1 h-10 rounded-xl border text-xs px-3 font-mono bg-slate-900/80 text-white placeholder-slate-600 focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.sin_lote ? 'border-slate-700/40 opacity-50' : 'border-cyan-500/30 focus:ring-cyan-500/40'}`} />
+                          <label className="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
+                            <Checkbox checked={row.sin_lote} onCheckedChange={() => toggleIngresoSinLote(i)} aria-label="Sin lote" title="Registrar sin lote" />
+                            <span className="text-[10px] text-slate-400 font-medium">Sin lote</span>
+                          </label>
+                        </div>
+                        <p className="text-[9px] text-slate-500 italic">{row.sin_lote ? 'Se registrará SIN lote' : 'Vacío o casilla marcada = SIN lote'}</p>
+                      </div>
 
                       {ingRows.length > 1 && (
                         <div className="flex justify-end">
@@ -2393,6 +2454,11 @@ export function PisoSectoresTab() {
                             {row.fecha_vencimiento && (
                               <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/20 flex items-center gap-0.5">
                                 <Calendar className="h-2.5 w-2.5" /> {row.fecha_vencimiento}
+                              </span>
+                            )}
+                            {row.lote && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/20" title="Código de lote físico">
+                                Lote: {row.lote}
                               </span>
                             )}
                             {row.selected && (
@@ -2701,6 +2767,21 @@ export function PisoSectoresTab() {
                       {/* Fecha de vencimiento */}
                       <FechaVencimientoField value={row.fecha_vencimiento} disabled={row.sin_vencimiento} variant="dev" onChange={(val) => updateDevFecha(i, val)} onToggleSin={() => toggleDevSinVencimiento(i)} />
 
+                      {/* Lote físico — igual que en Racks: informativo, opcional */}
+                      <div className="space-y-1">
+                        <Label className="text-[10px] text-cyan-400 font-semibold">Lote</Label>
+                        <div className="flex items-center gap-2">
+                          <input type="text" value={row.lote} onChange={(e) => updateDevLote(i, e.target.value)} disabled={row.sin_lote}
+                            placeholder={row.sin_lote ? 'Sin lote' : 'Ej: AP-304501210021'} autoComplete="off"
+                            className={`flex-1 h-10 rounded-xl border text-xs px-3 font-mono bg-slate-900/80 text-white placeholder-slate-600 focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${row.sin_lote ? 'border-slate-700/40 opacity-50' : 'border-cyan-500/30 focus:ring-cyan-500/40'}`} />
+                          <label className="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
+                            <Checkbox checked={row.sin_lote} onCheckedChange={() => toggleDevSinLote(i)} aria-label="Sin lote" title="Registrar sin lote" />
+                            <span className="text-[10px] text-slate-400 font-medium">Sin lote</span>
+                          </label>
+                        </div>
+                        <p className="text-[9px] text-slate-500 italic">{row.sin_lote ? 'Se registrará SIN lote' : 'Vacío o casilla marcada = SIN lote'}</p>
+                      </div>
+
                       {devRows.length > 1 && (
                         <div className="flex justify-end">
                           <button onClick={() => removeDevRow(i)} className="p-1.5 rounded-lg hover:bg-red-900/30 text-slate-600 hover:text-red-400 transition-all duration-300"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -2988,6 +3069,7 @@ export function PisoSectoresTab() {
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="font-mono text-xs font-semibold text-sky-300">{r.bloque_codigo}</span>
                       <span className="text-[10px] text-slate-500">{r.bloque_unidad}</span>
+                      {r.lote && <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 border border-cyan-500/20" title="Código de lote físico">Lote: {r.lote}</span>}
                     </div>
                     <span className="font-bold text-xs text-sky-300">{r.cantidad}</span>
                   </div>
@@ -3022,6 +3104,7 @@ export function PisoSectoresTab() {
                             <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-500">
                               <span className="font-bold text-slate-300 text-sm">{s.cantidad} {s.bloque_unidad}</span>
                               {s.fecha_vencimiento && <span>Venc: {s.fecha_vencimiento}</span>}
+                              {s.lote && <span className="text-cyan-300" title="Código de lote físico">Lote: {s.lote}</span>}
                             </div>
                             {/* Salida parcial/total */}
                             <div className="mt-2 flex items-center gap-2">
@@ -3392,6 +3475,7 @@ export function PisoSectoresTab() {
                           <div className="mt-0.5">
                             Cantidad: <span className={`font-bold font-mono ${esPositivo ? 'text-emerald-400' : 'text-red-400'}`}>{esPositivo ? '+' : '-'}{Math.abs(item.cantidad).toFixed(2)} {item.bloque_unidad}</span>
                             {item.fecha_vencimiento && <span className="text-slate-500 ml-1.5">· Venc: {item.fecha_vencimiento}</span>}
+                            {item.lote && <span className="text-cyan-400 ml-1.5" title="Código de lote físico">· Lote: {item.lote}</span>}
                           </div>
                           {esRotacion && (
                             <span className="inline-flex items-center gap-1 mt-1 text-[8px] font-semibold text-violet-400 bg-violet-500/8 border border-violet-500/15 px-1.5 py-0.5 rounded-md">

@@ -19,7 +19,7 @@ import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from 
 import { supabase, dataClient } from '@/lib/supabase/client'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
-import { requiereProveedor, extractError, isInsufficientStockError } from '@/lib/utils'
+import { requiereProveedor, extractError, isInsufficientStockError, isExpired, isExpiringSoon } from '@/lib/utils'
 import { PROVEEDORES_FILM } from '@/lib/rackly/constants'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
 import {
@@ -229,6 +229,9 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const [trDestPos, setTrDestPos] = useState('')
   const [trCantidad, setTrCantidad] = useState('')
   const [trCorregirDiferencia, setTrCorregirDiferencia] = useState(false)
+  // Fecha del LOTE elegido a trasladar (FEFO pre-marcado, editable). El traslado saca
+  // del origen con esa fecha (descuenta EXACTAMENTE ese lote) y la mantiene en destino.
+  const [trLoteFV, setTrLoteFV] = useState('')
 
   // ── Destino ocupado alerta (transferir) ──
   const [trDestAlertOpen, setTrDestAlertOpen] = useState(false)
@@ -236,6 +239,8 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const [trSalidaBusy, setTrSalidaBusy] = useState<string | null>(null)
   const [trSalidaCant, setTrSalidaCant] = useState<Record<string, string>>({})
   const [trSalidaTotalFlags, setTrSalidaTotalFlags] = useState<Record<string, boolean>>({})
+  // Lote elegido por item para la salida en destino (FEFO pre-marcado, editable)
+  const [trSalidaLoteSel, setTrSalidaLoteSel] = useState<Record<string, string>>({})
 
   // ── INC state ──
   const [incCodigo, setIncCodigo] = useState('')
@@ -243,6 +248,9 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   const [incUn, setIncUn] = useState('')
   const [incCantidad, setIncCantidad] = useState('')
   const [incCodigoInc, setIncCodigoInc] = useState('')
+  // Fecha de vencimiento del INC (para revalidación de productos por Calidad)
+  const [incFVenc, setIncFVenc] = useState('')
+  const [incSinFecha, setIncSinFecha] = useState(false)
 
   // ── Helper: construir celdaMap con merge de INC ──
   function buildCellMap(
@@ -413,7 +421,13 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
 
   function openTransferir(idx: number) {
     if (!detail?.stock[idx]) return
-    setTrIdx(idx); setTrCantidad(String(detail.stock[idx].stock))
+    const item = detail.stock[idx]
+    const loteFV = loteInicialFV(item)
+    setTrIdx(idx)
+    setTrLoteFV(loteFV)
+    // Multi-lote: por defecto se traslada el LOTE elegido (FEFO). El usuario puede
+    // cambiar de lote o subir la cantidad (el excedente desborda FEFO a los demás lotes).
+    setTrCantidad(String(item.lotes?.length ? stockDeLote(item, loteFV) : item.stock))
     setTrDestBloque(''); setTrDestTorre(''); setTrDestPiso(''); setTrDestPos('')
     setTrCorregirDiferencia(false)
     setDetailMode('transferir')
@@ -503,6 +517,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   function openInc() {
     setIncCodigo(''); setIncDescripcion(''); setIncUn('')
     setIncCantidad(''); setIncCodigoInc('')
+    setIncFVenc(''); setIncSinFecha(false)
     setDetailMode('inc')
   }
 
@@ -515,7 +530,10 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
       await addMovimiento({
         tipo: 'ingreso', bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
         codigo: incCodigo.trim().toUpperCase(), descripcion: incDescripcion, un: incUn, cantidad: q,
-        fVencimiento: '', turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+        // F. Vencimiento elegida por el usuario (o sin fecha). NUNCA se arrastra una
+        // fecha histórica del mismo código: el lote nuevo nace con SU propia fecha.
+        fVencimiento: incSinFecha ? '' : incFVenc,
+        turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         codigoInc: incCodigoInc.trim(),
       })
       toast.success('INC registrado')
@@ -581,6 +599,8 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
     const cantNum = isTotal ? stockItem.stock : parseFloat(cantStr)
     if (isNaN(cantNum) || cantNum <= 0) { toast.error('Cantidad inválida'); return }
     if (cantNum > stockItem.stock) { toast.error(`Máximo: ${stockItem.stock} ${stockItem.un}`); return }
+    // Lote ELEGIDO (FEFO pre-marcado): la salida descuenta EXACTAMENTE ese lote
+    const fvElegido = trSalidaLoteSel[itemKey] ?? (stockItem.fVencimiento || '')
     setTrSalidaBusy(itemKey)
     try {
       await addMovimiento({
@@ -593,7 +613,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         descripcion: stockItem.descripcion,
         un: stockItem.un,
         cantidad: cantNum,
-        fVencimiento: stockItem.fVencimiento ?? '',
+        fVencimiento: fvElegido,
         turno: calcularTurno(),
         usuarioId: perfil.id,
         usuarioNombre: perfil.nombre,
@@ -631,7 +651,9 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         origen: { bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion },
         destino: { bloque: trDestBloque, torre: trDestTorre, piso: trDestPiso, posicion: trDestPos },
         turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
-        fVencimiento: trItem.fVencimiento ?? '',
+        // LOTE ELEGIDO por el usuario (FEFO pre-marcado): el traslado descuenta de ese lote
+        // en origen y el material llega al destino con la MISMA fecha (no fechas fantasma).
+        fVencimiento: trLoteFV || trItem.fVencimiento || '',
         cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
         codigoInc: trItem.codigoInc || undefined,
       }
@@ -671,6 +693,7 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         setTrDestStock(destStock)
         setTrSalidaCant({})
         setTrSalidaTotalFlags({})
+        setTrSalidaLoteSel({})
         setTrDestAlertOpen(true)
         setActionBusy(false)
         return
@@ -1062,6 +1085,20 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                                           {s.codigoInc && <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 border border-rose-400/20 px-1.5 py-px rounded">{s.codigoInc}</span>}
                                         </div>
                                         <p className={`text-xs mt-0.5 truncate ${s.descripcion ? 'text-slate-300' : 'text-slate-500 italic'}`}>{s.descripcion || 'Sin descripción'}</p>
+                                        {/* Fecha de vencimiento del lote INC (para revalidación de Calidad) */}
+                                        <div className="flex items-center gap-2 mt-1 text-[10px] flex-wrap">
+                                          {s.fVencimiento && !s.lotes && (
+                                            <span className={`px-1.5 py-px rounded border ${isExpired(s.fVencimiento) ? 'border-red-500/30 text-red-400 font-semibold' : isExpiringSoon(s.fVencimiento) ? 'border-amber-500/25 text-amber-400' : 'border-slate-600/20 text-slate-500'}`}>
+                                              Venc: {s.fVencimiento}
+                                            </span>
+                                          )}
+                                          {s.lotes && s.lotes.length > 1 && (
+                                            <span className="px-1.5 py-px rounded border border-amber-500/25 text-amber-400">
+                                              {s.lotes.length} lotes: {s.lotes.map(l => l.fVencimiento || 'S/F').join(', ')}
+                                            </span>
+                                          )}
+                                          {!s.fVencimiento && !s.lotes && <span className="italic text-slate-500">Sin fecha de vencimiento</span>}
+                                        </div>
                                       </div>
                                       <div className="text-right flex-shrink-0">
                                         <p className="font-bold text-rose-300 text-sm">{s.stock}</p>
@@ -1143,6 +1180,37 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                     <Label className="text-[10px] text-slate-400">Código INC *</Label>
                     <Input value={incCodigoInc} onChange={e => setIncCodigoInc(e.target.value)} placeholder="Ej: INC026-120" className="h-8 bg-slate-700/50 border-rose-600/40 text-rose-300 text-xs placeholder:text-rose-500/40 focus:border-rose-400/60" />
                   </div>
+                </div>
+
+                {/* Fecha de vencimiento del INC — para revalidación de productos por Calidad */}
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] text-slate-400">Fecha de vencimiento (revalidación de Calidad)</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="date"
+                      value={incSinFecha ? '' : incFVenc}
+                      onChange={e => { setIncFVenc(e.target.value); if (e.target.value) setIncSinFecha(false) }}
+                      disabled={incSinFecha}
+                      className="flex-1 h-8 bg-slate-700/50 border-slate-600/40 text-slate-200 text-xs focus:border-sky-500/50 disabled:opacity-40 [color-scheme:dark]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { setIncSinFecha(!incSinFecha); if (!incSinFecha) setIncFVenc('') }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all border flex-shrink-0 ${
+                        incSinFecha
+                          ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                          : 'bg-slate-700/30 border-slate-600/30 text-slate-400 hover:text-slate-300 hover:border-slate-500/40'
+                      }`}
+                    >
+                      <CalendarOff className="w-3.5 h-3.5" />
+                      Sin fecha
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-500 italic">
+                    {incSinFecha
+                      ? 'El INC se registra sin fecha de vencimiento.'
+                      : 'Usa la fecha que indique Calidad para el control de revalidación. No se toma ninguna fecha antigua.'}
+                  </p>
                 </div>
 
                 {/* Botones */}
@@ -1377,10 +1445,62 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                   <div className="flex justify-between text-xs"><span className="text-slate-400">Producto:</span><span className="text-slate-200 font-mono">{trItem.codigo}</span></div>
                   <div className="flex justify-between text-xs"><span className="text-slate-400">Descripción:</span><span className="text-slate-300">{trItem.descripcion || '—'}</span></div>
                   {trItem.proveedor && <div className="flex justify-between text-xs"><span className="text-slate-400">Proveedor:</span><span className="text-purple-400 font-medium">{trItem.proveedor}</span></div>}
-                  {trItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className={trItem.fVencimiento < new Date().toISOString().slice(0, 10) ? 'text-red-400 font-semibold' : 'text-slate-300'}>{trItem.fVencimiento}</span></div>}
-                  {!trItem.fVencimiento && <div className="flex justify-between text-xs"><span className="text-slate-400">F. Vencimiento:</span><span className="text-slate-500 italic">Sin fecha</span></div>}
-                  <div className="flex justify-between text-xs"><span className="text-slate-400">Stock origen:</span><span className="text-emerald-400 font-bold">{trItem.stock} {trItem.un}</span></div>
+                  {(() => {
+                    const fvLote = trItem.lotes?.length ? trLoteFV : (trItem.fVencimiento || '')
+                    const hoy = new Date().toISOString().slice(0, 10)
+                    const stockLote = trItem.lotes?.length ? stockDeLote(trItem, trLoteFV) : trItem.stock
+                    return (
+                      <>
+                        {fvLote
+                          ? <div className="flex justify-between text-xs"><span className="text-slate-400">F. Venc. (lote elegido):</span><span className={fvLote < hoy ? 'text-red-400 font-semibold' : 'text-slate-300'}>{fvLote}</span></div>
+                          : <div className="flex justify-between text-xs"><span className="text-slate-400">F. Venc. (lote elegido):</span><span className="text-slate-500 italic">Sin fecha</span></div>}
+                        <div className="flex justify-between text-xs"><span className="text-slate-400">Stock del lote:</span><span className="text-emerald-400 font-bold">{stockLote} {trItem.un}</span></div>
+                        {trItem.lotes && trItem.lotes.length > 1 && (
+                          <div className="flex justify-between text-xs"><span className="text-slate-400">Stock total código:</span><span className="text-slate-300">{trItem.stock} {trItem.un}</span></div>
+                        )}
+                      </>
+                    )
+                  })()}
                 </div>
+
+                {/* Selector de LOTE a trasladar: FEFO pre-marcado; el usuario puede elegir otro */}
+                {trItem.lotes && trItem.lotes.length > 1 && (
+                  <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-2">
+                    <p className="text-[10px] text-sky-300/90 mb-1.5 font-medium">Lote a trasladar (FEFO pre-seleccionado — puedes cambiarlo):</p>
+                    <div className="space-y-1">
+                      {trItem.lotes.map((l, li) => {
+                        const fv = l.fVencimiento || ''
+                        const activo = trLoteFV === fv
+                        const hoy = new Date().toISOString().slice(0, 10)
+                        return (
+                          <button key={`${fv || 'SF'}-${li}`} onClick={() => { setTrLoteFV(fv); setTrCantidad(String(l.cantidad)) }}
+                            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${activo ? 'bg-sky-500/15 border border-sky-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>
+                            <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0" style={{ borderColor: activo ? '#38bdf8' : '#475569', backgroundColor: activo ? '#0ea5e9' : 'transparent' }}>
+                              {activo && <div className="w-2 h-2 rounded-full bg-white" />}
+                            </div>
+                            <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                              <span className={`text-xs font-medium ${fv && fv < hoy ? 'text-red-400' : 'text-slate-200'}`}>{fv ? `Venc: ${fv}` : 'Sin fecha (S/F)'}</span>
+                              {li === 0 && fv && <span className="text-[8px] font-bold text-sky-300 bg-sky-400/10 border border-sky-400/20 px-1 py-px rounded">FEFO</span>}
+                            </div>
+                            <span className="font-bold text-xs text-emerald-400 flex-shrink-0">{l.cantidad} <span className="text-slate-500 font-normal">{trItem.un}</span></span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {(() => {
+                      const stockLote = stockDeLote(trItem, trLoteFV)
+                      const trQty = parseFloat(trCantidad) || 0
+                      if (trQty > stockLote + 1e-9) {
+                        return (
+                          <p className="text-[10px] text-amber-400/90 mt-1.5">
+                            La cantidad excede el lote elegido: el excedente se descontará FEFO de los demás lotes (sin negativos).
+                          </p>
+                        )
+                      }
+                      return null
+                    })()}
+                  </div>
+                )}
 
                 {/* Origen */}
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Origen</p>
@@ -1711,6 +1831,30 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                               )}
                               {s.proveedor && <span>Prov: {s.proveedor}</span>}
                             </div>
+                            {/* Selector de LOTE a descontar en destino (FEFO pre-marcado, editable) */}
+                            {s.lotes && s.lotes.length > 1 && (() => {
+                              const selFv = trSalidaLoteSel[itemKey] ?? (s.fVencimiento || '')
+                              const loteSel = s.lotes.find(l => (l.fVencimiento || '') === selFv)
+                              return (
+                                <div className="mt-1.5 flex items-center gap-2">
+                                  <span className="text-[10px] text-slate-500 shrink-0">Lote a salir:</span>
+                                  <select
+                                    value={selFv}
+                                    onChange={(e) => setTrSalidaLoteSel(prev => ({ ...prev, [itemKey]: e.target.value }))}
+                                    className="h-7 text-[11px] rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 px-1.5"
+                                  >
+                                    {s.lotes.map((l, li) => (
+                                      <option key={li} value={l.fVencimiento || ''}>
+                                        {l.fVencimiento ? `Venc: ${l.fVencimiento} (${l.cantidad})` : `Sin fecha (${l.cantidad})`}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {loteSel && (
+                                    <span className="text-[10px] text-slate-400">Stock del lote: <b className="text-slate-600 dark:text-slate-300">{loteSel.cantidad}</b></span>
+                                  )}
+                                </div>
+                              )
+                            })()}
                             {/* Salida parcial/total */}
                             <div className="mt-2 flex items-center gap-2">
                               <button

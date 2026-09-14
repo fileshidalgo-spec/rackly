@@ -289,7 +289,11 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   // Estrategia: RPC v2 (rápido) → verificar que tenga TODOS los bloques
   // Si el RPC falta bloques → client-side (confiable, sin límite de bloques)
   // Fallback final: RPC v1 legacy
-  const refreshData = useCallback(async () => {
+  // Guard de concurrencia: mount + polling 10s + realtime disparan refreshData;
+  // si una pasada tarda >10s (fallback client-side descarga ~15K movimientos),
+  // varias corrían en paralelo y la más vieja podía pisar al estado final.
+  const refreshInFlightRef = useRef(false)
+  const doRefreshData = useCallback(async () => {
     const incPromise = fetchIncPorUbicacion()
     let incMap: Awaited<typeof incPromise>
 
@@ -344,12 +348,27 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
     }
   }, [])
 
+  // Wrapper con guard: si una pasada sigue en vuelo, se omite (el polling
+  // de 10s reintenta de todos modos).
+  const refreshData = useCallback(async () => {
+    if (refreshInFlightRef.current) return
+    refreshInFlightRef.current = true
+    try {
+      await doRefreshData()
+    } finally {
+      refreshInFlightRef.current = false
+    }
+  }, [doRefreshData])
+
   const refreshDetail = useCallback(async () => {
     if (!detail) return
     try {
       const stock = await stockEnUbicacion(detail.bloque, detail.torre, detail.piso, detail.posicion)
       if (mountedRef.current) setDetail({ ...detail, stock })
-    } catch { /* ok */ }
+    } catch {
+      // Antes silencioso: el diálogo mostraba stock viejo sin aviso
+      if (mountedRef.current) toast.error('No se pudo actualizar el stock de la ubicación')
+    }
   }, [detail])
 
   useEffect(() => { mountedRef.current = true; setLoading(true); refreshData().finally(() => { if (mountedRef.current) setLoading(false) }); return () => { mountedRef.current = false } }, [refreshData])
@@ -583,10 +602,12 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         toast.error(`Stock insuficiente en el lote ${loteElegido.fVencimiento || 'S/F'}. Disponible: ${loteElegido.cantidad} ${item.un}`)
         return
       }
-      const totalStockForCodigo = detail.stock
+      const totalStockForCodigo = Math.round(detail.stock
         .filter(s => s.codigo === item.codigo)
-        .reduce((sum, s) => sum + s.stock, 0)
-      if (qty > totalStockForCodigo) { toast.error(`Stock insuficiente. Stock total disponible: ${totalStockForCodigo} ${item.un}`); return }
+        .reduce((sum, s) => sum + s.stock, 0) * 1000) / 1000
+      // Misma tolerancia epsilon que la validación por lote: evita rechazar una
+      // salida válida por un residuo binario en la suma total.
+      if (qty > totalStockForCodigo + 1e-9) { toast.error(`Stock insuficiente. Stock total disponible: ${totalStockForCodigo} ${item.un}`); return }
     }
     setActionBusy(true)
     try {
@@ -1082,9 +1103,9 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
                                 </div>
                                 {/* Botones de acción */}
                                 <div className="flex items-center gap-1 pt-1">
-                                  <button onClick={() => openSalida(i, true)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Salida total</button>
-                                  <button onClick={() => openSalida(i, false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
-                                  <button onClick={() => openTransferir(i)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
+                                  <button onClick={() => openSalida(detail.stock.indexOf(s), true)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Salida total</button>
+                                  <button onClick={() => openSalida(detail.stock.indexOf(s), false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
+                                  <button onClick={() => openTransferir(detail.stock.indexOf(s))} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
                                   <button onClick={() => openHistorial()} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-colors text-[10px] font-medium border border-violet-500/15"><Clock className="w-3 h-3" /> Historial</button>
                                 </div>
                               </div>

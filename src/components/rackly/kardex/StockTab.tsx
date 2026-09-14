@@ -194,8 +194,10 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       let codeMap = cellMap.get(posKey)
       if (!codeMap) { codeMap = new Map(); cellMap.set(posKey, codeMap) }
       const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
+      // Redondeo a 3 decimales (precisión BD) para evitar residuos binarios que
+      // se muestran como stock fantasma (ej. 12.000000000000002) o filas con ~0.
       const current = codeMap.get(mCode) ?? 0
-      codeMap.set(mCode, current + delta)
+      codeMap.set(mCode, Math.round((current + delta) * 1000) / 1000)
 
       if (!descMap.has(posKey)) {
         descMap.set(posKey, { descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined })
@@ -221,7 +223,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         if (mCode !== code) continue
         const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
         const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
-        incCellMap.set(posKey, (incCellMap.get(posKey) ?? 0) + delta)
+        incCellMap.set(posKey, Math.round(((incCellMap.get(posKey) ?? 0) + delta) * 1000) / 1000)
         if (!descMap.has(posKey)) {
           descMap.set(posKey, { descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined })
         }
@@ -743,7 +745,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
           {/* Total sum */}
           <div className="flex justify-end">
             <Badge variant="outline" className="text-sm px-3 py-1">
-              Total stock: <span className="font-bold ml-1">{displayStock.reduce((sum, s) => sum + s.stock, 0)}</span>
+              Total stock: <span className="font-bold ml-1">{Math.round(displayStock.reduce((sum, s) => sum + s.stock, 0) * 1000) / 1000}</span>
             </Badge>
           </div>
         </div>

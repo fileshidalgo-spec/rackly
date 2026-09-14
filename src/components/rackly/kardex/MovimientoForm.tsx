@@ -150,6 +150,13 @@ function IngresoForm({
     try {
       // Verificar si CUALQUIER producto existe en esta posición
       const details = await stockEnUbicacion(bloque, torre, piso, posicion)
+      // Fila-marker de error: la consulta falló — NO abrir diálogo fantasma ni
+      // insertar a ciegas (antes mostraba 'Ubicación Ocupada' con producto vacío).
+      if (details.length > 0 && '_error' in details[0] && details[0]._error) {
+        toast.error('No se pudo verificar el stock de la ubicación. Intente de nuevo.')
+        setBusy(false)
+        return
+      }
       if (details.length > 0) {
         setConfirmData(details)
         setBusy(false)
@@ -232,7 +239,12 @@ function IngresoForm({
       onCreated(movs)
       // Refrescar datos del alerta
       const updated = await stockEnUbicacion(bloque, torre, piso, posicion)
-      if (updated.length > 0) {
+      const consultaFallo = updated.length > 0 && '_error' in updated[0] && updated[0]._error
+      if (consultaFallo) {
+        // No se sabe si la posición quedó vacía: NO insertar automáticamente
+        setConfirmData(null)
+        toast.warning('No se pudo verificar el stock restante. Revise la ubicación antes de repetir el ingreso.', { duration: 8000 })
+      } else if (updated.length > 0) {
         setConfirmData(updated)
       } else {
         setConfirmData(null)
@@ -598,10 +610,13 @@ function SalidaForm({
     })
   }
   function toggleSelectAll() {
+    // CLAVES CON makeLocKey (igual que las filas): posición + lote/vencimiento.
+    // Antes se generaban sin el sufijo '::venc' y doMassSalida no encontraba ninguna
+    // ubicación ('Ubicación X no encontrada' para todas las filas).
     if (selected.size === locations.length) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(locations.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`)))
+      setSelected(new Set(locations.map((l) => makeLocKey(l))))
     }
   }
 
@@ -698,7 +713,7 @@ function SalidaForm({
       setSelected(new Set())
       setQtyMap({})
       if (totalProcessed > 0) {
-        await refreshLocations()
+        await refreshLocations({ silent: true }) // ya se registró la salida: refresco sin toasts engañosos
       }
       onCreated([]) // trigger re-render
     } catch (err: unknown) {
@@ -712,7 +727,12 @@ function SalidaForm({
   const allSelected = locations.length > 0 && selected.size === locations.length
 
   // Función central para refrescar las ubicaciones
-  const refreshLocations = useCallback(async () => {
+  // silent=true (polling / post-acción): ante fallo se conservan los datos y no
+  // se toastea; silent=false (búsqueda manual): el error se propaga al catch
+  // externo que muestra 'Error al buscar stock'. Antes un fallo de red en la
+  // búsqueda mostraba 'sin stock' silenciosamente.
+  const refreshLocations = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false
     const code = searchCodeRef.current.trim()
     if (!code) {
       setLocations([])
@@ -727,9 +747,12 @@ function SalidaForm({
         // Intentar obtener del servidor - consulta optimizada por código
         const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
         movs = await fetchMovimientosByCodigo(code)
-      } catch {
-        // Sin cache offline, usar lista vacia
-        movs = []
+      } catch (fetchErr) {
+        if (silent) {
+          console.warn('[SalidaForm] refresh silencioso falló, se conservan datos actuales:', fetchErr)
+          return
+        }
+        throw fetchErr
       }
       const upperCode = code.toUpperCase()
       const locMap = new Map<string, {
@@ -824,6 +847,7 @@ function SalidaForm({
       setProductoDesc(desc)
       setProductoUn(un)
     } catch (err) {
+      if (silent) return
       console.error('[MovimientoForm] refreshLocations error:', err)
       toast.error('Error al buscar stock', { description: extractError(err) })
     }
@@ -850,7 +874,7 @@ function SalidaForm({
   useEffect(() => {
     if (!searchCode.trim()) return
     const interval = setInterval(() => {
-      refreshLocations()
+      refreshLocations({ silent: true })
     }, 8000)
     return () => clearInterval(interval)
   }, [searchCode, refreshLocations])
@@ -920,7 +944,7 @@ function SalidaForm({
           duration: 8000,
         })
         setConfirmState(null)
-        refreshLocations() // refrescar datos reales
+        refreshLocations({ silent: true }) // refrescar datos reales (silencioso: ya hay toast de stock)
       } else {
         const message = extractError(err)
         toast.error('Error al registrar salida', { description: message })
@@ -1362,8 +1386,8 @@ function SalidaForm({
 
             {/* Lista de ubicaciones */}
             <div className="px-4 sm:px-6 pb-4 space-y-2">
-              {locations.filter((l) => selected.has(`${l.bloque}-${l.torre}-${l.piso}-${l.posicion}`)).map((loc) => {
-                const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+              {locations.filter((l) => selected.has(makeLocKey(l))).map((loc) => {
+                const key = makeLocKey(loc)
                 const qtyVal = qtyMap[key] || ''
                 const qtyNum = qtyVal ? parseFloat(qtyVal) : loc.stock
                 return (
@@ -1485,7 +1509,10 @@ function SalidaIncForm({
   }
 
   // ─── Refresh: solo movimientos INC ───
-  const refreshLocations = useCallback(async () => {
+  // silent=true (polling / post-acción): conserva datos y no toastea; false (búsqueda
+  // manual): propaga al catch externo que muestra 'Error al buscar stock INC'.
+  const refreshLocations = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false
     const code = searchCodeRef.current.trim()
     if (!code) {
       setLocations([])
@@ -1499,9 +1526,12 @@ function SalidaIncForm({
       try {
         const { fetchMovimientosByCodigo } = await import('@/lib/rackly/kardex')
         movs = await fetchMovimientosByCodigo(code)
-      } catch {
-        // Sin cache offline, usar lista vacia
-        movs = []
+      } catch (fetchErr) {
+        if (silent) {
+          console.warn('[SalidaIncForm] refresh silencioso falló, se conservan datos actuales:', fetchErr)
+          return
+        }
+        throw fetchErr
       }
       const upperCode = code.toUpperCase()
       // Pools por (ubicación + codigoInc): ingresos por lote + salidas dirigidas
@@ -1596,6 +1626,7 @@ function SalidaIncForm({
       setProductoDesc(desc)
       setProductoUn(un)
     } catch (err) {
+      if (silent) return
       console.error('[SalidaIncForm] refreshLocations error:', err)
       toast.error('Error al buscar stock INC', { description: extractError(err) })
     }
@@ -1621,7 +1652,7 @@ function SalidaIncForm({
   useEffect(() => {
     if (!searchCode.trim()) return
     const interval = setInterval(() => {
-      refreshLocations()
+      refreshLocations({ silent: true })
     }, 8000)
     return () => clearInterval(interval)
   }, [searchCode, refreshLocations])
@@ -1741,7 +1772,7 @@ function SalidaIncForm({
       setMassConfirmOpen(false)
       setSelected(new Set())
       setQtyMap({})
-      await refreshLocations()
+      await refreshLocations({ silent: true }) // ya se registró la salida INC
       onCreated([])
     } catch (err: unknown) {
       toast.error('Error en salida masiva INC', { description: extractError(err) })

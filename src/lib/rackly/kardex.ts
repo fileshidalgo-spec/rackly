@@ -106,13 +106,28 @@ export async function fetchMovimientos(): Promise<Movimiento[]> {
 
 export async function fetchMovimientosByCodigo(codigo: string): Promise<Movimiento[]> {
   const upperCode = codigo.trim().toUpperCase()
-  const { data, error } = await dataClient
-    .from('movimientos')
-    .select('*')
-    .eq('codigo', upperCode)
-    .order('f_modificacion', { ascending: false })
-  if (error) throw error
-  return (data ?? []).map(fromRow)
+  // Paginado explícito: sin .range(), PostgREST trunca silenciosamente en ~1000
+  // filas y el stock calculado en Salidas (normal e INC) quedaba incompleto para
+  // códigos con historial largo.
+  const all: Record<string, unknown>[] = []
+  let from = 0
+  const BATCH = 1000
+  const MAX_PAGES = 50 // tope defensivo: 50.000 movimientos de un solo código
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const { data, error } = await dataClient
+      .from('movimientos')
+      .select('*')
+      .eq('codigo', upperCode)
+      .order('f_modificacion', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, from + BATCH - 1)
+    if (error) throw error
+    const rows = data ?? []
+    all.push(...rows)
+    if (rows.length < BATCH) break
+    from += BATCH
+  }
+  return all.map(fromRow)
 }
 
 // ═══ Stock cruzado: Racks por código (usado desde PisoStockTab) ═══
@@ -731,9 +746,13 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
       if (!locMap) { locMap = new Map(); map.set(key, locMap) }
       const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
       const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(String(r.tipo)) ? qty : -qty
+      // Redondeo a 3 decimales (precisión de la BD) ANTES de acumular/filtrar:
+      // sin esto, un residuo binario (ej. 1.4e-14) pasaba el filtro > 0 y mostraba
+      // INC fantasma con stock 0 (misma clase de bug que calcularLotesRemanentes).
+      const deltaR = Math.round(delta * 1000) / 1000
       const item = locMap.get(incKey)
-      if (item) { item.stock += delta } else {
-        locMap.set(incKey, { codigo: code, descripcion: String(r.descripcion ?? ''), codigoInc: codeInc, stock: delta })
+      if (item) { item.stock = Math.round((item.stock + deltaR) * 1000) / 1000 } else {
+        locMap.set(incKey, { codigo: code, descripcion: String(r.descripcion ?? ''), codigoInc: codeInc, stock: deltaR })
       }
     }
     const result = new Map<string, IncEnCelda[]>()

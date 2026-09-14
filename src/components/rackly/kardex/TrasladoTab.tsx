@@ -69,6 +69,13 @@ type LocStock = {
   stockTotalPos?: number
 }
 
+/** Clave de origen que DISTINGUE LOTES: dos lotes de la misma posición son filas
+ *  distintas. Antes la clave era solo la posición y `find()` resolvía siempre al
+ *  primer lote (FEFO): al clickear el lote N se trasladaba el lote 1 con su fecha. */
+function makeOriginKey(l: { bloque: string; torre: string; piso: string; posicion: string; fVencimiento?: string }): string {
+  return `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}::${l.fVencimiento || 'SF'}`
+}
+
 export function TrasladoTab() {
   const { perfil } = useAuth()
 
@@ -98,7 +105,9 @@ export function TrasladoTab() {
 
   useMovimientosRealtime(setMovs)
 
-  if (!perfil) return <div className="p-4 text-muted-foreground animate-pulse">Cargando...</div>
+  // NOTA: el early-return de carga se hace DESPUÉS de todos los hooks (más abajo),
+  // para no violar las Rules of Hooks (antes los hooks condicionales provocaban
+  // error latente de 'Rendered more hooks than during the previous render').
 
   function handleCatalogoPick(item: CatalogoItem) {
     setCodigo(item.codigo)
@@ -193,12 +202,15 @@ export function TrasladoTab() {
 
   // Limpiar selectedOrigin si la ubicación ya no existe en locations
   useEffect(() => {
-    if (selectedOrigin && !locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedOrigin)) {
+    if (selectedOrigin && !locations.find((l) => makeOriginKey(l) === selectedOrigin)) {
       setSelectedOrigin(null)
     }
   }, [locations, selectedOrigin])
 
-  const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedOrigin)
+  // Early-return de carga: DESPUÉS de todos los hooks (Rules of Hooks)
+  if (!perfil) return <div className="p-4 text-muted-foreground animate-pulse">Cargando...</div>
+
+  const origin = locations.find((l) => makeOriginKey(l) === selectedOrigin)
 
   const qtyNum = parseFloat(qty) || 0
   // Total de la POSICIÓN (todos los lotes): base para los ajustes automáticos.
@@ -214,10 +226,11 @@ export function TrasladoTab() {
 
   async function handleConfirm() {
     if (!origin) return
-    // selectedOrigin ahora es solo "bloque-torre-piso-pos" (sin fVencimiento ni codigoInc)
-    const originKey = selectedOrigin || ''
+    // Comparar POSICIÓN base (sin sufijo de lote) contra el destino: origen y
+    // destino no pueden ser la misma posición aunque el lote se distinga.
+    const originBase = `${origin.bloque}-${origin.torre}-${origin.piso}-${origin.posicion}`
     const destKey = `${destBloque}-${destTorre}-${destPiso || '1'}-${destPos}`
-    if (originKey === destKey) {
+    if (originBase === destKey) {
       toast.error('El destino no puede ser igual al origen')
       return
     }
@@ -228,9 +241,19 @@ export function TrasladoTab() {
     // Verificar si destino está ocupado
     try {
       const destStock = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
+      // Fila-marker de error: la consulta falló — no hay datos confiables del destino
+      if (destStock.length > 0 && '_error' in destStock[0] && destStock[0]._error) {
+        toast.warning('No se pudo verificar si el destino está ocupado. Revise manualmente antes de confirmar.', { duration: 6000 })
+        setDestinoOcupado([])
+        setSalidaParcialLote({})
+        setConfirm(true)
+        return
+      }
       setDestinoOcupado(destStock)
       setSalidaParcialLote({})
     } catch {
+      // Si falla la verificación, avisar pero permitir continuar
+      toast.warning('No se pudo verificar si el destino está ocupado. Revise manualmente antes de confirmar.', { duration: 6000 })
       setDestinoOcupado([])
     }
     setConfirm(true)
@@ -419,7 +442,7 @@ export function TrasladoTab() {
           {/* ── Mobile: Cards con TODA la info visible ── */}
           <div className="sm:hidden space-y-3">
             {locations.map((loc) => {
-              const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+              const key = makeOriginKey(loc)
               const isSelected = selectedOrigin === key
               return (
                 <div
@@ -545,7 +568,7 @@ export function TrasladoTab() {
               </TableHeader>
               <TableBody>
                 {locations.map((loc) => {
-                  const key = `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}`
+                  const key = makeOriginKey(loc)
                   const isSelected = selectedOrigin === key
                   return (
                     <TableRow

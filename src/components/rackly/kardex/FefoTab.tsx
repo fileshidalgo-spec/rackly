@@ -211,8 +211,10 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
       const q = search.trim().toUpperCase()
       data = data.filter((i) => i.codigo.toUpperCase().includes(q) || i.descripcion.toUpperCase().includes(q))
     }
-    if (fechaDesde) data = data.filter((i) => i.fVencimiento >= fechaDesde)
-    if (fechaHasta) data = data.filter((i) => i.fVencimiento <= fechaHasta)
+    // Los lotes SIN fecha no se comparan bien contra rangos ('' >= fecha es false):
+    // se incluyen/excluyen según su chip propio, no por comparación de string.
+    if (fechaDesde) data = data.filter((i) => i.status === 'sin_fecha' || i.fVencimiento >= fechaDesde)
+    if (fechaHasta) data = data.filter((i) => i.status === 'sin_fecha' || i.fVencimiento <= fechaHasta)
     return data.filter((i) => filtros[i.status] !== false)
   }, [fefoData, search, fechaDesde, fechaHasta, filtros])
 

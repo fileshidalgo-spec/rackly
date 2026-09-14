@@ -32,24 +32,38 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
   async function handleSearch() {
     const term = query.trim()
     if (!term) return
+    if (loading) return // evita búsquedas concurrentes (Enter repetido)
     setLoading(true)
     setError(false)
     setSearched(true)
     try {
       const upper = term.toUpperCase()
-      const { data, error: dbError } = await dataClient
-        .from('movimientos')
-        .select('bloque, torre, piso, posicion, codigo, descripcion, un, codigo_inc, tipo, cantidad')
-        .not('codigo_inc', 'is', null)
-        .neq('codigo_inc', '')
-        .or(`codigo.ilike.%${upper}%,codigo_inc.ilike.%${upper}%,descripcion.ilike.%${upper}%`)
-        .limit(5000)
-
-      if (dbError) {
-        console.error('[StockIncTab] Error:', dbError.message)
-        setError(true)
-        return
+      // Paginado explícito (antes .limit(5000): si una búsqueda amplia matcheaba más
+      // de 5000 movimientos, el stock neto INC se calculaba con datos incompletos).
+      const allRows: Record<string, unknown>[] = []
+      let from = 0
+      const BATCH = 1000
+      const MAX_PAGES = 50
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const { data, error: dbError } = await dataClient
+          .from('movimientos')
+          .select('bloque, torre, piso, posicion, codigo, descripcion, un, codigo_inc, tipo, cantidad')
+          .not('codigo_inc', 'is', null)
+          .neq('codigo_inc', '')
+          .or(`codigo.ilike.%${upper}%,codigo_inc.ilike.%${upper}%,descripcion.ilike.%${upper}%`)
+          .order('id', { ascending: true })
+          .range(from, from + BATCH - 1)
+        if (dbError) {
+          console.error('[StockIncTab] Error:', dbError.message)
+          setError(true)
+          return
+        }
+        const rows = data ?? []
+        allRows.push(...rows)
+        if (rows.length < BATCH) break
+        from += BATCH
       }
+      const data = allRows
 
       if (!data || data.length === 0) {
         setResults([])

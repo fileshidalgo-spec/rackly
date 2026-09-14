@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase/client'
 import { fetchMovimientos, type Movimiento } from '@/lib/rackly/kardex'
+import { POLLING_INTERVAL } from '@/lib/rackly/constants'
 
 /**
  * Hook que mantiene la lista de movimientos sincronizada.
@@ -51,8 +52,8 @@ function startSharedPolling() {
   // Fetch inmediato al iniciar
   refreshAndBroadcast()
 
-  // Polling cada 8 segundos
-  pollInterval = setInterval(refreshAndBroadcast, 8000)
+  // Polling (interval centralizado en constants, igual que usePisoRealtime)
+  pollInterval = setInterval(refreshAndBroadcast, POLLING_INTERVAL)
 }
 
 function stopSharedPolling() {

@@ -82,10 +82,18 @@ export function CatalogoTab() {
       return
     }
     try {
-      const data = await mergeCatalogo(items)
-      setCatalogo(data)
+      // Merge por lotes con dedupe: reporta el conteo REAL cargado y las filas con problema
+      const res = await mergeCatalogo(items)
+      setCatalogo(res.catalogo)
       setText('')
-      toast.success(`${items.length} ítem(s) importados`)
+      if (res.errores.length > 0) {
+        toast.warning(`Cargados ${res.cargados} ítem(s) con ${res.errores.length} con problema`, {
+          description: res.errores.slice(0, 5).join('\n'),
+          duration: 10000,
+        })
+      } else {
+        toast.success(`${res.cargados} ítem(s) importados`)
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
       toast.error('Error al importar', { description: message })
@@ -111,9 +119,16 @@ export function CatalogoTab() {
         toast.error('No se encontraron columnas válidas (CÓDIGO, DESCRIPCIÓN, UN, STOCK BIG MAGIC)')
         return
       }
-      const data = await mergeCatalogo(items)
-      setCatalogo(data)
-      toast.success(`${items.length} ítem(s) importados desde Excel`)
+      const res = await mergeCatalogo(items)
+      setCatalogo(res.catalogo)
+      if (res.errores.length > 0) {
+        toast.warning(`Cargados ${res.cargados} ítem(s) con ${res.errores.length} con problema`, {
+          description: res.errores.slice(0, 5).join('\n'),
+          duration: 10000,
+        })
+      } else {
+        toast.success(`${res.cargados} ítem(s) importados desde Excel`)
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
       toast.error('Error al procesar Excel', { description: message })
@@ -194,13 +209,18 @@ export function CatalogoTab() {
         if (error) throw error
         toast.success('Ítem agregado')
       }
-      // Sincronizar con piso_bloques
-      await syncToPisoBloques([{
+      // Sincronizar con piso_bloques (avisar si la sincronización falla)
+      const sync = await syncToPisoBloques([{
         codigo: formCodigo.trim().toUpperCase(),
         un: formUn.trim(),
         descripcion: formDesc.trim(),
         stock_big_magic: formSBM ? parseFloat(formSBM) || 0 : 0,
       }])
+      if (sync.errores.length > 0) {
+        toast.warning('Ítem guardado en el catálogo, pero no se pudo sincronizar con Piso', {
+          description: sync.errores.slice(0, 3).join('\n'),
+        })
+      }
       const data = await fetchCatalogo()
       setCatalogo(data)
       setShowAdd(false)

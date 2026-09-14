@@ -81,8 +81,11 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
         }
       }
 
-      // Filtrar stock > 0 y agrupar por (codigo, codigoInc) para mostrar ubicaciones
-      const filtered = [...stockMap.values()].filter(r => r.cantidad > 0)
+      // Filtrar stock > 0 (redondeado a 3 decimales: evita residuos float de las
+      // sumas binarias) y agrupar por (codigo, codigoInc) para mostrar ubicaciones
+      const filtered = [...stockMap.values()]
+        .map(r => ({ ...r, cantidad: Math.round(r.cantidad * 1000) / 1000 }))
+        .filter(r => r.cantidad > 0)
       filtered.sort((a, b) => a.codigoInc.localeCompare(b.codigoInc) || a.codigo.localeCompare(b.codigo))
       setResults(filtered)
     } catch {

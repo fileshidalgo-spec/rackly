@@ -790,8 +790,8 @@ export async function calcularStockNivel(
   }
 
   return Array.from(stockMap.entries())
-    .filter(([, qty]) => qty > 0)
-    .map(([bloque_codigo, cantidad]) => ({ bloque_codigo, cantidad }))
+    .map(([bloque_codigo, cantidad]) => ({ bloque_codigo, cantidad: Math.round(cantidad * 1000) / 1000 }))
+    .filter((r) => r.cantidad > 0)
 }
 
 // ═══ Piso Sectores Grid — Carga completa de posiciones con stock ═══
@@ -965,11 +965,12 @@ export async function cargarPosicionesSector(
       }
     }
 
-    // Filtrar solo stock positivo
+    // Filtrar solo stock positivo (redondeado a 3 decimales: evita residuos float)
     for (const [nivelId, bloques] of stockMap) {
       for (const b of bloques) {
-        if (b.cantidad > 0) {
-          stockPorNivel.push({ nivel_id: nivelId, bloque_id: b.bloque_id, cantidad: b.cantidad, tipo: '' })
+        const q = Math.round(b.cantidad * 1000) / 1000
+        if (q > 0) {
+          stockPorNivel.push({ nivel_id: nivelId, bloque_id: b.bloque_id, cantidad: q, tipo: '' })
         }
       }
     }
@@ -1141,9 +1142,14 @@ function lotesRestantesPorBloque(
         }
       }
     }
+    // ═══ FIX residuos de punto flotante ═══
+    // Redondear a 3 decimales (precisión de la BD) ANTES del filtro qty > 0.
+    // Sin esto, sumas como 30.780+30.780+82.080 menos salidas FEFO dejan residuos
+    // de ~1e-14 que pasan el filtro y se muestran como un articulo con 0 stock
+    // ("lotes fantasma", ej: 48035 venc 2026-12-26 en 1A1-3-1).
     const restantes = Array.from(rem.entries())
-      .filter(([, q]) => q > 0)
-      .map(([fecha, qty]) => ({ fecha, qty }))
+      .map(([fecha, q]) => ({ fecha, qty: Math.round(q * 1000) / 1000 }))
+      .filter(({ qty }) => qty > 0)
       .sort((a, b) => {
         if (a.fecha && b.fecha) return a.fecha.localeCompare(b.fecha)
         if (a.fecha && !b.fecha) return -1

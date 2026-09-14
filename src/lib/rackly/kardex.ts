@@ -467,9 +467,13 @@ export function calcularLotesRemanentes(
       }
     }
   }
+  // ═══ FIX residuos de punto flotante ═══
+  // Redondear a 3 decimales (precisión de la BD) ANTES del filtro cantidad > 0.
+  // Sin esto, sumas binarias como 30.780+30.780+82.080 menos salidas FEFO dejan
+  // residuos de ~1e-14 que pasan el filtro y aparecen como lotes con 0 stock.
   const out = Array.from(rem.entries())
-    .filter(([, q]) => q > 0)
-    .map(([venc, cantidad]) => ({ venc, cantidad }))
+    .map(([venc, cantidad]) => ({ venc, cantidad: Math.round(cantidad * 1000) / 1000 }))
+    .filter(({ cantidad }) => cantidad > 0)
   out.sort((a, b) => {
     if (a.venc && b.venc) return a.venc.localeCompare(b.venc)
     if (a.venc && !b.venc) return -1

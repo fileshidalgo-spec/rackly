@@ -3,6 +3,10 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { listarMovimientos, eliminarMovimiento, type Sector } from '@/lib/piso/api'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
+import { useAuth } from '@/hooks/useAuth'
+import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { extractError } from '@/lib/utils'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
@@ -101,14 +105,21 @@ export function MovimientosTab() {
     try {
       const data = await listarMovimientos()
       if (mountedRef.current) setMovimientos(data)
-    } catch {
-      if (mountedRef.current) setMovimientos([])
+    } catch (err) {
+      // Antes un error transitorio (red/token) BORRABA la lista visible y mostraba
+      // "No hay movimientos" — ahora se conservan los datos previos.
+      console.error('[MovimientosTab] Error al refrescar movimientos:', err)
     } finally {
       if (mountedRef.current) setLoading(false)
     }
   }, [])
 
   const mountedRef = useRef(true)
+  // Gate de rol: solo admin/supervisores eliminan movimientos (igual que la vista
+  // de Racks en page.tsx). Antes cualquier operario veía y podía usar el botón.
+  const { perfil } = useAuth()
+  const SUPERVISORES_SET = useMemo(() => new Set<string>(ROLES_SUPERVISORES), [])
+  const puedeEliminar = perfil?.rol === 'admin' || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
 
   // Load all movements on mount
   useEffect(() => {
@@ -179,13 +190,19 @@ export function MovimientosTab() {
 
   async function doEliminar() {
     if (!deleteTarget) return
+    if (!puedeEliminar) {
+      toast.error('No tienes permiso para eliminar movimientos.')
+      return
+    }
     setDeleteBusy(true)
     try {
       await eliminarMovimiento(deleteTarget.id)
       setMovimientos((prev) => prev.filter((m) => m.id !== deleteTarget.id))
       setDeleteTarget(null)
+      toast.success('Movimiento eliminado')
     } catch (err) {
-      console.error('Error eliminando movimiento:', err)
+      // Antes el error solo iba a console: el modal se cerraba sin borrar ni avisar
+      toast.error('No se pudo eliminar el movimiento', { description: extractError(err) })
     } finally {
       setDeleteBusy(false)
     }
@@ -627,14 +644,16 @@ export function MovimientosTab() {
                       </div>
                     </TableCell>
                     <TableCell className="text-center">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-red-400/60 hover:text-red-400 hover:bg-red-950/40 hover:border-red-500/30 border border-transparent rounded-lg transition-all duration-200"
-                        onClick={() => setDeleteTarget({ id: m.id, op: m.numero_operacion, tipo: m.tipo })}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      {puedeEliminar && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-red-400/60 hover:text-red-400 hover:bg-red-950/40 hover:border-red-500/30 border border-transparent rounded-lg transition-all duration-200"
+                          onClick={() => setDeleteTarget({ id: m.id, op: m.numero_operacion, tipo: m.tipo })}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

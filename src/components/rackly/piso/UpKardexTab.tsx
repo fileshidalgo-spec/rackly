@@ -22,6 +22,9 @@ export function UpKardexTab() {
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Token anti-carrera: si el usuario elige otro archivo mientras el anterior parsea,
+  // el parseo viejo no debe sobreescribir la vista previa.
+  const parseTokenRef = useRef(0)
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -32,12 +35,15 @@ export function UpKardexTab() {
   }
 
   async function parseFile(f: File) {
+    const token = ++parseTokenRef.current
     try {
       const XLSX = await import('xlsx')
       const buffer = await f.arrayBuffer()
       const wb = XLSX.read(buffer, { type: 'array' })
       const ws = wb.Sheets[wb.SheetNames[0]]
       const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+
+      if (token !== parseTokenRef.current) return // llegó otro archivo mientras tanto
 
       if (data.length === 0) {
         toast.error('El archivo está vacío')
@@ -51,13 +57,14 @@ export function UpKardexTab() {
       const descCol = headers.find((h) =>
         /descrip|nombre|name|product/i.test(h)
       ) || headers[1]
-      const unitCol = headers.find((h) =>
+      const unitColMatch = headers.find((h) =>
         /un|unidad|unit|medida/i.test(h)
-      ) || headers[2]
+      )
+      const unitCol = unitColMatch || headers[2]
 
       const items = data
-        .map((row) => ({
-          id: crypto.randomUUID(),
+        .map((row, idx) => ({
+          id: `tmp-${idx}-${f.name}`,
           codigo: String(row[codeCol] ?? '').trim().toUpperCase(),
           descripcion: String(row[descCol] ?? '').trim(),
           unidad: String(row[unitCol] ?? 'KG').trim(),
@@ -65,8 +72,17 @@ export function UpKardexTab() {
         }))
         .filter((item) => item.codigo && item.codigo !== codeCol.toUpperCase())
 
+      if (token !== parseTokenRef.current) return
+
+      if (items.length === 0) {
+        toast.error('No se detectaron códigos válidos en el archivo')
+        return
+      }
+      if (!unitColMatch) {
+        toast.warning('No se detectó columna de unidad: se usará "KG" por defecto')
+      }
       setPreview(items.slice(0, 20))
-      setBloques(items)
+      setBloques(items as unknown as Bloque[])
     } catch {
       toast.error('Error al leer el archivo')
     }
@@ -77,11 +93,22 @@ export function UpKardexTab() {
     if (!confirm(`¿Reemplazar todo el catálogo con ${bloques.length} bloque(s)?`)) return
     setBusy(true)
     try {
-      const data = await reemplazarCatalogoBloques(bloques)
-      setBloques(data)
+      // Carga segura por lotes: upsert ANTES de podar — si falla algo, el catálogo
+      // actual queda intacto y se reportan las filas con problema.
+      const res = await reemplazarCatalogoBloques(bloques)
+      setBloques(res.bloques)
       setPreview([])
       setDone(true)
-      toast.success(`${bloques.length} bloque(s) cargados`)
+      if (res.errores.length > 0) {
+        toast.warning(
+          `Cargados ${res.cargados} bloque(s) con ${res.errores.length} fila(s) con problema`,
+          { description: res.errores.slice(0, 5).join('\n'), duration: 10000 }
+        )
+      } else {
+        toast.success(
+          `${res.cargados} bloque(s) cargados${res.eliminados > 0 ? `, ${res.eliminados} obsoleto(s) eliminados` : ''}`
+        )
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
       toast.error('Error al cargar', { description: message })

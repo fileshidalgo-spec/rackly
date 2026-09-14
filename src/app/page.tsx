@@ -571,11 +571,11 @@ function RacklyApp() {
                     </div>
                     <div>
                       <CardTitle className="text-lg">FEFO — Control de vencimientos</CardTitle>
-                      <CardDescription>Verde &gt; 60 días · Azul ≤ 30 días · Naranja ≤ 15 días · Rojo vencidos.</CardDescription>
+                      <CardDescription>Lotes reales por ubicación (mismo stock que Stock y Ocupación). Verde &gt; 30 días · Azul ≤ 30 · Naranja ≤ 15 · Rojo vencidos · Gris sin fecha.</CardDescription>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><FefoTab /></CardContent>
+                <CardContent><FefoTab onGotoUbicacion={gotoUbicacion} /></CardContent>
               </Card>
             </TabsContent>
 

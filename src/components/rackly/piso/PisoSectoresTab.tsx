@@ -237,6 +237,9 @@ export function PisoSectoresTab() {
   const [incCodigoInc, setIncCodigoInc] = useState('')
   const [incFechaVencimiento, setIncFechaVencimiento] = useState('')
   const [incSinVencimiento, setIncSinVencimiento] = useState(false)
+  // Lote físico del ingreso INC — igual que en ingreso/devolucion (informativo, opcional)
+  const [incLote, setIncLote] = useState('')
+  const [incSinLote, setIncSinLote] = useState(false)
 
   // Niveles de la posición seleccionada
   const [niveles, setNiveles] = useState<NivelInfo[]>([])
@@ -648,6 +651,8 @@ export function PisoSectoresTab() {
     setIncCodigoInc('')
     setIncFechaVencimiento('')
     setIncSinVencimiento(false)
+    setIncLote('')
+    setIncSinLote(false)
     setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
     setMode('inc')
   }
@@ -696,11 +701,13 @@ export function PisoSectoresTab() {
       if (!bloqueId) { toast.error('No se pudo crear/encontrar el articulo'); setBusy(false); return }
 
       // Registrar ingreso INC con detalles de stock (usando registrarIngresoPosicion)
+      // Lote físico digitado; si se marcó "Sin lote" (o va vacío) NO viaja lote.
       const detalles = [{
         nivel_id: nivelId,
         bloque_id: bloqueId,
         cantidad: qty,
         fecha_vencimiento: incSinVencimiento ? '' : incFechaVencimiento,
+        lote: incSinLote ? undefined : (incLote.trim() || undefined),
       }]
       await registrarIngresoPosicion(
         calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '',
@@ -717,6 +724,8 @@ export function PisoSectoresTab() {
       setIncCodigoInc('')
       setIncFechaVencimiento('')
       setIncSinVencimiento(false)
+      setIncLote('')
+      setIncSinLote(false)
       loadBloques()
       const [stock, nivelStocks] = await Promise.all([
         stockDetallePosicion(detail.posicionId),
@@ -2899,6 +2908,20 @@ export function PisoSectoresTab() {
                           onChange={(val) => setIncFechaVencimiento(val)}
                           onToggleSin={() => setIncSinVencimiento(!incSinVencimiento)}
                         />
+                      </div>
+                      {/* Lote físico — igual que en ingreso/devolucion: informativo, opcional */}
+                      <div className="col-span-12">
+                        <Label className="text-[10px] text-cyan-400 font-semibold">Lote</Label>
+                        <div className="flex items-center gap-2">
+                          <input type="text" value={incLote} onChange={(e) => setIncLote(e.target.value)} disabled={incSinLote}
+                            placeholder={incSinLote ? 'Sin lote' : 'Ej: AP-304501210021'} autoComplete="off"
+                            className={`flex-1 h-10 rounded-xl border text-xs px-3 font-mono bg-slate-900/80 text-white placeholder-slate-600 focus:outline-none focus:ring-2 transition-all duration-300 backdrop-blur-sm ${incSinLote ? 'border-slate-700/40 opacity-50' : 'border-cyan-500/30 focus:ring-cyan-500/40'}`} />
+                          <label className="flex items-center gap-1.5 shrink-0 cursor-pointer">
+                            <Checkbox checked={incSinLote} onCheckedChange={() => setIncSinLote(!incSinLote)} aria-label="Sin lote" title="Registrar sin lote" />
+                            <span className="text-[10px] text-slate-400 font-medium">Sin lote</span>
+                          </label>
+                        </div>
+                        <p className="text-[9px] text-slate-500 italic">{incSinLote ? 'Se registrará SIN lote' : 'Vacío o casilla marcada = SIN lote'}</p>
                       </div>
                     </div>
                   </div>

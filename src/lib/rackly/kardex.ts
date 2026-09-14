@@ -3,6 +3,7 @@
 import { dataClient } from '@/lib/supabase/client'
 import { PAGE_SIZE, MAX_ITERATIONS, FETCH_MOV_MAX_PAGES, MOVIMIENTOS_ENTRADA, TURNO_DIA, TURNO_NOCHE } from './constants'
 import { impactoStock } from '@/lib/utils'
+import { toast } from 'sonner'
 
 export type Turno = typeof TURNO_DIA | typeof TURNO_NOCHE
 export type TipoMovimiento = 'ingreso' | 'salida' | 'devolucion' | 'traslado'
@@ -246,6 +247,7 @@ async function addMovimientoFallback(
       const { lote: _omit, ...sinLote } = payload
       const retry = await dataClient.from('movimientos').insert(sinLote)
       insErr = retry.error
+      if (!retry.error) avisarLoteNoGuardado('movimiento')
     }
   }
   if (insErr) throw insErr
@@ -321,6 +323,7 @@ export async function addMovimiento(
       console.warn('[addMovimiento] RPC sin soporte p_lote — reintentando SIN lote (ejecutar rackly_lote.sql para guardarlo).')
       const { p_lote: _omit, ...sinLote } = rpcArgs
       res = await dataClient.rpc('registrar_movimiento_kardex', sinLote)
+      if (!res.error) avisarLoteNoGuardado('movimiento')
     }
     const { data, error } = res
     // Stock insuficiente es un error controlado — NUNCA bypassear la decisión del RPC.
@@ -493,14 +496,33 @@ export type StockEnUbicacion = {
 
 /** Detecta si un error se debe a que la columna/parámetro `lote` aún no existe en la BD
  *  (migración rackly_lote.sql pendiente de ejecutar). Permite reintentar sin lote
- *  para que el movimiento NUNCA falle por el campo nuevo. */
+ *  para que el movimiento NUNCA falle por el campo nuevo.
+ *  IMPORTANTE: postgrest-js resuelve los errores HTTP como OBJETOS PLANOS
+ *  (JSON.parse del body: { code, message, details, hint }), NO como instancias de
+ *  Error. Por eso NO se puede usar `instanceof Error` aquí — se hace duck-typing
+ *  para soportar ambas formas. (Fix del 400 PGRST204 que bloqueaba ingresos.) */
 export function isLoteUnsupportedError(err: unknown): boolean {
-  const code = err instanceof Error ? ((err as unknown as Record<string, string>).code || '') : ''
-  const msg = err instanceof Error ? err.message : String(err ?? '')
+  const obj = (typeof err === 'object' && err !== null ? err : {}) as Record<string, unknown>
+  const code = typeof obj.code === 'string' ? obj.code : ''
+  const msg = typeof obj.message === 'string' ? obj.message : String(err ?? '')
   if (code === '42703' || code === 'PGRST204') return true // columna no existe
   // Parámetro no reconocido por una RPC con firma vieja (PGRST202 / 'Could not find the function')
   if ((code === 'PGRST202' || code === '42883' || msg.includes('Could not find')) && msg.toLowerCase().includes('lote')) return true
   return false
+}
+
+/** Aviso al usuario: el movimiento/traslado SÍ se registró, pero el lote digitado NO
+ *  quedó guardado porque la BD aún no tiene la columna/parámetro (migración
+ *  rackly_lote.sql pendiente de ejecutar en Supabase → SQL Editor).
+ *  id fijo: evita apilar avisos duplicados en ráfaga. */
+function avisarLoteNoGuardado(contexto: 'movimiento' | 'traslado'): void {
+  toast.warning(
+    contexto === 'traslado' ? 'Traslado registrado — lote NO guardado' : 'Movimiento registrado — lote NO guardado',
+    {
+      id: 'lote-no-guardado',
+      description: 'Falta ejecutar el SQL rackly_lote.sql en Supabase (SQL Editor). El lote digitado no quedó almacenado en la BD.',
+    }
+  )
 }
 
 export async function stockEnUbicacion(
@@ -937,6 +959,7 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
       })
       const retry = await dataClient.from('movimientos').insert(filasSinLote)
       insErr = retry.error
+      if (!retry.error) avisarLoteNoGuardado('traslado')
     }
   }
   if (insErr) throw insErr
@@ -984,6 +1007,7 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       console.warn('[trasladarMovimiento] RPC sin soporte p_lote — reintentando SIN lote (ejecutar rackly_lote.sql para guardarlo).')
       const { p_lote: _omit, ...sinLote } = rpcArgs
       res = await dataClient.rpc('registrar_traslado_kardex', sinLote)
+      if (!res.error) avisarLoteNoGuardado('traslado')
     }
     const { data, error } = res
     // Stock insuficiente en origen — NUNCA bypassear la decisión del RPC.

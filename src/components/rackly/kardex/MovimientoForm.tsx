@@ -24,7 +24,6 @@ import {
   isExpiringSoon,
   extractError,
   isInsufficientStockError,
-  impactoStock,
 } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -1425,7 +1424,7 @@ function SalidaIncForm({
     if (selected.size === locations.length) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(locations.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.codigoInc || ''}`)))
+      setSelected(new Set(locations.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.codigoInc || ''}||${l.fVencimiento || 'SF'}`)))
     }
   }
 
@@ -1457,45 +1456,60 @@ function SalidaIncForm({
         movs = []
       }
       const upperCode = code.toUpperCase()
-      const locMap = new Map<string, LocIncWithKey>()
+      // Pools por (ubicación + codigoInc): ingresos por lote + salidas dirigidas
+      const locMap = new Map<string, {
+        bloque: string; torre: string; piso: string; posicion: string;
+        codigo: string; descripcion: string; un: string; proveedor?: string; codigoInc: string;
+        ingresos: Map<string, number>
+        salidas: Array<{ venc: string; qty: number }>
+      }>()
       // SOLO movimientos INC — invertir el filtro de salidas normales
       const relevant = movs.filter((m) => m.codigo === upperCode && !!m.codigoInc)
       let desc = ''
       let un = ''
+      const POS_TYPES_INC = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
       for (const m of relevant) {
         if (!desc && m.descripcion) desc = m.descripcion
         if (!un && m.un) un = m.un
-        const impact = impactoStock(m.tipo, m.cantidad)
-        if (isNaN(impact) || !isFinite(impact)) continue
-        // Agrupar por ubicación + codigoInc (f_vencimiento NO participa)
+        const qty = m.cantidad
+        if (isNaN(qty) || !isFinite(qty) || qty <= 0) continue
         const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.codigoInc || ''}`
-        const current = locMap.get(key)
-        if (current) {
-          current.stock += impact
-          // Rastrear f_vencimiento más próxima
-          if (m.fVencimiento) {
-            if (!current.fVencimiento || m.fVencimiento < current.fVencimiento) {
-              current.fVencimiento = m.fVencimiento
-            }
+        let cur = locMap.get(key)
+        if (!cur) {
+          cur = {
+            bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
+            codigo: m.codigo, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor,
+            codigoInc: m.codigoInc || '', ingresos: new Map(), salidas: [],
           }
+          locMap.set(key, cur)
+        }
+        if (!cur.proveedor && m.proveedor) cur.proveedor = m.proveedor
+        const venc = m.fVencimiento || ''
+        if (POS_TYPES_INC.includes(m.tipo)) {
+          cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
         } else {
-          locMap.set(key, {
-            bloque: m.bloque,
-            torre: m.torre,
-            piso: m.piso,
-            posicion: m.posicion,
-            codigo: m.codigo,
-            descripcion: m.descripcion,
-            un: m.un,
-            stock: impact,
-            fVencimiento: m.fVencimiento || undefined,
-            proveedor: m.proveedor,
-            codigoInc: m.codigoInc,
+          // Las salidas conservan su orden temporal (fetchMovimientosByCodigo ordena por f_modificacion DESC;
+          // calcularLotesRemanentes procesa dirigido + desborde FEFO, sin dejar lotes negativos)
+          cur.salidas.push({ venc, qty })
+        }
+      }
+      // UNA FILA POR LOTE INC: la salida descuenta EXACTAMENTE el lote elegido
+      // (misma semántica que SalidaForm normal: FEFO como orden, lote como fila).
+      const results: LocIncWithKey[] = []
+      for (const lp of locMap.values()) {
+        const remanentes = calcularLotesRemanentes(lp.ingresos, lp.salidas)
+        for (const lote of remanentes) {
+          results.push({
+            bloque: lp.bloque, torre: lp.torre, piso: lp.piso, posicion: lp.posicion,
+            codigo: lp.codigo, descripcion: lp.descripcion, un: lp.un,
+            stock: Math.round(lote.cantidad * 1000) / 1000,
+            fVencimiento: lote.venc || undefined,
+            proveedor: lp.proveedor,
+            codigoInc: lp.codigoInc,
           })
         }
       }
-      const results = Array.from(locMap.values()).filter((l) => l.stock > 0)
-      // Ordenar: por bloque, torre, piso, posición
+      // Ordenar: por bloque, torre, piso, posición y FEFO dentro de la ubicación
       results.sort((a, b) => {
         const aB = parseInt(a.bloque, 10) || 0
         const bB = parseInt(b.bloque, 10) || 0
@@ -1508,9 +1522,12 @@ function SalidaIncForm({
         if (aP !== bP) return aP - bP
         const aPos = parseInt(a.posicion, 10) || 0
         const bPos = parseInt(b.posicion, 10) || 0
-        return aPos - bPos
+        if (aPos !== bPos) return aPos - bPos
+        const aV = a.fVencimiento || '9999-12-31'
+        const bV = b.fVencimiento || '9999-12-31'
+        return aV.localeCompare(bV)
       })
-      const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.codigoInc || ''}`))
+      const newKeys = new Set(results.map((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}||${l.codigoInc || ''}||${l.fVencimiento || 'SF'}`))
       setSelected((prev) => {
         const cleaned = new Set<string>()
         for (const k of prev) {
@@ -1552,8 +1569,10 @@ function SalidaIncForm({
     return () => clearInterval(interval)
   }, [searchCode, refreshLocations])
 
+  // Clave estable de una fila INC (ubicación + codigoInc + LOTE): dos lotes del mismo
+  // código INC en la misma posición son filas distintas, cada una con su fecha real.
   function makeKey(loc: LocIncWithKey) {
-    return `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.codigoInc || ''}`
+    return `${loc.bloque}-${loc.torre}-${loc.piso}-${loc.posicion}||${loc.codigoInc || ''}||${loc.fVencimiento || 'SF'}`
   }
 
   async function handleSalidaParcial(locKey: string) {
@@ -1794,6 +1813,9 @@ function SalidaIncForm({
                       <MapPin className="h-3.5 w-3.5" />
                       <span>B{loc.bloque} / T{loc.torre} / P{loc.piso} / Pos {loc.posicion}</span>
                     </div>
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-rose-200 text-rose-600 dark:border-rose-800 dark:text-rose-400">
+                      {loc.fVencimiento ? `Lote ${formatDate(loc.fVencimiento)}` : 'Lote S/F'}
+                    </Badge>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-rose-700 dark:text-rose-300">Stock INC: {loc.stock} {loc.un}</span>

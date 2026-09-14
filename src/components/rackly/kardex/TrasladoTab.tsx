@@ -6,6 +6,7 @@ import {
   trasladarMovimiento,
   stockEnUbicacion,
   addMovimiento,
+  calcularLotesRemanentes,
   type Movimiento,
   type StockEnUbicacion,
 } from '@/lib/rackly/kardex'
@@ -62,6 +63,8 @@ type LocStock = {
   codigo: string
   proveedor?: string
   codigoInc?: string
+  /** Stock TOTAL de la posición (todos los lotes). Solo se llena en la primera fila de cada posición. */
+  stockTotalPos?: number
 }
 
 export function TrasladoTab() {
@@ -85,6 +88,8 @@ export function TrasladoTab() {
   const [salidaBusy, setSalidaBusy] = useState<string | null>(null)
   const [salidaParcialCant, setSalidaParcialCant] = useState<Record<string, string>>({})
   const [salidaParcialTotal, setSalidaParcialTotal] = useState<Record<string, boolean>>({})
+  // Lote elegido por item para la salida en destino (FEFO pre-marcado, editable)
+  const [salidaParcialLote, setSalidaParcialLote] = useState<Record<string, string>>({})
   const [corregirDiferencia, setCorregirDiferencia] = useState(false)
 
   const [movs, setMovs] = useState<Movimiento[]>([])
@@ -102,62 +107,77 @@ export function TrasladoTab() {
   }
 
   // Recalcular ubicaciones reactivamente cuando cambian movs o codigo.
-  // LÓGICA IDÉNTICA a calcularOcupacion() de OcupacionTab.
-  // Agrupa por (posición, código) — fVencimiento SOLO para FEFO (display), NO para stock.
+  // UNA FILA POR LOTE: la misma semántica de Salidas — el traslado saca EXACTAMENTE
+  // del lote elegido (su fecha viaja al destino). stockTotalPos = total de la posición
+  // (todos los lotes) y se usa para los ajustes automáticos (saldo / corrección).
   // EXCLUYE movimientos INC del cálculo (igual que OcupaciónTab).
   const locations = useMemo(() => {
     if (!codigo) return []
     const code = codigo.toUpperCase()
-    const locMap = new Map<string, LocStock>()
+    const locMap = new Map<string, {
+      bloque: string; torre: string; piso: string; posicion: string;
+      codigo: string; descripcion: string; un: string; proveedor?: string;
+      ingresos: Map<string, number>
+      salidas: Array<{ venc: string; qty: number }>
+    }>()
     const relevant = movs.filter((m) => m.codigo === code && !m.codigoInc)
+    const POS_TYPES = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
     for (const m of relevant) {
+      const qty = m.cantidad
+      if (isNaN(qty) || !isFinite(qty) || qty <= 0) continue
       const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-      const current = locMap.get(posKey)
-      const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
-      if (current) {
-        current.stock += delta
-        // Rastrear fecha de vencimiento más próxima (FEFO)
-        if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
-          current.fVencimiento = m.fVencimiento
+      let cur = locMap.get(posKey)
+      if (!cur) {
+        cur = {
+          bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
+          codigo: m.codigo, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor,
+          ingresos: new Map(), salidas: [],
         }
+        locMap.set(posKey, cur)
+      }
+      if (!cur.proveedor && m.proveedor) cur.proveedor = m.proveedor
+      const venc = m.fVencimiento || ''
+      if (POS_TYPES.includes(m.tipo)) {
+        cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
       } else {
-        locMap.set(posKey, {
-          bloque: m.bloque,
-          torre: m.torre,
-          piso: m.piso,
-          posicion: m.posicion,
-          stock: delta,
-          descripcion: m.descripcion,
-          un: m.un,
-          fVencimiento: m.fVencimiento || '',
-          codigo: m.codigo,
-          proveedor: m.proveedor,
-          codigoInc: m.codigoInc || undefined,
+        cur.salidas.push({ venc, qty })
+      }
+    }
+    const rows: LocStock[] = []
+    for (const [, lp] of locMap) {
+      const remanentes = calcularLotesRemanentes(lp.ingresos, lp.salidas)
+      const totalPos = remanentes.reduce((s, l) => s + l.cantidad, 0)
+      for (const lote of remanentes) {
+        rows.push({
+          bloque: lp.bloque, torre: lp.torre, piso: lp.piso, posicion: lp.posicion,
+          codigo: lp.codigo, descripcion: lp.descripcion, un: lp.un,
+          stock: Math.round(lote.cantidad * 1000) / 1000,
+          fVencimiento: lote.venc || '',
+          proveedor: lp.proveedor,
+          stockTotalPos: Math.round(totalPos * 1000) / 1000,
         })
       }
     }
-    return Array.from(locMap.values())
-      .filter((l) => l.stock > 0)
-      .sort((a, b) => {
-        // FEFO primero (con fecha), luego sin fecha, luego por ubicación
-        const aHasDate = !!a.fVencimiento
-        const bHasDate = !!b.fVencimiento
-        if (aHasDate && bHasDate) return a.fVencimiento.localeCompare(b.fVencimiento)
-        if (aHasDate && !bHasDate) return -1
-        if (!aHasDate && bHasDate) return 1
-        const aB = parseInt(a.bloque, 10) || 0
-        const bB = parseInt(b.bloque, 10) || 0
-        if (aB !== bB) return aB - bB
-        const aT = parseInt(a.torre, 10) || 0
-        const bT = parseInt(b.torre, 10) || 0
-        if (aT !== bT) return aT - bT
-        const aP = parseInt(a.piso, 10) || 0
-        const bP = parseInt(b.piso, 10) || 0
-        if (aP !== bP) return aP - bP
-        const aPos = parseInt(a.posicion, 10) || 0
-        const bPos = parseInt(b.posicion, 10) || 0
-        return aPos - bPos
-      })
+    return rows.sort((a, b) => {
+      // FEFO primero (con fecha), luego sin fecha, luego por ubicación
+      const aHasDate = !!a.fVencimiento
+      const bHasDate = !!b.fVencimiento
+      if (aHasDate && bHasDate) return a.fVencimiento.localeCompare(b.fVencimiento)
+      if (aHasDate && !bHasDate) return -1
+      if (!aHasDate && bHasDate) return 1
+      const aB = parseInt(a.bloque, 10) || 0
+      const bB = parseInt(b.bloque, 10) || 0
+      if (aB !== bB) return aB - bB
+      const aT = parseInt(a.torre, 10) || 0
+      const bT = parseInt(b.torre, 10) || 0
+      if (aT !== bT) return aT - bT
+      const aP = parseInt(a.piso, 10) || 0
+      const bP = parseInt(b.piso, 10) || 0
+      if (aP !== bP) return aP - bP
+      const aPos = parseInt(a.posicion, 10) || 0
+      const bPos = parseInt(b.posicion, 10) || 0
+      return aPos - bPos
+    })
   }, [movs, codigo])
 
   // Limpiar selectedOrigin si la ubicación ya no existe en locations
@@ -170,10 +190,14 @@ export function TrasladoTab() {
   const origin = locations.find((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === selectedOrigin)
 
   const qtyNum = parseFloat(qty) || 0
-  const saldoRestante = origin ? origin.stock - qtyNum : 0
-  const excedeStock = origin ? qtyNum > origin.stock : false
-  const faltaStock = origin ? qtyNum > 0 && qtyNum < origin.stock : false
-  const diferencia = origin ? qtyNum - origin.stock : 0
+  // Total de la POSICIÓN (todos los lotes): base para los ajustes automáticos.
+  // origin.stock = stock del LOTE elegido (fila seleccionada).
+  const originTotal = origin?.stockTotalPos ?? origin?.stock ?? 0
+  const saldoRestante = origin ? originTotal - qtyNum : 0
+  const excedeStock = origin ? qtyNum > originTotal : false
+  const faltaStock = origin ? qtyNum > 0 && qtyNum < originTotal : false
+  const diferencia = origin ? qtyNum - originTotal : 0
+  const trasladandoLoteCompleto = origin ? Math.abs(qtyNum - origin.stock) < 1e-9 : false
   // Ajuste automático: se activa cuando qty > stock (siempre), o cuando qty < stock Y el usuario elige corregir
   const ajusteActivo = excedeStock || (faltaStock && corregirDiferencia)
 
@@ -194,6 +218,7 @@ export function TrasladoTab() {
     try {
       const destStock = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
       setDestinoOcupado(destStock)
+      setSalidaParcialLote({})
     } catch {
       setDestinoOcupado([])
     }
@@ -209,6 +234,8 @@ export function TrasladoTab() {
     const cantNum = isTotal ? stockItem.stock : parseFloat(cantStr)
     if (isNaN(cantNum) || cantNum <= 0) { toast.error('Cantidad inválida'); return }
     if (cantNum > stockItem.stock) { toast.error(`Máximo: ${stockItem.stock} ${stockItem.un}`); return }
+    // Lote ELEGIDO (FEFO pre-marcado): la salida descuenta EXACTAMENTE ese lote
+    const fvElegido = salidaParcialLote[itemKey] ?? (stockItem.fVencimiento || '')
     setSalidaBusy(itemKey)
     try {
       await addMovimiento({
@@ -221,7 +248,7 @@ export function TrasladoTab() {
         descripcion: stockItem.descripcion,
         un: stockItem.un,
         cantidad: cantNum,
-        fVencimiento: stockItem.fVencimiento ?? '',
+        fVencimiento: fvElegido,
         turno: calcularTurno(),
         usuarioId: perfil.id,
         usuarioNombre: perfil.nombre,
@@ -249,7 +276,7 @@ export function TrasladoTab() {
 
   async function doTraslado() {
     if (!origin || !perfil) return
-    const cantidadFinal = qtyNum || origin.stock
+    const cantidadFinal = qtyNum || originTotal
     setBusy(true)
     try {
       await trasladarMovimiento({
@@ -444,7 +471,7 @@ export function TrasladoTab() {
                   {isSelected ? (
                     <div className="flex items-center justify-center gap-1.5 pt-1 text-xs font-bold text-blue-700 dark:text-blue-400">
                       <CheckCircle2 className="h-3.5 w-3.5" />
-                      <span>{trasladoTotal ? 'Traslado Total' : 'Traslado Parcial'}</span>
+                      <span>Lote seleccionado — Venc: {loc.fVencimiento ? formatDate(loc.fVencimiento) : 'S/F'}</span>
                     </div>
                   ) : (
                     <div className="flex gap-2 pt-0.5">
@@ -459,7 +486,7 @@ export function TrasladoTab() {
                         className="flex-1 h-9 flex items-center justify-center gap-1.5 rounded-lg text-xs font-bold border-2 border-emerald-200 text-emerald-700 bg-emerald-50/50 hover:bg-emerald-100 active:bg-emerald-200 dark:border-emerald-700 dark:text-emerald-400 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50 transition-colors"
                       >
                         <Package className="h-3 w-3" />
-                        Traslado Total
+                        Trasladar lote
                       </button>
                       <button
                         onClick={(e) => {
@@ -472,7 +499,7 @@ export function TrasladoTab() {
                         className="flex-1 h-9 flex items-center justify-center gap-1.5 rounded-lg text-xs font-bold border-2 border-sky-200 text-sky-700 bg-sky-50/50 hover:bg-sky-100 active:bg-sky-200 dark:border-sky-700 dark:text-sky-400 dark:bg-sky-950/30 dark:hover:bg-sky-950/50 transition-colors"
                       >
                         <ArrowUpFromLine className="h-3 w-3" />
-                        Traslado Parcial
+                        Parcial
                       </button>
                     </div>
                   )}
@@ -579,7 +606,7 @@ export function TrasladoTab() {
                               }}
                             >
                               <Package className="h-3 w-3" />
-                              Todo
+                              Lote
                             </Button>
                             <Button
                               size="sm"
@@ -618,7 +645,7 @@ export function TrasladoTab() {
             <p className="text-sm font-medium">2. Elige ubicación de destino:</p>
             <div className="flex items-center gap-1.5">
               <button
-                onClick={() => { setTrasladoTotal(true); setQty(String(origin.stock)) }}
+                onClick={() => { setTrasladoTotal(true); setQty(String(originTotal)) }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                   trasladoTotal
                     ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400 shadow-sm'
@@ -654,7 +681,7 @@ export function TrasladoTab() {
                   <Package className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                 </div>
                 <p className="text-xs text-emerald-700 dark:text-emerald-300">
-                  <strong>Traslado Total:</strong> Se moverán <strong>todas las {origin.stock} {origin.un}</strong> al destino.
+                  <strong>Traslado Total:</strong> Se moverán <strong>todas las {originTotal} {origin.un}</strong> (todos los lotes de la posición) al destino.
                   La ubicación de origen quedará con <strong>stock 0</strong>.
                 </p>
               </>
@@ -665,10 +692,21 @@ export function TrasladoTab() {
                 </div>
                 <p className="text-xs text-sky-700 dark:text-sky-300">
                   <strong>Traslado Parcial:</strong> Ingresa la cantidad que deseas mover.
-                  El <strong>saldo restante ({origin.stock} - cantidad)</strong> se quedará en la ubicación de origen.
+                  El <strong>saldo restante ({originTotal} - cantidad)</strong> se quedará en la ubicación de origen.
                 </p>
               </>
             )}
+          </div>
+
+          {/* Lote elegido en origen */}
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20 p-2.5 flex items-center justify-between gap-2">
+            <span className="text-xs text-amber-700 dark:text-amber-300 font-medium">
+              Lote en origen: {origin.fVencimiento ? `Venc ${formatDate(origin.fVencimiento)}` : 'Sin fecha (S/F)'}
+            </span>
+            <span className="text-xs text-slate-600 dark:text-slate-300">
+              Stock del lote: <strong>{origin.stock} {origin.un}</strong>
+              {originTotal !== origin.stock && <span className="text-slate-400"> · Total posición: {originTotal}</span>}
+            </span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="space-y-1">
@@ -718,7 +756,7 @@ export function TrasladoTab() {
                 value={qty}
                 onChange={(e) => { setQty(e.target.value); setCorregirDiferencia(false) }}
                 disabled={trasladoTotal}
-                placeholder={`Stock disponible: ${origin.stock} ${origin.un}`}
+                placeholder={`Stock disponible: ${originTotal} ${origin.un}`}
                 className={trasladoTotal ? 'bg-emerald-50 dark:bg-emerald-950/20 font-bold' : ''}
               />
               {!trasladoTotal && (
@@ -726,10 +764,10 @@ export function TrasladoTab() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => { setQty(String(origin.stock)); setCorregirDiferencia(false) }}
+                  onClick={() => { setQty(String(originTotal)); setCorregirDiferencia(false) }}
                   className="shrink-0 h-9 px-2.5 text-xs font-semibold border-slate-200 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900"
                 >
-                  Max: {origin.stock}
+                  Max: {originTotal}
                 </Button>
               )}
             </div>
@@ -743,12 +781,14 @@ export function TrasladoTab() {
 
             {!trasladoTotal && qtyNum > 0 && (
               <div className="space-y-1.5 pt-1">
-                {/* Caso 1: Cantidad exacta (igual al stock) */}
-                {qtyNum === origin.stock && (
+                {/* Caso 1: Cantidad exacta (igual al stock del lote) */}
+                {trasladandoLoteCompleto && (
                   <div className="flex items-center gap-2 text-xs">
                     <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
                     <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                      Cantidad exacta — Se trasladará todo el stock. Origen quedará en 0.
+                      {originTotal === origin.stock
+                        ? 'Cantidad exacta — Se trasladará todo el stock. Origen quedará en 0.'
+                        : `Cantidad exacta del lote (${origin.stock} ${origin.un}). Los demás lotes (${originTotal - origin.stock} ${origin.un}) quedan en origen.`}
                     </span>
                   </div>
                 )}
@@ -757,7 +797,7 @@ export function TrasladoTab() {
                 {faltaStock && (
                   <div className="rounded-lg border border-sky-200 bg-sky-50/60 dark:border-sky-800 dark:bg-sky-950/20 p-2.5 space-y-2">
                     <p className="text-xs text-sky-700 dark:text-sky-300 font-medium">
-                      Cantidad menor al stock ({qtyNum} de {origin.stock} {origin.un}).
+                      Cantidad menor al stock total ({qtyNum} de {originTotal} {origin.un}).
                       Diferencia: <strong>{saldoRestante} {origin.un}</strong>
                     </p>
                     <p className="text-[11px] text-muted-foreground font-medium">¿Qué deseas hacer con la diferencia?</p>
@@ -811,7 +851,7 @@ export function TrasladoTab() {
                       <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
                       <div className="text-xs text-amber-700 dark:text-amber-300 space-y-1">
                         <p className="font-medium">
-                          Cantidad mayor al stock registrado ({qtyNum} de {origin.stock} {origin.un}).
+                          Cantidad mayor al stock registrado ({qtyNum} de {originTotal} {origin.un}).
                         </p>
                         <p>
                           Diferencia: <strong>+{Math.abs(diferencia)} {origin.un}</strong> (faltaba en el sistema)
@@ -825,7 +865,7 @@ export function TrasladoTab() {
                     </div>
                     <div className="flex items-center gap-3 text-[11px] font-semibold pt-0.5">
                       <Badge variant="outline" className="border-amber-300 text-amber-700 dark:text-amber-300">
-                        Origen: {origin.stock} +{Math.abs(diferencia)} = {qtyNum} {origin.un}
+                        Origen: {originTotal} +{Math.abs(diferencia)} = {qtyNum} {origin.un}
                       </Badge>
                       <Badge variant="outline" className="border-blue-300 text-blue-700 dark:text-blue-300">
                         Destino: +{qtyNum} {origin.un}
@@ -944,7 +984,7 @@ export function TrasladoTab() {
                         : <><ArrowUpFromLine className="h-3 w-3 mr-1" /> Traslado Parcial</>
                   }
                 </Badge>
-                {!trasladoTotal && !excedeStock && !corregirDiferencia && qtyNum > 0 && origin && qtyNum < origin.stock && (
+                {!trasladoTotal && !excedeStock && !corregirDiferencia && qtyNum > 0 && origin && qtyNum < originTotal && (
                   <Badge variant="outline" className="border-sky-300 text-sky-700 dark:text-sky-300 text-xs font-semibold">
                     Saldo en origen: {saldoRestante} {origin?.un}
                   </Badge>
@@ -1021,6 +1061,31 @@ export function TrasladoTab() {
                             )}
                             {s.proveedor && <span>Prov: {s.proveedor}</span>}
                           </div>
+                          {/* Selector de LOTE a descontar en destino (FEFO pre-marcado, editable) */}
+                          {s.lotes && s.lotes.length > 1 && (() => {
+                            const itemKey = `${s.codigo}-${s.fVencimiento || ''}`
+                            const selFv = salidaParcialLote[itemKey] ?? (s.fVencimiento || '')
+                            const loteSel = s.lotes.find(l => (l.fVencimiento || '') === selFv)
+                            return (
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <span className="text-[10px] text-slate-500 shrink-0">Lote a salir:</span>
+                                <select
+                                  value={selFv}
+                                  onChange={(e) => setSalidaParcialLote(prev => ({ ...prev, [itemKey]: e.target.value }))}
+                                  className="h-7 text-[11px] rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 px-1.5"
+                                >
+                                  {s.lotes.map((l, li) => (
+                                    <option key={li} value={l.fVencimiento || ''}>
+                                      {l.fVencimiento ? `Venc: ${l.fVencimiento} (${l.cantidad})` : `Sin fecha (${l.cantidad})`}
+                                    </option>
+                                  ))}
+                                </select>
+                                {loteSel && (
+                                  <span className="text-[10px] text-slate-400">Stock del lote: <b className="text-slate-600 dark:text-slate-300">{loteSel.cantidad}</b></span>
+                                )}
+                              </div>
+                            )
+                          })()}
                           {/* Salida parcial/total */}
                           <div className="mt-2 flex items-center gap-2">
                             {(() => {

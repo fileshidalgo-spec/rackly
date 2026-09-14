@@ -381,6 +381,71 @@ export type LoteInfo = {
   cantidad: number
 }
 
+/**
+ * Algoritmo de lotes remanentes (FEFO con dirección por fecha + desborde).
+ *
+ * Semántica (acordada con operación):
+ *  - Una SALIDA con fecha F descuenta PRIMERO del lote con fecha F (el lote que el usuario eligió).
+ *  - Una SALIDA sin fecha descuenta PRIMERO del lote sin fecha (material sin vencimiento).
+ *  - Si el lote dirigido no alcanza, el remanente se desborda en orden FEFO
+ *    (fechas más antiguas primero, lote sin fecha al final).
+ *
+ * Con esto ningún lote queda en negativo y la salida respeta el lote seleccionado.
+ * El stock TOTAL (suma de remanentes) siempre es igual a ingresos - salidas.
+ */
+export function calcularLotesRemanentes(
+  ingresos: Map<string, number>,
+  salidas: Array<{ venc: string; qty: number }>
+): { venc: string; cantidad: number }[] {
+  // Remanente inicial por lote (solo ingresos positivos)
+  const rem = new Map<string, number>()
+  for (const [v, q] of ingresos) {
+    if (q > 0) rem.set(v, (rem.get(v) ?? 0) + q)
+  }
+  // Orden FEFO: fechas ascendentes primero, lote sin fecha ('') al final
+  const ordenFefo = Array.from(rem.keys()).sort((a, b) => {
+    if (a && b) return a.localeCompare(b)
+    if (a && !b) return -1
+    if (!a && b) return 1
+    return 0
+  })
+  const descontarDe = (venc: string, pend: number): number => {
+    const disp = rem.get(venc) ?? 0
+    if (disp <= 0) return pend
+    const tomar = Math.min(pend, disp)
+    rem.set(venc, disp - tomar)
+    return pend - tomar
+  }
+  for (const s of salidas) {
+    let pend = s.qty
+    if (!(pend > 0)) continue
+    if (s.venc && (rem.get(s.venc) ?? 0) > 0) {
+      // Salida dirigida al lote con la fecha registrada
+      pend = descontarDe(s.venc, pend)
+    } else if (!s.venc && (rem.get('') ?? 0) > 0) {
+      // Salida sin fecha: primero el lote sin fecha
+      pend = descontarDe('', pend)
+    }
+    // Desborde FEFO por lo que falte
+    if (pend > 0) {
+      for (const v of ordenFefo) {
+        if (pend <= 0) break
+        pend = descontarDe(v, pend)
+      }
+    }
+  }
+  const out = Array.from(rem.entries())
+    .filter(([, q]) => q > 0)
+    .map(([venc, cantidad]) => ({ venc, cantidad }))
+  out.sort((a, b) => {
+    if (a.venc && b.venc) return a.venc.localeCompare(b.venc)
+    if (a.venc && !b.venc) return -1
+    if (!a.venc && b.venc) return 1
+    return 0
+  })
+  return out
+}
+
 export type StockEnUbicacion = {
   codigo: string
   descripcion: string
@@ -426,42 +491,50 @@ export async function stockEnUbicacion(
       from += BATCH
     }
 
-    // ── Paso 1: Stock NETO por (codigo, codigo_inc) SIN separar por vencimiento ──
-    const stockMap = new Map<string, {
+    // ── Paso 1: Pools de INGRESOS por lote y SALIDAS dirigidas por (codigo, codigo_inc) ──
+    const ingresosMap = new Map<string, Map<string, number>>()   // key -> (venc -> qty)
+    const salidasMap = new Map<string, Array<{ venc: string; qty: number }>>()
+    const metaMap = new Map<string, {
       codigo: string; descripcion: string; un: string;
-      stock: number;
       usuarioPrimerNombre: string; proveedor: string; codigoInc: string;
     }>()
 
-    // ── Paso 2: Lotes por vencimiento SOLO para desglose FEFO visual ──
-    const lotMap = new Map<string, {
-      codigo: string; codigoInc: string;
-      fVencimiento: string; stock: number;
-    }>()
+    const isPosTipo = (t: string) => ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(t)
 
     for (const r of allRows) {
       const m = fromRow(r)
       const incKey = m.codigoInc || ''
-      const isPos = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo)
+      const key = `${m.codigo}||${incKey}`
       const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
-      const delta = isPos ? qty : -qty
+      if (!(qty > 0)) continue
 
-      const stockKey = `${m.codigo}||${incKey}`
-      let entry = stockMap.get(stockKey)
-      if (!entry) {
-        entry = { codigo: m.codigo, descripcion: m.descripcion, un: m.un, stock: 0, usuarioPrimerNombre: m.usuarioNombre?.split(' ')[0] ?? '', proveedor: m.proveedor ?? '', codigoInc: incKey }
-        stockMap.set(stockKey, entry)
-      } else { if (!entry.descripcion && m.descripcion) entry.descripcion = m.descripcion }
-      entry.stock += delta
+      if (!metaMap.has(key)) {
+        metaMap.set(key, {
+          codigo: m.codigo, descripcion: m.descripcion, un: m.un,
+          usuarioPrimerNombre: m.usuarioNombre?.split(' ')[0] ?? '',
+          proveedor: m.proveedor ?? '', codigoInc: incKey,
+        })
+      } else {
+        const meta = metaMap.get(key)!
+        if (!meta.descripcion && m.descripcion) meta.descripcion = m.descripcion
+      }
 
-      const vencKey = m.fVencimiento || '__sin_fecha__'
-      const lotKey = `${m.codigo}||${incKey}||${vencKey}`
-      let lot = lotMap.get(lotKey)
-      if (!lot) { lot = { codigo: m.codigo, codigoInc: incKey, fVencimiento: m.fVencimiento || '', stock: 0 }; lotMap.set(lotKey, lot) }
-      lot.stock += delta
+      const venc = m.fVencimiento || ''
+      if (isPosTipo(m.tipo)) {
+        const pool = ingresosMap.get(key) ?? new Map<string, number>()
+        pool.set(venc, (pool.get(venc) ?? 0) + qty)
+        ingresosMap.set(key, pool)
+      } else {
+        // Las salidas conservan su orden temporal (allRows viene ordenado por f_modificacion ASC)
+        const list = salidasMap.get(key) ?? []
+        list.push({ venc, qty })
+        salidasMap.set(key, list)
+      }
     }
 
-    // ── Paso 3: Construir resultado final ──
+    // ── Paso 2: Remanentes por lote (salida dirigida al lote elegido + desborde FEFO) ──
+    // Ver calcularLotesRemanentes(): ningún lote queda en negativo y el descuento
+    // respeta la fecha registrada en cada salida. Stock total = ingresos - salidas.
     const groups = new Map<string, {
       codigo: string; descripcion: string; un: string;
       stock: number; fVencimientoMasProxima: string;
@@ -469,22 +542,18 @@ export async function stockEnUbicacion(
       lotes: LoteInfo[];
     }>()
 
-    for (const [stockKey, entry] of stockMap) {
-      if (entry.stock <= 0) continue
-      const lotsForCode = Array.from(lotMap.values())
-        .filter(l => l.codigo === entry.codigo && l.codigoInc === entry.codigoInc && l.stock > 0)
-      lotsForCode.sort((a, b) => {
-        if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
-        if (a.fVencimiento && !b.fVencimiento) return -1
-        if (!a.fVencimiento && b.fVencimiento) return 1
-        return 0
-      })
-      groups.set(stockKey, {
-        codigo: entry.codigo, descripcion: entry.descripcion, un: entry.un,
-        stock: Math.round(entry.stock * 1000) / 1000,
-        fVencimientoMasProxima: lotsForCode.find(l => l.fVencimiento)?.fVencimiento || '',
-        usuarioPrimerNombre: entry.usuarioPrimerNombre, proveedor: entry.proveedor, codigoInc: entry.codigoInc,
-        lotes: lotsForCode.map(l => ({ fVencimiento: l.fVencimiento, cantidad: Math.round(l.stock * 1000) / 1000 })),
+    for (const [key, pool] of ingresosMap) {
+      const meta = metaMap.get(key)
+      if (!meta) continue
+      const remanentes = calcularLotesRemanentes(pool, salidasMap.get(key) ?? [])
+      const stockTotal = remanentes.reduce((s, l) => s + l.cantidad, 0)
+      if (stockTotal <= 0) continue
+      groups.set(key, {
+        codigo: meta.codigo, descripcion: meta.descripcion, un: meta.un,
+        stock: Math.round(stockTotal * 1000) / 1000,
+        fVencimientoMasProxima: remanentes.find(l => l.venc)?.venc || '',
+        usuarioPrimerNombre: meta.usuarioPrimerNombre, proveedor: meta.proveedor, codigoInc: meta.codigoInc,
+        lotes: remanentes.map(l => ({ fVencimiento: l.venc, cantidad: Math.round(l.cantidad * 1000) / 1000 })),
       })
     }
 

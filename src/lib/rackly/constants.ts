@@ -42,6 +42,7 @@ export const PROVEEDORES_FILM = [
   'NEOPACK',
   'SOLPACK',
   'ITS',
+  'UNION PLAST',
 ] as const
 
 // ── Paginación y Polling ────────────────────────────────

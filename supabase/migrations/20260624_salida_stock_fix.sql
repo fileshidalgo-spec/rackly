@@ -67,9 +67,9 @@ BEGIN
   FROM movimientos
   WHERE bloque = p_bloque
     -- Comparacion normalizada: eliminar ceros a la izquierda de AMBOS lados
-    AND BTRIM(LEADING '0' FROM torre) = BTRIM(LEADING '0' FROM NULLIF(p_torre, '0'))
-    AND BTRIM(LEADING '0' FROM piso) = BTRIM(LEADING '0' FROM NULLIF(p_piso, '0'))
-    AND BTRIM(LEADING '0' FROM posicion) = BTRIM(LEADING '0' FROM NULLIF(p_posicion, '0'))
+    AND TRIM(LEADING '0' FROM torre) = TRIM(LEADING '0' FROM NULLIF(p_torre, '0'))
+    AND TRIM(LEADING '0' FROM piso) = TRIM(LEADING '0' FROM NULLIF(p_piso, '0'))
+    AND TRIM(LEADING '0' FROM posicion) = TRIM(LEADING '0' FROM NULLIF(p_posicion, '0'))
     AND codigo = v_codigo_clean
     -- FIX 3: Excluir INC del stock para salidas normales (no INC)
     AND (p_tipo != 'salida' OR p_codigo_inc IS NOT NULL OR codigo_inc IS NULL);
@@ -166,9 +166,9 @@ BEGIN
   ), 0) INTO v_orig_stock
   FROM movimientos
   WHERE bloque = p_orig_bloque
-    AND BTRIM(LEADING '0' FROM torre) = BTRIM(LEADING '0' FROM NULLIF(p_orig_torre, '0'))
-    AND BTRIM(LEADING '0' FROM piso) = BTRIM(LEADING '0' FROM NULLIF(p_orig_piso, '0'))
-    AND BTRIM(LEADING '0' FROM posicion) = BTRIM(LEADING '0' FROM NULLIF(p_orig_pos, '0'))
+    AND TRIM(LEADING '0' FROM torre) = TRIM(LEADING '0' FROM NULLIF(p_orig_torre, '0'))
+    AND TRIM(LEADING '0' FROM piso) = TRIM(LEADING '0' FROM NULLIF(p_orig_piso, '0'))
+    AND TRIM(LEADING '0' FROM posicion) = TRIM(LEADING '0' FROM NULLIF(p_orig_pos, '0'))
     AND codigo = v_codigo_clean
     -- FIX 3: Excluir INC del stock para traslados normales
     AND (p_codigo_inc IS NOT NULL OR codigo_inc IS NULL);

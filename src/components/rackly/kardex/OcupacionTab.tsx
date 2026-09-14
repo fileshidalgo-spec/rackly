@@ -95,7 +95,9 @@ function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
     if (!codeMap) { codeMap = new Map(); cellMap.set(key, codeMap) }
     const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
     const current = codeMap.get(code) ?? 0
-    codeMap.set(code, current + delta)
+    // Redondeo a 3 decimales (precisión de la BD) en cada acumulación: evita que
+    // residuos binarios (~1e-14) dejen celdas "ocupadas" con stock invisible 0.
+    codeMap.set(code, Math.round((current + delta) * 1000) / 1000)
   }
   // Construir resultado: solo celdas con stock total > 0
   const result: OcupacionCelda[] = []

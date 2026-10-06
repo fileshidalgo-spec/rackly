@@ -51,9 +51,6 @@ const RE_GUIA = /\bT\s?\d{3}\s?-\s?\d{5,8}\b/
  */
 const RE_GUIA_SIN_T = /\b\d{3,4}\s?-\s?\d{5,8}\b/
 
-/** Etiquetas de proveedor en los 2 formatos conocidos (AJEPER / SAN MIGUEL). */
-const RE_PROVEEDOR = /(?:RAZ[OÓ]N\s+SOCIAL|SE[ÑN]ORES|PROVEEDOR)\s*:?\s*(.+)/i
-
 /** Cantidad con separador de miles y/o decimales: 2,884 · 9,400.00 · 340.340
  *  Con fronteras de palabra para no picar "BT48.3H" como 48.3. */
 const RE_CANTIDAD = /\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,3})?\b|\b\d+[.,]\d{1,3}\b/
@@ -73,7 +70,10 @@ function limpiarLineas(texto: string): string[] {
 }
 
 function extraerPlaca(lineas: string[]): string {
-  const reEtiqueta = /PLACA[S]?\s*(?:TRACTO|TRACTOR|CARRETA|REMOLQUE)?\s*(?:N[º°.]?)?\s*:?\s*(.+)$/i
+  // Acepta la etiqueta con o sin paréntesis: "PLACA (TRACTO): X" / "PLACA TRACTO: X".
+  const reEtiqueta = /PLACA[S]?\s*\(?\s*(?:TRACTO|TRACTOR|CARRETA|REMOLQUE)?\s*\)?\s*(?:N[º°.]?)?\s*:?\s*(.+)$/i
+  // Palabras de etiqueta que el OCR puede confundir con la placa.
+  const RE_NO_PLACA = /^(?:TRACTO|TRACTOR|CARRETA|REMOLQUE|REMOLCADOR|PLACA|LICENCIA|CODIGO)$/i
   for (const linea of lineas) {
     const m = linea.match(reEtiqueta)
     if (!m) continue
@@ -85,7 +85,8 @@ function extraerPlaca(lineas: string[]): string {
       // Preserva el separador original del OCR (A10-927 queda igual;
       // D9SB18 o D9SA18 se mantienen tal cual para corrección manual).
       const bruto = mp[0].replace(/\s+/g, '').toUpperCase()
-      // Descarta números de documento largos (RUC, DNI, licencias)
+      // Descarta palabras de etiqueta y números de documento largos (RUC, DNI, licencias)
+      if (RE_NO_PLACA.test(bruto)) continue
       if (/^\d{6,}$/.test(bruto.replace('-', ''))) continue
       // Guion solo si el formato clásico llegó sin él (AAA000 / 000AAA)
       if (/^[A-Z]{3}\d{3}$/.test(bruto) || /^\d{3}[A-Z]{3}$/.test(bruto)) {
@@ -100,10 +101,17 @@ function extraerPlaca(lineas: string[]): string {
 function extraerProveedor(lineas: string[]): string {
   const RE_CORTE =
     /\s+(?:FEC\.?\s*EMIS|FACTURA|ORDEN|RUC|DIRECCI[ÓO]N|NOMBRE\s+COMERCIAL|OTRO\s+SUSTENTO|TELEFONO|TEL\.)/i
-  for (const linea of lineas) {
-    const m = linea.match(RE_PROVEEDOR)
-    if (m) {
-      const val = m[1]
+  // Prioridad: RAZÓN SOCIAL / PROVEEDOR (el emisor = proveedor real). La
+  // etiqueta SEÑORES es el DESTINATARIO en el formato estándar de guías
+  // (p. ej. el propio cliente), así que solo se usa de respaldo.
+  const etiquetas = [/RAZ[OÓ]N\s+SOCIAL/i, /PROVEEDOR/i, /SE[ÑN]ORES/i]
+  for (const re of etiquetas) {
+    for (const linea of lineas) {
+      const m = linea.match(re)
+      if (!m) continue
+      const resto = linea.slice((m.index ?? 0) + m[0].length).replace(/^\s*:?\s*/, '')
+      if (!resto) continue
+      const val = resto
         .split(RE_CORTE)[0]
         .replace(/\s{2,}.*$/, '')
         .replace(/[,;:.]+$/, '')
@@ -147,6 +155,23 @@ function esqueleto(token: string): string {
   return token.replace(/[0ODQ]/g, '')
 }
 
+/** Tope de artículos reconocidos por guía (el usuario pidió soportar 20+). */
+const MAX_ITEMS = 30
+
+/**
+ * true si a y b difieren en EXACTAMENTE 1 sustitución de un carácter
+ * (misma longitud, 1 desigualdad). Para códigos numéricos mal leídos.
+ */
+function levenshtein1(a: string, b: string): boolean {
+  if (a === b) return false // idéntico ya lo cubre la estrategia 1
+  if (a.length !== b.length) return false
+  let dif = 0
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i] && ++dif > 1) return false
+  }
+  return dif === 1
+}
+
 /** Extrae tokens-candidato del texto y los cruza contra el catálogo. */
 function extraerItems(texto: string, catalogo: CatalogoItem[]): ItemGuia[] {
   if (catalogo.length === 0) return []
@@ -182,6 +207,7 @@ function extraerItems(texto: string, catalogo: CatalogoItem[]): ItemGuia[] {
   }
 
   // 2) Fallback: tokens alfanuméricos largos comparados por esqueleto (0/O/D/Q).
+  //    Cap 30: las guías pueden traer 20+ artículos.
   if (encontrados.length === 0) {
     const reTok = /\b[A-Z0-9][A-Z0-9-]{2,15}\b/g
     let t: RegExpExecArray | null
@@ -202,7 +228,50 @@ function extraerItems(texto: string, catalogo: CatalogoItem[]): ItemGuia[] {
           cat: hit,
         })
       }
-      if (encontrados.length >= 5) break
+      if (encontrados.length >= MAX_ITEMS) break
+    }
+  }
+
+  // 3) Rescate fuzzy: si NADA coincidió (p. ej. tabla larga con letra pequeña
+  //    donde el OCR malla 1 dígito por código), se busca cada token numérico
+  //    contra el catálogo aceptando 1 sustitución, SOLO si el match es único.
+  //    Todo queda editable en la confirmación, así que un falso positivo es
+  //    visible y borrable; el beneficio (rescatar los códigos) lo compensa.
+  if (encontrados.length === 0 && porCodigo.size > 0) {
+    const reNum = /\b\d{3,8}\b/g
+    let t: RegExpExecArray | null
+    while ((t = reNum.exec(textoUp)) !== null) {
+      const token = t[0]
+      // Excluye fragmentos de números con separadores ("200" de "1,200.00"):
+      // el token debe estar rodeado de algo que no sea dígito/separador.
+      const antes = t.index > 0 ? textoUp[t.index - 1] : ' '
+      const despues = t.index + token.length < textoUp.length ? textoUp[t.index + token.length] : ' '
+      if (/[0-9.,]/.test(antes) || /[0-9.,]/.test(despues)) continue
+      if (/^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(token)) continue // fechas
+      const linea = lineaDePos(textoUp, t.index)
+      // Solo tokens que parecen códigos de tabla: su línea debe tener
+      // letras (descripción) o más de un número separado (cant./unidad).
+      const conTexto = /[A-ZÑ]{3,}/.test(linea)
+      if (!conTexto) continue
+      let hit: CatalogoItem | undefined
+      let duplicado = false
+      for (const item of catalogo) {
+        const codigo = item.codigo.trim().toUpperCase()
+        if (Math.abs(codigo.length - token.length) > 1) continue
+        if (levenshtein1(token, codigo)) {
+          if (hit) { duplicado = true; break }
+          hit = item
+        }
+      }
+      if (hit && !duplicado) {
+        encontrados.push({
+          pos: t.index,
+          codigo: hit.codigo.trim().toUpperCase(),
+          linea,
+          cat: hit,
+        })
+      }
+      if (encontrados.length >= MAX_ITEMS) break
     }
   }
   encontrados.sort((a, b) => a.pos - b.pos)

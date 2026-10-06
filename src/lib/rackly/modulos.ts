@@ -181,8 +181,17 @@ export async function listarRecepciones(
   return { filas: (data ?? []).map(mapRecepcion), total: count ?? (data ?? []).length }
 }
 
-export async function crearRecepcion(datos: NuevoRecepcion, usuario: UsuarioCtx): Promise<void> {
-  const { error } = await dataClient.from('recepcion_registros').insert({
+/**
+ * Registra UNA recepción de N artículos: cada artículo se guarda como su
+ * propia fila (compatible con búsqueda por código, actividad y listado)
+ * compartiendo el encabezado del documento (guía, proveedor, placa, foto).
+ */
+export async function crearRecepciones(
+  items: NuevoRecepcion[],
+  usuario: UsuarioCtx
+): Promise<void> {
+  if (items.length === 0) return
+  const filas = items.map((datos) => ({
     fecha: datos.fecha,
     tipo_documento: datos.tipoDocumento,
     numero_documento: datos.numeroDocumento.trim(),
@@ -201,7 +210,8 @@ export async function crearRecepcion(datos: NuevoRecepcion, usuario: UsuarioCtx)
     usuario_id: usuario.id,
     usuario_nombre: usuario.nombre,
     usuario_correo: usuario.correo,
-  })
+  }))
+  const { error } = await dataClient.from('recepcion_registros').insert(filas)
   if (error) throw error
 }
 

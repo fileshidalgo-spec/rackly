@@ -55,6 +55,34 @@ export function findCatalogoByCodigo(codigo: string): CatalogoItem | undefined {
 }
 
 /**
+ * Búsqueda tolerante para el ingreso MANUAL del código en Recepción.
+ * 1) Coincidencia exacta (case-insensitive).
+ * 2) Regla histórica del app: '09' == '9' — si tras quitar ceros a la
+ *    izquierda existe EXACTAMENTE un candidato, se usa ese.
+ * Devuelve undefined si no hay match claro (el usuario escribe a mano).
+ * `fuente` (opcional) permite inyectar el catálogo en los tests.
+ */
+export function buscarCatalogo(
+  codigo: string,
+  fuente?: CatalogoItem[]
+): CatalogoItem | undefined {
+  const cache = fuente ?? _cache
+  const objetivo = codigo.trim().toUpperCase()
+  const exacto = cache.find((i) => i.codigo.trim().toUpperCase() === objetivo)
+  if (exacto) return exacto
+  const sinCeros = codigo.trim().replace(/^0+/, '')
+  if (!sinCeros) return undefined
+  let candidato: CatalogoItem | undefined
+  for (const item of cache) {
+    if (item.codigo.trim().replace(/^0+/, '') === sinCeros) {
+      if (candidato) return undefined // ambiguo: 2 códigos distintos tras normalizar
+      candidato = item
+    }
+  }
+  return candidato
+}
+
+/**
  * Busca en el catálogo por código exacto O por descripción que contenga el texto.
  * Retorna hasta `limit` resultados ordenados: primero coincidencia exacta de código,
  * luego por coincidencia parcial de código, luego por descripción.

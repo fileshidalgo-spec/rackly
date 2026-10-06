@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { GuiaFotoForm } from '@/components/rackly/recepcion/GuiaFotoForm'
 import {
   listarRecepciones,
   crearRecepcion,
@@ -64,9 +65,15 @@ import {
   Trash2,
   Loader2,
   Inbox,
+  Camera,
+  PencilLine,
+  ExternalLink,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
+
+/** Las 2 vías de registro del módulo (independientes entre sí). */
+type ModoRegistro = 'foto' | 'manual'
 
 const ESTADO_CLASE: Record<string, string> = {
   Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -99,8 +106,10 @@ export function RecepcionModule() {
   const [offset, setOffset] = useState(0)
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<RegistroRecepcion | null>(null)
+  // Vía de registro activa: foto de guía (OCR) o formulario manual.
+  const [modo, setModo] = useState<ModoRegistro>('foto')
 
-  // Formulario
+  // Formulario manual
   const [fFecha, setFFecha] = useState(hoyISO())
   const [fDoc, setFDoc] = useState('Guia')
   const [fNumero, setFNumero] = useState('')
@@ -108,6 +117,11 @@ export function RecepcionModule() {
   const [fCodigo, setFCodigo] = useState('')
   const [fDescripcion, setFDescripcion] = useState('')
   const [fCantidad, setFCantidad] = useState('')
+  const [fUnidad, setFUnidad] = useState('')
+  const [fLote, setFLote] = useState('')
+  const [fFechaProd, setFFechaProd] = useState('')
+  const [fFechaVenc, setFFechaVenc] = useState('')
+  const [fPlaca, setFPlaca] = useState('')
   const [fObs, setFObs] = useState('')
 
   const formRef = useRef<HTMLDivElement>(null)
@@ -168,6 +182,11 @@ export function RecepcionModule() {
           codigo: fCodigo,
           descripcion: fDescripcion,
           cantidad,
+          unidadMedida: fUnidad,
+          lote: fLote,
+          fechaProduccion: fFechaProd,
+          fechaVencimiento: fFechaVenc,
+          placa: fPlaca,
           observaciones: fObs,
         },
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
@@ -178,6 +197,11 @@ export function RecepcionModule() {
       setFCodigo('')
       setFDescripcion('')
       setFCantidad('')
+      setFUnidad('')
+      setFLote('')
+      setFFechaProd('')
+      setFFechaVenc('')
+      setFPlaca('')
       setFObs('')
       cargar(0, true)
     } catch (err: unknown) {
@@ -221,11 +245,41 @@ export function RecepcionModule() {
 
   return (
     <div className="space-y-5">
-      {/* ── Formulario de registro ── */}
+      {/* ── Selector de las 2 vías de registro ── */}
+      <div className="flex items-center gap-1 bg-white/70 border rounded-lg p-1 w-fit">
+        <button
+          onClick={() => setModo('foto')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+            modo === 'foto'
+              ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+          }`}
+        >
+          <Camera className="h-3.5 w-3.5" />
+          Con foto de guía
+        </button>
+        <button
+          onClick={() => setModo('manual')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+            modo === 'manual'
+              ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+          }`}
+        >
+          <PencilLine className="h-3.5 w-3.5" />
+          Manual
+        </button>
+      </div>
+
+      {/* ── Opción 1: registro con foto de la guía (OCR + catálogo) ── */}
+      {modo === 'foto' && <GuiaFotoForm onRegistrado={() => cargar(0, true)} />}
+
+      {/* ── Opción 2: formulario manual ── */}
+      {modo === 'manual' && (
       <div ref={formRef} className="rounded-xl border border-amber-100 bg-amber-50/50 p-4">
         <div className="flex items-center gap-2 mb-4">
           <Plus className="h-4 w-4 text-amber-600" />
-          <h3 className="text-sm font-bold text-amber-900">Nueva recepción</h3>
+          <h3 className="text-sm font-bold text-amber-900">Nueva recepción (manual)</h3>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1.5">
@@ -288,6 +342,38 @@ export function RecepcionModule() {
               onChange={(e) => setFCantidad(e.target.value)}
             />
           </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Unidad de medida</Label>
+            <Input
+              placeholder="KGM, MILL, UND…"
+              value={fUnidad}
+              onChange={(e) => setFUnidad(e.target.value.toUpperCase())}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Lote (manual)</Label>
+            <Input
+              placeholder="Lote de fabricación"
+              value={fLote}
+              onChange={(e) => setFLote(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Fecha de producción</Label>
+            <Input type="date" value={fFechaProd} onChange={(e) => setFFechaProd(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Fecha de vencimiento</Label>
+            <Input type="date" value={fFechaVenc} onChange={(e) => setFFechaVenc(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Placa</Label>
+            <Input
+              placeholder="Placa del vehículo"
+              value={fPlaca}
+              onChange={(e) => setFPlaca(e.target.value.toUpperCase())}
+            />
+          </div>
           <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
             <Label className="text-xs">Observaciones</Label>
             <Textarea
@@ -309,6 +395,7 @@ export function RecepcionModule() {
           </div>
         </div>
       </div>
+      )}
 
       {/* ── Filtros ── */}
       <div className="flex flex-col sm:flex-row gap-2">
@@ -351,6 +438,7 @@ export function RecepcionModule() {
               <TableHead className="min-w-[140px]">Proveedor</TableHead>
               <TableHead className="min-w-[180px]">Artículo</TableHead>
               <TableHead className="w-[90px] text-right">Cant.</TableHead>
+              <TableHead className="w-[60px] text-center">Foto</TableHead>
               <TableHead className="w-[140px]">Estado</TableHead>
               <TableHead className="min-w-[130px]">Registró</TableHead>
               {puedeEliminar && <TableHead className="w-[60px]" />}
@@ -359,7 +447,7 @@ export function RecepcionModule() {
           <TableBody>
             {filas.length === 0 && !loading && (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-sm text-slate-400 py-10">
+                <TableCell colSpan={9} className="text-center text-sm text-slate-400 py-10">
                   <Inbox className="h-8 w-8 mx-auto mb-2 text-slate-300" />
                   No hay recepciones registradas con los filtros actuales.
                 </TableCell>
@@ -381,7 +469,27 @@ export function RecepcionModule() {
                     {r.descripcion ? ` · ${r.descripcion}` : ''}
                   </p>
                 </TableCell>
-                <TableCell className="text-right text-sm font-semibold">{r.cantidad}</TableCell>
+                <TableCell className="text-right text-sm font-semibold">
+                  {r.cantidad}
+                  {r.unidadMedida ? (
+                    <span className="block text-[10px] font-normal text-slate-400">{r.unidadMedida}</span>
+                  ) : null}
+                </TableCell>
+                <TableCell className="text-center">
+                  {r.fotoUrl ? (
+                    <a
+                      href={r.fotoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Ver foto de la guía"
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-slate-500 hover:bg-amber-50 hover:text-amber-600"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  ) : (
+                    <span className="text-slate-300">—</span>
+                  )}
+                </TableCell>
                 <TableCell>
                   {puedeCambiarEstado(r) ? (
                     <Select value={r.estado} onValueChange={(v) => handleEstado(r, v)}>
@@ -449,11 +557,23 @@ export function RecepcionModule() {
             </div>
             <div className="grid grid-cols-2 gap-1 text-xs text-slate-500">
               <span>Fecha: {r.fecha}</span>
-              <span>Cant.: {r.cantidad}</span>
+              <span>Cant.: {r.cantidad}{r.unidadMedida ? ` ${r.unidadMedida}` : ''}</span>
               <span className="truncate">
                 Doc: {r.tipoDocumento} {r.numeroDocumento || ''}
               </span>
               <span className="truncate">Por: {r.usuarioNombre || '—'}</span>
+              {r.lote && <span>Lote: {r.lote}</span>}
+              {r.placa && <span>Placa: {r.placa}</span>}
+              {r.fotoUrl && (
+                <a
+                  href={r.fotoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-amber-600 font-semibold underline"
+                >
+                  Ver foto de la guía
+                </a>
+              )}
             </div>
             {puedeCambiarEstado(r) && (
               <Select value={r.estado} onValueChange={(v) => handleEstado(r, v)}>

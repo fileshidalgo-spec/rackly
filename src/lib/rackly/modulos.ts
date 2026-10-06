@@ -35,6 +35,12 @@ export type RegistroRecepcion = {
   codigo: string
   descripcion: string
   cantidad: number
+  unidadMedida: string
+  lote: string
+  fechaProduccion: string
+  fechaVencimiento: string
+  placa: string
+  fotoUrl: string
   estado: string
   observaciones: string
   usuarioId: string
@@ -66,6 +72,12 @@ export type NuevoRecepcion = {
   codigo: string
   descripcion: string
   cantidad: number
+  unidadMedida?: string
+  lote?: string
+  fechaProduccion?: string // 'YYYY-MM-DD' o '' = sin dato
+  fechaVencimiento?: string
+  placa?: string
+  fotoUrl?: string
   observaciones: string
 }
 
@@ -105,6 +117,12 @@ function mapRecepcion(r: Record<string, unknown>): RegistroRecepcion {
     codigo: str(r.codigo),
     descripcion: str(r.descripcion),
     cantidad: toNum(r.cantidad),
+    unidadMedida: str(r.unidad_medida),
+    lote: str(r.lote),
+    fechaProduccion: str(r.fecha_produccion),
+    fechaVencimiento: str(r.fecha_vencimiento),
+    placa: str(r.placa),
+    fotoUrl: str(r.foto_url),
     estado: str(r.estado),
     observaciones: str(r.observaciones),
     usuarioId: str(r.usuario_id),
@@ -172,6 +190,12 @@ export async function crearRecepcion(datos: NuevoRecepcion, usuario: UsuarioCtx)
     codigo: datos.codigo.trim().toUpperCase(),
     descripcion: datos.descripcion.trim(),
     cantidad: datos.cantidad,
+    unidad_medida: (datos.unidadMedida ?? '').trim().toUpperCase(),
+    lote: (datos.lote ?? '').trim(),
+    fecha_produccion: datos.fechaProduccion?.trim() || null,
+    fecha_vencimiento: datos.fechaVencimiento?.trim() || null,
+    placa: (datos.placa ?? '').trim().toUpperCase(),
+    foto_url: datos.fotoUrl?.trim() || null,
     observaciones: datos.observaciones.trim() || null,
     estado: 'Pendiente',
     usuario_id: usuario.id,
@@ -179,6 +203,21 @@ export async function crearRecepcion(datos: NuevoRecepcion, usuario: UsuarioCtx)
     usuario_correo: usuario.correo,
   })
   if (error) throw error
+}
+
+/**
+ * Sube la foto de la guía al bucket `recepcion-guias` y devuelve su URL
+ * pública. Ruta por usuario + timestamp para evitar colisiones.
+ */
+export async function subirFotoGuia(archivo: Blob, usuarioId: string): Promise<string> {
+  const ext = 'jpg'
+  const ruta = `${usuarioId}/${Date.now()}.${ext}`
+  const { error } = await dataClient.storage
+    .from('recepcion-guias')
+    .upload(ruta, archivo, { contentType: 'image/jpeg', upsert: false })
+  if (error) throw error
+  const { data } = dataClient.storage.from('recepcion-guias').getPublicUrl(ruta)
+  return data.publicUrl
 }
 
 export async function cambiarEstadoRecepcion(id: string, estado: string): Promise<void> {

@@ -375,8 +375,9 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
   useEffect(() => { const i = setInterval(() => refreshData(), 10000); return () => clearInterval(i) }, [refreshData])
   useEffect(() => {
     let ch: ReturnType<typeof supabase.channel> | null = null
-    try { ch = supabase.channel('ocupacion-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'movimientos' }, () => refreshData()).subscribe() } catch { /* ok */ }
-    return () => { if (ch) try { supabase.removeChannel(ch) } catch { /* ok */ } }
+    // Canal con dataClient (service_role): recibe eventos aunque RLS restrinja anon
+    try { ch = dataClient.channel('ocupacion-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'movimientos' }, () => refreshData()).subscribe() } catch { /* ok */ }
+    return () => { if (ch) try { dataClient.removeChannel(ch) } catch { /* ok */ } }
   }, [refreshData])
 
   // ── Diagnostic: per-block cell counts (visible in UI) ──

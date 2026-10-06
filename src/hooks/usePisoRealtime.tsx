@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useCallback } from 'react'
-import { supabase } from '@/lib/supabase/client'
+import { dataClient, supabase } from '@/lib/supabase/client'
 import { POLLING_INTERVAL } from '@/lib/rackly/constants'
 
 /**
@@ -9,6 +9,8 @@ import { POLLING_INTERVAL } from '@/lib/rackly/constants'
  * Escucha cambios en las tablas piso_movimientos y piso_movimiento_detalles
  * mediante Supabase Realtime, con polling SOLO como respaldo cuando el
  * WebSocket NO está conectado.
+ * El canal usa dataClient (service_role): sigue recibiendo eventos con RLS
+ * restringido a authenticated y sin exponer cambios al cliente público anon.
  *
  * Comportamiento:
  * - Al montar: carga inicial (refresh) + intenta conectar WebSocket
@@ -63,13 +65,13 @@ export function usePisoRealtime(onChange: () => void) {
 
     // Limpiar canal previo (React Strict Mode / remount)
     if (moduleChannel) {
-      try { supabase.removeChannel(moduleChannel) } catch { /* ignore */ }
+      try { dataClient.removeChannel(moduleChannel) } catch { /* ignore */ }
       moduleChannel = null
     }
 
     // Realtime: escucha cambios en piso_movimientos y piso_movimiento_detalles
     try {
-      moduleChannel = supabase
+      moduleChannel = dataClient
         .channel(CHANNEL_NAME)
         .on(
           'postgres_changes',
@@ -105,7 +107,7 @@ export function usePisoRealtime(onChange: () => void) {
       active = false
       stopPolling()
       if (moduleChannel) {
-        try { supabase.removeChannel(moduleChannel) } catch { /* ignore */ }
+        try { dataClient.removeChannel(moduleChannel) } catch { /* ignore */ }
         moduleChannel = null
       }
     }

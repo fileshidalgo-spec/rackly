@@ -1,13 +1,15 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { supabase } from '@/lib/supabase/client'
+import { dataClient, supabase } from '@/lib/supabase/client'
 import { fetchMovimientos, type Movimiento } from '@/lib/rackly/kardex'
 import { POLLING_INTERVAL } from '@/lib/rackly/constants'
 
 /**
  * Hook que mantiene la lista de movimientos sincronizada.
  * Usa Supabase Realtime como mecanismo principal y polling cada 8s como respaldo.
+ * El canal usa dataClient (service_role): sigue recibiendo eventos con RLS
+ * restringido a authenticated y sin exponer cambios al cliente público anon.
  *
  * SINGLETON COMPARTIDO: Todas las instancias del hook comparten el MISMO polling
  * interval y la MISMA suscripción Realtime. Solo se inicia el polling/realtime cuando
@@ -67,7 +69,7 @@ function startSharedRealtime() {
   if (realtimeChannel) return // Ya suscrito
 
   try {
-    realtimeChannel = supabase
+    realtimeChannel = dataClient
       .channel(CHANNEL_NAME)
       .on(
         'postgres_changes',
@@ -89,7 +91,7 @@ function startSharedRealtime() {
 
 function stopSharedRealtime() {
   if (realtimeChannel) {
-    try { supabase.removeChannel(realtimeChannel) } catch { /* ignore */ }
+    try { dataClient.removeChannel(realtimeChannel) } catch { /* ignore */ }
     realtimeChannel = null
   }
 }

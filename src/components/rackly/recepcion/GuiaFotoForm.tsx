@@ -5,31 +5,34 @@
  *
  * Flujo:
  *   1. Usuario toma foto a la guía (cámara móvil o archivo).
- *   2. Se reduce la imagen, corre OCR (tesseract.js, idioma spa) y el
- *      parser `extraerDatosGuia` recopila: nº guía, placa, proveedor y
- *      códigos de artículo (cruzados contra el catálogo → descripción
- *      y unidad automáticas).
- *   3. Formulario de CONFIRMACIÓN prellenado: todo editable (la cantidad
- *      se ajusta si llegó menor), fechas de producción/vencimiento y lote
- *      se colocan manualmente.
+ *   2. Se reduce la imagen (2800px, tablas largas con letra pequeña),
+ *      corre OCR (tesseract.js, idioma spa) y el parser `extraerDatosGuia`
+ *      recopila: nº guía, placa, proveedor y TODOS los códigos de artículo
+ *      detectados (cruzados contra el catálogo → descripción y unidad
+ *      automáticas). Si no encontró ninguno, activa rescate fuzzy.
+ *   3. Formulario de CONFIRMACIÓN con la LISTA COMPLETA de artículos
+ *      (la guía puede traer 20+): todo editable, cantidad ajustable por
+ *      artículo, lote y fechas manuales (con atajo "aplicar a todos").
  *   4. Al registrar: foto liviana → Storage (bucket recepcion-guias) y
- *      registro en recepcion_registros (misma tabla que la vía manual).
+ *      UNA FILA POR ARTÍCULO en recepcion_registros compartiendo el
+ *      encabezado (guía, placa, proveedor, foto).
  */
 
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import {
-  fetchCatalogo,
-  findCatalogoByCodigo,
-  type CatalogoItem,
-} from '@/lib/rackly/catalogo'
+import { fetchCatalogo, getCachedCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
 import {
   extraerDatosGuia,
   reducirImagen,
   type DatosGuia,
-  type ItemGuia,
 } from '@/lib/rackly/guia-ocr'
-import { crearRecepcion, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
+import { crearRecepciones, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
+import {
+  RecepcionItemsEditor,
+  itemVacio,
+  itemsValidos,
+  type ItemRecepcion,
+} from '@/components/rackly/recepcion/RecepcionItemsEditor'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -63,22 +66,15 @@ function hoyISO(): string {
 
 type Paso = 'elegir' | 'procesando' | 'confirmar'
 
-/** Estado del formulario de confirmación (todo editable). */
+/** Estado del formulario de confirmación: encabezado + lista de artículos. */
 type FormFoto = {
   numeroGuia: string
   placa: string
   proveedor: string
   fecha: string
   tipoDocumento: string
-  codigo: string
-  descripcion: string
-  cantidad: string
-  unidad: string
-  fechaProduccion: string
-  fechaVencimiento: string
-  lote: string
   observaciones: string
-  enCatalogo: boolean
+  items: ItemRecepcion[]
 }
 
 const FORM_VACIO: FormFoto = {
@@ -87,15 +83,22 @@ const FORM_VACIO: FormFoto = {
   proveedor: '',
   fecha: hoyISO(),
   tipoDocumento: 'Guia',
-  codigo: '',
-  descripcion: '',
-  cantidad: '',
-  unidad: '',
-  fechaProduccion: '',
-  fechaVencimiento: '',
-  lote: '',
   observaciones: '',
-  enCatalogo: false,
+  items: [itemVacio()],
+}
+
+/** ItemGuia (OCR) → ItemRecepcion (editor). */
+function itemDesdeOcr(item: DatosGuia['items'][number]): ItemRecepcion {
+  return {
+    codigo: item.codigo,
+    descripcion: item.descripcion,
+    cantidad: item.cantidad,
+    unidad: item.unidad,
+    lote: '',
+    fechaProduccion: '',
+    fechaVencimiento: '',
+    enCatalogo: item.enCatalogo,
+  }
 }
 
 export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
@@ -118,31 +121,12 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     setForm((prev) => ({ ...prev, [k]: v }))
   }
 
-  /** Al escribir el código: descripción y unidad se sacan del catálogo. */
-  function onCodigoChange(valor: string) {
-    const cat = findCatalogoByCodigo(valor)
-    setForm((prev) => ({
-      ...prev,
-      codigo: valor,
-      descripcion: cat ? cat.descripcion : prev.descripcion,
-      unidad: cat ? cat.un : prev.unidad,
-      enCatalogo: Boolean(cat),
-    }))
-  }
-
-  function aplicarItemPrincipal(datos: DatosGuia) {
-    const item: ItemGuia | undefined = datos.items[0]
-    setForm({
-      ...FORM_VACIO,
-      numeroGuia: datos.numeroGuia,
-      placa: datos.placa,
-      proveedor: datos.proveedor,
-      codigo: item?.codigo ?? '',
-      descripcion: item?.descripcion ?? '',
-      cantidad: item?.cantidad || datos.cantidadSugerida || '',
-      unidad: item?.unidad ?? '',
-      enCatalogo: item?.enCatalogo ?? false,
-    })
+  /** Carga (o recarga) el catálogo; false si sigue vacío. */
+  async function asegurarCatalogo(): Promise<boolean> {
+    if (catalogo.length > 0) return true
+    const c = await fetchCatalogo()
+    setCatalogo(c)
+    return c.length > 0
   }
 
   async function procesar(archivo: File) {
@@ -150,10 +134,21 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     setProgreso(0)
     setEtapa('Preparando imagen…')
     try {
-      const imagen = await reducirImagen(archivo, 2000, 0.9)
+      // 2800px: las guías con 20+ artículos imprimen la tabla en letra
+      // pequeña; a 2000px el OCR no distinguía los dígitos del código.
+      const imagen = await reducirImagen(archivo, 2800, 0.9)
       const liviana = await reducirImagen(archivo, 1200, 0.8)
       setFotoBlob(liviana)
       setThumb(URL.createObjectURL(liviana))
+
+      setEtapa('Verificando catálogo…')
+      const catOk = await asegurarCatalogo()
+      if (!catOk) {
+        toast.warning('Catálogo no disponible', {
+          description:
+            'Los códigos no se podrán reconocer automáticamente; el app abrirá el formulario para completarlos a mano.',
+        })
+      }
 
       setEtapa('Leyendo la guía (OCR español)…')
       const { createWorker } = await import('tesseract.js')
@@ -165,32 +160,47 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           }
         },
       })
+      let datos: DatosGuia
       try {
         const { data } = await worker.recognize(imagen)
-        const datos = extraerDatosGuia(data.text ?? '', catalogo)
-        aplicarItemPrincipal(datos)
-        if (!datos.numeroGuia && datos.items.length === 0) {
-          toast.warning('No se detectaron datos automáticamente', {
-            description: 'Completa los datos manualmente en el siguiente paso.',
-          })
-        } else {
-          const faltantes: string[] = []
-          if (!datos.numeroGuia) faltantes.push('nº guía')
-          if (!datos.placa) faltantes.push('placa')
-          toast.success('Datos recopilados de la guía', {
-            description:
-              `Detectados: ${[
-                datos.numeroGuia ? `guía ${datos.numeroGuia}` : '',
-                datos.placa ? `placa ${datos.placa}` : '',
-                `${datos.items.length} código(s)`,
-              ]
-                .filter(Boolean)
-                .join(' · ')}` +
-              (faltantes.length ? `. Faltan: ${faltantes.join(', ')} (se completan a mano).` : ''),
-          })
-        }
+        datos = extraerDatosGuia(data.text ?? '', catOk ? getCachedCatalogo() : [])
       } finally {
         await worker.terminate()
+      }
+
+      const itemsOcr = datos.items.map(itemDesdeOcr)
+      setForm({
+        ...FORM_VACIO,
+        numeroGuia: datos.numeroGuia,
+        placa: datos.placa,
+        proveedor: datos.proveedor,
+        items: itemsOcr.length > 0 ? itemsOcr : [itemVacio()],
+      })
+
+      if (!datos.numeroGuia && itemsOcr.length === 0) {
+        toast.warning('No se detectaron datos automáticamente', {
+          description: 'Completa los datos manualmente en el siguiente paso.',
+        })
+      } else {
+        const faltantes: string[] = []
+        if (!datos.numeroGuia) faltantes.push('nº guía')
+        if (!datos.placa) faltantes.push('placa')
+        const enCat = itemsOcr.filter((i) => i.enCatalogo).length
+        toast.success(
+          itemsOcr.length > 0
+            ? `Se detectaron ${itemsOcr.length} artículo(s)${enCat > 0 ? ` · ${enCat} en catálogo` : ''}`
+            : 'Datos del documento recopilados',
+          {
+            description:
+              [
+                datos.numeroGuia ? `guía ${datos.numeroGuia}` : '',
+                datos.placa ? `placa ${datos.placa}` : '',
+              ]
+                .filter(Boolean)
+                .join(' · ') +
+              (faltantes.length ? `. Faltan: ${faltantes.join(', ')} (se completan a mano).` : ''),
+          }
+        )
       }
       setPaso('confirmar')
     } catch (err: unknown) {
@@ -210,13 +220,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   }
 
   async function guardar() {
-    const cantidad = parseFloat((form.cantidad || '').replace(',', '.'))
-    if (!form.codigo.trim() && !form.proveedor.trim()) {
-      toast.error('Ingresa al menos el código del artículo o el proveedor')
-      return
-    }
-    if (isNaN(cantidad) || cantidad <= 0) {
-      toast.error('La cantidad debe ser un número mayor a 0')
+    const validos = itemsValidos(form.items)
+    if (validos.length === 0) {
+      toast.error('Agrega al menos un artículo con código y cantidad mayor a 0')
       return
     }
     if (!perfil) {
@@ -233,26 +239,27 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           toast.warning('La foto no se pudo subir; el registro se guarda sin ella.')
         }
       }
-      await crearRecepcion(
-        {
-          fecha: form.fecha || hoyISO(),
+      const fecha = form.fecha || hoyISO()
+      await crearRecepciones(
+        validos.map((it) => ({
+          fecha,
           tipoDocumento: form.tipoDocumento,
           numeroDocumento: form.numeroGuia,
           proveedor: form.proveedor,
-          codigo: form.codigo,
-          descripcion: form.descripcion,
-          cantidad,
-          unidadMedida: form.unidad,
-          lote: form.lote,
-          fechaProduccion: form.fechaProduccion,
-          fechaVencimiento: form.fechaVencimiento,
+          codigo: it.codigo,
+          descripcion: it.descripcion,
+          cantidad: parseFloat(it.cantidad.replace(',', '.')),
+          unidadMedida: it.unidad,
+          lote: it.lote,
+          fechaProduccion: it.fechaProduccion,
+          fechaVencimiento: it.fechaVencimiento,
           placa: form.placa,
           fotoUrl,
           observaciones: form.observaciones,
-        },
+        })),
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )
-      toast.success('Recepción registrada con foto de guía')
+      toast.success(`Recepción registrada con foto: ${validos.length} artículo(s)`)
       reiniciar()
       onRegistrado()
     } catch (err: unknown) {
@@ -274,9 +281,10 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           <h3 className="text-sm font-bold text-amber-900">Registrar con foto de guía</h3>
         </div>
         <p className="text-xs text-slate-500 mb-4">
-          Toma una foto a la guía y el app recopila el código del artículo, descripción (desde el
-          catálogo), cantidad, unidad, placa y número de guía. La fecha de producción, vencimiento y
-          el lote se completan manualmente. Todo es editable antes de registrar.
+          Toma una foto a la guía y el app recopila el número de guía, placa, proveedor y TODOS los
+          artículos detectados (código, descripción del catálogo, cantidad y unidad). La fecha de
+          producción, vencimiento y el lote se completan manualmente. Todo es editable antes de
+          registrar.
         </p>
         <input
           ref={inputRef}
@@ -321,8 +329,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   }
 
   // ────────────────────────────────────────────────────────────
-  // PASO 3: confirmación prellenada
+  // PASO 3: confirmación (encabezado + lista de artículos)
   // ────────────────────────────────────────────────────────────
+  const detectados = form.items.filter((i) => i.codigo.trim()).length
   return (
     <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-4 space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -362,18 +371,21 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
               <XCircle className="h-3.5 w-3.5" /> Placa no detectada — colócala abajo
             </p>
           )}
-          {form.enCatalogo ? (
-            <p className="text-xs flex items-center gap-1.5 text-emerald-700">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Código encontrado en catálogo
-            </p>
-          ) : (
-            <p className="text-xs flex items-center gap-1.5 text-slate-500">
-              <XCircle className="h-3.5 w-3.5" /> Código no está en el catálogo (descripción manual)
-            </p>
-          )}
+          <p className={`text-xs flex items-center gap-1.5 ${detectados > 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
+            {detectados > 0 ? (
+              <>
+                <CheckCircle2 className="h-3.5 w-3.5" /> Artículos detectados: <b>{detectados}</b>
+              </>
+            ) : (
+              <>
+                <XCircle className="h-3.5 w-3.5" /> Sin códigos detectados — agrégalos abajo
+              </>
+            )}
+          </p>
         </div>
       </div>
 
+      {/* Encabezado del documento (compartido por todos los artículos) */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1.5">
           <Label className="text-xs">Nº de guía</Label>
@@ -391,37 +403,6 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           <Label className="text-xs">Fecha de recepción</Label>
           <Input type="date" value={form.fecha} onChange={(e) => set('fecha', e.target.value)} />
         </div>
-
-        <div className="space-y-1.5">
-          <Label className="text-xs">Código del artículo</Label>
-          <Input value={form.codigo} onChange={(e) => onCodigoChange(e.target.value)} placeholder="Se autocompleta la descripción" />
-        </div>
-        <div className="space-y-1.5 lg:col-span-2">
-          <Label className="text-xs">Descripción {form.enCatalogo ? '(del catálogo)' : ''}</Label>
-          <Input value={form.descripcion} onChange={(e) => set('descripcion', e.target.value)} placeholder="Descripción del artículo" />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Cantidad (editable)</Label>
-          <Input inputMode="decimal" value={form.cantidad} onChange={(e) => set('cantidad', e.target.value)} placeholder="0" />
-        </div>
-
-        <div className="space-y-1.5">
-          <Label className="text-xs">Unidad de medida</Label>
-          <Input value={form.unidad} onChange={(e) => set('unidad', e.target.value.toUpperCase())} placeholder="KGM, MILL, UND…" />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Fecha de producción (manual)</Label>
-          <Input type="date" value={form.fechaProduccion} onChange={(e) => set('fechaProduccion', e.target.value)} />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Fecha de vencimiento (manual)</Label>
-          <Input type="date" value={form.fechaVencimiento} onChange={(e) => set('fechaVencimiento', e.target.value)} />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Lote (manual)</Label>
-          <Input value={form.lote} onChange={(e) => set('lote', e.target.value)} placeholder="Lote de fabricación" />
-        </div>
-
         <div className="space-y-1.5">
           <Label className="text-xs">Tipo de documento</Label>
           <Select value={form.tipoDocumento} onValueChange={(v) => set('tipoDocumento', v)}>
@@ -437,21 +418,26 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1.5 sm:col-span-2 lg:col-span-2">
+        <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
           <Label className="text-xs">Observaciones</Label>
           <Textarea rows={1} value={form.observaciones} onChange={(e) => set('observaciones', e.target.value)} placeholder="Opcional" />
         </div>
-        <div className="flex items-end">
-          <Button
-            onClick={guardar}
-            disabled={saving}
-            className="w-full gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
-            Registrar recepción
-          </Button>
-        </div>
       </div>
+
+      {/* Artículos detectados por el OCR + agregados a mano */}
+      <RecepcionItemsEditor
+        items={form.items}
+        onChange={(items) => set('items', items)}
+      />
+
+      <Button
+        onClick={guardar}
+        disabled={saving}
+        className="w-full gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
+      >
+        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
+        Registrar recepción ({itemsValidos(form.items).length} artículo(s))
+      </Button>
     </div>
   )
 }

@@ -16,10 +16,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { fetchCatalogo } from '@/lib/rackly/catalogo'
 import { GuiaFotoForm } from '@/components/rackly/recepcion/GuiaFotoForm'
 import {
+  RecepcionItemsEditor,
+  itemVacio,
+  itemsValidos,
+  type ItemRecepcion,
+} from '@/components/rackly/recepcion/RecepcionItemsEditor'
+import {
   listarRecepciones,
-  crearRecepcion,
+  crearRecepciones,
   cambiarEstadoRecepcion,
   eliminarRecepcion,
   ESTADOS_RECEPCION,
@@ -109,20 +116,15 @@ export function RecepcionModule() {
   // Vía de registro activa: foto de guía (OCR) o formulario manual.
   const [modo, setModo] = useState<ModoRegistro>('foto')
 
-  // Formulario manual
+  // Formulario manual: encabezado del documento + lista de artículos.
+  // Una guía puede traer 20+ artículos; cada artículo = 1 fila en BD.
   const [fFecha, setFFecha] = useState(hoyISO())
   const [fDoc, setFDoc] = useState('Guia')
   const [fNumero, setFNumero] = useState('')
   const [fProveedor, setFProveedor] = useState('')
-  const [fCodigo, setFCodigo] = useState('')
-  const [fDescripcion, setFDescripcion] = useState('')
-  const [fCantidad, setFCantidad] = useState('')
-  const [fUnidad, setFUnidad] = useState('')
-  const [fLote, setFLote] = useState('')
-  const [fFechaProd, setFFechaProd] = useState('')
-  const [fFechaVenc, setFFechaVenc] = useState('')
   const [fPlaca, setFPlaca] = useState('')
   const [fObs, setFObs] = useState('')
+  const [items, setItems] = useState<ItemRecepcion[]>([itemVacio()])
 
   const formRef = useRef<HTMLDivElement>(null)
 
@@ -153,18 +155,20 @@ export function RecepcionModule() {
     cargar(0, true)
   }, [estadoFiltro])
 
+  // Catálogo en cache para el auto-llenado de descripción/unidad al
+  // escribir el código (en el editor de artículos).
+  useEffect(() => {
+    void fetchCatalogo()
+  }, [])
+
   function buscar() {
     cargar(0, true)
   }
 
   async function handleRegistrar() {
-    const cantidad = parseFloat(fCantidad.replace(',', '.'))
-    if (!fProveedor.trim() && !fCodigo.trim()) {
-      toast.error('Ingresa al menos el proveedor o el código del artículo')
-      return
-    }
-    if (isNaN(cantidad) || cantidad <= 0) {
-      toast.error('La cantidad debe ser un número mayor a 0')
+    const validos = itemsValidos(items)
+    if (validos.length === 0) {
+      toast.error('Agrega al menos un artículo con código y cantidad mayor a 0')
       return
     }
     if (!perfil) {
@@ -173,36 +177,31 @@ export function RecepcionModule() {
     }
     setSaving(true)
     try {
-      await crearRecepcion(
-        {
-          fecha: fFecha || hoyISO(),
+      const fecha = fFecha || hoyISO()
+      await crearRecepciones(
+        validos.map((it) => ({
+          fecha,
           tipoDocumento: fDoc,
           numeroDocumento: fNumero,
           proveedor: fProveedor,
-          codigo: fCodigo,
-          descripcion: fDescripcion,
-          cantidad,
-          unidadMedida: fUnidad,
-          lote: fLote,
-          fechaProduccion: fFechaProd,
-          fechaVencimiento: fFechaVenc,
+          codigo: it.codigo,
+          descripcion: it.descripcion,
+          cantidad: parseFloat(it.cantidad.replace(',', '.')),
+          unidadMedida: it.unidad,
+          lote: it.lote,
+          fechaProduccion: it.fechaProduccion,
+          fechaVencimiento: it.fechaVencimiento,
           placa: fPlaca,
           observaciones: fObs,
-        },
+        })),
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )
-      toast.success('Recepción registrada')
+      toast.success(`Recepción registrada: ${validos.length} artículo(s)`)
       setFNumero('')
       setFProveedor('')
-      setFCodigo('')
-      setFDescripcion('')
-      setFCantidad('')
-      setFUnidad('')
-      setFLote('')
-      setFFechaProd('')
-      setFFechaVenc('')
       setFPlaca('')
       setFObs('')
+      setItems([itemVacio()])
       cargar(0, true)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
@@ -274,13 +273,20 @@ export function RecepcionModule() {
       {/* ── Opción 1: registro con foto de la guía (OCR + catálogo) ── */}
       {modo === 'foto' && <GuiaFotoForm onRegistrado={() => cargar(0, true)} />}
 
-      {/* ── Opción 2: formulario manual ── */}
+      {/* ── Opción 2: formulario manual (encabezado + N artículos) ── */}
       {modo === 'manual' && (
-      <div ref={formRef} className="rounded-xl border border-amber-100 bg-amber-50/50 p-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Plus className="h-4 w-4 text-amber-600" />
-          <h3 className="text-sm font-bold text-amber-900">Nueva recepción (manual)</h3>
+      <div ref={formRef} className="rounded-xl border border-amber-100 bg-amber-50/50 p-4 space-y-4">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Plus className="h-4 w-4 text-amber-600" />
+            <h3 className="text-sm font-bold text-amber-900">Nueva recepción (manual)</h3>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            Escribe el código y se autocompletan descripción y unidad desde el catálogo.
+          </p>
         </div>
+
+        {/* Encabezado del documento (compartido por todos los artículos) */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1.5">
             <Label className="text-xs">Fecha</Label>
@@ -304,7 +310,7 @@ export function RecepcionModule() {
           <div className="space-y-1.5">
             <Label className="text-xs">Nº de documento</Label>
             <Input
-              placeholder="Ej: GR-0012345"
+              placeholder="Ej: T005-0034403"
               value={fNumero}
               onChange={(e) => setFNumero(e.target.value)}
             />
@@ -318,55 +324,6 @@ export function RecepcionModule() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Código</Label>
-            <Input
-              placeholder="Código del artículo"
-              value={fCodigo}
-              onChange={(e) => setFCodigo(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5 lg:col-span-2">
-            <Label className="text-xs">Descripción</Label>
-            <Input
-              placeholder="Descripción del artículo o mercadería"
-              value={fDescripcion}
-              onChange={(e) => setFDescripcion(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Cantidad</Label>
-            <Input
-              inputMode="decimal"
-              placeholder="0"
-              value={fCantidad}
-              onChange={(e) => setFCantidad(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Unidad de medida</Label>
-            <Input
-              placeholder="KGM, MILL, UND…"
-              value={fUnidad}
-              onChange={(e) => setFUnidad(e.target.value.toUpperCase())}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Lote (manual)</Label>
-            <Input
-              placeholder="Lote de fabricación"
-              value={fLote}
-              onChange={(e) => setFLote(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Fecha de producción</Label>
-            <Input type="date" value={fFechaProd} onChange={(e) => setFFechaProd(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Fecha de vencimiento</Label>
-            <Input type="date" value={fFechaVenc} onChange={(e) => setFFechaVenc(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
             <Label className="text-xs">Placa</Label>
             <Input
               placeholder="Placa del vehículo"
@@ -377,23 +334,25 @@ export function RecepcionModule() {
           <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
             <Label className="text-xs">Observaciones</Label>
             <Textarea
-              rows={2}
+              rows={1}
               placeholder="Observaciones de la recepción (opcional)"
               value={fObs}
               onChange={(e) => setFObs(e.target.value)}
             />
           </div>
-          <div className="flex items-end">
-            <Button
-              onClick={handleRegistrar}
-              disabled={saving}
-              className="w-full gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
-              Registrar
-            </Button>
-          </div>
         </div>
+
+        {/* Artículos de la guía (1, 20 o más) */}
+        <RecepcionItemsEditor items={items} onChange={setItems} />
+
+        <Button
+          onClick={handleRegistrar}
+          disabled={saving}
+          className="w-full gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
+          Registrar {itemsValidos(items).length > 0 ? `${itemsValidos(items).length} artículo(s)` : 'recepción'}
+        </Button>
       </div>
       )}
 

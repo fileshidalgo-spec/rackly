@@ -208,16 +208,29 @@ export async function crearRecepcion(datos: NuevoRecepcion, usuario: UsuarioCtx)
 /**
  * Sube la foto de la guía al bucket `recepcion-guias` y devuelve su URL
  * pública. Ruta por usuario + timestamp para evitar colisiones.
+ *
+ * Usa fetch directo al Storage API (probado en producción): el cliente
+ * storage.upload() de supabase-js devolvía 400 en este entorno.
  */
 export async function subirFotoGuia(archivo: Blob, usuarioId: string): Promise<string> {
-  const ext = 'jpg'
-  const ruta = `${usuarioId}/${Date.now()}.${ext}`
-  const { error } = await dataClient.storage
-    .from('recepcion-guias')
-    .upload(ruta, archivo, { contentType: 'image/jpeg', upsert: false })
-  if (error) throw error
-  const { data } = dataClient.storage.from('recepcion-guias').getPublicUrl(ruta)
-  return data.publicUrl
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+  const key = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? ''
+  const ruta = `${usuarioId}/${Date.now()}.jpg`
+  const res = await fetch(`${base}/storage/v1/object/recepcion-guias/${ruta}`, {
+    method: 'POST',
+    headers: {
+      apikey: key,
+      authorization: `Bearer ${key}`,
+      'content-type': 'image/jpeg',
+      'x-upsert': 'false',
+    },
+    body: archivo,
+  })
+  if (!res.ok) {
+    const detalle = await res.text().catch(() => '')
+    throw new Error(`Storage ${res.status}: ${detalle.slice(0, 140)}`)
+  }
+  return `${base}/storage/v1/object/public/recepcion-guias/${ruta}`
 }
 
 export async function cambiarEstadoRecepcion(id: string, estado: string): Promise<void> {

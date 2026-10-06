@@ -139,7 +139,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
       proveedor: datos.proveedor,
       codigo: item?.codigo ?? '',
       descripcion: item?.descripcion ?? '',
-      cantidad: item?.cantidad ?? '',
+      cantidad: item?.cantidad || datos.cantidadSugerida || '',
       unidad: item?.unidad ?? '',
       enCatalogo: item?.enCatalogo ?? false,
     })

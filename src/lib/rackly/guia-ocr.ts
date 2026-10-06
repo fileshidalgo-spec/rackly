@@ -82,10 +82,12 @@ function extraerPlaca(lineas: string[]): string {
     // usuario corrige en el formulario de confirmación.
     const mp = m[1].match(/\b([A-Z0-9]{2,4})[-\s]?([A-Z0-9]{3})\b/i)
     if (mp) {
-      const bruto = (mp[1] + mp[2]).toUpperCase()
+      // Preserva el separador original del OCR (A10-927 queda igual;
+      // D9SB18 o D9SA18 se mantienen tal cual para corrección manual).
+      const bruto = mp[0].replace(/\s+/g, '').toUpperCase()
       // Descarta números de documento largos (RUC, DNI, licencias)
-      if (/^\d{6,}$/.test(bruto)) continue
-      // Guion solo en el formato clásico AAA000 / 000AAA
+      if (/^\d{6,}$/.test(bruto.replace('-', ''))) continue
+      // Guion solo si el formato clásico llegó sin él (AAA000 / 000AAA)
       if (/^[A-Z]{3}\d{3}$/.test(bruto) || /^\d{3}[A-Z]{3}$/.test(bruto)) {
         return `${bruto.slice(0, 3)}-${bruto.slice(3)}`
       }

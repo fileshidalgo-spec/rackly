@@ -18,6 +18,10 @@ import { PisoSectoresTab } from '@/components/rackly/piso/PisoSectoresTab'
 import { PisoStockTab } from '@/components/rackly/piso/PisoStockTab'
 import { StockIncTab } from '@/components/rackly/kardex/StockIncTab'
 import { StockIncPisoTab } from '@/components/rackly/piso/StockIncPisoTab'
+import { ModulosHome, type VistaModulo } from '@/components/rackly/inicio/ModulosHome'
+import { UsuariosModule } from '@/components/rackly/usuarios/UsuariosModule'
+import { RecepcionModule } from '@/components/rackly/recepcion/RecepcionModule'
+import { AtencionModule } from '@/components/rackly/atencion/AtencionModule'
 import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Button } from '@/components/ui/button'
@@ -69,6 +73,10 @@ import {
   Filter,
   BarChart3,
   TriangleAlert,
+  Home,
+  Users,
+  PackageCheck,
+  HeartHandshake,
 } from 'lucide-react'
 
 function fmtCantidad(n: number) {
@@ -83,7 +91,8 @@ function formatDateTime(iso: string) {
 
 function RacklyApp() {
   const { perfil } = useAuth()
-  const [view, setView] = useState<'racks' | 'piso'>('racks')
+  // Pantalla de ingreso de módulos: 'inicio' por defecto; cada módulo navega independiente.
+  const [view, setView] = useState<'inicio' | VistaModulo>('inicio')
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [expandMovs, setExpandMovs] = useState(false)
   const [filterTipo, setFilterTipo] = useState('todos')
@@ -166,8 +175,19 @@ function RacklyApp() {
                 </p>
               </div>
             </div>
-            {/* View Switcher */}
+            {/* Módulos: Inicio · Racks · Piso */}
             <div className="flex items-center bg-white/10 rounded-lg p-0.5 ml-2 sm:ml-4">
+              <button
+                onClick={() => setView('inicio')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                  view === 'inicio'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-300 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <Home className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Inicio</span>
+              </button>
               <button
                 onClick={() => setView('racks')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
@@ -191,6 +211,25 @@ function RacklyApp() {
                 <span className="hidden sm:inline">Piso</span>
               </button>
             </div>
+            {/* Indicador de módulo transversal activo */}
+            {view === 'usuarios' && (
+              <Badge variant="outline" className="ml-2 border-slate-500/40 bg-white/10 text-slate-200 gap-1.5 font-semibold">
+                <Shield className="h-3 w-3" />
+                <span className="hidden sm:inline">Usuarios</span>
+              </Badge>
+            )}
+            {view === 'recepcion' && (
+              <Badge variant="outline" className="ml-2 border-amber-400/40 bg-amber-400/10 text-amber-200 gap-1.5 font-semibold">
+                <PackageCheck className="h-3 w-3" />
+                <span className="hidden sm:inline">Recepción</span>
+              </Badge>
+            )}
+            {view === 'atencion' && (
+              <Badge variant="outline" className="ml-2 border-teal-400/40 bg-teal-400/10 text-teal-200 gap-1.5 font-semibold">
+                <HeartHandshake className="h-3 w-3" />
+                <span className="hidden sm:inline">Atención</span>
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <SesionBar />
@@ -199,6 +238,71 @@ function RacklyApp() {
       </header>
 
       <div className="mx-auto max-w-7xl p-4 md:p-6 relative z-10">
+        {/* ═══ PANTALLA DE INGRESO DE MÓDULOS ═══ */}
+        {view === 'inicio' && <ModulosHome onEntrar={(v) => setView(v)} />}
+
+        {/* ═══ MÓDULO USUARIOS (TRANSVERSAL) ═══ */}
+        {view === 'usuarios' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-500 to-slate-700 flex items-center justify-center shadow-md shadow-slate-500/20">
+                  <Users className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Módulo Usuarios</CardTitle>
+                  <CardDescription>
+                    Gestión transversal: usuarios, roles y su actividad en todos los módulos.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent><UsuariosModule /></CardContent>
+          </Card>
+        )}
+
+        {/* ═══ MÓDULO RECEPCIÓN ═══ */}
+        {view === 'recepcion' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-md shadow-amber-500/20">
+                  <PackageCheck className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Módulo Recepción</CardTitle>
+                  <CardDescription>
+                    Registro de recepción de mercadería y documentos. Funciona de forma
+                    independiente al kardex.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent><RecepcionModule /></CardContent>
+          </Card>
+        )}
+
+        {/* ═══ MÓDULO ATENCIÓN ═══ */}
+        {view === 'atencion' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center shadow-md shadow-teal-500/20">
+                  <HeartHandshake className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Módulo Atención</CardTitle>
+                  <CardDescription>
+                    Tickets de atención y soporte interno con seguimiento de estados. Funciona de
+                    forma independiente al kardex.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent><AtencionModule /></CardContent>
+          </Card>
+        )}
+
         {/* ═══ KARDEX RACKS VIEW ═══ */}
         {view === 'racks' && (
           <Tabs value={racksTab} onValueChange={setRacksTab} className="w-full">

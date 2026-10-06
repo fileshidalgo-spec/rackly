@@ -64,7 +64,6 @@ import {
   PackageSearch,
   Trash2,
   LayoutGrid,
-  Warehouse,
   Layers3,
   History,
   Settings,
@@ -175,7 +174,8 @@ function RacklyApp() {
                 </p>
               </div>
             </div>
-            {/* Módulos: Inicio · Racks · Piso */}
+            {/* Navegación: volver a la pantalla de módulos (las 5 puertas de entrada
+                viven en ModulosHome; el header no duplica accesos directos) */}
             <div className="flex items-center bg-white/10 rounded-lg p-0.5 ml-2 sm:ml-4">
               <button
                 onClick={() => setView('inicio')}
@@ -187,28 +187,6 @@ function RacklyApp() {
               >
                 <Home className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Inicio</span>
-              </button>
-              <button
-                onClick={() => setView('racks')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                  view === 'racks'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Warehouse className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Racks</span>
-              </button>
-              <button
-                onClick={() => setView('piso')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                  view === 'piso'
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Layers3 className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Piso</span>
               </button>
             </div>
             {/* Indicador de módulo transversal activo */}

@@ -143,7 +143,7 @@ export function ModulosHome({ onEntrar }: { onEntrar: (vista: VistaModulo) => vo
         </div>
       </div>
 
-      {/* ── Grid de módulos ── */}
+      {/* ── Grid de módulos (exactamente las 5 puertas de entrada) ── */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {MODULOS.map((m) => (
           <Card
@@ -178,18 +178,6 @@ export function ModulosHome({ onEntrar }: { onEntrar: (vista: VistaModulo) => vo
             </CardContent>
           </Card>
         ))}
-
-        {/* Tarjeta informativa para completar la grilla 3x2 */}
-        <Card className="border-dashed border-slate-300 bg-white/50 shadow-none">
-          <CardContent className="p-5 flex flex-col h-full gap-3 justify-center">
-            <p className="text-sm font-semibold text-slate-600">Arquitectura de módulos</p>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Cada módulo opera con sus propias tablas y componentes, de forma independiente.{' '}
-              <span className="font-semibold text-slate-700">Usuarios</span> es transversal: gestiona
-              los accesos y consulta los movimientos de todos los módulos.
-            </p>
-          </CardContent>
-        </Card>
       </div>
     </div>
   )

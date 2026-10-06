@@ -100,7 +100,7 @@ function extraerPlaca(lineas: string[]): string {
 
 function extraerProveedor(lineas: string[]): string {
   const RE_CORTE =
-    /\s+(?:FEC\.?\s*EMIS|FACTURA|ORDEN|RUC|DIRECCI[ÓO]N|NOMBRE\s+COMERCIAL|OTRO\s+SUSTENTO|TELEFONO|TEL\.)/i
+    /\s+(?:FEC\.?\s*EMIS|FECHA|FACTURA|ORDEN|RUC|NUMERO|N[º°]|DIRECCI[ÓO]N|NOMBRE\s+COMERCIAL|OTRO\s+SUSTENTO|TELEFONO|TEL\.|SERIE)/i
   // Prioridad: RAZÓN SOCIAL / PROVEEDOR (el emisor = proveedor real). La
   // etiqueta SEÑORES es el DESTINATARIO en el formato estándar de guías
   // (p. ej. el propio cliente), así que solo se usa de respaldo.

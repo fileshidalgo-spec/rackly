@@ -137,6 +137,18 @@ const r4 = buscarCatalogo('9999', CATALOGO)
 check('inexistente → undefined (sin inventar)', r4 === undefined)
 check('vacío → undefined', buscarCatalogo('', CATALOGO) === undefined)
 
+// ─── 6. aNumero: separadores de miles/decimales ───
+console.log('\n[6] aNumero (cantidades con separadores)')
+const { aNumero } = require('@/lib/rackly/formato')
+check('"1,500.00" → 1500 (bug del 1.5 corregido)', aNumero('1,500.00') === 1500, String(aNumero('1,500.00')))
+check('"1.500,00" → 1500 (formato EU)', aNumero('1.500,00') === 1500, String(aNumero('1.500,00')))
+check('"250.50" → 250.5 (decimal Perú)', aNumero('250.50') === 250.5, String(aNumero('250.50')))
+check('"2,884" → 2884 (miles con coma)', aNumero('2,884') === 2884, String(aNumero('2,884')))
+check('"1500" → 1500', aNumero('1500') === 1500)
+check('"12,5" → 12.5 (decimal con coma)', aNumero('12,5') === 12.5, String(aNumero('12,5')))
+check('"" → NaN', isNaN(aNumero('')))
+check('"9,400.00" → 9400 (AJEPER real)', aNumero('9,400.00') === 9400, String(aNumero('9,400.00')))
+
 // ─── Resumen ───
 console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)
 process.exit(fallidos > 0 ? 1 : 0)

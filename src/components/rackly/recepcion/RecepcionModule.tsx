@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
+import { aNumero } from '@/lib/rackly/formato'
 import { GuiaFotoForm } from '@/components/rackly/recepcion/GuiaFotoForm'
 import {
   RecepcionItemsEditor,
@@ -186,7 +187,7 @@ export function RecepcionModule() {
           proveedor: fProveedor,
           codigo: it.codigo,
           descripcion: it.descripcion,
-          cantidad: parseFloat(it.cantidad.replace(',', '.')),
+          cantidad: aNumero(it.cantidad),
           unidadMedida: it.unidad,
           lote: it.lote,
           fechaProduccion: it.fechaProduccion,

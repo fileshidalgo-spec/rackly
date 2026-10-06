@@ -21,6 +21,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { fetchCatalogo, getCachedCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
+import { aNumero } from '@/lib/rackly/formato'
 import {
   extraerDatosGuia,
   reducirImagen,
@@ -248,7 +249,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           proveedor: form.proveedor,
           codigo: it.codigo,
           descripcion: it.descripcion,
-          cantidad: parseFloat(it.cantidad.replace(',', '.')),
+          cantidad: aNumero(it.cantidad),
           unidadMedida: it.unidad,
           lote: it.lote,
           fechaProduccion: it.fechaProduccion,

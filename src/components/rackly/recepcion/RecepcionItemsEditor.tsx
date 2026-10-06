@@ -15,6 +15,7 @@
 
 import { useState } from 'react'
 import { buscarCatalogo } from '@/lib/rackly/catalogo'
+import { aNumero } from '@/lib/rackly/formato'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
@@ -49,7 +50,7 @@ export function itemVacio(): ItemRecepcion {
 /** Filtra los artículos listos para registrar (con código/desc y cantidad > 0). */
 export function itemsValidos(items: ItemRecepcion[]): ItemRecepcion[] {
   return items.filter((it) => {
-    const cantidad = parseFloat((it.cantidad || '').replace(',', '.'))
+    const cantidad = aNumero(it.cantidad)
     return Boolean(it.codigo.trim() || it.descripcion.trim()) && !isNaN(cantidad) && cantidad > 0
   })
 }

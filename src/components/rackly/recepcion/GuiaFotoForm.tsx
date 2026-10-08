@@ -40,6 +40,10 @@ import {
   itemsValidos,
   type ItemRecepcion,
 } from '@/components/rackly/recepcion/RecepcionItemsEditor'
+import {
+  ImprimirRotulosDialog,
+  rotulosDesdeItems,
+} from '@/components/rackly/recepcion/ImprimirRotulosDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -62,6 +66,7 @@ import {
   ImageIcon,
   CheckCircle2,
   XCircle,
+  Printer,
 } from 'lucide-react'
 
 function hoyISO(): string {
@@ -127,6 +132,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   const [fotoBlob, setFotoBlob] = useState<Blob | null>(null)
   const [form, setForm] = useState<FormFoto>(FORM_VACIO)
   const [saving, setSaving] = useState(false)
+  // Modal de impresión de rótulos (Zebra ZT411) de los artículos detectados.
+  const [rotulosOpen, setRotulosOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -221,6 +228,13 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           }
         },
       })
+      // DPI fijo + espacios entre palabras: sin `user_defined_dpi` Tesseract
+      // ESTIMA la resolución ("Estimating resolution as 143") y re-escala
+      // regiones pequeñas hasta fallar ("Image too small to scale!!" /
+      // "Line cannot be recognized!!"). Con 300 dpi (nuestra imagen ya viene
+      // ampliada a 2800px) lee directo y sin warnings. El espaciado
+      // inter-palabra conserva las columnas de la tabla para el parser.
+      await worker.setParameters({ user_defined_dpi: '300', preserve_interword_spaces: '1' })
       const catalogoParaOCR = catOk ? getCachedCatalogo() : []
       async function ocrData(psm: PSM, con: Blob, conBloques = false) {
         await worker.setParameters({ tessedit_pageseg_mode: psm })
@@ -515,14 +529,39 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         onChange={(items) => set('items', items)}
       />
 
-      <Button
-        onClick={guardar}
-        disabled={saving}
-        className="w-full gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
-      >
-        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
-        Registrar recepción ({itemsValidos(form.items).length} artículo(s))
-      </Button>
+      <div className="flex flex-col sm:flex-row gap-2">
+        <Button
+          onClick={guardar}
+          disabled={saving}
+          className="flex-1 gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
+          Registrar recepción ({itemsValidos(form.items).length} artículo(s))
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => setRotulosOpen(true)}
+          disabled={form.items.every((it) => !it.codigo.trim())}
+          className="gap-2"
+          title="Imprimir rótulos de los artículos en la Zebra ZT411"
+        >
+          <Printer className="h-4 w-4" /> Rótulos
+        </Button>
+      </div>
+
+      {/* Impresión de rótulos (Zebra ZT411 por USB) de lo leído/editado. */}
+      <ImprimirRotulosDialog
+        open={rotulosOpen}
+        onOpenChange={setRotulosOpen}
+        rotulos={rotulosDesdeItems(form.items)}
+        encabezado={{
+          fecha: form.fecha || hoyISO(),
+          numeroDocumento: form.numeroGuia,
+          proveedor: form.proveedor,
+          placa: form.placa,
+          registradoPor: perfil?.nombre || '',
+        }}
+      />
     </div>
   )
 }

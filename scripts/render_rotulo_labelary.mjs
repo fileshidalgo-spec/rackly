@@ -43,7 +43,9 @@ fs.writeFileSync('/tmp/rotulos_preview.zpl', zpl)
 console.log('ZPL escrito en /tmp/rotulos_preview.zpl')
 
 async function render(zpl, out, dpmm = 8) {
-  const res = await fetch(`http://api.labelary.com/v1/printers/${dpmm}/labels/10x15cm/0.png`, {
+  // OJO: el API actual exige la barra final tras el índice y el tamaño es
+  // {width}x{height} en pulgadas: 4x6 = 10.2 × 15.2 cm (812 × 1218 dots).
+  const res = await fetch(`http://api.labelary.com/v1/printers/${dpmm}/labels/4x6/0/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: zpl,
@@ -60,7 +62,7 @@ async function render(zpl, out, dpmm = 8) {
 ;(async () => {
   // 2 etiquetas separadas: Labelary renderiza 1 por request (usar index)
   for (let i = 0; i < 2; i++) {
-    const res = await fetch(`http://api.labelary.com/v1/printers/8dpmm/labels/10x15cm/${i}.png`, {
+    const res = await fetch(`https://api.labelary.com/v1/printers/8dpmm/labels/4x6/${i}/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: zpl,

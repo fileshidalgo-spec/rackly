@@ -249,11 +249,15 @@ export function construirZPLRotulo(
   lineas.push('^FO0,0^GB800,1200,3^FS')
 
   // ── 1) CÓDIGO (gigante, centrado, "demi") ──
+  // El alto se AUTO-AJUSTA a la longitud: hoy el catálogo usa 3-5 dígitos
+  // (cabe a 200 dots), pero con códigos de 6+ el texto se saldría de la
+  // etiqueta — se reduce proporcionalmente y siempre queda centrado.
   lineas.push('^FO0,0^GB800,310,3^FS')
   if (codigo) {
-    const alto = 200
-    for (const dx of [0, 3]) {
-      lineas.push(`^FO${dx},60^A0N,${alto},${Math.round(alto * 0.6)}^FB800,1,0,C^FD${codigo}^FS`)
+    const alto = altoParaCaja(codigo, 768, 200, 90)
+    const y = Math.floor((310 - alto) / 2) - 10
+    for (const dx of [0, 2]) {
+      lineas.push(`^FO${dx},${y}^A0N,${alto},${Math.round(alto * 0.6)}^FB800,1,0,C^FD${codigo}^FS`)
     }
   }
 
@@ -275,7 +279,7 @@ export function construirZPLRotulo(
   lineas.push(`^FO0,612^A0N,66,50^FB212,1,0,C^FDLOTE:^FS`)
   if (lote) {
     const alto = altoParaCaja(lote, 588, 92)
-    for (const dx of [0, 3]) {
+    for (const dx of [0, 2]) {
       lineas.push(`^FO${212 + dx},608^A0N,${alto},${Math.round(alto * 0.6)}^FB588,1,0,C^FD${lote}^FS`)
     }
   }
@@ -305,7 +309,7 @@ export function construirZPLRotulo(
   if (cantidad) {
     const alto = altoParaCaja(cantidad, 236, 110)
     const y = 728 + Math.floor((464 - alto) / 2)
-    for (const dx of [0, 3]) {
+    for (const dx of [0, 2]) {
       lineas.push(`^FO${452 + dx},${y}^A0N,${alto},${Math.round(alto * 0.6)}^FB236,1,0,C^FD${cantidad}^FS`)
     }
   }

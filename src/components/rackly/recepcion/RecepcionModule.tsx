@@ -365,7 +365,7 @@ export function RecepcionModule() {
           <Button
             variant="outline"
             onClick={() => setRotulosOpen(true)}
-            disabled={itemsValidos(items).every((it) => !it.codigo.trim())}
+            disabled={!items.some((it) => it.codigo.trim())}
             className="gap-2"
             title="Imprimir rótulos de los artículos en la Zebra ZT411"
           >

@@ -264,6 +264,44 @@ check('"SAL INDUSTRIAL" → 126 exacto', bm?.item.codigo === '126' && bm.score >
 check('descripción vacía → null', buscarPorDescripcion('', CATALOGO_AJER) === null)
 check('sin match → null', buscarPorDescripcion('ZZZZ QQQ 12345', CATALOGO_AJER) === null)
 
+// ─── 11. Filas repetidas del MISMO código (2 lotes en la misma guía) ───
+// Bug corregido: el dedupe por código descartaba la 2ª fila en silencio.
+console.log('\n[11] Mismo código en 2 filas (2 lotes/cantidades distintas)')
+const textoRepetido = `
+GUIA DE REMISION - ELECTRONICA
+RAZON SOCIAL : COMERCIAL AJEPER S.A.C.
+NUMERO DE GUIA : T173-00004076
+BIENES TRANSPORTADOS
+CODIGO    DESCRIPCION                        CANTIDAD    UNIDAD
+5653      PURE DE DURAZNO 30-32 ºBRIX        1,000.00    KGM
+5653      PURE DE DURAZNO 30-32 ºBRIX        2,500.00    KGM
+`
+const rep = extraerDatosGuia(textoRepetido, CATALOGO)
+check('mismo código con 2 cantidades → 2 filas (antes: 1)', rep.items.length === 2, `obtuvo ${rep.items.length}`)
+check('cantidades 1,000.00 y 2,500.00 presentes', rep.items.some((i) => i.cantidad === '1,000.00') && rep.items.some((i) => i.cantidad === '2,500.00'), JSON.stringify(rep.items.map((i) => i.cantidad)))
+
+// Tartamudeo del OCR: misma línea leída 2 veces idéntica → 1 fila.
+const textoDuplicado = `
+BIENES TRANSPORTADOS
+CODIGO    DESCRIPCION                        CANTIDAD    UNIDAD
+5653      PURE DE DURAZNO 30-32 ºBRIX        1,000.00    KGM
+5653      PURE DE DURAZNO 30-32 ºBRIX        1,000.00    KGM
+`
+const dup = extraerDatosGuia(textoDuplicado, CATALOGO)
+check('línea idéntica duplicada (OCR) → 1 fila', dup.items.length === 1, `obtuvo ${dup.items.length}`)
+
+// ─── 12. terminoBusquedaSeguro — filtro .or() de PostgREST ───
+// Bug corregido: una coma/paréntesis en la búsqueda rompía el listado
+// ("Error al cargar recepciones") en Recepción, Atención y StockInc.
+console.log('\n[12] terminoBusquedaSeguro (búsqueda con caracteres de PostgREST)')
+const { terminoBusquedaSeguro } = require('@/lib/rackly/formato')
+check('"LIMA, PERU (S.A.)" → sin coma/paréntesis', terminoBusquedaSeguro('LIMA, PERU (S.A.)') === 'LIMA PERU S.A.', terminoBusquedaSeguro('LIMA, PERU (S.A.)'))
+check('"50%" → comodín LIKE eliminado', terminoBusquedaSeguro('50%') === '50', terminoBusquedaSeguro('50%'))
+check('"T005_003" → guion bajo eliminado', terminoBusquedaSeguro('T005_003') === 'T005 003', terminoBusquedaSeguro('T005_003'))
+check('espacios colapsados y recortados', terminoBusquedaSeguro('  ACIDO    CITRICO  ') === 'ACIDO CITRICO')
+check('término solo de caracteres peligrosos → "" (se omite el filtro)', terminoBusquedaSeguro(',"()') === '')
+check('término normal pasa intacto', terminoBusquedaSeguro('AJEPER') === 'AJEPER')
+
 // ─── Resumen ───
 console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)
 process.exit(fallidos > 0 ? 1 : 0)

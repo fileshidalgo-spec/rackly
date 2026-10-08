@@ -255,18 +255,27 @@ export function RecepcionModule() {
       // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
       // se abre solo, listo para digitar las etiquetas por artículo. La
       // impresión solo existe DESPUÉS de registrar (carga ya validada).
-      setGuardados({
-        rotulos: rotulosDesdeItems(validos),
-        encabezado: {
-          fecha,
-          numeroDocumento: fNumero,
-          proveedor: fProveedor,
-          placa: fPlaca,
-          registradoPor: perfil.nombre,
-        },
-        nota: `Recepción guardada: ${validos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
-      })
-      setRotulosOpen(true)
+      // Si lo guardado no trae ningún código no hay rótulos que imprimir:
+      // se avisa en vez de abrir un modal vacío.
+      const rotulos = rotulosDesdeItems(validos)
+      if (rotulos.length > 0) {
+        setGuardados({
+          rotulos,
+          encabezado: {
+            fecha,
+            numeroDocumento: fNumero,
+            proveedor: fProveedor,
+            placa: fPlaca,
+            registradoPor: perfil.nombre,
+          },
+          nota: `Recepción guardada: ${validos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
+        })
+        setRotulosOpen(true)
+      } else {
+        toast.info('Recepción guardada sin rótulos', {
+          description: 'Ningún artículo registrado tiene código; completa el código en la lista para poder imprimir etiquetas.',
+        })
+      }
       setFNumero('')
       setFProveedor('')
       setFPlaca('')
@@ -482,7 +491,7 @@ export function RecepcionModule() {
           <TableBody>
             {filas.length === 0 && !loading && (
               <TableRow>
-                <TableCell colSpan={10} className="text-center text-sm text-slate-400 py-10">
+                <TableCell colSpan={puedeEliminar ? 10 : 9} className="text-center text-sm text-slate-400 py-10">
                   <Inbox className="h-8 w-8 mx-auto mb-2 text-slate-300" />
                   No hay recepciones registradas con los filtros actuales.
                 </TableCell>

@@ -28,6 +28,7 @@ import {
   extraerPalabras,
   extraerAnclasTabla,
   mejorarImagenOCR,
+  MARGEN_OCR,
   puntuarExtraccion,
   recortarFranjaTabla,
   reducirImagen,
@@ -90,14 +91,18 @@ type FormFoto = {
   items: ItemRecepcion[]
 }
 
-const FORM_VACIO: FormFoto = {
-  numeroGuia: '',
-  placa: '',
-  proveedor: '',
-  fecha: hoyISO(),
-  tipoDocumento: 'Guia',
-  observaciones: '',
-  items: [itemVacio()],
+/** Estado inicial FRESCO: fecha del día (FORM_VACIO congelaba la fecha de la
+ *  carga de la página) y arrays propios (sin instancias compartidas). */
+function formVacio(): FormFoto {
+  return {
+    numeroGuia: '',
+    placa: '',
+    proveedor: '',
+    fecha: hoyISO(),
+    tipoDocumento: 'Guia',
+    observaciones: '',
+    items: [itemVacio()],
+  }
 }
 
 /** ItemGuia (OCR) → ItemRecepcion (editor). */
@@ -131,7 +136,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   const [etapa, setEtapa] = useState('')
   const [thumb, setThumb] = useState<string>('')
   const [fotoBlob, setFotoBlob] = useState<Blob | null>(null)
-  const [form, setForm] = useState<FormFoto>(FORM_VACIO)
+  const [form, setForm] = useState<FormFoto>(formVacio())
   const [saving, setSaving] = useState(false)
   // Modal de impresión de rótulos (Zebra ZT411). Se abre SOLO tras REGISTRAR
   // (la carga ya validada y guardada en la BD): automáticamente al guardar,
@@ -171,7 +176,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   function procesarExtraccion(datos: DatosGuia) {
     const itemsOcr = datos.items.map(itemDesdeOcr)
     setForm({
-      ...FORM_VACIO,
+      ...formVacio(),
       numeroGuia: datos.numeroGuia,
       placa: datos.placa,
       proveedor: datos.proveedor,
@@ -217,6 +222,11 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     setProgreso(0)
     setEtapa('Preparando imagen…')
     try {
+      // Si un intento anterior dejó thumbnail, liberarlo (fuga de objectURL).
+      if (thumb) {
+        URL.revokeObjectURL(thumb)
+        setThumb('')
+      }
       setEtapa('Preparando imagen (contraste)…')
       // Preprocesado: gris + contraste → mejora la lectura de la tabla
       const imagen = await mejorarImagenOCR(archivo, 2800)
@@ -277,14 +287,20 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           setEtapa('Escaneando la tabla de artículos (zoom)…')
           try {
             const bitmap = await createImageBitmap(archivo)
+            // La imagen leída por el OCR viene de mejorarImagenOCR: escalada
+            // a 2800 px y con MARGEN_OCR px de margen blanco por lado.
+            // Coordenada original = (yOcr - MARGEN) / escala. Antes se
+            // ignoraba el margen y el recorte quedaba corrido ~26 px hacia
+            // abajo (podía comerse la primera fila de la tabla).
             const escala = 2800 / Math.max(bitmap.width, bitmap.height)
+            bitmap.close?.()
+            const aOriginal = (yOcr: number) => Math.max(0, (yOcr - MARGEN_OCR) / escala)
             const franja = await recortarFranjaTabla(
               archivo,
-              anclas.yTop / escala,
-              anclas.yBot / escala,
+              aOriginal(anclas.yTop),
+              aOriginal(anclas.yBot),
               3
             )
-            bitmap.close?.()
             textoTabla = await ocrTexto(PSM.SINGLE_BLOCK, franja)
           } catch {
             textoTabla = null
@@ -323,7 +339,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     if (thumb) URL.revokeObjectURL(thumb)
     setThumb('')
     setFotoBlob(null)
-    setForm(FORM_VACIO)
+    setForm(formVacio())
     setProgreso(0)
     setPaso('elegir')
   }
@@ -372,18 +388,27 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
       // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
       // se abre solo, listo para digitar las etiquetas por artículo. La
       // impresión solo existe DESPUÉS de registrar (carga ya validada).
-      setGuardados({
-        rotulos: rotulosDesdeItems(validos),
-        encabezado: {
-          fecha,
-          numeroDocumento: form.numeroGuia,
-          proveedor: form.proveedor,
-          placa: form.placa,
-          registradoPor: perfil.nombre,
-        },
-        nota: `Recepción guardada: ${validos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
-      })
-      setRotulosOpen(true)
+      // Si lo guardado no trae ningún código no hay rótulos que imprimir:
+      // se avisa en vez de abrir un modal vacío.
+      const rotulos = rotulosDesdeItems(validos)
+      if (rotulos.length > 0) {
+        setGuardados({
+          rotulos,
+          encabezado: {
+            fecha,
+            numeroDocumento: form.numeroGuia,
+            proveedor: form.proveedor,
+            placa: form.placa,
+            registradoPor: perfil.nombre,
+          },
+          nota: `Recepción guardada: ${validos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
+        })
+        setRotulosOpen(true)
+      } else {
+        toast.info('Recepción guardada sin rótulos', {
+          description: 'Ningún artículo registrado tiene código; completa el código en la lista para poder imprimir etiquetas.',
+        })
+      }
       reiniciar()
       onRegistrado()
     } catch (err: unknown) {

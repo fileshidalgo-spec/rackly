@@ -14,6 +14,7 @@
  */
 
 import { dataClient } from '@/lib/supabase/client'
+import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS COMPARTIDOS
@@ -170,7 +171,9 @@ export async function listarRecepciones(
     .order('fecha', { ascending: false })
     .order('created_at', { ascending: false })
   if (estado) q = q.eq('estado', estado)
-  const b = busqueda.trim()
+  // Saneado: una coma/paréntesis en el término rompía el filtro .or() de
+  // PostgREST y el listado fallaba con "Error al cargar recepciones".
+  const b = terminoBusquedaSeguro(busqueda)
   if (b) {
     const like = `%${b}%`
     q = q.or(`proveedor.ilike.${like},codigo.ilike.${like},numero_documento.ilike.${like},descripcion.ilike.${like}`)
@@ -277,7 +280,8 @@ export async function listarAtenciones(
     .order('fecha', { ascending: false })
     .order('created_at', { ascending: false })
   if (estado) q = q.eq('estado', estado)
-  const b = busqueda.trim()
+  // Mismo saneo que Recepción (la falla estaba repetida aquí).
+  const b = terminoBusquedaSeguro(busqueda)
   if (b) {
     const like = `%${b}%`
     q = q.or(`solicitante.ilike.${like},area.ilike.${like},asunto.ilike.${like},tipo.ilike.${like}`)

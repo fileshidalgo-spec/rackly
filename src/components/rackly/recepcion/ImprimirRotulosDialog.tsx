@@ -17,12 +17,15 @@
  *   4. La prop `nota` permite contextualizar el modal tras GUARDAR la
  *      recepción: se abre con los artículos ya registrados en la BD.
  *
- * Si el servicio no responde se muestra la guía de instalación en el propio
- * modal (no es un error del app: Browser Print corre en la PC de la impresora).
+ * Si el servicio no responde se muestra la guía de instalación/permisos en el
+ * propio modal (no es un error del app: Browser Print corre en la PC de la
+ * impresora, y Chrome 142+ además exige permiso de "Dispositivos de red
+ * local" para el sitio).
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import {
+  detectarServicioZebra,
   descubrirImpresorasZebra,
   obtenerImpresoraDefaultZebra,
   enviarZPL,
@@ -30,6 +33,7 @@ import {
   type ImpresoraZebra,
   type DatosRotulo,
   type EncabezadoRotulo,
+  type MotivoFallaZebra,
 } from '@/lib/rackly/zebra'
 import type { ItemRecepcion } from '@/components/rackly/recepcion/RecepcionItemsEditor'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -93,6 +97,8 @@ export function ImprimirRotulosDialog({
   nota?: string
 }) {
   const [estado, setEstado] = useState<EstadoServicio>('verificando')
+  /** Por qué falló la detección (guía diferenciada en el panel amber). */
+  const [motivo, setMotivo] = useState<MotivoFallaZebra>('sin-servicio')
   const [impresoras, setImpresoras] = useState<ImpresoraZebra[]>([])
   const [seleccion, setSeleccion] = useState<string>('')
   const [copias, setCopias] = useState<number[]>([])
@@ -103,9 +109,18 @@ export function ImprimirRotulosDialog({
     setEstado('verificando')
     setImpresoras([])
     setSeleccion('')
+    // 1) Detectar el middleware (y SU MOTIVO de falla si no responde).
+    const det = await detectarServicioZebra()
+    if (!det.base) {
+      setMotivo(det.motivo)
+      setEstado('no-encontrado')
+      return
+    }
+    // 2) Con el servicio vivo, listar impresoras y preseleccionar la default.
     const lista = await descubrirImpresorasZebra()
     setImpresoras(lista)
     if (lista.length === 0) {
+      setMotivo('sin-servicio')
       setEstado('no-encontrado')
       return
     }
@@ -268,16 +283,20 @@ export function ImprimirRotulosDialog({
         {estado === 'no-encontrado' && (
           <div className="space-y-2 text-sm">
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-              <p className="font-semibold mb-1">No se detectó Zebra Browser Print</p>
+              <p className="font-semibold mb-1">
+                {motivo === 'permiso-bloqueado'
+                  ? 'Chrome bloqueó la conexión con la impresora local'
+                  : 'No se detectó Zebra Browser Print'}
+              </p>
               <p className="text-xs leading-relaxed">
-                El navegador no puede hablar con la impresora USB directamente. Instala el
-                programa gratuito <b>Zebra Browser Print</b> en la computadora donde está
-                conectada la ZT411 y vuelve a abrir este diálogo (no hace falta reiniciar).
+                {motivo === 'permiso-bloqueado'
+                  ? 'El navegador denegó el salto del sitio hacia el programa local (protección de "red local"). Se concede UNA vez por computadora:'
+                  : 'El navegador no puede hablar con la impresora USB directamente. Hace falta el programa gratuito Zebra Browser Print corriendo en la PC donde está conectada la ZT411. Si YA lo tienes instalado, es casi seguro el bloqueo de red local de Chrome:'}
               </p>
             </div>
             <ol className="list-decimal list-inside text-xs text-slate-600 space-y-1 py-1">
               <li>
-                Descarga e instala:{' '}
+                Instala o ACTUALIZA Browser Print:{' '}
                 <a
                   className="text-sky-700 font-semibold underline"
                   href="https://www.zebra.com/browserprint"
@@ -285,24 +304,42 @@ export function ImprimirRotulosDialog({
                   rel="noreferrer"
                 >
                   zebra.com/browserprint
-                </a>
+                </a>{' '}
+                (versiones antiguas no pasan el control de seguridad de Chrome) y déjalo abierto
+                (ícono junto al reloj de Windows).
               </li>
-              <li>Enciende la ZT411 y verifica que aparezca lista en el programa.</li>
               <li>
-                Si al imprimir pide certificado, abre{' '}
-                <a className="text-sky-700 underline" href="https://localhost:9101" target="_blank" rel="noreferrer">
+                Concede el permiso local: ícono de la barra de direcciones → Permisos →{' '}
+                <b>Dispositivos de red local</b> → Permitir (o abre
+                <code className="mx-1 rounded bg-slate-100 px-1">chrome://settings/content/localNetworkAccess</code>
+                y permite rackly.pages.dev). Si Chrome pregunta "¿acceder a dispositivos de tu red
+                local?" → <b>Permitir</b>.
+              </li>
+              <li>
+                Enciende la ZT411. Si al imprimir pide certificado, abre{' '}
+                <a
+                  className="text-sky-700 underline"
+                  href="https://localhost:9101"
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   https://localhost:9101
                 </a>{' '}
-                y acepta el aviso una sola vez.
+                y acéptalo una sola vez.
               </li>
             </ol>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => void sondear()} className="flex-1 gap-2">
+                <RefreshCw className="h-4 w-4" /> Reintentar detección
+              </Button>
+              <Button variant="outline" onClick={descargar} className="flex-1 gap-2" title="Plan B: imprimir con Zebra Setup Utilities">
+                <Download className="h-4 w-4" /> Plan B: .zpl
+              </Button>
+            </div>
             <p className="text-xs text-slate-500">
-              Mientras tanto puedes descargar los rótulos como archivo .zpl y enviarlos a la
-              impresora con Zebra Setup Utilities.
+              Plan B sin permisos: descarga los rótulos como archivo .zpl y envíalos a la impresora
+              con Zebra Setup Utilities (arrastrar al ícono de envío).
             </p>
-            <Button variant="outline" onClick={descargar} className="w-full gap-2">
-              <Download className="h-4 w-4" /> Descargar {totalEtiquetas} rótulo(s) en .zpl
-            </Button>
           </div>
         )}
 

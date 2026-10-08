@@ -68,7 +68,6 @@ import {
   ImageIcon,
   CheckCircle2,
   XCircle,
-  Printer,
 } from 'lucide-react'
 
 function hoyISO(): string {
@@ -134,14 +133,15 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   const [fotoBlob, setFotoBlob] = useState<Blob | null>(null)
   const [form, setForm] = useState<FormFoto>(FORM_VACIO)
   const [saving, setSaving] = useState(false)
-  // Modal de impresión de rótulos (Zebra ZT411). Tras GUARDAR se abre solo
-  // con la instantánea exacta de lo registrado en la BD (`guardados`), para
-  // digitar cuántas etiquetas se necesitan de cada artículo e imprimirlas
-  // todas de un solo golpe.
+  // Modal de impresión de rótulos (Zebra ZT411). Se abre SOLO tras REGISTRAR
+  // (la carga ya validada y guardada en la BD): automáticamente al guardar,
+  // con la instantánea exacta de lo registrado (`guardados`). Nunca con
+  // datos sin registrar.
   const [rotulosOpen, setRotulosOpen] = useState(false)
   const [guardados, setGuardados] = useState<{
     rotulos: RotuloAImprimir[]
     encabezado: EncabezadoRotulo
+    nota?: string
   } | null>(null)
 
   /** Cierra el modal y libera la instantánea post-guardado. */
@@ -370,7 +370,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
       )
       toast.success(`Recepción registrada con foto: ${validos.length} artículo(s)`)
       // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
-      // se abre solo, listo para digitar las etiquetas por artículo.
+      // se abre solo, listo para digitar las etiquetas por artículo. La
+      // impresión solo existe DESPUÉS de registrar (carga ya validada).
       setGuardados({
         rotulos: rotulosDesdeItems(validos),
         encabezado: {
@@ -380,6 +381,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           placa: form.placa,
           registradoPor: perfil.nombre,
         },
+        nota: `Recepción guardada: ${validos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
       })
       setRotulosOpen(true)
       reiniciar()
@@ -400,23 +402,13 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     <ImprimirRotulosDialog
       open={rotulosOpen}
       onOpenChange={cerrarRotulos}
-      rotulos={guardados ? guardados.rotulos : rotulosDesdeItems(form.items)}
+      rotulos={guardados ? guardados.rotulos : []}
       encabezado={
         guardados
           ? guardados.encabezado
-          : {
-              fecha: form.fecha || hoyISO(),
-              numeroDocumento: form.numeroGuia,
-              proveedor: form.proveedor,
-              placa: form.placa,
-              registradoPor: perfil?.nombre || '',
-            }
+          : { fecha: '', numeroDocumento: '', proveedor: '', placa: '', registradoPor: '' }
       }
-      nota={
-        guardados
-          ? `Recepción guardada: ${guardados.rotulos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`
-          : undefined
-      }
+      nota={guardados?.nota}
     />
   )
 
@@ -601,18 +593,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
           Registrar recepción ({itemsValidos(form.items).length} artículo(s))
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => {
-            setGuardados(null) // modo pre-guardado: imprime lo del formulario
-            setRotulosOpen(true)
-          }}
-          disabled={form.items.every((it) => !it.codigo.trim())}
-          className="gap-2"
-          title="Imprimir rótulos de los artículos en la Zebra ZT411"
-        >
-          <Printer className="h-4 w-4" /> Rótulos
-        </Button>
+        {/* La impresión de rótulos NO va aquí: el modal se abre solo tras
+            REGISTRAR, cuando la carga ya fue validada y guardada. */}
       </div>
 
       {/* Impresión de rótulos: renderizado compartido al final (dialogRotulos). */}

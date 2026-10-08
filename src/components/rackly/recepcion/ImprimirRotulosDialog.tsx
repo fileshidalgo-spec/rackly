@@ -6,12 +6,16 @@
  * Flujo:
  *   1. Al abrir, sondea Zebra Browser Print (http://localhost:9100) y lista
  *      las impresoras; preselecciona la del sistema (GET /default).
- *   2. El usuario ajusta copias por artículo. El tamaño es FIJO: etiqueta
- *      de 10 × 15 cm con el formato PERECIBLE de la empresa (plantilla
- *      "ETIQUETA ALMACEN insumos.xlsm"), replicado en ZPL 1:1.
- *   3. "Imprimir" genera ZPL (^CI28 UTF-8) y lo envía por POST /write.
+ *   2. El usuario digita las etiquetas que necesita de CADA artículo
+ *      (o "aplicar a todos"). El tamaño es FIJO: etiqueta de 10 × 15 cm
+ *      con el formato PERECIBLE de la empresa (plantilla "ETIQUETA ALMACEN
+ *      insumos.xlsm"), replicado en ZPL 1:1.
+ *   3. "Imprimir" genera TODO el ZPL (^CI28 UTF-8) y lo envía en UN SOLO
+ *      trabajo (un POST /write con todos los ^XA…^XZ concatenados).
  *      "Descargar .zpl" es el PLAN B sin middleware: el archivo se imprime
  *      con Zebra Setup Utilities (arrastrar al ícono de envío).
+ *   4. La prop `nota` permite contextualizar el modal tras GUARDAR la
+ *      recepción: se abre con los artículos ya registrados en la BD.
  *
  * Si el servicio no responde se muestra la guía de instalación en el propio
  * modal (no es un error del app: Browser Print corre en la PC de la impresora).
@@ -79,16 +83,20 @@ export function ImprimirRotulosDialog({
   onOpenChange,
   rotulos,
   encabezado,
+  nota,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   rotulos: RotuloAImprimir[]
   encabezado: EncabezadoRotulo
+  /** Banner contextual (p. ej. "Recepción guardada") cuando se abre tras guardar. */
+  nota?: string
 }) {
   const [estado, setEstado] = useState<EstadoServicio>('verificando')
   const [impresoras, setImpresoras] = useState<ImpresoraZebra[]>([])
   const [seleccion, setSeleccion] = useState<string>('')
   const [copias, setCopias] = useState<number[]>([])
+  const [copiasTodos, setCopiasTodos] = useState('')
   const [imprimiendo, setImprimiendo] = useState(false)
 
   const sondear = useCallback(async () => {
@@ -120,6 +128,15 @@ export function ImprimirRotulosDialog({
     setCopias((prev) => prev.map((c, i) => (i === idx ? Math.max(1, Math.min(999, Math.round(valor || 1))) : c)))
   }
 
+  /** Misma cantidad de etiquetas para TODOS los artículos de una vez. */
+  function aplicarCopiasATodos() {
+    const n = Number(copiasTodos)
+    if (!n || n < 1) return
+    const v = Math.min(999, Math.round(n))
+    setCopias(rotulos.map(() => v))
+    setCopiasTodos('')
+  }
+
   const totalEtiquetas = rotulos.reduce((s, _r, i) => s + (copias[i] ?? 1), 0)
 
   function zplActual(): string {
@@ -139,7 +156,7 @@ export function ImprimirRotulosDialog({
     setImprimiendo(true)
     try {
       await enviarZPL(impresora, zplActual())
-      toast.success(`${totalEtiquetas} rótulo(s) enviados a ${impresora.name}`)
+      toast.success(`${totalEtiquetas} etiqueta(s) enviadas en UN solo trabajo a ${impresora.name}`)
       onOpenChange(false)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
@@ -173,9 +190,74 @@ export function ImprimirRotulosDialog({
             <Printer className="h-4 w-4 text-amber-600" /> Imprimir rótulos
           </DialogTitle>
           <DialogDescription>
-            {rotulos.length} artículo(s) · Zebra ZT411 conectada por USB a esta computadora.
+            {rotulos.length} artículo(s) · etiqueta 10 × 15 cm · formato PERECIBLE de la empresa.
           </DialogDescription>
         </DialogHeader>
+
+        {nota && (
+          <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800">
+            {nota}
+          </p>
+        )}
+
+        {/* Copias por artículo: digitable SIEMPRE (con o sin Browser Print). */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <Label className="text-xs">Etiquetas por artículo</Label>
+            <div className="flex items-center gap-1">
+              <Input
+                type="number"
+                min={1}
+                max={999}
+                placeholder="N"
+                value={copiasTodos}
+                onChange={(e) => setCopiasTodos(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && aplicarCopiasATodos()}
+                className="h-7 w-14 text-xs text-right"
+                title="Misma cantidad de etiquetas para todos los artículos"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-[11px]"
+                onClick={aplicarCopiasATodos}
+                disabled={rotulos.length === 0}
+              >
+                Aplicar a todos
+              </Button>
+            </div>
+          </div>
+          <div className="rounded-lg border divide-y max-h-44 overflow-y-auto">
+            {rotulos.map((r, i) => (
+              <div key={`${r.codigo}-${i}`} className="flex items-center gap-2 px-2.5 py-1.5">
+                <Package className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold truncate">
+                    {r.codigo || '(sin código)'}
+                    {r.descripcion ? ` · ${r.descripcion}` : ''}
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    Cant.: {r.cantidad}{r.unidad ? ` ${r.unidad}` : ''}
+                    {r.lote ? ` · Lote ${r.lote}` : ''}
+                  </p>
+                </div>
+                <Input
+                  type="number"
+                  min={1}
+                  max={999}
+                  value={copias[i] ?? 1}
+                  onChange={(e) => setCopiasDe(i, Number(e.target.value))}
+                  className="h-7 w-16 text-xs text-right"
+                  title="Etiquetas de este artículo"
+                />
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-400">
+            Total: <b className="text-slate-600">{totalEtiquetas}</b> etiqueta(s) · se envían todas en
+            {' '}<b className="text-slate-600">un solo trabajo</b> de impresión.
+          </p>
+        </div>
 
         {estado === 'verificando' && (
           <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
@@ -253,35 +335,6 @@ export function ImprimirRotulosDialog({
               <span className="text-xs font-bold text-slate-700">10 × 15 cm · formato PERECIBLE</span>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">Copias por artículo</Label>
-              <div className="rounded-lg border divide-y max-h-44 overflow-y-auto">
-                {rotulos.map((r, i) => (
-                  <div key={`${r.codigo}-${i}`} className="flex items-center gap-2 px-2.5 py-1.5">
-                    <Package className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold truncate">
-                        {r.codigo || '(sin código)'}
-                        {r.descripcion ? ` · ${r.descripcion}` : ''}
-                      </p>
-                      <p className="text-[10px] text-slate-400">
-                        Cant.: {r.cantidad}{r.unidad ? ` ${r.unidad}` : ''}
-                        {r.lote ? ` · Lote ${r.lote}` : ''}
-                      </p>
-                    </div>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={999}
-                      value={copias[i] ?? 1}
-                      onChange={(e) => setCopiasDe(i, Number(e.target.value))}
-                      className="h-7 w-16 text-xs text-right"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
             <div className="flex items-center gap-2">
               <Button
                 onClick={() => void imprimir()}
@@ -289,7 +342,7 @@ export function ImprimirRotulosDialog({
                 className="flex-1 gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
               >
                 {imprimiendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                Imprimir {totalEtiquetas} rótulo(s)
+                Imprimir todo de una vez ({totalEtiquetas})
               </Button>
               <Button variant="outline" onClick={descargar} className="gap-2" title="Plan B: imprimir con Zebra Setup Utilities">
                 <Download className="h-4 w-4" /> .zpl

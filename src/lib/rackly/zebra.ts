@@ -18,8 +18,9 @@
  *   funciona sin warnings. Si el servicio corre en modo HTTPS usa
  *   https://localhost:9101 (requiere aceptar su certificado una vez).
  *
- * LENGUAJE: ZPL II con ^CI28 (UTF-8) para tildes/ñ. Diseñado a 203 dpi
- * (resolución estándar de la ZT411): 4" = 812 dots, 6" = 1218 dots.
+ * LENGUAJE: ZPL II con ^CI28 (UTF-8) para tildes/ñ. Etiqueta 10 × 15 cm
+ * (800 × 1200 dots @203 dpi) con el FORMATO PERECIBLE de la empresa,
+ * replicado de "ETIQUETA ALMACEN insumos.xlsm" (hoja PERECIBLE).
  *
  * FALLBACK: sin el middleware, el app genera un archivo .zpl descargable
  * que se imprime con Zebra Setup Utilities (arrastrar y enviar).
@@ -51,7 +52,9 @@ export type DatosRotulo = {
   fechaVencimiento: string
 }
 
-/** Encabezado compartido por los rótulos de una recepción. */
+/** Encabezado compartido por los rótulos de una recepción.
+ *  El formato PERECIBLE de la empresa no lo imprime; se conserva en la
+ *  firma de las funciones por compatibilidad con las 2 vías de registro. */
 export type EncabezadoRotulo = {
   fecha: string
   numeroDocumento: string
@@ -59,8 +62,6 @@ export type EncabezadoRotulo = {
   placa: string
   registradoPor?: string
 }
-
-export type TamanoRotulo = '4x6' | '4x2'
 
 // ═══════════════════════════════════════════════════════════════════
 // 2. CLIENTE ZEBRA BROWSER PRINT
@@ -190,116 +191,141 @@ function fechaCorta(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : sanearZPL(iso)
 }
 
-/** Línea de texto con fuente A0 (ancho, alto). */
-function fd(x: number, y: number, ancho: number, alto: number, texto: string): string {
-  return `^FO${x},${y}^A0N,${alto},${ancho}^FD${texto}^FS`
-}
-
-/** Bloque de texto envuelto (^FB) para descripciones largas. */
-function fdEnvuelto(
-  x: number,
-  y: number,
-  anchoCaja: number,
-  lineas: number,
-  alto: number,
-  texto: string
-): string {
-  return `^FO${x},${y}^A0N,${alto},${alto}^FB${anchoCaja},${lineas},0,L,0^FD${texto}^FS`
-}
-
 /**
- * Rótulo de RECEPCIÓN en ZPL II, a 203 dpi (ZT411 estándar).
+ * Rótulo de RECEPCIÓN en ZPL II — FORMATO PERECIBLE de la empresa,
+ * replicado 1:1 desde "ETIQUETA ALMACEN insumos.xlsm" (hoja PERECIBLE).
+ * Etiqueta física: 10 × 15 cm (100 × 150 mm) = 800 × 1200 dots @203 dpi.
  *
- *   · Código grande + Code128 (scannable desde Racks/Piso).
- *   · Descripción envuelta hasta 3 líneas.
- *   · Cantidad + unidad destacadas.
- *   · Lote, fecha de producción y vencimiento.
- *   · Guía, placa, proveedor y fecha de recepción.
+ *   ┌────────────────────────────┐
+ *   │         56119              │  ← código, fuente gigante centrada
+ *   ├────────────────────────────┤
+ *   │  ENVASE TETRA PACK PULP…   │  ← descripción centrada (hasta 3 líneas)
+ *   ├──────────┬─────────────────┤
+ *   │  LOTE:   │   0869051017    │
+ *   ├──────┬───┴─────┬─────┬────┴────┬──────┐
+ *   │ F.P  │ 23/07/… │CANT:│ 193320  │  UN  │
+ *   │ F.V  │ 22/07/… │     │         │      │
+ *   └──────┴─────────┴─────┴─────────┴──────┘
  *
- * Tamaños: 4x6 (100×150 mm, default) y 4x2 (100×50 mm, compacto).
+ * FIDELIDAD al formato de la empresa:
+ *   · SIN código de barras (el original es solo texto).
+ *   · SIN guía/placa/proveedor/fecha de recepción (no están en la plantilla;
+ *     `encabezado` queda en la firma por compatibilidad, no se imprime).
+ *   · Todas las cajas con borde, textos centrados, "negrita" simulada
+ *     (doble pasada con 3 dots de offset) en código, lote, cantidad y UM.
+ *   · Campos vacíos (lote/fechas) salen en blanco, como en la plantilla.
+ *
+ * DPI: la ZT411 estándar es 203 dpi (8 dots/mm). Si la suya fuera 300 dpi,
+ * la etiqueta sale al ~68% del tamaño (avisar para reescalar).
  */
 export function construirZPLRotulo(
   datos: DatosRotulo,
-  encabezado: EncabezadoRotulo,
-  opciones?: { tamano?: TamanoRotulo; copias?: number }
+  _encabezado: EncabezadoRotulo,
+  opciones?: { copias?: number }
 ): string {
-  const tamano = opciones?.tamano ?? '4x6'
   const copias = Math.max(1, Math.min(999, Math.round(opciones?.copias ?? 1)))
 
   const codigo = sanearZPL(datos.codigo)
   const descripcion = sanearZPL(datos.descripcion)
-  const cantidad = sanearZPL(datos.cantidad) || '0'
+  const cantidad = sanearZPL(datos.cantidad)
   const unidad = sanearZPL(datos.unidad)
   const lote = sanearZPL(datos.lote)
   const fProd = datos.fechaProduccion ? fechaCorta(datos.fechaProduccion) : ''
   const fVenc = datos.fechaVencimiento ? fechaCorta(datos.fechaVencimiento) : ''
-  const guia = sanearZPL(encabezado.numeroDocumento)
-  const placa = sanearZPL(encabezado.placa)
-  const proveedor = sanearZPL(encabezado.proveedor)
-  const fecha = fechaCorta(encabezado.fecha)
-  const quien = sanearZPL(encabezado.registradoPor || '')
+
+  // ── Geometría (dots @203dpi; 1 dot = 0.125 mm) ──
+  // Ancho total 800, alto 1200; marco interior x 8..792, y 8..1192.
+  // Bandas: código 8-318 · descripción 318-578 · lote 578-728 ·
+  //         inferior 728-1192 (fechas 2 filas de 232; cantidad/UM 464).
 
   const lineas: string[] = []
   lineas.push('^XA')
-  lineas.push('^CI28') // UTF-8: tildes y ñ
+  lineas.push('^CI28') // UTF-8: tildes y ñ (p. ej. "DISEÑO")
+  lineas.push('^PW800')
+  lineas.push('^LL1200')
+  lineas.push('^LH8,8')
 
-  if (tamano === '4x6') {
-    // ── 4×6 pulgadas · 812 × 1218 dots @203dpi ──
-    lineas.push('^PW812')
-    lineas.push('^LL1218')
-    lineas.push('^LH10,10')
+  // Marco exterior
+  lineas.push('^FO0,0^GB800,1200,3^FS')
 
-    // Encabezado de la etiqueta
-    lineas.push('^FO0,0^GB812,86,2,B,0^FS')
-    lineas.push(fd(24, 14, 34, 34, 'RACKLY'))
-    lineas.push(fd(24, 52, 22, 22, 'RECEPCION DE MERCADERIA'))
-    lineas.push(fd(548, 14, 22, 22, 'FECHA DE RECEPCION'))
-    lineas.push(fd(548, 40, 30, 30, fecha))
+  // ── 1) CÓDIGO (gigante, centrado, "demi") ──
+  lineas.push('^FO0,0^GB800,310,3^FS')
+  if (codigo) {
+    const alto = 200
+    for (const dx of [0, 3]) {
+      lineas.push(`^FO${dx},60^A0N,${alto},${Math.round(alto * 0.6)}^FB800,1,0,C^FD${codigo}^FS`)
+    }
+  }
 
-    // Código (grande) + código de barras Code128
-    lineas.push(fd(24, 104, 24, 24, 'CODIGO DE ARTICULO'))
-    lineas.push(fd(24, 130, 64, 64, codigo))
-    lineas.push(`^FO24,208^BY3,3,110^BCN,110,Y,N,N^FD${codigo}^FS`)
+  // ── 2) DESCRIPCIÓN (centrada, hasta 3 líneas, bloque centrado vertical) ──
+  lineas.push('^FO0,310^GB800,268,3^FS')
+  if (descripcion) {
+    // Estimación de líneas con métricas de font 0 (avance ≈ 0.55 × ancho 42)
+    const anchoLinea = 752
+    const avanceDesc = Math.round(0.55 * 42)
+    const nLineas = Math.min(3, Math.max(1, Math.ceil((descripcion.length * avanceDesc) / anchoLinea)))
+    const altoBloque = nLineas * Math.round(58 * 1.15)
+    const yDesc = 310 + Math.floor((268 - altoBloque) / 2)
+    lineas.push(`^FO24,${yDesc}^A0N,58,42^FB752,3,10,C^FD${descripcion}^FS`)
+  }
 
-    // Descripción (envuelta)
-    lineas.push(fd(24, 348, 24, 24, 'DESCRIPCION'))
-    lineas.push(fdEnvuelto(24, 376, 760, 3, 30, descripcion))
+  // ── 3) LOTE ──
+  lineas.push('^FO0,578^GB212,150,3^FS')
+  lineas.push('^FO212,578^GB588,150,3^FS')
+  lineas.push(`^FO0,612^A0N,66,50^FB212,1,0,C^FDLOTE:^FS`)
+  if (lote) {
+    const alto = altoParaCaja(lote, 588, 92)
+    for (const dx of [0, 3]) {
+      lineas.push(`^FO${212 + dx},608^A0N,${alto},${Math.round(alto * 0.6)}^FB588,1,0,C^FD${lote}^FS`)
+    }
+  }
 
-    // Cantidad + unidad (destacadas)
-    lineas.push(fd(24, 500, 24, 24, 'CANTIDAD'))
-    lineas.push(fd(24, 528, 54, 54, `${cantidad}${unidad ? ' ' + unidad : ''}`))
+  // ── 4) Bloque inferior: F.P / F.V · CANT · UM ──
+  // Columnas (métrica font 0: avance dígito ≈ 0.55 × ancho de glifo):
+  //   etiquetas 0-112 | fechas 112-332 | CANT: 332-452 |
+  //   cantidad 452-688 | UM 688-800
+  // Cajas de fechas (2 filas) y cajas de cantidad + UM (1 sola alta).
+  lineas.push('^FO112,728^GB220,232,2^FS')
+  lineas.push('^FO112,960^GB220,232,2^FS')
+  lineas.push('^FO452,728^GB236,464,2^FS')
+  lineas.push('^FO688,728^GB112,464,2^FS')
 
-    // Lote / producción / vencimiento
-    lineas.push(fd(24, 610, 26, 26, `LOTE: ${lote || '—'}`))
-    lineas.push(fd(24, 644, 26, 26, `F. PRODUCCION: ${fProd || '—'}`))
-    lineas.push(fd(24, 678, 26, 26, `F. VENCIMIENTO: ${fVenc || '—'}`))
+  // Etiquetas F.P / F.V (sin caja, como la plantilla)
+  lineas.push('^FO14,808^A0N,56,44^FDF.P^FS')
+  lineas.push('^FO14,1040^A0N,56,44^FDF.V^FS')
 
-    // Caja de documento: guía / placa / proveedor
-    lineas.push('^FO24,730^GB760,116,2^FS')
-    lineas.push(fd(44, 748, 24, 24, `GUIA: ${guia || '—'}`))
-    lineas.push(fd(44, 780, 24, 24, `PLACA: ${placa || '—'}${proveedor ? `   PROVEEDOR: ${proveedor}` : ''}`))
-    if (quien) lineas.push(fd(44, 812, 22, 22, `REGISTRO: ${quien}`))
+  // Fechas (centradas en su caja; 10 caracteres a ancho 30 ≈ 165 dots < 220)
+  lineas.push(`^FO112,823^A0N,42,30^FB220,1,0,C^FD${fProd}^FS`)
+  lineas.push(`^FO112,1055^A0N,42,30^FB220,1,0,C^FD${fVenc}^FS`)
 
-    // Pie: fecha de impresión
-    lineas.push(fd(24, 1150, 20, 20, `Rótulo generado por Rackly · ${new Date().toISOString().slice(0, 10)}`))
-  } else {
-    // ── 4×2 pulgadas · 812 × 406 dots @203dpi (compacto) ──
-    lineas.push('^PW812')
-    lineas.push('^LL406')
-    lineas.push('^LH8,8')
+  // CANT: (centrado vertical del bloque inferior; 5 glifos a ancho 34 ≈ 94 < 120)
+  lineas.push('^FO332,939^A0N,42,34^FB120,1,0,C^FDCANT:^FS')
 
-    lineas.push(fd(20, 8, 40, 40, `${codigo}${unidad ? ' · ' + unidad : ''}`))
-    lineas.push(`^FO20,54^BY2,2,72^BCN,72,Y,N,N^FD${codigo}^FS`)
-    lineas.push(fdEnvuelto(330, 12, 460, 2, 26, descripcion))
-    lineas.push(fd(330, 108, 34, 34, `CANT: ${cantidad}${unidad ? ' ' + unidad : ''}`))
-    lineas.push(fd(330, 148, 22, 22, `LOTE: ${lote || '—'}  VENC: ${fVenc || '—'}`))
-    lineas.push(fd(330, 176, 20, 20, `GUIA: ${guia || '—'}${placa ? '  PLACA: ' + placa : ''}`))
-    lineas.push(fd(330, 200, 20, 20, `${proveedor}${fecha ? (proveedor ? ' · ' : '') + fecha : ''}`))
+  // Cantidad (grande, "demi", auto-ajustada a su caja)
+  if (cantidad) {
+    const alto = altoParaCaja(cantidad, 236, 110)
+    const y = 728 + Math.floor((464 - alto) / 2)
+    for (const dx of [0, 3]) {
+      lineas.push(`^FO${452 + dx},${y}^A0N,${alto},${Math.round(alto * 0.6)}^FB236,1,0,C^FD${cantidad}^FS`)
+    }
+  }
+
+  // Unidad de medida (grande, centrada)
+  if (unidad) {
+    const alto = altoParaCaja(unidad, 112, 80)
+    const y = 728 + Math.floor((464 - alto) / 2)
+    lineas.push(`^FO688,${y}^A0N,${alto},${Math.round(alto * 0.6)}^FB112,1,0,C^FD${unidad}^FS`)
   }
 
   lineas.push(`^PQ${copias},0,0,N`)
   lineas.push('^XZ')
   return lineas.join('\n')
+}
+
+/** Alto de fuente (font 0) para que `texto` quepa en una caja de `anchoCaja` dots. */
+function altoParaCaja(texto: string, anchoCaja: number, max: number, min = 34): number {
+  const len = Math.max(1, texto.length)
+  return Math.max(min, Math.min(max, Math.floor((anchoCaja - 24) / (0.58 * len))))
 }
 
 /**
@@ -309,10 +335,9 @@ export function construirZPLRotulo(
 export function construirZPLRotulos(
   rotulos: DatosRotulo[],
   copias: number[],
-  encabezado: EncabezadoRotulo,
-  tamano: TamanoRotulo
+  encabezado: EncabezadoRotulo
 ): string {
   return rotulos
-    .map((r, i) => construirZPLRotulo(r, encabezado, { tamano, copias: copias[i] ?? 1 }))
+    .map((r, i) => construirZPLRotulo(r, encabezado, { copias: copias[i] ?? 1 }))
     .join('\n')
 }

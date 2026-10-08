@@ -216,9 +216,12 @@ export function ImprimirRotulosDialog({
               </li>
             </ol>
             <p className="text-xs text-slate-500">
-              Plan B sin instalar nada: descarga el archivo .zpl y envíalo a la impresora con
-              Zebra Setup Utilities.
+              Mientras tanto puedes descargar los rótulos como archivo .zpl y enviarlos a la
+              impresora con Zebra Setup Utilities.
             </p>
+            <Button variant="outline" onClick={descargar} className="w-full gap-2">
+              <Download className="h-4 w-4" /> Descargar {totalEtiquetas} rótulo(s) en .zpl
+            </Button>
           </div>
         )}
 
@@ -305,6 +308,14 @@ export function ImprimirRotulosDialog({
               <MonitorDown className="h-3 w-3" />
               La impresión va directa por Zebra Browser Print instalado en la PC de la impresora.
             </p>
+            <details className="text-[11px] text-slate-400">
+              <summary className="cursor-pointer hover:text-slate-600">
+                ¿Sin el programa? Descarga los rótulos como .zpl
+              </summary>
+              <Button variant="outline" onClick={descargar} className="mt-1.5 w-full gap-2">
+                <Download className="h-4 w-4" /> Descargar {totalEtiquetas} rótulo(s) en .zpl
+              </Button>
+            </details>
           </div>
         )}
       </DialogContent>

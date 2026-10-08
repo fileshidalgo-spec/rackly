@@ -13,10 +13,26 @@
  *     · GET  http://localhost:9100/default    → impresora por defecto
  *     · POST http://localhost:9100/write      → envía ZPL crudo
  *
- *   Desde una página HTTPS los navegadores modernos (Chrome/Edge/Firefox)
- *   tratan localhost como origen seguro, así que http://localhost:9100
- *   funciona sin warnings. Si el servicio corre en modo HTTPS usa
- *   https://localhost:9101 (requiere aceptar su certificado una vez).
+ *   SEGURIDAD DEL NAVEGADOR (importante): desde un sitio HTTPS público
+ *   (rackly.pages.dev) Chrome/Edge aplican la política "Private/Local
+ *   Network Access" sobre las peticiones a loopback (localhost/127.0.0.1).
+ *   Para que la conexión pase hacen falta DOS cosas:
+ *
+ *     1. Browser Print ACTUALIZADO: el middleware debe responder el
+ *        preflight (OPTIONS) con la cabecera
+ *        `Access-Control-Allow-Private-Network: true`. Las versiones
+ *        antiguas no lo hacen y Chrome bloquea el fetch con:
+ *        "Permission was denied for this request to access the `loopback`
+ *        address space".
+ *     2. PERMISO del usuario: Chrome 142+ pide permiso de "Dispositivos de
+ *        red local" para el sitio (prompt, o
+ *        chrome://settings/content/localNetworkAccess). Si se deniega,
+ *        TODOS los fetch a loopback fallan con el mismo error.
+ *
+ *   El app no puede saltarse esa política (es seguridad del navegador, no
+ *   es un bug). Por eso la detección reporta el MOTIVO de la falla y la UI
+ *   guía al usuario; el Plan B (.zpl con Zebra Setup Utilities) siempre
+ *   queda disponible sin permisos.
  *
  * LENGUAJE: ZPL II con ^CI28 (UTF-8) para tildes/ñ. Etiqueta 10 × 15 cm
  * (800 × 1200 dots @203 dpi) con el FORMATO PERECIBLE de la empresa,
@@ -39,6 +55,23 @@ export type ImpresoraZebra = {
   provider?: string
   manufacturer?: string
   version?: number
+}
+
+/**
+ * Por qué no se pudo contactar al servicio local. Sirve para que la UI
+ * muestre la guía correcta en lugar de un genérico "instala el programa".
+ */
+export type MotivoFallaZebra =
+  | 'ok'
+  | 'permiso-bloqueado' // Chrome/Edge denegó el acceso del sitio a la red local (PNA/LNA)
+  | 'sin-servicio' // Browser Print no está instalado, no corre, o es una versión vieja sin soporte PNA
+
+/** Resultado de la detección del middleware local. */
+export type ResultadoDeteccionZebra = {
+  /** Base que respondió (p. ej. http://localhost:9100); null si ninguna. */
+  base: string | null
+  /** Causa del resultado, para la guía de la UI. */
+  motivo: MotivoFallaZebra
 }
 
 /** Datos que porta un rótulo (1 artículo de la recepción). */
@@ -80,8 +113,29 @@ function abortar(ms: number): { signal: AbortSignal; limpiar: () => void } {
   return { signal: ctrl.signal, limpiar: () => clearTimeout(t) }
 }
 
-/** Prueba las bases locales y devuelve la primera que responde. */
-export async function detectarServicioZebra(): Promise<string | null> {
+/**
+ * Estado del permiso de "Dispositivos de red local" (Chrome 142+/Edge) para
+ * el sitio actual. Devuelve null si el navegador no lo expone: en ese caso
+ * la UI muestra ambas causas posibles sin afirmar cuál es.
+ */
+async function estadoPermisoRedLocal(): Promise<PermissionState | null> {
+  try {
+    const perms = navigator.permissions
+    if (!perms?.query) return null
+    const st = await perms.query({ name: 'local-network-access' as PermissionName })
+    return st.state
+  } catch {
+    // Nombre de permiso desconocido en este navegador → sin señal.
+    return null
+  }
+}
+
+/**
+ * Prueba las bases locales y devuelve la primera que responde. Si ninguna
+ * responde, clasifica el motivo: permiso de red local denegado (Chrome lo
+ * indica en su API de permisos) o servicio ausente/viejo.
+ */
+export async function detectarServicioZebra(): Promise<ResultadoDeteccionZebra> {
   for (const base of BASES_ZEBRA) {
     try {
       const { signal, limpiar } = abortar(TIMEOUT_MS)
@@ -89,17 +143,21 @@ export async function detectarServicioZebra(): Promise<string | null> {
         const res = await fetch(`${base}/available`, { signal })
         if (res.ok) {
           baseActiva = base
-          return base
+          return { base, motivo: 'ok' }
         }
       } finally {
         limpiar()
       }
     } catch {
-      // esta base no responde; probar la siguiente
+      // Esta base no responde o fue bloqueada por el navegador; seguir.
     }
   }
   baseActiva = null
-  return null
+  const permiso = await estadoPermisoRedLocal()
+  return {
+    base: null,
+    motivo: permiso === 'denied' ? 'permiso-bloqueado' : 'sin-servicio',
+  }
 }
 
 /**
@@ -108,7 +166,7 @@ export async function detectarServicioZebra(): Promise<string | null> {
  * (p. ej. {"printer":[…]}); se aplana sin depender del nombre de la clave.
  */
 export async function descubrirImpresorasZebra(): Promise<ImpresoraZebra[]> {
-  const base = baseActiva ?? (await detectarServicioZebra())
+  const base = baseActiva ?? (await detectarServicioZebra()).base
   if (!base) return []
   try {
     const res = await fetch(`${base}/available`)
@@ -134,7 +192,7 @@ export async function descubrirImpresorasZebra(): Promise<ImpresoraZebra[]> {
 
 /** Impresora marcada como por defecto en Browser Print (o null). */
 export async function obtenerImpresoraDefaultZebra(): Promise<ImpresoraZebra | null> {
-  const base = baseActiva ?? (await detectarServicioZebra())
+  const base = baseActiva ?? (await detectarServicioZebra()).base
   if (!base) return null
   try {
     const res = await fetch(`${base}/default?type=printer`)
@@ -154,9 +212,13 @@ export async function obtenerImpresoraDefaultZebra(): Promise<ImpresoraZebra | n
  * propios campos); solo completa `version` si falta.
  */
 export async function enviarZPL(impresora: ImpresoraZebra, zpl: string): Promise<void> {
-  const base = baseActiva ?? (await detectarServicioZebra())
+  const base = baseActiva ?? (await detectarServicioZebra()).base
   if (!base) {
-    throw new Error('Zebra Browser Print no está disponible en esta computadora.')
+    throw new Error(
+      'Zebra Browser Print no responde. Si el programa está instalado: actualízalo a la última versión ' +
+        '(zebra.com/browserprint) y concede a este sitio el permiso de "Dispositivos de red local" ' +
+        '(ícono junto a la dirección en Chrome). Plan B: descarga el .zpl.'
+    )
   }
   const device: ImpresoraZebra = { ...impresora, version: impresora.version ?? 2 }
   const res = await fetch(`${base}/write`, {

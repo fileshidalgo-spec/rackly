@@ -123,20 +123,52 @@ export function RecepcionModule() {
   const [deleteTarget, setDeleteTarget] = useState<RegistroRecepcion | null>(null)
   // Vía de registro activa: foto de guía (OCR) o formulario manual.
   const [modo, setModo] = useState<ModoRegistro>('foto')
-  // Modal de impresión de rótulos (Zebra ZT411). Tras GUARDAR se abre solo
-  // con la instantánea de lo registrado en la BD (`guardados`), para digitar
-  // cuántas etiquetas se necesitan de cada artículo e imprimirlas todas de
-  // un solo golpe.
+  // Modal de impresión de rótulos (Zebra ZT411). Se abre SOLO tras REGISTRAR
+  // (la carga ya validada y guardada en la BD): automáticamente al guardar
+  // (instantánea `guardados`) o con el botón de reimpresión de una fila ya
+  // registrada en la lista. Nunca con datos sin registrar.
   const [rotulosOpen, setRotulosOpen] = useState(false)
   const [guardados, setGuardados] = useState<{
     rotulos: RotuloAImprimir[]
     encabezado: EncabezadoRotulo
+    nota?: string
   } | null>(null)
 
   /** Cierra el modal y libera la instantánea post-guardado. */
   function cerrarRotulos(open: boolean) {
     setRotulosOpen(open)
     if (!open) setGuardados(null)
+  }
+
+  /**
+   * Reimpresión de rótulos de UNA fila ya REGISTRADA en la lista. Solo
+   * opera sobre datos guardados en la BD (la carga ya fue validada al
+   * registrarse); cumple la regla de negocio: imprimir solo lo registrado.
+   */
+  function reimprimirFila(r: RegistroRecepcion) {
+    setGuardados({
+      rotulos: [
+        {
+          codigo: r.codigo.trim(),
+          descripcion: r.descripcion.trim(),
+          cantidad: String(r.cantidad),
+          unidad: r.unidadMedida.trim(),
+          lote: r.lote.trim(),
+          fechaProduccion: r.fechaProduccion,
+          fechaVencimiento: r.fechaVencimiento,
+          copias: 1,
+        },
+      ],
+      encabezado: {
+        fecha: r.fecha,
+        numeroDocumento: r.numeroDocumento,
+        proveedor: r.proveedor,
+        placa: r.placa,
+        registradoPor: r.usuarioNombre,
+      },
+      nota: `Reimpresión del artículo ${r.codigo.trim()} (registrado en la BD${r.numeroDocumento ? `, ${r.tipoDocumento} ${r.numeroDocumento}` : ''}). Digita cuántas etiquetas necesitas e imprime.`,
+    })
+    setRotulosOpen(true)
   }
 
   // Formulario manual: encabezado del documento + lista de artículos.
@@ -221,7 +253,8 @@ export function RecepcionModule() {
       )
       toast.success(`Recepción registrada: ${validos.length} artículo(s)`)
       // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
-      // se abre solo, listo para digitar las etiquetas por artículo.
+      // se abre solo, listo para digitar las etiquetas por artículo. La
+      // impresión solo existe DESPUÉS de registrar (carga ya validada).
       setGuardados({
         rotulos: rotulosDesdeItems(validos),
         encabezado: {
@@ -231,6 +264,7 @@ export function RecepcionModule() {
           placa: fPlaca,
           registradoPor: perfil.nombre,
         },
+        nota: `Recepción guardada: ${validos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
       })
       setRotulosOpen(true)
       setFNumero('')
@@ -390,18 +424,9 @@ export function RecepcionModule() {
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
             Registrar {itemsValidos(items).length > 0 ? `${itemsValidos(items).length} artículo(s)` : 'recepción'}
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => {
-              setGuardados(null) // modo pre-guardado: imprime lo del formulario
-              setRotulosOpen(true)
-            }}
-            disabled={!items.some((it) => it.codigo.trim())}
-            className="gap-2"
-            title="Imprimir rótulos de los artículos en la Zebra ZT411"
-          >
-            <Printer className="h-4 w-4" /> Rótulos
-          </Button>
+          {/* La impresión de rótulos NO va aquí: solo se ofrece tras REGISTRAR
+              (el modal se abre solo al guardar, o desde la lista de
+              registrados), cuando la carga ya fue validada. */}
         </div>
       </div>
       )}
@@ -450,13 +475,14 @@ export function RecepcionModule() {
               <TableHead className="w-[60px] text-center">Foto</TableHead>
               <TableHead className="w-[140px]">Estado</TableHead>
               <TableHead className="min-w-[130px]">Registró</TableHead>
+              <TableHead className="w-[60px] text-center" title="Reimprimir rótulo del artículo registrado">Rótulo</TableHead>
               {puedeEliminar && <TableHead className="w-[60px]" />}
             </TableRow>
           </TableHeader>
           <TableBody>
             {filas.length === 0 && !loading && (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-sm text-slate-400 py-10">
+                <TableCell colSpan={10} className="text-center text-sm text-slate-400 py-10">
                   <Inbox className="h-8 w-8 mx-auto mb-2 text-slate-300" />
                   No hay recepciones registradas con los filtros actuales.
                 </TableCell>
@@ -524,6 +550,17 @@ export function RecepcionModule() {
                     {r.usuarioNombre || '—'}
                   </p>
                   <p className="text-[10px] text-slate-400 truncate max-w-[130px]">{r.usuarioCorreo}</p>
+                </TableCell>
+                <TableCell className="text-center">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                    onClick={() => reimprimirFila(r)}
+                    title="Reimprimir rótulo de este artículo ya registrado"
+                  >
+                    <Printer className="h-4 w-4" />
+                  </Button>
                 </TableCell>
                 {puedeEliminar && (
                   <TableCell className="text-right">
@@ -598,6 +635,14 @@ export function RecepcionModule() {
                 </SelectContent>
               </Select>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full gap-1 text-amber-700 hover:bg-amber-50"
+              onClick={() => reimprimirFila(r)}
+            >
+              <Printer className="h-3 w-3" /> Imprimir rótulos
+            </Button>
             {puedeEliminar && (
               <Button
                 size="sm"
@@ -627,27 +672,18 @@ export function RecepcionModule() {
         </div>
       )}
 
-      {/* ── Impresión de rótulos (Zebra ZT411 por USB) ── */}
+      {/* ── Impresión de rótulos (Zebra ZT411 por USB) — solo datos YA
+          registrados: instantánea post-guardado o reimpresión de fila ── */}
       <ImprimirRotulosDialog
         open={rotulosOpen}
         onOpenChange={cerrarRotulos}
-        rotulos={guardados ? guardados.rotulos : rotulosDesdeItems(items)}
+        rotulos={guardados ? guardados.rotulos : []}
         encabezado={
           guardados
             ? guardados.encabezado
-            : {
-                fecha: fFecha || hoyISO(),
-                numeroDocumento: fNumero,
-                proveedor: fProveedor,
-                placa: fPlaca,
-                registradoPor: perfil?.nombre || '',
-              }
+            : { fecha: '', numeroDocumento: '', proveedor: '', placa: '', registradoPor: '' }
         }
-        nota={
-          guardados
-            ? `Recepción guardada: ${guardados.rotulos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`
-            : undefined
-        }
+        nota={guardados?.nota}
       />
 
       {/* ── Confirmar eliminación ── */}

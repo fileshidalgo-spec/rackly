@@ -24,7 +24,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
-import { Plus, Trash2, Check, ClipboardCopy, TriangleAlert, PackageSearch } from 'lucide-react'
+import { Plus, Trash2, Check, ClipboardCopy, TriangleAlert, PackageSearch, SearchCheck } from 'lucide-react'
 
 /** Artículo editable de una recepción (1 fila en BD al registrar). */
 export type ItemRecepcion = {
@@ -36,6 +36,10 @@ export type ItemRecepcion = {
   fechaProduccion: string
   fechaVencimiento: string
   enCatalogo: boolean
+  /** El código se recuperó por coincidencia de descripción del OCR. */
+  matchPorDescripcion?: boolean
+  /** Requiere revisión humana contra la guía física. */
+  revision?: boolean
   /** El usuario escribió la descripción a mano (no la pisa el catálogo). */
   descripcionManual: boolean
   /** El usuario escribió la unidad a mano (no la pisa el catálogo). */
@@ -139,6 +143,8 @@ export function RecepcionItemsEditor({
       descripcion,
       unidad,
       enCatalogo: Boolean(cat),
+      matchPorDescripcion: false,
+      revision: false,
     })
     // Reabrir menú con las sugerencias del nuevo texto
     if (valor.trim()) {
@@ -160,6 +166,8 @@ export function RecepcionItemsEditor({
       descripcion: cat.descripcion,
       unidad: cat.un,
       enCatalogo: true,
+      matchPorDescripcion: false,
+      revision: false,
     })
     setMenuIdx(null)
   }
@@ -332,12 +340,22 @@ export function RecepcionItemsEditor({
                 <div className="flex-1 space-y-1">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <Label className="text-[10px] text-slate-500">Descripción</Label>
-                    {it.enCatalogo && (
+                    {it.revision && (
+                      <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-700">
+                        <TriangleAlert className="h-2.5 w-2.5" /> revisar con la guía
+                      </span>
+                    )}
+                    {!it.revision && it.matchPorDescripcion && (
+                      <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-sky-700">
+                        <SearchCheck className="h-2.5 w-2.5" /> código por descripción — confírmalo
+                      </span>
+                    )}
+                    {!it.revision && !it.matchPorDescripcion && it.enCatalogo && (
                       <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-emerald-700">
                         <Check className="h-2.5 w-2.5" /> del catálogo
                       </span>
                     )}
-                    {!it.enCatalogo && it.codigo.trim() && (
+                    {!it.enCatalogo && !it.revision && it.codigo.trim() && (
                       <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-700">
                         <TriangleAlert className="h-2.5 w-2.5" /> no está en catálogo — revisa el código
                       </span>

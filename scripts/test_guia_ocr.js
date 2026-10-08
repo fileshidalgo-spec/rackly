@@ -16,7 +16,7 @@ process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://dummy.supabase.co'
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'dummy'
 process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY = 'dummy'
 
-const { extraerDatosGuia } = require('@/lib/rackly/guia-ocr')
+const { extraerDatosGuia, extraerDatosGuiaDeTextos, extraerFilasDeTabla, similitudDescripcion, buscarPorDescripcion } = require('@/lib/rackly/guia-ocr')
 const { buscarCatalogo, getCachedCatalogo, fetchCatalogo } = require('@/lib/rackly/catalogo')
 
 // ─── Catálogo simulado (mismo formato que la BD: códigos numéricos texto) ───
@@ -189,6 +189,80 @@ check('"56 53" (espacio interno) → match', buscarCatalogo('56 53', CATALOGO)?.
 check('"5653-" (guion pegado) → match', buscarCatalogo('5653-', CATALOGO)?.codigo === '5653')
 check('inexistente "5659" → undefined', buscarCatalogo('5659', CATALOGO) === undefined)
 check('ambiguo sigue sin inventar', buscarCatalogo('53', CATALOGO) === undefined)
+
+// ─── 9. GUÍA REAL AJER S.A. (T173-00004090, foto WhatsApp 960×1280) ───
+// Casos calibrados con el OCR real del ZOOM de la franja de tabla (×3).
+console.log('\n[9] Guía real AJER — zoom de tabla + matching por descripción')
+const CATALOGO_AJER = [
+  { codigo: '126', un: 'KG', descripcion: 'SAL INDUSTRIAL', stock_big_magic: 0 },
+  { codigo: '125', un: 'KG', descripcion: 'HIDROXIDO DE CALCIO (IND.60-94 por ciento)', stock_big_magic: 0 },
+  { codigo: '6634', un: 'KG', descripcion: 'ASEPTICPER WC', stock_big_magic: 0 },
+  { codigo: '11688', un: 'GLS', descripcion: 'ALCOHOL RECTIFICADO AL 75 por ciento', stock_big_magic: 0 },
+  { codigo: '23961', un: 'UN', descripcion: 'CARTON SEPARADOR PARA ESTIBA', stock_big_magic: 0 },
+  { codigo: '53414', un: 'UN', descripcion: 'DIVERFLOW 156 (ENVASE X 28 KG.)', stock_big_magic: 0 },
+  { codigo: '53524', un: 'KG', descripcion: 'LAMINA TERMOCONTRAIBLE 470 CM X 50 µ - MAQUINA SIDEL - CARAL', stock_big_magic: 0 },
+  { codigo: '53574', un: 'UN', descripcion: 'BASES PAPAS PICANTES BOLSA X 25 KG 49854', stock_big_magic: 0 },
+  { codigo: '56119', un: 'UN', descripcion: 'ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 145 ML - DISEÑO 2025', stock_big_magic: 0 },
+  { codigo: '56364', un: 'UN', descripcion: 'ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 100 ML', stock_big_magic: 0 },
+]
+
+// Texto OCR REAL del zoom de la franja de tabla (imperfecciones incluidas).
+const FRANJA_AJER = `
+| cómGOo | DESCRIPCIÓN o — o
+| E 4 SAL INDUSTRIAL 4,000:09 KGM 4000.00
+2 |es ASEPTICPER WC 128000 KG 1,280.00
+3 | 11688 ALCOMOL RECTIFICADO AL 75 por ciento 50.00 CLL 50.00
+| 23951 CARTON SEPARADOR PARA ESTIBA 7,000.00 UND 1.050,00
+La 5u1a DIVERFLOW 155 (ENVASE X 25 KG) 20.00 UND 56000
+[=] 53574 LAMINA TERMOCONTRAIBLE 470 CM X 50 Ap - MAQUINA SIDEL - CARAL 1,356.80 KGM 1,356.80
+7 56119 ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 145 ML - DISEAYO 2925 77327000 UND 6,418 14
+B| 56264 ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 100 ML 545,000.00 UND 546,000.00
+NOTAS! VER NRO DE COMPROBANTES DE PAGO Y DIRECCION DEL PUNTO DE LLEGADA EN ANEXO ADJUNTO
+`
+const ajer = extraerDatosGuiaDeTextos('NRO. T173-00004090\nPLACA: C9G7B1\nRAZÓN SOCIAL: AJEPER S.A.', FRANJA_AJER, CATALOGO_AJER)
+const codigosAj = ajer.items.map((i) => i.codigo)
+check('recupera los 8 artículos de la tabla', ajer.items.length === 8, `obtuvo ${ajer.items.length}: [${codigosAj.join(', ')}]`)
+check('SAL INDUSTRIAL → 126 (por descripción, código ilegible "4")', ajer.items.some((i) => i.codigo === '126' && i.matchPorDescripcion), JSON.stringify(codigosAj))
+check('ASEPTICPER WC → 6634 (código ilegible "es")', ajer.items.some((i) => i.codigo === '6634' && i.matchPorDescripcion && i.revision), JSON.stringify(codigosAj))
+check('ALCOHOL: 11688 exacto y coherente (sin flags)', ajer.items.some((i) => i.codigo === '11688' && i.enCatalogo && !i.matchPorDescripcion && !i.revision), JSON.stringify(ajer.items.find((i) => i.codigo === '11688')))
+check('CARTON: 23951 → 23961 (1 dígito, validado por descripción)', ajer.items.some((i) => i.codigo === '23961'), JSON.stringify(codigosAj))
+check('LAMINA: 53574 NO queda con BASES PAPAS (cross-check)', !ajer.items.some((i) => i.codigo === '53574'), JSON.stringify(codigosAj))
+check('LAMINA → 53524 (código re-buscado por descripción)', ajer.items.some((i) => i.codigo === '53524' && i.matchPorDescripcion), JSON.stringify(ajer.items.find((i) => /535/.test(i.codigo))))
+check('TETRA 145 ML → 56119 exacto (número discriminante)', ajer.items.some((i) => i.codigo === '56119' && !i.matchPorDescripcion), JSON.stringify(codigosAj))
+check('TETRA 100 ML: 56264 → 56364 (vecino + descripción)', ajer.items.some((i) => i.codigo === '56364' && i.matchPorDescripcion), JSON.stringify(codigosAj))
+check('FICHER ilegible queda editable (código 5U1A + revisión)', ajer.items.some((i) => i.codigo === '5U1A' && i.revision && /DIVERFLOW/i.test(i.descripcion)), JSON.stringify(ajer.items.find((i) => /DIVERFLOW/i.test(i.descripcion))))
+check('cantidad plana 77327000 → 773,270.00', ajer.items.find((i) => i.codigo === '56119')?.cantidad === '773,270.00', ajer.items.find((i) => i.codigo === '56119')?.cantidad)
+check('cantidad plana 128000 → 1,280.00', ajer.items.find((i) => i.codigo === '6634')?.cantidad === '1,280.00', ajer.items.find((i) => i.codigo === '6634')?.cantidad)
+check('cantidad con basura 4,000:09 → 4,000', ajer.items.find((i) => i.codigo === '126')?.cantidad === '4,000', ajer.items.find((i) => i.codigo === '126')?.cantidad)
+check('unidad del catálogo manda (11688 → GLS)', ajer.items.find((i) => i.codigo === '11688')?.unidad === 'GLS', ajer.items.find((i) => i.codigo === '11688')?.unidad)
+check('encabezados: guía/placa del texto completo', ajer.numeroGuia === 'T173-00004090' && ajer.placa === 'C9G7B1', `${ajer.numeroGuia} / ${ajer.placa}`)
+
+// Texto COMPLETO mallado (sin zoom): los falsos positivos de antes NO vuelven.
+const MALLA_AJER = `
+Ro AJEPER SA. R.U.C. 20331061655
+NRO. T173-00004090
+NES TRANSPORTADOS.
+E SAL IDUSTUAL 400000 = cmoco)
+E ASEPTICPER VIC 120000 Lo 120000
+| 125 ALCONOL RECTIFICADO AL 75 por cardo E a soce|
+[2000 CARTON SEPARADOR PARA ESTBA 700000 uo 105000
+NOTAS? Fecha de entrega de bienes al transportista - 06/10/2026
+`
+const malla = extraerDatosGuia(MALLA_AJER, CATALOGO_AJER)
+check('texto malla: el fragmento "125" NO crea HIDROXIDO falso', !malla.items.some((i) => i.codigo === '125'), JSON.stringify(malla.items.map((i) => i.codigo)))
+check('texto malla: "2000" NO crea artículo falso', !malla.items.some((i) => i.codigo === '2000'), JSON.stringify(malla.items.map((i) => i.codigo)))
+
+// ─── 10. similitudDescripcion — números discriminan ───
+console.log('\n[10] similitudDescripcion / buscarPorDescripcion')
+const d145 = 'ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 145 ML - DISEAYO 2025'
+const c56119 = similitudDescripcion(d145, 'ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 145 ML - DISEÑO 2025')
+const c56364 = similitudDescripcion(d145, 'ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 100 ML')
+check('145 ML puntúa más alto que 100 ML', c56119 > c56364, `145→${c56119.toFixed(2)} vs 100→${c56364.toFixed(2)}`)
+check('145 ML supera umbral auto (0.82)', c56119 >= 0.82, c56119.toFixed(2))
+const bm = buscarPorDescripcion('SAL INDUSTRIAL', CATALOGO_AJER)
+check('"SAL INDUSTRIAL" → 126 exacto', bm?.item.codigo === '126' && bm.score >= 0.99, JSON.stringify(bm))
+check('descripción vacía → null', buscarPorDescripcion('', CATALOGO_AJER) === null)
+check('sin match → null', buscarPorDescripcion('ZZZZ QQQ 12345', CATALOGO_AJER) === null)
 
 // ─── Resumen ───
 console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)

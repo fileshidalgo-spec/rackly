@@ -84,11 +84,16 @@ export function RecepcionItemsEditor({
 
   // Catálogo para el autocompletado (comparte la carga con el módulo).
   const [catTamano, setCatTamano] = useState(isCatalogoLoaded() ? -1 : 0)
+  const [catError, setCatError] = useState(false)
   useEffect(() => {
     if (isCatalogoLoaded()) return
     let vivo = true
     void fetchCatalogo().then((c) => {
-      if (vivo) setCatTamano(c.length)
+      if (!vivo) return
+      setCatTamano(c.length)
+      // La carga respondió pero trajo 0 códigos (BD vacía o red caída):
+      // antes quedaba "Catálogo: cargando…" para siempre.
+      if (c.length === 0) setCatError(true)
     })
     return () => {
       vivo = false
@@ -195,11 +200,13 @@ export function RecepcionItemsEditor({
       {/* Estado del catálogo (fuente del autocompletado) */}
       <p className="text-[10px] text-slate-400 flex items-center gap-1">
         <PackageSearch className="h-3 w-3" />
-        {catTamano === 0
-          ? 'Catálogo: cargando… (mientras, puedes teclear el código a mano)'
-          : catTamano < 0
-            ? `Catálogo listo — al escribir el código se muestran sugerencias y se autocompleta descripción y unidad.`
-            : `Catálogo listo (${catTamano} códigos) — al escribir el código se muestran sugerencias.`}
+        {catError
+          ? 'Catálogo no disponible (revisa tu conexión y recarga la página). Puedes digitar código, descripción y unidad a mano.'
+          : catTamano === 0
+            ? 'Catálogo: cargando… (mientras, puedes teclear el código a mano)'
+            : catTamano < 0
+              ? `Catálogo listo — al escribir el código se muestran sugerencias y se autocompleta descripción y unidad.`
+              : `Catálogo listo (${catTamano} códigos) — al escribir el código se muestran sugerencias.`}
       </p>
 
       {/* Aplicar lote/fechas a todos (atajo para guías que comparten datos) */}

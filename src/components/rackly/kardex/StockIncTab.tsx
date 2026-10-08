@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { dataClient } from '@/lib/supabase/client'
+import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { TriangleAlert, Search, MapPin, Package, Loader2, AlertCircle, ExternalLink } from 'lucide-react'
@@ -33,11 +34,14 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
     const term = query.trim()
     if (!term) return
     if (loading) return // evita búsquedas concurrentes (Enter repetido)
+    // Saneo igual que en Recepción/Atención: la coma/paréntesis del término
+    // rompía el filtro .or() de PostgREST y la pestaña quedaba en error.
+    const upper = terminoBusquedaSeguro(term.toUpperCase())
+    if (!upper) return
     setLoading(true)
     setError(false)
     setSearched(true)
     try {
-      const upper = term.toUpperCase()
       // Paginado explícito (antes .limit(5000): si una búsqueda amplia matcheaba más
       // de 5000 movimientos, el stock neto INC se calculaba con datos incompletos).
       const allRows: Record<string, unknown>[] = []

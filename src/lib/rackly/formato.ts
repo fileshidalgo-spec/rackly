@@ -1,5 +1,26 @@
 /**
- * RACKLY — Utilidades de parseo numérico para cantidades escritas o
+ * RACKLY — Utilidades de parseo para datos escritos o extraídos por OCR.
+ */
+
+/**
+ * Sanea un término de búsqueda para filtros `.or(...ilike...)` de PostgREST:
+ *   · la COMA separa condiciones del filtro y el PARÉNTESIS agrupa → un
+ *     término como "LIMA, PERU (S.A.)" rompía la consulta y la pestaña
+ *     mostraba "Error al cargar" (bug repetido en Recepción, Atención y
+ *     StockInc → sanear SIEMPRE aquí antes de interpolar).
+ *   · % y _ son comodines de LIKE y la comilla/backslash rompen el parseo
+ *     del valor → también se reemplazan.
+ * Devuelve '' si el término queda vacío (el llamador omite el filtro).
+ */
+export function terminoBusquedaSeguro(termino: string): string {
+  return termino
+    .replace(/[,()"\\%_]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Parseo numérico para cantidades escritas o
  * extraídas por OCR, donde el separador de miles/decimales varía:
  *
  *   "1,500.00" → 1500    (miles con coma, decimal con punto — guía US)

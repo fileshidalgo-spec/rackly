@@ -497,9 +497,14 @@ function resolverFilas(
 
   function push(it: ItemGuia) {
     if (!it.codigo && !it.descripcion) return
+    const descClave = quitarAcentos(it.descripcion).replace(/[^A-Z0-9 ]/g, '').trim()
+    // La clave incluye cantidad y descripción: una guía puede traer EL MISMO
+    // código en 2 filas (mismo artículo, 2 lotes/cantidades) y esas filas son
+    // legítimas — antes la 2ª se descartaba en silencio. Solo colapsa el
+    // "tartamudeo" del OCR (misma línea leída 2 veces idéntica).
     const clave = it.codigo
-      ? `C:${it.codigo.toUpperCase().replace(/^0+/, '')}`
-      : `D:${quitarAcentos(it.descripcion).replace(/[^A-Z0-9 ]/g, '').trim()}`
+      ? `C:${it.codigo.toUpperCase().replace(/^0+/, '')}|${it.cantidad.trim()}|${descClave}`
+      : `D:${descClave}|${it.cantidad.trim()}`
     if (vistos.has(clave)) return
     vistos.add(clave)
     items.push(it)
@@ -871,11 +876,13 @@ function desruidoImagen(ctx: CanvasRenderingContext2D, ancho: number, alto: numb
 }
 
 /**
- * MARGEN blanco alrededor del contenido: el análisis de layout de Tesseract
- * falla (o genera regiones degeneradas) cuando líneas/bordes de la tabla
- * tocan el borde exacto de la imagen.
+ * MARGEN blanco alrededor del contenido (en px de la imagen preprocesada):
+ * el análisis de layout de Tesseract falla (o genera regiones degeneradas)
+ * cuando líneas/bordes de la tabla tocan el borde exacto de la imagen.
+ * EXPORTADO: quien convierta coordenadas del OCR de vuelta a píxeles de la
+ * foto original debe restarlo (ver GuiaFotoForm, zoom de tabla).
  */
-const MARGEN_OCR = 24
+export const MARGEN_OCR = 24
 
 function prepararCanvasOCR(ancho: number, alto: number): HTMLCanvasElement {
   const canvas = document.createElement('canvas')

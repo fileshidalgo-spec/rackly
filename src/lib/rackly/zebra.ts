@@ -234,8 +234,8 @@ export function construirZPLRotulo(
   const fVenc = datos.fechaVencimiento ? fechaCorta(datos.fechaVencimiento) : ''
 
   // ── Geometría (dots @203dpi; 1 dot = 0.125 mm) ──
-  // Ancho total 800, alto 1200; marco interior x 8..792, y 8..1192.
-  // Bandas: código 8-318 · descripción 318-578 · lote 578-728 ·
+  // Ancho total 800, alto 1200; marco exterior (0,0)-(800,1200).
+  // Bandas: código 0-310 · descripción 310-578 · lote 578-728 ·
   //         inferior 728-1192 (fechas 2 filas de 232; cantidad/UM 464).
 
   const lineas: string[] = []
@@ -243,7 +243,11 @@ export function construirZPLRotulo(
   lineas.push('^CI28') // UTF-8: tildes y ñ (p. ej. "DISEÑO")
   lineas.push('^PW800')
   lineas.push('^LL1200')
-  lineas.push('^LH8,8')
+  // SIN ^LH: el label home por defecto es (0,0). Antes se usaba ^LH8,8 como
+  // "margen", pero desplaza TODOS los ^FO: el marco ^FO0,0^GB800,1200 quedaba
+  // en (8,8)-(808,1208), fuera del área 800×1200 → los bordes derecho e
+  // inferior NO salían impresos (verificado con render real). Todo el
+  // trazado ya está en coordenadas absolutas 0-based.
 
   // Marco exterior
   lineas.push('^FO0,0^GB800,1200,3^FS')

@@ -6,10 +6,12 @@
  * Flujo:
  *   1. Al abrir, sondea Zebra Browser Print (http://localhost:9100) y lista
  *      las impresoras; preselecciona la del sistema (GET /default).
- *   2. El usuario elige tamaño de etiqueta (4×6 o 4×2) y copias por artículo.
- *   3. "Imprimir" genera ZPL (^CI28 UTF-8, Code128 del código) y lo envía por
- *      POST /write. "Descargar .zpl" es el PLAN B sin middleware: el archivo
- *      se imprime con Zebra Setup Utilities (arrastrar al ícono de envío).
+ *   2. El usuario ajusta copias por artículo. El tamaño es FIJO: etiqueta
+ *      de 10 × 15 cm con el formato PERECIBLE de la empresa (plantilla
+ *      "ETIQUETA ALMACEN insumos.xlsm"), replicado en ZPL 1:1.
+ *   3. "Imprimir" genera ZPL (^CI28 UTF-8) y lo envía por POST /write.
+ *      "Descargar .zpl" es el PLAN B sin middleware: el archivo se imprime
+ *      con Zebra Setup Utilities (arrastrar al ícono de envío).
  *
  * Si el servicio no responde se muestra la guía de instalación en el propio
  * modal (no es un error del app: Browser Print corre en la PC de la impresora).
@@ -24,7 +26,6 @@ import {
   type ImpresoraZebra,
   type DatosRotulo,
   type EncabezadoRotulo,
-  type TamanoRotulo,
 } from '@/lib/rackly/zebra'
 import type { ItemRecepcion } from '@/components/rackly/recepcion/RecepcionItemsEditor'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -87,7 +88,6 @@ export function ImprimirRotulosDialog({
   const [estado, setEstado] = useState<EstadoServicio>('verificando')
   const [impresoras, setImpresoras] = useState<ImpresoraZebra[]>([])
   const [seleccion, setSeleccion] = useState<string>('')
-  const [tamano, setTamano] = useState<TamanoRotulo>('4x6')
   const [copias, setCopias] = useState<number[]>([])
   const [imprimiendo, setImprimiendo] = useState(false)
 
@@ -126,8 +126,7 @@ export function ImprimirRotulosDialog({
     return construirZPLRotulos(
       rotulos,
       copias.map((c) => c || 1),
-      encabezado,
-      tamano
+      encabezado
     )
   }
 
@@ -249,17 +248,9 @@ export function ImprimirRotulosDialog({
               </Select>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">Tamaño de etiqueta</Label>
-              <Select value={tamano} onValueChange={(v) => setTamano(v as TamanoRotulo)}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="4x6">4×6 pulgadas (100×150 mm) — rótulo completo</SelectItem>
-                  <SelectItem value="4x2">4×2 pulgadas (100×50 mm) — compacto</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+              <span className="text-xs text-slate-500">Tamaño de etiqueta</span>
+              <span className="text-xs font-bold text-slate-700">10 × 15 cm · formato PERECIBLE</span>
             </div>
 
             <div className="space-y-1.5">

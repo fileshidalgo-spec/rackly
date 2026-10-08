@@ -43,7 +43,9 @@ import {
 import {
   ImprimirRotulosDialog,
   rotulosDesdeItems,
+  type RotuloAImprimir,
 } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
+import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -132,8 +134,21 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   const [fotoBlob, setFotoBlob] = useState<Blob | null>(null)
   const [form, setForm] = useState<FormFoto>(FORM_VACIO)
   const [saving, setSaving] = useState(false)
-  // Modal de impresión de rótulos (Zebra ZT411) de los artículos detectados.
+  // Modal de impresión de rótulos (Zebra ZT411). Tras GUARDAR se abre solo
+  // con la instantánea exacta de lo registrado en la BD (`guardados`), para
+  // digitar cuántas etiquetas se necesitan de cada artículo e imprimirlas
+  // todas de un solo golpe.
   const [rotulosOpen, setRotulosOpen] = useState(false)
+  const [guardados, setGuardados] = useState<{
+    rotulos: RotuloAImprimir[]
+    encabezado: EncabezadoRotulo
+  } | null>(null)
+
+  /** Cierra el modal y libera la instantánea post-guardado. */
+  function cerrarRotulos(open: boolean) {
+    setRotulosOpen(open)
+    if (!open) setGuardados(null)
+  }
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -354,6 +369,19 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )
       toast.success(`Recepción registrada con foto: ${validos.length} artículo(s)`)
+      // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
+      // se abre solo, listo para digitar las etiquetas por artículo.
+      setGuardados({
+        rotulos: rotulosDesdeItems(validos),
+        encabezado: {
+          fecha,
+          numeroDocumento: form.numeroGuia,
+          proveedor: form.proveedor,
+          placa: form.placa,
+          registradoPor: perfil.nombre,
+        },
+      })
+      setRotulosOpen(true)
       reiniciar()
       onRegistrado()
     } catch (err: unknown) {
@@ -365,10 +393,39 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   }
 
   // ────────────────────────────────────────────────────────────
+  // Modal de rótulos: visible en CUALQUIER paso (tras guardar, el
+  // formulario vuelve al paso 1 con el modal abierto encima).
+  // ────────────────────────────────────────────────────────────
+  const dialogRotulos = (
+    <ImprimirRotulosDialog
+      open={rotulosOpen}
+      onOpenChange={cerrarRotulos}
+      rotulos={guardados ? guardados.rotulos : rotulosDesdeItems(form.items)}
+      encabezado={
+        guardados
+          ? guardados.encabezado
+          : {
+              fecha: form.fecha || hoyISO(),
+              numeroDocumento: form.numeroGuia,
+              proveedor: form.proveedor,
+              placa: form.placa,
+              registradoPor: perfil?.nombre || '',
+            }
+      }
+      nota={
+        guardados
+          ? `Recepción guardada: ${guardados.rotulos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`
+          : undefined
+      }
+    />
+  )
+
+  // ────────────────────────────────────────────────────────────
   // PASO 1: elegir foto
   // ────────────────────────────────────────────────────────────
   if (paso === 'elegir') {
     return (
+      <>
       <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-4">
         <div className="flex items-center gap-2 mb-1">
           <Camera className="h-4 w-4 text-amber-600" />
@@ -409,6 +466,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           </Button>
         </div>
       </div>
+      {dialogRotulos}
+      </>
     )
   }
 
@@ -417,6 +476,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   // ────────────────────────────────────────────────────────────
   if (paso === 'procesando') {
     return (
+      <>
       <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-6 space-y-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
           <ScanLine className="h-4 w-4 animate-pulse" /> {etapa || 'Procesando…'}
@@ -424,6 +484,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         <Progress value={progreso} className="h-2" />
         <p className="text-xs text-slate-400">Esto puede tardar unos segundos según la foto.</p>
       </div>
+      {dialogRotulos}
+      </>
     )
   }
 
@@ -432,6 +494,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   // ────────────────────────────────────────────────────────────
   const detectados = form.items.filter((i) => i.codigo.trim()).length
   return (
+    <>
     <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-4 space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
@@ -540,7 +603,10 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         </Button>
         <Button
           variant="outline"
-          onClick={() => setRotulosOpen(true)}
+          onClick={() => {
+            setGuardados(null) // modo pre-guardado: imprime lo del formulario
+            setRotulosOpen(true)
+          }}
           disabled={form.items.every((it) => !it.codigo.trim())}
           className="gap-2"
           title="Imprimir rótulos de los artículos en la Zebra ZT411"
@@ -549,19 +615,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         </Button>
       </div>
 
-      {/* Impresión de rótulos (Zebra ZT411 por USB) de lo leído/editado. */}
-      <ImprimirRotulosDialog
-        open={rotulosOpen}
-        onOpenChange={setRotulosOpen}
-        rotulos={rotulosDesdeItems(form.items)}
-        encabezado={{
-          fecha: form.fecha || hoyISO(),
-          numeroDocumento: form.numeroGuia,
-          proveedor: form.proveedor,
-          placa: form.placa,
-          registradoPor: perfil?.nombre || '',
-        }}
-      />
+      {/* Impresión de rótulos: renderizado compartido al final (dialogRotulos). */}
     </div>
+    {dialogRotulos}
+    </>
   )
 }

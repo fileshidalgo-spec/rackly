@@ -28,7 +28,9 @@ import {
 import {
   ImprimirRotulosDialog,
   rotulosDesdeItems,
+  type RotuloAImprimir,
 } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
+import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
 import {
   listarRecepciones,
   crearRecepciones,
@@ -121,8 +123,21 @@ export function RecepcionModule() {
   const [deleteTarget, setDeleteTarget] = useState<RegistroRecepcion | null>(null)
   // Vía de registro activa: foto de guía (OCR) o formulario manual.
   const [modo, setModo] = useState<ModoRegistro>('foto')
-  // Modal de impresión de rótulos (Zebra ZT411) de los artículos cargados.
+  // Modal de impresión de rótulos (Zebra ZT411). Tras GUARDAR se abre solo
+  // con la instantánea de lo registrado en la BD (`guardados`), para digitar
+  // cuántas etiquetas se necesitan de cada artículo e imprimirlas todas de
+  // un solo golpe.
   const [rotulosOpen, setRotulosOpen] = useState(false)
+  const [guardados, setGuardados] = useState<{
+    rotulos: RotuloAImprimir[]
+    encabezado: EncabezadoRotulo
+  } | null>(null)
+
+  /** Cierra el modal y libera la instantánea post-guardado. */
+  function cerrarRotulos(open: boolean) {
+    setRotulosOpen(open)
+    if (!open) setGuardados(null)
+  }
 
   // Formulario manual: encabezado del documento + lista de artículos.
   // Una guía puede traer 20+ artículos; cada artículo = 1 fila en BD.
@@ -205,6 +220,19 @@ export function RecepcionModule() {
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )
       toast.success(`Recepción registrada: ${validos.length} artículo(s)`)
+      // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
+      // se abre solo, listo para digitar las etiquetas por artículo.
+      setGuardados({
+        rotulos: rotulosDesdeItems(validos),
+        encabezado: {
+          fecha,
+          numeroDocumento: fNumero,
+          proveedor: fProveedor,
+          placa: fPlaca,
+          registradoPor: perfil.nombre,
+        },
+      })
+      setRotulosOpen(true)
       setFNumero('')
       setFProveedor('')
       setFPlaca('')
@@ -364,7 +392,10 @@ export function RecepcionModule() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => setRotulosOpen(true)}
+            onClick={() => {
+              setGuardados(null) // modo pre-guardado: imprime lo del formulario
+              setRotulosOpen(true)
+            }}
             disabled={!items.some((it) => it.codigo.trim())}
             className="gap-2"
             title="Imprimir rótulos de los artículos en la Zebra ZT411"
@@ -599,15 +630,24 @@ export function RecepcionModule() {
       {/* ── Impresión de rótulos (Zebra ZT411 por USB) ── */}
       <ImprimirRotulosDialog
         open={rotulosOpen}
-        onOpenChange={setRotulosOpen}
-        rotulos={rotulosDesdeItems(items)}
-        encabezado={{
-          fecha: fFecha || hoyISO(),
-          numeroDocumento: fNumero,
-          proveedor: fProveedor,
-          placa: fPlaca,
-          registradoPor: perfil?.nombre || '',
-        }}
+        onOpenChange={cerrarRotulos}
+        rotulos={guardados ? guardados.rotulos : rotulosDesdeItems(items)}
+        encabezado={
+          guardados
+            ? guardados.encabezado
+            : {
+                fecha: fFecha || hoyISO(),
+                numeroDocumento: fNumero,
+                proveedor: fProveedor,
+                placa: fPlaca,
+                registradoPor: perfil?.nombre || '',
+              }
+        }
+        nota={
+          guardados
+            ? `Recepción guardada: ${guardados.rotulos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`
+            : undefined
+        }
       />
 
       {/* ── Confirmar eliminación ── */}

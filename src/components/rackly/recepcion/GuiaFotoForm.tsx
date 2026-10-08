@@ -20,10 +20,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import type { PSM } from 'tesseract.js'
 import { fetchCatalogo, getCachedCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
 import { aNumero } from '@/lib/rackly/formato'
 import {
   extraerDatosGuia,
+  mejorarImagenOCR,
+  puntuarExtraccion,
   reducirImagen,
   type DatosGuia,
 } from '@/lib/rackly/guia-ocr'
@@ -99,7 +102,14 @@ function itemDesdeOcr(item: DatosGuia['items'][number]): ItemRecepcion {
     fechaProduccion: '',
     fechaVencimiento: '',
     enCatalogo: item.enCatalogo,
+    descripcionManual: false,
+    unidadManual: false,
   }
+}
+
+/** Umbral de calidad: con estos 3 pilares detectados no se re-procesa. */
+function extraccionSuficiente(d: DatosGuia): boolean {
+  return d.items.length > 0 && Boolean(d.numeroGuia) && Boolean(d.placa)
 }
 
 export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
@@ -130,14 +140,55 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     return c.length > 0
   }
 
+  /** Aplica la mejor extracción al formulario + resumen de lo detectado. */
+  function procesarExtraccion(datos: DatosGuia) {
+    const itemsOcr = datos.items.map(itemDesdeOcr)
+    setForm({
+      ...FORM_VACIO,
+      numeroGuia: datos.numeroGuia,
+      placa: datos.placa,
+      proveedor: datos.proveedor,
+      items: itemsOcr.length > 0 ? itemsOcr : [itemVacio()],
+    })
+
+    if (!datos.numeroGuia && itemsOcr.length === 0) {
+      toast.warning('No se detectaron datos automáticamente', {
+        description: 'Completa los datos manualmente en el siguiente paso.',
+      })
+      return
+    }
+
+    const faltantes: string[] = []
+    if (!datos.numeroGuia) faltantes.push('nº guía')
+    if (!datos.placa) faltantes.push('placa')
+    const enCat = itemsOcr.filter((i) => i.enCatalogo).length
+    const fueraCat = itemsOcr.length - enCat
+    toast.success(
+      itemsOcr.length > 0
+        ? `Se detectaron ${itemsOcr.length} artículo(s)${enCat > 0 ? ` · ${enCat} en catálogo` : ''}`
+        : 'Datos del documento recopilados',
+      {
+        description:
+          [
+            datos.numeroGuia ? `guía ${datos.numeroGuia}` : '',
+            datos.placa ? `placa ${datos.placa}` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') +
+          (fueraCat > 0 ? ` · ${fueraCat} sin match en catálogo (revisar código)` : '') +
+          (faltantes.length ? `. Faltan: ${faltantes.join(', ')} (se completan a mano).` : ''),
+      }
+    )
+  }
+
   async function procesar(archivo: File) {
     setPaso('procesando')
     setProgreso(0)
     setEtapa('Preparando imagen…')
     try {
-      // 2800px: las guías con 20+ artículos imprimen la tabla en letra
-      // pequeña; a 2000px el OCR no distinguía los dígitos del código.
-      const imagen = await reducirImagen(archivo, 2800, 0.9)
+      setEtapa('Preparando imagen (contraste)…')
+      // Preprocesado: gris + contraste → mejora la lectura de la tabla
+      const imagen = await mejorarImagenOCR(archivo, 2800)
       const liviana = await reducirImagen(archivo, 1200, 0.8)
       setFotoBlob(liviana)
       setThumb(URL.createObjectURL(liviana))
@@ -152,7 +203,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
       }
 
       setEtapa('Leyendo la guía (OCR español)…')
-      const { createWorker } = await import('tesseract.js')
+      const { createWorker, PSM } = await import('tesseract.js')
       const worker = await createWorker('spa', 1, {
         logger: (m: { status: string; progress: number }) => {
           if (m.status === 'recognizing text') {
@@ -161,48 +212,37 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           }
         },
       })
-      let datos: DatosGuia
+
+      const catalogoParaOCR = catOk ? getCachedCatalogo() : []
+      async function ocr(psm: PSM, con: Blob): Promise<string> {
+        await worker.setParameters({ tessedit_pageseg_mode: psm })
+        const { data } = await worker.recognize(con)
+        return data.text ?? ''
+      }
+
       try {
-        const { data } = await worker.recognize(imagen)
-        datos = extraerDatosGuia(data.text ?? '', catOk ? getCachedCatalogo() : [])
+        // PASADA 1 — PSM 6 (bloque uniforme): ideal para la tabla de ítems.
+        const texto1 = await ocr(PSM.SINGLE_BLOCK, imagen)
+        let datos = extraerDatosGuia(texto1, catalogoParaOCR)
+
+        // PASADA 2 — revisión más estricta: si faltan pilares (artículos,
+        // guía o placa) se relee con PSM 3 (layout automático) y gana la
+        // extracción con mejor puntuación.
+        if (!extraccionSuficiente(datos)) {
+          setEtapa('Revisando lectura con un segundo pase…')
+          const imagenBase = await reducirImagen(archivo, 2800, 0.9)
+          const texto2 = await ocr(PSM.AUTO, imagenBase)
+          const datos2 = extraerDatosGuia(texto2, catalogoParaOCR)
+          if (puntuarExtraccion(datos2) > puntuarExtraccion(datos)) {
+            datos = datos2
+          }
+        }
+
+        procesarExtraccion(datos)
       } finally {
         await worker.terminate()
       }
 
-      const itemsOcr = datos.items.map(itemDesdeOcr)
-      setForm({
-        ...FORM_VACIO,
-        numeroGuia: datos.numeroGuia,
-        placa: datos.placa,
-        proveedor: datos.proveedor,
-        items: itemsOcr.length > 0 ? itemsOcr : [itemVacio()],
-      })
-
-      if (!datos.numeroGuia && itemsOcr.length === 0) {
-        toast.warning('No se detectaron datos automáticamente', {
-          description: 'Completa los datos manualmente en el siguiente paso.',
-        })
-      } else {
-        const faltantes: string[] = []
-        if (!datos.numeroGuia) faltantes.push('nº guía')
-        if (!datos.placa) faltantes.push('placa')
-        const enCat = itemsOcr.filter((i) => i.enCatalogo).length
-        toast.success(
-          itemsOcr.length > 0
-            ? `Se detectaron ${itemsOcr.length} artículo(s)${enCat > 0 ? ` · ${enCat} en catálogo` : ''}`
-            : 'Datos del documento recopilados',
-          {
-            description:
-              [
-                datos.numeroGuia ? `guía ${datos.numeroGuia}` : '',
-                datos.placa ? `placa ${datos.placa}` : '',
-              ]
-                .filter(Boolean)
-                .join(' · ') +
-              (faltantes.length ? `. Faltan: ${faltantes.join(', ')} (se completan a mano).` : ''),
-          }
-        )
-      }
       setPaso('confirmar')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'

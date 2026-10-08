@@ -29,6 +29,7 @@ const CATALOGO = [
   { codigo: '09', un: 'UND', descripcion: 'ARTICULO CON CERO INICIAL', stock_big_magic: 0 },
   { codigo: '7301', un: 'KGM', descripcion: 'CONCENTRADO DE MANZANA', stock_big_magic: 0 },
   { codigo: '7302', un: 'KGM', descripcion: 'JUGO CONCENTRADO DE UVA', stock_big_magic: 0 },
+  { codigo: '0034403', un: 'UND', descripcion: 'CODIGO QUE CHoca CON NUMERO DE GUIA', stock_big_magic: 0 },
 ]
 
 let pasados = 0
@@ -148,6 +149,46 @@ check('"1500" → 1500', aNumero('1500') === 1500)
 check('"12,5" → 12.5 (decimal con coma)', aNumero('12,5') === 12.5, String(aNumero('12,5')))
 check('"" → NaN', isNaN(aNumero('')))
 check('"9,400.00" → 9400 (AJEPER real)', aNumero('9,400.00') === 9400, String(aNumero('9,400.00')))
+
+// ─── 7. OCR ESTRICTO: falsos positivos eliminados ───
+console.log('\n[7] OCR estricto — cantidades y documentos NO crean artículos')
+// 7a. "118.00 KGM" como CANTIDAD (no como fila): el código 118 existe en el
+//     catálogo; antes lo creaba como artículo falso.
+const textoCantidad = `
+GUIA DE REMISION - ELECTRONICA
+RAZON SOCIAL : TRANSPORTES DEL SUR S.A.C.
+NUMERO DE GUIA : T005-0034403
+BIENES TRANSPORTADOS
+CODIGO    DESCRIPCION                        CANTIDAD    UNIDAD
+5653      PURE DE DURAZNO 30-32 ºBRIX        2.884       KGM
+ENTREGA PARCIAL 118.00 KGM CERTIFICADA POR EL LABORATORIO
+`
+const t7a = extraerDatosGuia(textoCantidad, CATALOGO)
+check('cant "118.00 KGM" NO crea artículo 118', !t7a.items.some((i) => i.codigo === '118'), JSON.stringify(t7a.items.map((i) => i.codigo)))
+check('fila real 5653 SÍ se detecta', t7a.items.length === 1 && t7a.items[0].codigo === '5653', JSON.stringify(t7a.items.map((i) => i.codigo)))
+
+// 7b. El número de guía T005-0034403 contiene el código 0034403 del catálogo:
+//     NO debe crear artículo.
+check('nº de guía NO crea artículo 0034403', !t7a.items.some((i) => i.codigo === '0034403'), JSON.stringify(t7a.items.map((i) => i.codigo)))
+
+// 7c. Cantidad = número pegado a la unidad (no el primer número de la línea):
+//     "LAMINA 2.0 MM … 450.5 KGM" debe dar 450.5, no 2.0.
+const textoCantidad2 = `
+BIENES TRANSPORTADOS
+CODIGO    DESCRIPCION                        CANTIDAD    UNIDAD
+118       LAMINA DE ACERO 2.0 MM             450.5       KGM
+`
+const t7c = extraerDatosGuia(textoCantidad2, CATALOGO)
+check('detecta 118 (fila real)', t7c.items.length === 1 && t7c.items[0].codigo === '118', JSON.stringify(t7c.items.map((i) => i.codigo)))
+check('cantidad 450.5 (pegada a unidad, no 2.0 de la desc)', t7c.items[0]?.cantidad === '450.5', t7c.items[0]?.cantidad)
+
+// ─── 8. buscarCatalogo: tolerancia a pegados OCR ───
+console.log('\n[8] buscarCatalogo — pegados OCR ("5653.", "56 53")')
+check('"5653." (punto pegado) → match', buscarCatalogo('5653.', CATALOGO)?.codigo === '5653', JSON.stringify(buscarCatalogo('5653.', CATALOGO)))
+check('"56 53" (espacio interno) → match', buscarCatalogo('56 53', CATALOGO)?.codigo === '5653')
+check('"5653-" (guion pegado) → match', buscarCatalogo('5653-', CATALOGO)?.codigo === '5653')
+check('inexistente "5659" → undefined', buscarCatalogo('5659', CATALOGO) === undefined)
+check('ambiguo sigue sin inventar', buscarCatalogo('53', CATALOGO) === undefined)
 
 // ─── Resumen ───
 console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)

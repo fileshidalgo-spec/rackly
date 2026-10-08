@@ -827,6 +827,71 @@ function aplicarGrisYContraste(ctx: CanvasRenderingContext2D, ancho: number, alt
 }
 
 /**
+ * DESRUIDO post-contraste: el realce amplifica motas JPEG y bordes de tabla
+ * que Tesseract detecta como "regiones de texto" degeneradas (p. ej. 2×36 px)
+ * y llena la consola con "Image too small to scale!!" / "Line cannot be
+ * recognized!!". Dos pasadas ligeras:
+ *   1. Estirar extremos: casi-blanco → blanco puro, casi-negro → negro puro.
+ *   2. Speckles: píxel oscuro con ≤1 vecino oscuro en 3×3 → blanco (el trazo
+ *      real de letra siempre tiene vecinos oscuros y sobrevive).
+ */
+function desruidoImagen(ctx: CanvasRenderingContext2D, ancho: number, alto: number) {
+  const img = ctx.getImageData(0, 0, ancho, alto)
+  const d = img.data
+  const n = ancho * alto
+  for (let i = 0; i < n; i++) {
+    const p = i * 4
+    const v = d[p]
+    if (v >= 210) {
+      d[p] = d[p + 1] = d[p + 2] = 255
+    } else if (v <= 60) {
+      d[p] = d[p + 1] = d[p + 2] = 0
+    }
+  }
+  const gris = new Uint8Array(n)
+  for (let i = 0; i < n; i++) gris[i] = d[i * 4]
+  for (let y = 1; y < alto - 1; y++) {
+    for (let x = 1; x < ancho - 1; x++) {
+      const i = y * ancho + x
+      if (gris[i] >= 128) continue
+      let oscuros = 0
+      for (let dy = -1; dy <= 1; dy++) {
+        const fila = (y + dy) * ancho
+        for (let dx = -1; dx <= 1; dx++) {
+          if (gris[fila + (x + dx)] < 128) oscuros++
+        }
+      }
+      if (oscuros <= 1) {
+        const p = i * 4
+        d[p] = d[p + 1] = d[p + 2] = 255
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0)
+}
+
+/**
+ * MARGEN blanco alrededor del contenido: el análisis de layout de Tesseract
+ * falla (o genera regiones degeneradas) cuando líneas/bordes de la tabla
+ * tocan el borde exacto de la imagen.
+ */
+const MARGEN_OCR = 24
+
+function prepararCanvasOCR(ancho: number, alto: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = ancho + MARGEN_OCR * 2
+  canvas.height = alto + MARGEN_OCR * 2
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (ctx) {
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+  }
+  return canvas
+}
+
+/**
  * PREPROCESADO para el OCR: escala a `maxLado`, pasa a GRIS y aplica
  * realce de contraste pixel a pixel. A diferencia de antes, TAMBIÉN
  * AMPLÍA fotos pequeñas (WhatsApp 960px): los códigos de la tabla son
@@ -838,19 +903,16 @@ export async function mejorarImagenOCR(archivo: File | Blob, maxLado = 2800): Pr
     const escala = maxLado / Math.max(bitmap.width, bitmap.height)
     const ancho = Math.round(bitmap.width * escala)
     const alto = Math.round(bitmap.height * escala)
-    const canvas = document.createElement('canvas')
-    canvas.width = ancho
-    canvas.height = alto
+    const canvas = prepararCanvasOCR(ancho, alto)
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
     if (!ctx) {
       bitmap.close?.()
       return archivo
     }
-    ctx.imageSmoothingEnabled = true
-    ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(bitmap, 0, 0, ancho, alto)
+    ctx.drawImage(bitmap, MARGEN_OCR, MARGEN_OCR, ancho, alto)
     bitmap.close?.()
-    aplicarGrisYContraste(ctx, ancho, alto, 1.45)
+    aplicarGrisYContraste(ctx, canvas.width, canvas.height, 1.45)
+    desruidoImagen(ctx, canvas.width, canvas.height)
     return await new Promise<Blob>((resolve) => {
       canvas.toBlob(
         (b) => resolve(b && b.size > 0 ? b : archivo),
@@ -887,19 +949,16 @@ export async function recortarFranjaTabla(
     const esc = Math.min(escalaExtra, maxAncho / bitmap.width)
     const ancho = Math.round(bitmap.width * esc)
     const alto = Math.round(hF * esc)
-    const canvas = document.createElement('canvas')
-    canvas.width = ancho
-    canvas.height = alto
+    const canvas = prepararCanvasOCR(ancho, alto)
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
     if (!ctx) {
       bitmap.close?.()
       return archivo
     }
-    ctx.imageSmoothingEnabled = true
-    ctx.imageSmoothingQuality = 'high'
-    ctx.drawImage(bitmap, 0, y0, bitmap.width, hF, 0, 0, ancho, alto)
+    ctx.drawImage(bitmap, 0, y0, bitmap.width, hF, MARGEN_OCR, MARGEN_OCR, ancho, alto)
     bitmap.close?.()
-    aplicarGrisYContraste(ctx, ancho, alto, 1.5)
+    aplicarGrisYContraste(ctx, canvas.width, canvas.height, 1.5)
+    desruidoImagen(ctx, canvas.width, canvas.height)
     return await new Promise<Blob>((resolve) => {
       canvas.toBlob(
         (b) => resolve(b && b.size > 0 ? b : archivo),

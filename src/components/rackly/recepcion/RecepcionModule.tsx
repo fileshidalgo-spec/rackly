@@ -26,6 +26,10 @@ import {
   type ItemRecepcion,
 } from '@/components/rackly/recepcion/RecepcionItemsEditor'
 import {
+  ImprimirRotulosDialog,
+  rotulosDesdeItems,
+} from '@/components/rackly/recepcion/ImprimirRotulosDialog'
+import {
   listarRecepciones,
   crearRecepciones,
   cambiarEstadoRecepcion,
@@ -76,6 +80,7 @@ import {
   Camera,
   PencilLine,
   ExternalLink,
+  Printer,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
@@ -116,6 +121,8 @@ export function RecepcionModule() {
   const [deleteTarget, setDeleteTarget] = useState<RegistroRecepcion | null>(null)
   // Vía de registro activa: foto de guía (OCR) o formulario manual.
   const [modo, setModo] = useState<ModoRegistro>('foto')
+  // Modal de impresión de rótulos (Zebra ZT411) de los artículos cargados.
+  const [rotulosOpen, setRotulosOpen] = useState(false)
 
   // Formulario manual: encabezado del documento + lista de artículos.
   // Una guía puede traer 20+ artículos; cada artículo = 1 fila en BD.
@@ -346,14 +353,25 @@ export function RecepcionModule() {
         {/* Artículos de la guía (1, 20 o más) */}
         <RecepcionItemsEditor items={items} onChange={setItems} />
 
-        <Button
-          onClick={handleRegistrar}
-          disabled={saving}
-          className="w-full gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
-          Registrar {itemsValidos(items).length > 0 ? `${itemsValidos(items).length} artículo(s)` : 'recepción'}
-        </Button>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <Button
+            onClick={handleRegistrar}
+            disabled={saving}
+            className="flex-1 gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
+            Registrar {itemsValidos(items).length > 0 ? `${itemsValidos(items).length} artículo(s)` : 'recepción'}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setRotulosOpen(true)}
+            disabled={itemsValidos(items).every((it) => !it.codigo.trim())}
+            className="gap-2"
+            title="Imprimir rótulos de los artículos en la Zebra ZT411"
+          >
+            <Printer className="h-4 w-4" /> Rótulos
+          </Button>
+        </div>
       </div>
       )}
 
@@ -577,6 +595,20 @@ export function RecepcionModule() {
           </Button>
         </div>
       )}
+
+      {/* ── Impresión de rótulos (Zebra ZT411 por USB) ── */}
+      <ImprimirRotulosDialog
+        open={rotulosOpen}
+        onOpenChange={setRotulosOpen}
+        rotulos={rotulosDesdeItems(items)}
+        encabezado={{
+          fecha: fFecha || hoyISO(),
+          numeroDocumento: fNumero,
+          proveedor: fProveedor,
+          placa: fPlaca,
+          registradoPor: perfil?.nombre || '',
+        }}
+      />
 
       {/* ── Confirmar eliminación ── */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>

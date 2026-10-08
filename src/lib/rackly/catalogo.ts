@@ -11,37 +11,50 @@ export type CatalogoItem = {
 
 let _cache: CatalogoItem[] = []
 let _cacheLoaded = false
+let _fetchEnVuelo: Promise<CatalogoItem[]> | null = null
 
-export async function fetchCatalogo(): Promise<CatalogoItem[]> {
-  try {
-    const allData: Record<string, unknown>[] = []
-    let from = 0
-    const BATCH = 1000
-    for (let page = 0; page < 50; page++) {
-      const { data, error } = await dataClient
-        .from('catalogo')
-        .select('codigo, un, descripcion, stock_big_magic')
-        .order('codigo')
-        .range(from, from + BATCH - 1)
-      if (error) throw error
-      const rows = data ?? []
-      allData.push(...rows)
-      if (rows.length < BATCH) break
-      from += BATCH
+/**
+ * Carga el catálogo completo paginando (1000 por lote, hasta 50K).
+ * Con dedupe de petición en vuelo: si RecepcionModule y GuiaFotoForm (o el
+ * editor de artículos) piden a la vez, TODOS comparten la misma respuesta
+ * y el usuario no teclea sobre un cache vacío por peticiones duplicadas.
+ */
+export function fetchCatalogo(): Promise<CatalogoItem[]> {
+  if (_fetchEnVuelo) return _fetchEnVuelo
+  _fetchEnVuelo = (async () => {
+    try {
+      const allData: Record<string, unknown>[] = []
+      let from = 0
+      const BATCH = 1000
+      for (let page = 0; page < 50; page++) {
+        const { data, error } = await dataClient
+          .from('catalogo')
+          .select('codigo, un, descripcion, stock_big_magic')
+          .order('codigo')
+          .range(from, from + BATCH - 1)
+        if (error) throw error
+        const rows = data ?? []
+        allData.push(...rows)
+        if (rows.length < BATCH) break
+        from += BATCH
+      }
+      _cache = allData.map((r) => ({
+        codigo: String(r.codigo ?? ''),
+        un: String(r.un ?? ''),
+        descripcion: String(r.descripcion ?? ''),
+        stock_big_magic: parseFloat(String(r.stock_big_magic ?? '0')) || 0,
+      }))
+      _cacheLoaded = true
+
+      return _cache
+    } catch (err) {
+      if (_cache.length > 0) return _cache
+      return []
+    } finally {
+      _fetchEnVuelo = null
     }
-    _cache = allData.map((r) => ({
-      codigo: String(r.codigo ?? ''),
-      un: String(r.un ?? ''),
-      descripcion: String(r.descripcion ?? ''),
-      stock_big_magic: parseFloat(String(r.stock_big_magic ?? '0')) || 0,
-    }))
-    _cacheLoaded = true
-
-    return _cache
-  } catch (err) {
-    if (_cache.length > 0) return _cache
-    return []
-  }
+  })()
+  return _fetchEnVuelo
 }
 
 export function getCachedCatalogo(): CatalogoItem[] {
@@ -55,8 +68,19 @@ export function findCatalogoByCodigo(codigo: string): CatalogoItem | undefined {
 }
 
 /**
+ * Normaliza un código para compararlo contra el catálogo: mayúsculas y SIN
+ * espacios internos ni puntuación suelta. Cubre códigos pegados desde texto
+ * OCR ("5653 ", "5653.", "56 53", "5653-") que antes no matcheaban.
+ * Los guiones se quitan porque hoy el catálogo es 100% numérico; si mañana
+ * hubiera códigos con guion real, se comparan igual entre normalizados.
+ */
+function normalizarClave(codigo: string): string {
+  return codigo.toUpperCase().replace(/[\s.,;:()\-_\/\\]+/g, '')
+}
+
+/**
  * Búsqueda tolerante para el ingreso MANUAL del código en Recepción.
- * 1) Coincidencia exacta (case-insensitive).
+ * 1) Coincidencia exacta tras normalizar (case, espacios, puntuación suelta).
  * 2) Regla histórica del app: '09' == '9' — si tras quitar ceros a la
  *    izquierda existe EXACTAMENTE un candidato, se usa ese.
  * Devuelve undefined si no hay match claro (el usuario escribe a mano).
@@ -67,14 +91,15 @@ export function buscarCatalogo(
   fuente?: CatalogoItem[]
 ): CatalogoItem | undefined {
   const cache = fuente ?? _cache
-  const objetivo = codigo.trim().toUpperCase()
-  const exacto = cache.find((i) => i.codigo.trim().toUpperCase() === objetivo)
+  const objetivo = normalizarClave(codigo)
+  if (!objetivo) return undefined
+  const exacto = cache.find((i) => normalizarClave(i.codigo) === objetivo)
   if (exacto) return exacto
-  const sinCeros = codigo.trim().replace(/^0+/, '')
+  const sinCeros = objetivo.replace(/^0+/, '')
   if (!sinCeros) return undefined
   let candidato: CatalogoItem | undefined
   for (const item of cache) {
-    if (item.codigo.trim().replace(/^0+/, '') === sinCeros) {
+    if (normalizarClave(item.codigo).replace(/^0+/, '') === sinCeros) {
       if (candidato) return undefined // ambiguo: 2 códigos distintos tras normalizar
       candidato = item
     }
@@ -85,22 +110,27 @@ export function buscarCatalogo(
 /**
  * Busca en el catálogo por código exacto O por descripción que contenga el texto.
  * Retorna hasta `limit` resultados ordenados: primero coincidencia exacta de código,
- * luego por coincidencia parcial de código, luego por descripción.
+ * luego códigos que EMPIEZAN por la consulta, luego coincidencia parcial de código,
+ * luego por descripción.
+ * Tolerante a puntuación suelta ("5653." busca "5653").
  */
 export function searchCatalogo(query: string, limit = 10): CatalogoItem[] {
-  if (!query || !query.trim()) return []
-  const q = query.trim().toUpperCase()
+  const q = normalizarClave(query)
+  if (!q) return []
 
   const exactCode: CatalogoItem[] = []
+  const prefixCode: CatalogoItem[] = []
   const partialCode: CatalogoItem[] = []
   const byDescription: CatalogoItem[] = []
 
   for (const item of _cache) {
-    const codeNorm = item.codigo.trim().toUpperCase()
+    const codeNorm = normalizarClave(item.codigo)
     const descNorm = item.descripcion.trim().toUpperCase()
 
     if (codeNorm === q) {
       exactCode.push(item)
+    } else if (codeNorm.startsWith(q)) {
+      prefixCode.push(item)
     } else if (codeNorm.includes(q)) {
       partialCode.push(item)
     } else if (descNorm.includes(q)) {
@@ -108,7 +138,7 @@ export function searchCatalogo(query: string, limit = 10): CatalogoItem[] {
     }
   }
 
-  return [...exactCode, ...partialCode, ...byDescription].slice(0, limit)
+  return [...exactCode, ...prefixCode, ...partialCode, ...byDescription].slice(0, limit)
 }
 
 export function isCatalogoLoaded(): boolean {

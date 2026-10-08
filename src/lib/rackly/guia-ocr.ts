@@ -62,6 +62,14 @@ const UNIDADES = new Set([
   'MTR', 'MT', 'PAR', 'JGO', 'SET', 'PQT', 'TON',
 ])
 
+/** Regex de unidades dentro de una línea (para detectar filas de la tabla). */
+const RE_UNIDAD_LINEA = new RegExp(
+  '\\b(' + [...UNIDADES].map((u) => u.toUpperCase()).sort((a, b) => b.length - a.length).join('|') + ')\\b'
+)
+
+/** Etiquetas de cabecera que NO son descripción de artículo. */
+const RE_ETIQUETA = /^(?:GUIA|REMISION|REMITENTE|ELECTRONICA|NUMERO|FECHA|EMISION|PLACA|TRACTO|CARRETA|LICENCIA|CONDUCTOR|TRANSPORTISTA|RUC|DNI|DESTINATARIO|PUNTO|PARTIDA|LLEGADA|DIRECCION|MOTRIZ|SERIE|AUTORIZ|CODIGO|DESCRIPCION|CANTIDAD|UNIDAD|OBSERVACION|BIENES|TRANSPORTADOS|MARCA|LIC)$/i
+
 function limpiarLineas(texto: string): string[] {
   return texto
     .split(/\r?\n/)
@@ -172,7 +180,46 @@ function levenshtein1(a: string, b: string): boolean {
   return dif === 1
 }
 
-/** Extrae tokens-candidato del texto y los cruza contra el catálogo. */
+/**
+ * ¿Lo que sigue al código en su línea parece una FILA DE TABLA de ítems?
+ *
+ * Es el filtro anti-falsos-positivos del OCR estricto. Una ocurrencia de un
+ * código del catálogo solo se acepta como artículo si su contexto es de fila:
+ *   · código solo en su línea                                        → sí
+ *   · seguido de una DESCRIPCIÓN (≥3 letras que no sean unidad)      → sí
+ *   · seguido de número + unidad en la línea ("5653 2.884 KGM")      → sí
+ *   · "118.00 KGM" (cantidad que choca con un código)                → NO
+ *   · fragmento de documento "T005-0034403", fechas "05/10/26"       → NO
+ */
+function pareceFilaDeItem(resto: string): boolean {
+  if (!resto) return true // código solo en su línea
+  const ch = resto[0]
+  if (/[.,]/.test(ch)) return false // "118.00" → es un número decimal, no un código
+  const limpio = resto.replace(/^[\s:]+/, '')
+  if (!limpio) return true
+  if (/[0-9]/.test(limpio[0])) {
+    // Código seguido de número: fila válida solo si la línea trae unidad
+    return RE_UNIDAD_LINEA.test(limpio)
+  }
+  const letras = limpio.match(/[A-ZÑÁÉÍÓÚÜ]{3,}/)
+  if (letras && !UNIDADES.has(letras[0]) && !RE_ETIQUETA.test(letras[0])) return true
+  // Solo unidades tras el código: exigir también un número ("5653 KGM 2.884")
+  return /\d/.test(limpio) && RE_UNIDAD_LINEA.test(limpio)
+}
+
+/** Contexto de una ocurrencia de código dentro del texto (para el filtro). */
+function contextoDePos(texto: string, inicio: number, largo: number): { linea: string; resto: string; antes: string } {
+  const iniLinea = texto.lastIndexOf('\n', inicio) + 1
+  const finLineaRaw = texto.indexOf('\n', inicio)
+  const linea = texto.slice(iniLinea, finLineaRaw === -1 ? undefined : finLineaRaw)
+  const offset = inicio - iniLinea
+  return {
+    linea,
+    resto: linea.slice(offset + largo),
+    antes: offset > 0 ? linea[offset - 1] : '',
+  }
+}
+
 function extraerItems(texto: string, catalogo: CatalogoItem[]): ItemGuia[] {
   if (catalogo.length === 0) return []
   const textoUp = texto.toUpperCase()
@@ -189,25 +236,38 @@ function extraerItems(texto: string, catalogo: CatalogoItem[]): ItemGuia[] {
     }
   }
 
-  // 1) Códigos del catálogo presentes textualmente (estrategia principal).
   const encontrados: { pos: number; codigo: string; linea: string; cat?: CatalogoItem }[] = []
+  const yaVisto = new Set<string>()
+
+  function aceptar(pos: number, item: CatalogoItem, linea: string) {
+    const codigo = item.codigo.trim().toUpperCase()
+    if (yaVisto.has(codigo)) return
+    yaVisto.add(codigo)
+    encontrados.push({ pos, codigo, linea, cat: item })
+  }
+
+  // 1) OCR ESTRICTO: cada código del catálogo se busca en el texto y se
+  //    acepta SOLO si su contexto es una fila de la tabla de ítems
+  //    (pareceFilaDeItem). Antes se aceptaba CUALQUIER ocurrencia y las
+  //    cantidades ("118.00") o trozos de documentos creaban artículos falsos.
   for (const item of catalogo) {
     const codigo = item.codigo.trim().toUpperCase()
     if (codigo.length < 3) continue
-    const re = new RegExp('(^|[^0-9A-Z])(' + codigo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')($|[^0-9A-Z])')
-    const m = re.exec(textoUp)
-    if (m) {
+    const re = new RegExp('(^|[^0-9A-Z])(' + codigo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')($|[^0-9A-Z])', 'g')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(textoUp)) !== null) {
       const pos = m.index + m[1].length
-      const linea = lineaDePos(textoUp, pos)
-      const previa = encontrados.find((e) => mismaClave(e.codigo, codigo))
-      if (previa && previa.pos <= pos) continue
-      if (previa) encontrados.splice(encontrados.indexOf(previa), 1)
-      encontrados.push({ pos, codigo, linea, cat: item })
+      const { linea, resto, antes } = contextoDePos(textoUp, pos, codigo.length)
+      // Parte de un documento compuesto (T005-0034403) o fecha (05/10/26)
+      if (antes === '-' || antes === '/') continue
+      if (!pareceFilaDeItem(resto)) continue
+      aceptar(pos, item, linea)
+      break
     }
   }
 
   // 2) Fallback: tokens alfanuméricos largos comparados por esqueleto (0/O/D/Q).
-  //    Cap 30: las guías pueden traer 20+ artículos.
+  //    Mismo filtro estricto de contexto que la estrategia 1.
   if (encontrados.length === 0) {
     const reTok = /\b[A-Z0-9][A-Z0-9-]{2,15}\b/g
     let t: RegExpExecArray | null
@@ -221,12 +281,11 @@ function extraerItems(texto: string, catalogo: CatalogoItem[]): ItemGuia[] {
           ? porEsqueleto.get(esqueleto(token))
           : undefined)
       if (hit) {
-        encontrados.push({
-          pos: t.index,
-          codigo: hit.codigo.trim().toUpperCase(),
-          linea: lineaDePos(textoUp, t.index),
-          cat: hit,
-        })
+        const { linea, resto, antes } = contextoDePos(textoUp, t.index, token.length)
+        if (antes === '-' || antes === '/') continue
+        if (pareceFilaDeItem(resto)) {
+          aceptar(t.index, hit, linea)
+        }
       }
       if (encontrados.length >= MAX_ITEMS) break
     }
@@ -242,11 +301,12 @@ function extraerItems(texto: string, catalogo: CatalogoItem[]): ItemGuia[] {
     let t: RegExpExecArray | null
     while ((t = reNum.exec(textoUp)) !== null) {
       const token = t[0]
-      // Excluye fragmentos de números con separadores ("200" de "1,200.00"):
-      // el token debe estar rodeado de algo que no sea dígito/separador.
+      // Excluye fragmentos de números con separadores ("200" de "1,200.00",
+      // "123"/"0000777" de "T123-0000777", "05" de fechas): el token debe
+      // estar rodeado de algo que no sea dígito/separador de documento.
       const antes = t.index > 0 ? textoUp[t.index - 1] : ' '
       const despues = t.index + token.length < textoUp.length ? textoUp[t.index + token.length] : ' '
-      if (/[0-9.,]/.test(antes) || /[0-9.,]/.test(despues)) continue
+      if (/[0-9.,/-]/.test(antes) || /[0-9.,/-]/.test(despues)) continue
       if (/^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(token)) continue // fechas
       const linea = lineaDePos(textoUp, t.index)
       // Solo tokens que parecen códigos de tabla: su línea debe tener
@@ -277,39 +337,55 @@ function extraerItems(texto: string, catalogo: CatalogoItem[]): ItemGuia[] {
   encontrados.sort((a, b) => a.pos - b.pos)
 
   return encontrados.map(({ codigo, linea, cat }) => {
-    // Cantidad: primer número con formato numérico de guía en la línea,
-    // ignorando los tokens que forman parte del propio código.
-    let cantidad = ''
-    const reNum = new RegExp(RE_CANTIDAD.source, 'g')
-    let mm: RegExpExecArray | null
-    while ((mm = reNum.exec(linea)) !== null) {
-      const tok = mm[0]
-      if (mismaClave(tok.replace(/[.,]/g, ''), codigo)) continue
-      // Descarta fechas (02.10.26 / 05/10) y series largas de caja
-      if (/^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(tok)) continue
-      if (tok.replace(/[.,]/g, '').length >= 9) continue
-      cantidad = tok
-      break
-    }
-    // Unidad: token de unidad en la línea; si no, la del catálogo
-    let unidad = cat?.un ?? ''
-    if (!unidad) {
-      for (const tok of linea.split(/\s+/)) {
-        const t = tok.replace(/[^A-ZÑ]/g, '')
-        if (t.length >= 2 && UNIDADES.has(t)) {
-          unidad = t
-          break
-        }
-      }
-    }
     return {
       codigo,
       descripcion: cat?.descripcion ?? '',
-      cantidad,
-      unidad: unidad ?? '',
+      cantidad: cantidadDeLinea(linea, codigo),
+      unidad: unidadDeLineaOCatalogo(linea, cat),
       enCatalogo: Boolean(cat),
     }
   })
+}
+
+/**
+ * CANTIDAD estricta: el número válido más CERCANO (por la izquierda) a la
+ * unidad de medida de la línea ("… 2.884 KGM" → 2.884). Antes se tomaba el
+ * PRIMER número y descripciones tipo "LÁMINA 2.0 MM … 450.5 KGM" metían 2.0.
+ * Sin unidad en la línea: primer número válido (comportamiento previo).
+ */
+function cantidadDeLinea(linea: string, codigo: string): string {
+  const esValida = (tok: string): boolean => {
+    if (mismaClave(tok.replace(/[.,]/g, ''), codigo)) return false
+    // Descarta fechas (02.10.26 / 05/10) y series largas de caja
+    if (/^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(tok)) return false
+    if (tok.replace(/[.,]/g, '').length >= 9) return false
+    return true
+  }
+  const numerosDe = (trozo: string): string[] => {
+    const out: string[] = []
+    const re = new RegExp(RE_CANTIDAD.source, 'g')
+    let m: RegExpExecArray | null
+    while ((m = re.exec(trozo)) !== null) out.push(m[0])
+    return out
+  }
+
+  const mu = RE_UNIDAD_LINEA.exec(linea)
+  if (mu && mu.index > 0) {
+    const previos = numerosDe(linea.slice(0, mu.index)).filter(esValida)
+    if (previos.length > 0) return previos[previos.length - 1]
+  }
+  const todos = numerosDe(linea).filter(esValida)
+  return todos.length > 0 ? todos[0] : ''
+}
+
+/** Unidad: token de unidad en la línea; si no, la del catálogo. */
+function unidadDeLineaOCatalogo(linea: string, cat?: CatalogoItem): string {
+  if (cat?.un) return cat.un
+  for (const tok of linea.split(/\s+/)) {
+    const t = tok.replace(/[^A-ZÑ]/g, '')
+    if (t.length >= 2 && UNIDADES.has(t)) return t
+  }
+  return ''
 }
 
 /** Devuelve la línea completa que contiene la posición dada. */
@@ -317,6 +393,22 @@ function lineaDePos(texto: string, pos: number): string {
   const ini = texto.lastIndexOf('\n', pos) + 1
   const fin = texto.indexOf('\n', pos)
   return texto.slice(ini, fin === -1 ? undefined : fin)
+}
+
+/**
+ * PUNTUACIÓN de una extracción: sirve para elegir el mejor de varios
+ * intentos de OCR (más estricto = revisar y quedarse con la mejor lectura).
+ *   · artículo en catálogo +5 · no catalogado +2
+ *   · nº de guía +4 · placa +4 · proveedor +2
+ */
+export function puntuarExtraccion(datos: DatosGuia): number {
+  const items = datos.items.reduce((s, i) => s + (i.enCatalogo ? 5 : 2), 0)
+  return (
+    items +
+    (datos.numeroGuia ? 4 : 0) +
+    (datos.placa ? 4 : 0) +
+    (datos.proveedor ? 2 : 0)
+  )
 }
 
 /**
@@ -392,4 +484,54 @@ export async function reducirImagen(archivo: File, maxLado = 1600, calidad = 0.8
       calidad
     )
   })
+}
+
+/**
+ * PREPROCESADO para el OCR: escala a `maxLado`, pasa a GRIS y aplica
+ * realce de contraste pixel a pixel. Las fotos a guías impresas traen
+ * sombras/reflejos; a tesseract le cuesta con el papel grisáceo y esto
+ * mejora notablemente la lectura de los dígitos de la tabla de códigos.
+ * (Se hace a mano por pixel y no con ctx.filter para soportar todos los
+ * navegadores, incluidos los que ignoran canvas filter.)
+ */
+export async function mejorarImagenOCR(archivo: File | Blob, maxLado = 2800): Promise<Blob> {
+  try {
+    const bitmap = await createImageBitmap(archivo)
+    const escala = Math.min(1, maxLado / Math.max(bitmap.width, bitmap.height))
+    const ancho = Math.round(bitmap.width * escala)
+    const alto = Math.round(bitmap.height * escala)
+    const canvas = document.createElement('canvas')
+    canvas.width = ancho
+    canvas.height = alto
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    if (!ctx) {
+      bitmap.close?.()
+      return archivo
+    }
+    ctx.drawImage(bitmap, 0, 0, ancho, alto)
+    bitmap.close?.()
+
+    const img = ctx.getImageData(0, 0, ancho, alto)
+    const d = img.data
+    const CONTRASTE = 1.45
+    for (let i = 0; i < d.length; i += 4) {
+      // Luminancia + contraste centrado en 128 (papel → casi blanco, tinta → casi negro)
+      const gris = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+      const v = Math.max(0, Math.min(255, Math.round((gris - 128) * CONTRASTE + 128)))
+      d[i] = v
+      d[i + 1] = v
+      d[i + 2] = v
+    }
+    ctx.putImageData(img, 0, 0)
+
+    return await new Promise<Blob>((resolve) => {
+      canvas.toBlob(
+        (b) => resolve(b && b.size > 0 ? b : archivo),
+        'image/jpeg',
+        0.92
+      )
+    })
+  } catch {
+    return archivo
+  }
 }

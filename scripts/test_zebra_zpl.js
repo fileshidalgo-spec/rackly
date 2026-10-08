@@ -122,5 +122,25 @@ check('fechas vacías → ^FD^FS', zVacio.includes('^FD^FS'))
 check('cantidad vacía → caja sin texto, unidad sí impresa', zVacio.includes('^FDKG^FS'))
 check('etiquetas LOTE:/F.P/F.V/CANT: siempre presentes', ['LOTE:', 'F.P', 'F.V', 'CANT:'].every((t) => zVacio.includes(t)))
 
+console.log('\n── 7. Auto-ajuste del código gigante (códigos 6+ dígitos) ──')
+const zCorto = construirZPLRotulo({ ...DATOS, codigo: '56119' }, ENCABEZADO)
+const zLargo = construirZPLRotulo({ ...DATOS, codigo: '1234567' }, ENCABEZADO)
+function altoCodigo(z) {
+  const m = z.match(/\^FO0,(\d+)\^A0N,(\d+),/)
+  return m ? { y: Number(m[1]), alto: Number(m[2]) } : null
+}
+const aCorto = altoCodigo(zCorto)
+const aLargo = altoCodigo(zLargo)
+check('código 5 dígitos usa el alto máximo (200)', aCorto && aCorto.alto === 200)
+check('código 7 dígitos se reduce (alto < 200)', aLargo && aLargo.alto < 200)
+check(
+  'código 7 dígitos cabe en el ancho (7 × 0.6 × alto < 800)',
+  aLargo && 7 * 0.6 * aLargo.alto < 800
+)
+check(
+  'código sigue centrado verticalmente en su banda (0 < y < 310-alto)',
+  aLargo && aLargo.y > 0 && aLargo.y < 310 - aLargo.alto
+)
+
 console.log(`\n═══ RESULTADO: ${passed} pasados, ${failed} fallados ═══`)
 process.exit(failed > 0 ? 1 : 0)

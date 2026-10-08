@@ -24,9 +24,12 @@ import type { PSM } from 'tesseract.js'
 import { fetchCatalogo, getCachedCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
 import { aNumero } from '@/lib/rackly/formato'
 import {
-  extraerDatosGuia,
+  extraerDatosGuiaDeTextos,
+  extraerPalabras,
+  extraerAnclasTabla,
   mejorarImagenOCR,
   puntuarExtraccion,
+  recortarFranjaTabla,
   reducirImagen,
   type DatosGuia,
 } from '@/lib/rackly/guia-ocr'
@@ -102,6 +105,8 @@ function itemDesdeOcr(item: DatosGuia['items'][number]): ItemRecepcion {
     fechaProduccion: '',
     fechaVencimiento: '',
     enCatalogo: item.enCatalogo,
+    matchPorDescripcion: Boolean(item.matchPorDescripcion),
+    revision: Boolean(item.revision),
     descripcionManual: false,
     unidadManual: false,
   }
@@ -163,6 +168,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     if (!datos.placa) faltantes.push('placa')
     const enCat = itemsOcr.filter((i) => i.enCatalogo).length
     const fueraCat = itemsOcr.length - enCat
+    const porDesc = itemsOcr.filter((i) => i.matchPorDescripcion).length
+    const rev = itemsOcr.filter((i) => i.revision).length
     toast.success(
       itemsOcr.length > 0
         ? `Se detectaron ${itemsOcr.length} artículo(s)${enCat > 0 ? ` · ${enCat} en catálogo` : ''}`
@@ -175,7 +182,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           ]
             .filter(Boolean)
             .join(' · ') +
-          (fueraCat > 0 ? ` · ${fueraCat} sin match en catálogo (revisar código)` : '') +
+          (porDesc > 0 ? ` · ${porDesc} por descripción` : '') +
+          (rev > 0 ? ` · ${rev} a revisar` : '') +
+          (fueraCat > 0 ? ` · ${fueraCat} sin match en catálogo` : '') +
           (faltantes.length ? `. Faltan: ${faltantes.join(', ')} (se completan a mano).` : ''),
       }
     )
@@ -212,27 +221,57 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           }
         },
       })
-
       const catalogoParaOCR = catOk ? getCachedCatalogo() : []
-      async function ocr(psm: PSM, con: Blob): Promise<string> {
+      async function ocrData(psm: PSM, con: Blob, conBloques = false) {
         await worker.setParameters({ tessedit_pageseg_mode: psm })
-        const { data } = await worker.recognize(con)
-        return data.text ?? ''
+        const { data } = await worker.recognize(con, {}, conBloques ? { blocks: true } : {})
+        return data
+      }
+      async function ocrTexto(psm: PSM, con: Blob): Promise<string> {
+        return (await ocrData(psm, con)).text ?? ''
       }
 
       try {
-        // PASADA 1 — PSM 6 (bloque uniforme): ideal para la tabla de ítems.
-        const texto1 = await ocr(PSM.SINGLE_BLOCK, imagen)
-        let datos = extraerDatosGuia(texto1, catalogoParaOCR)
+        // PASADA 1 — PSM 6 (bloque uniforme) sobre la página completa.
+        // Con `blocks: true` además entrega las cajas de palabras para
+        // localizar la tabla de artículos.
+        const d1 = await ocrData(PSM.SINGLE_BLOCK, imagen, true)
+        const texto1 = d1.text ?? ''
 
-        // PASADA 2 — revisión más estricta: si faltan pilares (artículos,
-        // guía o placa) se relee con PSM 3 (layout automático) y gana la
-        // extracción con mejor puntuación.
+        // PASADA ZOOM — "cuadro por cuadro": con las anclas del formato
+        // estándar (…TRANSPORTADOS / NOTAS…) se recorta la franja de la
+        // tabla y se vuelve a leer escalada ×3. Es lo que rescata los
+        // códigos de letra pequeña (validado con la guía real AJER).
+        let textoTabla: string | null = null
+        const anclas = extraerAnclasTabla(extraerPalabras(d1))
+        if (anclas) {
+          setEtapa('Escaneando la tabla de artículos (zoom)…')
+          try {
+            const bitmap = await createImageBitmap(archivo)
+            const escala = 2800 / Math.max(bitmap.width, bitmap.height)
+            const franja = await recortarFranjaTabla(
+              archivo,
+              anclas.yTop / escala,
+              anclas.yBot / escala,
+              3
+            )
+            bitmap.close?.()
+            textoTabla = await ocrTexto(PSM.SINGLE_BLOCK, franja)
+          } catch {
+            textoTabla = null
+          }
+        }
+
+        let datos = extraerDatosGuiaDeTextos(texto1, textoTabla, catalogoParaOCR)
+
+        // PASADA 3 — revisión más estricta: si faltan pilares (artículos,
+        // guía o placa) se relee la página completa con PSM 3 (layout
+        // automático) y gana la extracción con mejor puntuación.
         if (!extraccionSuficiente(datos)) {
           setEtapa('Revisando lectura con un segundo pase…')
           const imagenBase = await reducirImagen(archivo, 2800, 0.9)
-          const texto2 = await ocr(PSM.AUTO, imagenBase)
-          const datos2 = extraerDatosGuia(texto2, catalogoParaOCR)
+          const texto2 = await ocrTexto(PSM.AUTO, imagenBase)
+          const datos2 = extraerDatosGuiaDeTextos(texto2, textoTabla, catalogoParaOCR)
           if (puntuarExtraccion(datos2) > puntuarExtraccion(datos)) {
             datos = datos2
           }
@@ -321,11 +360,16 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           <Camera className="h-4 w-4 text-amber-600" />
           <h3 className="text-sm font-bold text-amber-900">Registrar con foto de guía</h3>
         </div>
-        <p className="text-xs text-slate-500 mb-4">
+        <p className="text-xs text-slate-500 mb-2">
           Toma una foto a la guía y el app recopila el número de guía, placa, proveedor y TODOS los
           artículos detectados (código, descripción del catálogo, cantidad y unidad). La fecha de
           producción, vencimiento y el lote se completan manualmente. Todo es editable antes de
           registrar.
+        </p>
+        <p className="text-[11px] text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2.5 py-1.5 mb-4">
+          Consejo: foto <b>directa y nítida</b>, guía completa y sin sombras. Las fotos reenviadas
+          por WhatsApp pierden resolución. El app escanea la tabla con zoom y verifica los códigos
+          contra el catálogo; lo que no se lea bien se marca para revisar.
         </p>
         <input
           ref={inputRef}

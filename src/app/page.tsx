@@ -284,8 +284,9 @@ function RacklyApp() {
         {/* ═══ KARDEX RACKS VIEW ═══ */}
         {view === 'racks' && (
           <Tabs value={racksTab} onValueChange={setRacksTab} className="w-full">
-            {/* Nav Tabs */}
-            <TabsList className="sticky top-0 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
+            {/* Nav Tabs — pega DEBAJO del header (52px móvil / 64px sm+); en top-0
+                se deslizaría DETRÁS del header (z-50) y se taparían entre sí. */}
+            <TabsList className="sticky top-[52px] sm:top-16 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
               {[
                 { val: 'movimientos', icon: BarChart3, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
                 { val: 'traslado', icon: ArrowRightLeft, label: 'Traslado', shortLabel: 'Trasl', color: 'from-blue-500 to-indigo-600' },
@@ -326,9 +327,10 @@ function RacklyApp() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  {/* Movement type sub-tabs */}
+                  {/* Movement type sub-tabs — SIN sticky: si se pegara en top-0
+                      se encimaría con la barra principal (también sticky). */}
                   <Tabs defaultValue="ingreso" className="w-full">
-                    <TabsList className="sticky top-0 z-40 flex flex-wrap gap-2 bg-white/80 backdrop-blur-sm p-0 mb-5 h-auto rounded-none">
+                    <TabsList className="flex flex-wrap gap-2 bg-white/80 backdrop-blur-sm p-0 mb-5 h-auto rounded-none">
                       {[
                         { val: 'ingreso', icon: ArrowDownToLine, label: 'Ingreso', gradient: 'from-green-500 to-emerald-600', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', ring: 'ring-green-500/20' },
                         { val: 'salida', icon: ArrowUpFromLine, label: 'Salida', gradient: 'from-red-500 to-rose-600', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', ring: 'ring-red-500/20' },
@@ -691,7 +693,8 @@ function RacklyApp() {
         {/* ═══ KARDEX PISO VIEW ═══ */}
         {view === 'piso' && (
           <Tabs defaultValue="movimientos" className="w-full">
-            <TabsList className="sticky top-0 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
+            {/* Mismo anclaje bajo el header que Kardex (ver comentario allá). */}
+            <TabsList className="sticky top-[52px] sm:top-16 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
               {[
                 { val: 'movimientos', icon: History, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
                 { val: 'sectores', icon: Layers3, label: 'Sectores', shortLabel: 'Sector', color: 'from-sky-500 to-blue-600' },

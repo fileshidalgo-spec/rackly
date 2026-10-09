@@ -376,7 +376,9 @@ export function RecepcionItemsEditor({
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-2 pl-8">
+              {/* En móvil las fechas nativas necesitan ~110px: en 3 columnas
+                  quedaban a 69px y el valor elegido se veía recortado. */}
+              <div className="grid grid-cols-1 min-[430px]:grid-cols-3 gap-2 pl-8">
                 <div className="space-y-1">
                   <Label className="text-[10px] text-slate-500">Lote</Label>
                   <Input className="h-8 text-xs" value={it.lote} onChange={(e) => actualizar(idx, { lote: e.target.value })} placeholder="Manual" />

@@ -117,7 +117,11 @@
     @apply border-border outline-ring/50;
   }
   html, body {
-    @apply bg-background text-foreground overflow-x-hidden;
+    /* overflow-x-clip (y NO hidden): hidden convierte a html/body en contenedor
+       de scroll y ROMPE todos los position:sticky (header y barras de pestañas
+       dejaban de quedarse fijas al hacer scroll). clip recorta el desborde
+       horizontal igual que hidden pero SIN crear scroll container. */
+    @apply bg-background text-foreground overflow-x-clip;
   }
 }
 

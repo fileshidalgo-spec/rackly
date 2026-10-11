@@ -18,13 +18,14 @@
  *                     paletas" parte el artículo y al registrar sale 1
  *                     fila/rótulo POR PALETA con su cantidad propia.
  *                     Agregar/quitar paletas REPARTE el total solo.
- *   · Lote y fechas → manuales, por artículo; con acción "aplicar a todos"
- *                     para no repetir tecleo cuando coinciden.
+ *   · Lote y fechas → manuales, en cada tarjeta de artículo.
  *   · POR PALETA    → cada paleta puede llevar SU lote/producción/vencimiento
- *                     (pedido del usuario: corregir una paleta específica, o
- *                     aplicar el mismo a todas) SIN tocar código, descripción
- *                     ni la cantidad total ya jalada; vacío = hereda del
- *                     artículo.
+ *                     (corregir una paleta específica) SIN tocar código,
+ *                     descripción ni la cantidad total ya jalada; vacío =
+ *                     hereda del artículo (así el dato del artículo cubre a
+ *                     todas las paletas sin dato propio — no hace falta un
+ *                     panel de "aplicar a todos": se pidieron quitar por
+ *                     redundantes, 2026-10).
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -42,12 +43,10 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { toast } from 'sonner'
 import {
   Plus,
   Trash2,
   Check,
-  ClipboardCopy,
   TriangleAlert,
   PackageSearch,
   SearchCheck,
@@ -124,10 +123,6 @@ export function RecepcionItemsEditor({
   items: ItemRecepcion[]
   onChange: (items: ItemRecepcion[]) => void
 }) {
-  const [aLote, setALote] = useState('')
-  const [aProd, setAProd] = useState('')
-  const [aVenc, setAVenc] = useState('')
-
   // Catálogo para el autocompletado (comparte la carga con el módulo).
   const [catTamano, setCatTamano] = useState(isCatalogoLoaded() ? -1 : 0)
   const [catError, setCatError] = useState(false)
@@ -232,15 +227,6 @@ export function RecepcionItemsEditor({
     setMenuIdx(null)
   }
 
-  function aplicarLoteYFechasATodos() {
-    if (!aLote && !aProd && !aVenc) {
-      toast.error('Escribe al menos el lote o una fecha para aplicar')
-      return
-    }
-    onChange(items.map((it) => ({ ...it, lote: aLote || it.lote, fechaProduccion: aProd || it.fechaProduccion, fechaVencimiento: aVenc || it.fechaVencimiento })))
-    toast.success(`Aplicado a ${items.length} artículo(s)`)
-  }
-
   // ─── DIVIDIR EN PALETAS ───────────────────────────────────────────
   // La guía trae la SUMA; la mercadería llega en N paletas con cantidades
   // distintas y CADA paleta se rotula con SU cantidad. Dividir pre-llena
@@ -272,35 +258,6 @@ export function RecepcionItemsEditor({
               ? `Catálogo listo — al escribir el código se muestran sugerencias y se autocompleta descripción y unidad.`
               : `Catálogo listo (${catTamano} códigos) — al escribir el código se muestran sugerencias.`}
       </p>
-
-      {/* Aplicar lote/fechas a todos (atajo para guías que comparten datos) */}
-      <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-2.5">
-        <div className="flex items-center gap-1.5 mb-2">
-          <ClipboardCopy className="h-3.5 w-3.5 text-amber-600" />
-          <p className="text-[11px] font-semibold text-amber-900">
-            Lote y fechas para todos los artículos (opcional)
-          </p>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <div className="space-y-1">
-            <Label className="text-[10px] text-slate-500">Lote</Label>
-            <Input className="h-8 text-xs" value={aLote} onChange={(e) => setALote(e.target.value)} placeholder="L-001" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[10px] text-slate-500">F. producción</Label>
-            <Input className="h-8 text-xs" type="date" value={aProd} onChange={(e) => setAProd(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[10px] text-slate-500">F. vencimiento</Label>
-            <Input className="h-8 text-xs" type="date" value={aVenc} onChange={(e) => setAVenc(e.target.value)} />
-          </div>
-          <div className="flex items-end">
-            <Button type="button" size="sm" variant="outline" className="w-full h-8 text-xs gap-1" onClick={aplicarLoteYFechasATodos}>
-              Aplicar a todos
-            </Button>
-          </div>
-        </div>
-      </div>
 
       {/* Lista de artículos */}
       <div className="space-y-2">
@@ -510,9 +467,10 @@ export function RecepcionItemsEditor({
  * Reglas (pedidas por el usuario):
  *   · Agregar/quitar paletas REPARTE el total del artículo en partes iguales
  *     (100 en 3 → quito 1 → 50 y 50; 100 → 4 → 25 por paleta).
- *   · El lote/fechas de UNA paleta se corrige SOLO en esa paleta; el atajo
- *     "Mismo lote/fechas para TODAS" cubre el caso de 3, 4 o 5 paletas que
- *     comparten datos, y "Quitar diferencias" vuelve a hacerlas heredar.
+ *   · El lote/fechas de UNA paleta se corrige SOLO en esa paleta; si todas
+ *     comparten datos basta ponerlos en el artículo (las paletas vacías lo
+ *     heredan). "Quitar diferencias" vuelve a hacerlas heredar. El atajo
+ *     "mismo lote/fechas para TODAS" se quitó por redundante (2026-10).
  *   · JAMÁS se toca código, descripción ni la cantidad total ya jalada de la
  *     guía: esos datos viven en la tarjeta del artículo, no en este panel.
  *     Vacío en un campo = esa paleta USA el dato del artículo (así editar el
@@ -528,10 +486,6 @@ function PanelPaletas({
   onQuitarDivision: () => void
 }) {
   const paletas = it.paletas ?? []
-  // Atajo "mismo lote/fechas para todas": inputs del bloque inferior.
-  const [todasLote, setTodasLote] = useState('')
-  const [todasProd, setTodasProd] = useState('')
-  const [todasVenc, setTodasVenc] = useState('')
 
   function editarPaleta(pi: number, patch: Partial<PaletaDividir>) {
     onPaletas(paletas.map((p, i) => (i === pi ? { ...p, ...patch } : p)))
@@ -567,28 +521,6 @@ function PanelPaletas({
     if (next) onPaletas(combinarPaletas(paletas, next))
   }
 
-  /** Aplica el lote/fechas digitado a TODAS las paletas (solo campos llenos):
-   *  el atajo para guías donde las 3/4/5 paletas comparten datos. */
-  function aplicarATodas() {
-    if (!todasLote.trim() && !todasProd && !todasVenc) {
-      toast.error('Escribe al menos el lote o una fecha para aplicar')
-      return
-    }
-    const n = paletas.length
-    onPaletas(
-      paletas.map((p) => ({
-        ...p,
-        lote: todasLote.trim() || p.lote,
-        fechaProduccion: todasProd || p.fechaProduccion,
-        fechaVencimiento: todasVenc || p.fechaVencimiento,
-      }))
-    )
-    setTodasLote('')
-    setTodasProd('')
-    setTodasVenc('')
-    toast.success(`Aplicado a ${n} paleta(s)`)
-  }
-
   /** Borra los datos propios de todas las paletas: vuelven a heredar del
    *  artículo (el "reset" cómodo después de corregir a mano). */
   function usarElDelArticulo() {
@@ -609,7 +541,8 @@ function PanelPaletas({
           <Package className="h-3.5 w-3.5 mt-0.5 shrink-0" />
           <span>
             Paletas ({paletas.length}) — al agregar o quitar se reparte el total en partes
-            iguales. Lote/fechas por paleta: opcional — vacío usa el del artículo.
+            iguales. Lote/fechas por paleta: opcional — vacío usa el del artículo (si
+            todas comparten los mismos datos, basta ponerlos en el artículo).
           </span>
         </p>
         <Button
@@ -691,43 +624,6 @@ function PanelPaletas({
           </div>
         ))}
       </div>
-      {/* Atajo del usuario: 3, 4 o 5 paletas que comparten lote/fechas — se
-          digita UNA vez y se aplica a todas (solo los campos llenos). */}
-      <div className="rounded-md border border-sky-200 bg-white p-2 space-y-1.5">
-        <p className="text-[10px] font-semibold text-sky-900 flex items-center gap-1.5">
-          <ClipboardCopy className="h-3 w-3 shrink-0" />
-          Mismo lote/fechas para TODAS las paletas
-        </p>
-        <div className="grid grid-cols-2 min-[430px]:grid-cols-4 gap-1.5">
-          <div className="space-y-0.5">
-            <Label className="text-[9px] text-slate-500">Lote</Label>
-            <Input className="h-8 text-xs" value={todasLote} onChange={(e) => setTodasLote(e.target.value)} placeholder="L-001" />
-          </div>
-          <div className="space-y-0.5">
-            <Label className="text-[9px] text-slate-500">F. producción</Label>
-            <Input className="h-8 text-xs" type="date" value={todasProd} onChange={(e) => setTodasProd(e.target.value)} />
-          </div>
-          <div className="space-y-0.5">
-            <Label className="text-[9px] text-slate-500">F. vencimiento</Label>
-            <Input className="h-8 text-xs" type="date" value={todasVenc} onChange={(e) => setTodasVenc(e.target.value)} />
-          </div>
-          <div className="flex items-end">
-            <Button type="button" size="sm" variant="outline" className="w-full h-8 text-xs" onClick={aplicarATodas}>
-              Aplicar a todas
-            </Button>
-          </div>
-        </div>
-        {conDatosPropios && (
-          <button
-            type="button"
-            className="text-[10px] text-slate-500 underline hover:text-sky-700"
-            onClick={usarElDelArticulo}
-            title="Borra los datos propios de las paletas: todas vuelven a usar el lote/fechas del artículo"
-          >
-            Quitar diferencias: todas usan el lote/fechas del artículo
-          </button>
-        )}
-      </div>
       <div className="flex items-center gap-2 flex-wrap">
         <Button
           type="button"
@@ -749,6 +645,21 @@ function PanelPaletas({
         >
           <Scale className="h-2.5 w-2.5" /> Repartir en partes iguales
         </Button>
+        {/* Reset cómodo: si te equivocaste digitando datos propios en las
+            paletas, un clic las devuelve a heredar el dato del artículo.
+            Solo aparece cuando HAY datos propios (no estorba el resto). */}
+        {conDatosPropios && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 gap-1 px-2 text-[10px] text-slate-500 hover:text-rose-600"
+            onClick={usarElDelArticulo}
+            title="Borra los datos propios de las paletas: todas vuelven a usar el lote/fechas del artículo"
+          >
+            <X className="h-2.5 w-2.5" /> Quitar diferencias
+          </Button>
+        )}
         <p className={`flex-1 min-w-[140px] text-right text-[10px] font-semibold ${difieren ? 'text-amber-700' : 'text-slate-500'}`}>
           Suma de paletas: {formatearCantidad(suma)}
           {!isNaN(total) && total > 0 ? ` · Total en la guía: ${formatearCantidad(total)}` : ''}

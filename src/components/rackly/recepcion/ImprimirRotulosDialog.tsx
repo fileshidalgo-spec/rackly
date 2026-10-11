@@ -44,6 +44,7 @@ import {
   type EncabezadoRotulo,
   type MotivoFallaZebra,
 } from '@/lib/rackly/zebra'
+import { expandirEnFilas } from '@/lib/rackly/recepcion-filas'
 import type { ItemRecepcion } from '@/components/rackly/recepcion/RecepcionItemsEditor'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -71,21 +72,24 @@ export type RotuloAImprimir = DatosRotulo & { copias: number }
 
 /**
  * Mapea los artículos del editor de recepción (misma fuente para la vía
- * foto y la manual) a rótulos imprimibles, con 1 copia por artículo.
- * Solo se pasan artículos CON código: un rótulo sin código no sirve
+ * foto y la manual) a rótulos imprimibles, con 1 copia por rótulo.
+ * PASA por `expandirEnFilas`: un artículo DIVIDIDO en N paletas produce
+ * N rótulos (mismo código, cantidad propia por paleta) — rotular paleta
+ * por paleta es el motivo de la división.
+ * Solo se pasan rótulos CON código: un rótulo sin código no sirve
  * (el código de barras es su identificador en Racks/Piso).
  */
-export function rotulosDesdeItems(items: ItemRecepcion[]): RotuloAImprimir[] {
-  return items
-    .filter((it) => it.codigo.trim())
-    .map((it) => ({
-      codigo: it.codigo.trim(),
-      descripcion: it.descripcion.trim(),
-      cantidad: it.cantidad,
-      unidad: it.unidad,
-      lote: it.lote,
-      fechaProduccion: it.fechaProduccion,
-      fechaVencimiento: it.fechaVencimiento,
+export function filasARotulos(items: ItemRecepcion[]): RotuloAImprimir[] {
+  return expandirEnFilas(items)
+    .filter((f) => f.codigo)
+    .map((f) => ({
+      codigo: f.codigo,
+      descripcion: f.descripcion,
+      cantidad: f.cantidad,
+      unidad: f.unidad,
+      lote: f.lote,
+      fechaProduccion: f.fechaProduccion,
+      fechaVencimiento: f.fechaVencimiento,
       copias: 1,
     }))
 }

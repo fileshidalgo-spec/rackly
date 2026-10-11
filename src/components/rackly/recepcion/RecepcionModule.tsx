@@ -4,8 +4,11 @@
  * RACKLY — Módulo Recepción (independiente).
  *
  * Registro de recepción de mercadería/documentos con:
- *   · Formulario de registro (usuario tomado de la sesión).
- *   · Listado con búsqueda y filtro por estado.
+ *   · Formulario de registro (usuario tomado de la sesión) con 2 vías:
+ *     foto de guía (OCR) o manual; ambas con "Dividir en paletas".
+ *   · Listado AGRUPADO POR GUÍA: UNA fila por documento con todos sus
+ *     artículos dentro (expandible); estado y borrado del documento completo.
+ *   · Impresión de rótulos agrupada por guía (un solo trabajo).
  *   · Cambio de estado inline (autor o admin/supervisores).
  *   · Eliminación (solo admin/supervisores, misma política que Racks).
  *
@@ -13,11 +16,11 @@
  * src/lib/rackly/modulos.ts. No toca Racks ni Piso.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
-import { aNumero } from '@/lib/rackly/formato'
+import { agruparGuias, avisosDePaletas, expandirEnFilas, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
 import { GuiaFotoForm } from '@/components/rackly/recepcion/GuiaFotoForm'
 import {
   RecepcionItemsEditor,
@@ -27,7 +30,7 @@ import {
 } from '@/components/rackly/recepcion/RecepcionItemsEditor'
 import {
   ImprimirRotulosDialog,
-  rotulosDesdeItems,
+  filasARotulos,
   type RotuloAImprimir,
 } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
 import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
@@ -35,8 +38,8 @@ import {
   listarRecepciones,
   listarRecepcionesPorDocumento,
   crearRecepciones,
-  cambiarEstadoRecepcion,
-  eliminarRecepcion,
+  cambiarEstadoGuia,
+  eliminarGuia,
   ESTADOS_RECEPCION,
   TIPOS_DOCUMENTO_RECEPCION,
   type RegistroRecepcion,
@@ -84,6 +87,8 @@ import {
   PencilLine,
   ExternalLink,
   Printer,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
@@ -121,7 +126,19 @@ export function RecepcionModule() {
   const [estadoFiltro, setEstadoFiltro] = useState('todos')
   const [offset, setOffset] = useState(0)
   const [saving, setSaving] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<RegistroRecepcion | null>(null)
+  // Borrado POR GUÍA: el registro está agrupado por documento y el documento
+  // completo entra y sale junto (con confirmación que muestra el conteo).
+  const [deleteTarget, setDeleteTarget] = useState<GuiaAgrupada | null>(null)
+  // Guías EXPANDIDAS en el registro (chevron → ver sus artículos).
+  const [expandidas, setExpandidas] = useState<Set<string>>(new Set())
+  function alternarExpansion(clave: string) {
+    setExpandidas((prev) => {
+      const next = new Set(prev)
+      if (next.has(clave)) next.delete(clave)
+      else next.add(clave)
+      return next
+    })
+  }
   // Vía de registro activa: foto de guía (OCR) o formulario manual.
   const [modo, setModo] = useState<ModoRegistro>('foto')
   // Modal de impresión de rótulos (Zebra ZT411). Se abre SOLO tras REGISTRAR
@@ -206,7 +223,8 @@ export function RecepcionModule() {
   }
 
   // Formulario manual: encabezado del documento + lista de artículos.
-  // Una guía puede traer 20+ artículos; cada artículo = 1 fila en BD.
+  // Una guía puede traer 20+ artículos; cada artículo = 1 fila en BD
+  // (o N filas si se DIVIDE en paletas).
   const [fFecha, setFFecha] = useState(hoyISO())
   const [fDoc, setFDoc] = useState('Guia')
   const [fNumero, setFNumero] = useState('')
@@ -274,31 +292,42 @@ export function RecepcionModule() {
     setSaving(true)
     try {
       const fecha = fFecha || hoyISO()
+      // DIVIDIR: cada artículo dividido en N paletas se expande a N filas
+      // (mismo código; cantidad propia; "Paleta i/N" en observaciones).
+      const filasGuardar = expandirEnFilas(validos)
+      for (const aviso of avisosDePaletas(validos)) {
+        toast.warning('Las paletas no suman el total del artículo', {
+          description: `${aviso}. Se registra lo digitado en las paletas.`,
+        })
+        break // un solo aviso basta
+      }
       await crearRecepciones(
-        validos.map((it) => ({
+        filasGuardar.map((f) => ({
           fecha,
           tipoDocumento: fDoc,
           numeroDocumento: fNumero,
           proveedor: fProveedor,
-          codigo: it.codigo,
-          descripcion: it.descripcion,
-          cantidad: aNumero(it.cantidad),
-          unidadMedida: it.unidad,
-          lote: it.lote,
-          fechaProduccion: it.fechaProduccion,
-          fechaVencimiento: it.fechaVencimiento,
+          codigo: f.codigo,
+          descripcion: f.descripcion,
+          cantidad: f.cantidadNum,
+          unidadMedida: f.unidad,
+          lote: f.lote,
+          fechaProduccion: f.fechaProduccion,
+          fechaVencimiento: f.fechaVencimiento,
           placa: fPlaca,
-          observaciones: fObs,
+          observaciones: [fObs, f.paleta].filter(Boolean).join(' · '),
         })),
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )
-      toast.success(`Recepción registrada: ${validos.length} artículo(s)`)
+      toast.success(
+        `Recepción registrada: ${validos.length} artículo(s) · ${filasGuardar.length} fila(s)`
+      )
       // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
-      // se abre solo, listo para digitar las etiquetas por artículo. La
+      // se abre solo, listo para digitar las etiquetas por rótulo/paleta. La
       // impresión solo existe DESPUÉS de registrar (carga ya validada).
       // Si lo guardado no trae ningún código no hay rótulos que imprimir:
       // se avisa en vez de abrir un modal vacío.
-      const rotulos = rotulosDesdeItems(validos)
+      const rotulos = filasARotulos(validos)
       if (rotulos.length > 0) {
         setGuardados({
           rotulos,
@@ -309,7 +338,7 @@ export function RecepcionModule() {
             placa: fPlaca,
             registradoPor: perfil.nombre,
           },
-          nota: `Recepción guardada: ${validos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
+          nota: `Recepción guardada: ${filasGuardar.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
         })
         setRotulosOpen(true)
       } else {
@@ -331,28 +360,33 @@ export function RecepcionModule() {
     }
   }
 
-  async function handleEstado(reg: RegistroRecepcion, estado: string) {
-    if (!puedeCambiarEstado(reg)) {
+  /** Grupos del registro: UNA fila por guía con todos sus artículos dentro. */
+  const grupos = useMemo(() => agruparGuias(filas), [filas])
+
+  async function handleEstadoGuia(grupo: GuiaAgrupada, estado: string) {
+    const primera = grupo.filas[0]
+    if (!primera || !puedeCambiarEstado(primera)) {
       toast.error('Solo el autor o un supervisor puede cambiar el estado.')
       return
     }
     try {
-      await cambiarEstadoRecepcion(reg.id, estado)
-      setFilas((prev) => prev.map((r) => (r.id === reg.id ? { ...r, estado } : r)))
-      toast.success(`Estado actualizado a ${estado}`)
+      await cambiarEstadoGuia(grupo.ref, estado)
+      const ids = new Set(grupo.filas.map((f) => f.id))
+      setFilas((prev) => prev.map((r) => (ids.has(r.id) ? { ...r, estado } : r)))
+      toast.success(`Guía actualizada a ${estado} (${grupo.filas.length} fila(s))`)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
       toast.error('No se pudo actualizar el estado', { description: message })
     }
   }
 
-  async function handleDelete() {
+  async function handleDeleteGuia() {
     if (!deleteTarget) return
     const target = deleteTarget
     setDeleteTarget(null)
     try {
-      await eliminarRecepcion(target.id)
-      toast.success('Registro eliminado')
+      await eliminarGuia(target.ref)
+      toast.success(`Guía eliminada (${target.filas.length} fila(s))`)
       cargar(0, true)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
@@ -512,16 +546,19 @@ export function RecepcionModule() {
         </Button>
       </div>
 
-      {/* ── Listado desktop ── */}
+      {/* ── Listado desktop AGRUPADO POR GUÍA: 1 fila por documento con
+          TODOS sus artículos dentro (expandibles con el chevron). El
+          estado y el borrado operan sobre el documento completo. ── */}
       <div className="hidden md:block rounded-lg border overflow-x-auto bg-white">
-        <Table className="min-w-[860px]">
+        <Table className="min-w-[960px]">
           <TableHeader>
             <TableRow>
+              <TableHead className="w-[36px]" />
               <TableHead className="w-[100px]">Fecha</TableHead>
               <TableHead className="w-[150px]">Documento</TableHead>
               <TableHead className="min-w-[140px]">Proveedor</TableHead>
-              <TableHead className="min-w-[180px]">Artículo</TableHead>
-              <TableHead className="w-[90px] text-right">Cant.</TableHead>
+              <TableHead className="min-w-[200px]">Artículos</TableHead>
+              <TableHead className="w-[100px] text-right">Cant. total</TableHead>
               <TableHead className="w-[60px] text-center">Foto</TableHead>
               <TableHead className="w-[140px]">Estado</TableHead>
               <TableHead className="min-w-[130px]">Registró</TableHead>
@@ -530,184 +567,277 @@ export function RecepcionModule() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filas.length === 0 && !loading && (
+            {grupos.length === 0 && !loading && (
               <TableRow>
-                <TableCell colSpan={puedeEliminar ? 10 : 9} className="text-center text-sm text-slate-400 py-10">
+                <TableCell colSpan={puedeEliminar ? 11 : 10} className="text-center text-sm text-slate-400 py-10">
                   <Inbox className="h-8 w-8 mx-auto mb-2 text-slate-300" />
                   No hay recepciones registradas con los filtros actuales.
                 </TableCell>
               </TableRow>
             )}
-            {filas.map((r) => (
-              <TableRow key={r.id}>
-                <TableCell className="text-xs text-slate-500">{r.fecha}</TableCell>
-                <TableCell>
-                  <p className="text-xs font-semibold">{r.tipoDocumento}</p>
-                  <p className="text-xs text-slate-400">{r.numeroDocumento || '—'}</p>
-                </TableCell>
-                <TableCell className="text-sm truncate max-w-[180px]" title={r.proveedor}>
-                  {r.proveedor || '—'}
-                </TableCell>
-                <TableCell>
-                  <p className="text-sm font-medium truncate max-w-[220px]" title={r.descripcion}>
-                    {r.codigo}
-                    {r.descripcion ? ` · ${r.descripcion}` : ''}
-                  </p>
-                </TableCell>
-                <TableCell className="text-right text-sm font-semibold">
-                  {r.cantidad}
-                  {r.unidadMedida ? (
-                    <span className="block text-[10px] font-normal text-slate-400">{r.unidadMedida}</span>
-                  ) : null}
-                </TableCell>
-                <TableCell className="text-center">
-                  {r.fotoUrl ? (
-                    <a
-                      href={r.fotoUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      title="Ver foto de la guía"
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-slate-500 hover:bg-amber-50 hover:text-amber-600"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </a>
-                  ) : (
-                    <span className="text-slate-300">—</span>
+            {grupos.map((g) => {
+              const abierta = expandidas.has(g.clave)
+              const primera = g.filas[0]
+              const puedeEstado = primera ? puedeCambiarEstado(primera) : false
+              const resumen =
+                primera
+                  ? `${primera.codigo || '(sin código)'}${primera.descripcion ? ` · ${primera.descripcion}` : ''}${g.filas.length > 1 ? `  +${g.filas.length - 1} más` : ''}`
+                  : ''
+              return (
+                <Fragment key={g.clave}>
+                  <TableRow className={abierta ? 'bg-amber-50/40' : ''}>
+                    <TableCell>
+                      <button
+                        type="button"
+                        onClick={() => alternarExpansion(g.clave)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-amber-50 hover:text-amber-700"
+                        title={abierta ? 'Ocultar artículos de la guía' : 'Ver TODOS los artículos de la guía'}
+                        aria-label={abierta ? 'Ocultar artículos' : 'Ver artículos'}
+                      >
+                        {abierta ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </button>
+                    </TableCell>
+                    <TableCell className="text-xs text-slate-500">{g.fecha}</TableCell>
+                    <TableCell>
+                      <p className="text-xs font-semibold">{g.tipoDocumento}</p>
+                      <p className="text-xs text-slate-400">{g.numeroDocumento || '—'}</p>
+                    </TableCell>
+                    <TableCell className="text-sm truncate max-w-[180px]" title={g.proveedor}>
+                      {g.proveedor || '—'}
+                    </TableCell>
+                    <TableCell>
+                      <p className="text-sm font-semibold">
+                        {g.filas.length} artículo{g.filas.length !== 1 ? 's' : ''}
+                        {g.filas.length > 1 && (
+                          <span className="ml-1.5 text-[10px] font-normal text-slate-400">(chevron para verlos)</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-slate-400 truncate max-w-[240px]" title={resumen}>
+                        {resumen}
+                      </p>
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      {String(Math.round(g.cantidadTotal * 1000) / 1000)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {g.fotoUrl ? (
+                        <a
+                          href={g.fotoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Ver foto de la guía"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-slate-500 hover:bg-amber-50 hover:text-amber-600"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {puedeEstado && g.estado ? (
+                        <Select value={g.estado} onValueChange={(v) => void handleEstadoGuia(g, v)}>
+                          <SelectTrigger className="h-8 w-[125px] text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ESTADOS_RECEPCION.map((e) => (
+                              <SelectItem key={e} value={e}>
+                                {e}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Badge variant="outline" className={ESTADO_CLASE[g.estado] ?? ''}>
+                          {g.estado || 'Mixto'}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <p className="text-xs font-medium truncate max-w-[130px]" title={g.usuarioNombre}>
+                        {g.usuarioNombre || '—'}
+                      </p>
+                      <p className="text-[10px] text-slate-400 truncate max-w-[130px]">{g.usuarioCorreo}</p>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                        onClick={() => primera && void reimprimirGuia(primera)}
+                        disabled={cargandoGuia || !primera}
+                        title="Imprimir los rótulos de TODA la guía, agrupados en una sola ventana"
+                      >
+                        {cargandoGuia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                      </Button>
+                    </TableCell>
+                    {puedeEliminar && (
+                      <TableCell className="text-right">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="text-rose-500 hover:text-rose-700 hover:bg-rose-50"
+                          onClick={() => setDeleteTarget(g)}
+                          title="Eliminar TODA la guía (todas sus filas)"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                  {abierta && (
+                    <TableRow className="bg-slate-50/70 hover:bg-slate-50/70">
+                      <TableCell colSpan={puedeEliminar ? 11 : 10} className="p-0">
+                        <div className="px-4 py-3 space-y-1.5">
+                          {g.filas.map((f, i) => {
+                            const mPaleta = f.observaciones?.match(/Paleta \d+\/\d+/)
+                            return (
+                              <div
+                                key={f.id}
+                                className="flex items-center gap-3 text-xs border-b border-slate-100 pb-1.5 last:border-0 last:pb-0"
+                              >
+                                <span className="w-6 shrink-0 text-slate-400 font-bold">{i + 1}</span>
+                                <span className="w-24 shrink-0 font-semibold text-slate-800">{f.codigo || '—'}</span>
+                                <span className="flex-1 truncate text-slate-600" title={f.descripcion}>
+                                  {f.descripcion || '—'}
+                                </span>
+                                {f.lote && <span className="shrink-0 text-slate-400">Lote {f.lote}</span>}
+                                {mPaleta && (
+                                  <span className="shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700">
+                                    {mPaleta[0]}
+                                  </span>
+                                )}
+                                <span className="w-28 shrink-0 text-right font-semibold text-slate-800">
+                                  {f.cantidad}
+                                  {f.unidadMedida ? ` ${f.unidadMedida}` : ''}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </TableCell>
+                    </TableRow>
                   )}
-                </TableCell>
-                <TableCell>
-                  {puedeCambiarEstado(r) ? (
-                    <Select value={r.estado} onValueChange={(v) => handleEstado(r, v)}>
-                      <SelectTrigger className="h-8 w-[125px] text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ESTADOS_RECEPCION.map((e) => (
-                          <SelectItem key={e} value={e}>
-                            {e}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Badge variant="outline" className={ESTADO_CLASE[r.estado] ?? ''}>
-                      {r.estado}
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <p className="text-xs font-medium truncate max-w-[130px]" title={r.usuarioNombre}>
-                    {r.usuarioNombre || '—'}
-                  </p>
-                  <p className="text-[10px] text-slate-400 truncate max-w-[130px]">{r.usuarioCorreo}</p>
-                </TableCell>
-                <TableCell className="text-center">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                    onClick={() => void reimprimirGuia(r)}
-                    disabled={cargandoGuia}
-                    title="Imprimir los rótulos de TODA la guía, agrupados en una sola ventana"
-                  >
-                    {cargandoGuia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                  </Button>
-                </TableCell>
-                {puedeEliminar && (
-                  <TableCell className="text-right">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="text-rose-500 hover:text-rose-700 hover:bg-rose-50"
-                      onClick={() => setDeleteTarget(r)}
-                      title="Eliminar registro"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
+                </Fragment>
+              )
+            })}
           </TableBody>
         </Table>
       </div>
 
-      {/* ── Listado móvil ── */}
+      {/* ── Listado móvil AGRUPADO POR GUÍA ── */}
       <div className="md:hidden space-y-3">
-        {filas.length === 0 && !loading && (
+        {grupos.length === 0 && !loading && (
           <p className="text-sm text-slate-400 text-center py-8">No hay recepciones para mostrar.</p>
         )}
-        {filas.map((r) => (
-          <div key={r.id} className="rounded-lg border bg-white p-4 space-y-2">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm font-bold truncate">
-                  {r.codigo || r.proveedor || '(sin código)'}
-                </p>
-                <p className="text-xs text-slate-500 truncate">
-                  {r.descripcion || r.proveedor || '—'}
-                </p>
+        {grupos.map((g) => {
+          const abierta = expandidas.has(g.clave)
+          const primera = g.filas[0]
+          const puedeEstado = primera ? puedeCambiarEstado(primera) : false
+          return (
+            <div key={g.clave} className="rounded-lg border bg-white p-4 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold truncate">
+                    {g.tipoDocumento} {g.numeroDocumento || '(sin número)'}
+                  </p>
+                  <p className="text-xs text-slate-500 truncate">
+                    {g.proveedor || '—'} · {g.fecha}
+                  </p>
+                </div>
+                <Badge variant="outline" className={`${ESTADO_CLASE[g.estado] ?? ''} shrink-0`}>
+                  {g.estado || 'Mixto'}
+                </Badge>
               </div>
-              <Badge variant="outline" className={`${ESTADO_CLASE[r.estado] ?? ''} shrink-0`}>
-                {r.estado}
-              </Badge>
-            </div>
-            <div className="grid grid-cols-2 gap-1 text-xs text-slate-500">
-              <span>Fecha: {r.fecha}</span>
-              <span>Cant.: {r.cantidad}{r.unidadMedida ? ` ${r.unidadMedida}` : ''}</span>
-              <span className="truncate">
-                Doc: {r.tipoDocumento} {r.numeroDocumento || ''}
-              </span>
-              <span className="truncate">Por: {r.usuarioNombre || '—'}</span>
-              {r.lote && <span>Lote: {r.lote}</span>}
-              {r.placa && <span>Placa: {r.placa}</span>}
-              {r.fotoUrl && (
-                <a
-                  href={r.fotoUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-amber-600 font-semibold underline"
-                >
-                  Ver foto de la guía
-                </a>
+              <button
+                type="button"
+                onClick={() => alternarExpansion(g.clave)}
+                className="w-full flex items-center gap-1.5 text-xs font-semibold text-amber-700 hover:text-amber-800"
+                title={abierta ? 'Ocultar artículos' : 'Ver todos los artículos de la guía'}
+              >
+                {abierta ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                <span className="truncate">
+                  {g.filas.length} artículo{g.filas.length !== 1 ? 's' : ''} · Cant. total:{' '}
+                  {String(Math.round(g.cantidadTotal * 1000) / 1000)}
+                  {g.placa ? ` · Placa ${g.placa}` : ''}
+                </span>
+              </button>
+              {abierta && (
+                <div className="space-y-1 rounded-lg border border-slate-100 bg-slate-50/60 p-2">
+                  {g.filas.map((f, i) => {
+                    const mPaleta = f.observaciones?.match(/Paleta \d+\/\d+/)
+                    return (
+                      <div key={f.id} className="flex items-center gap-2 text-xs">
+                        <span className="w-5 shrink-0 text-slate-400 font-bold">{i + 1}</span>
+                        <span className="font-semibold text-slate-800 shrink-0">{f.codigo || '—'}</span>
+                        <span className="flex-1 truncate text-slate-600" title={f.descripcion}>
+                          {f.descripcion || '—'}
+                        </span>
+                        {mPaleta && (
+                          <span className="shrink-0 rounded border border-sky-200 bg-sky-50 px-1 py-0.5 text-[9px] font-semibold text-sky-700">
+                            {mPaleta[0]}
+                          </span>
+                        )}
+                        <span className="shrink-0 text-right font-semibold text-slate-800">
+                          {f.cantidad}
+                          {f.unidadMedida ? ` ${f.unidadMedida}` : ''}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
               )}
-            </div>
-            {puedeCambiarEstado(r) && (
-              <Select value={r.estado} onValueChange={(v) => handleEstado(r, v)}>
-                <SelectTrigger className="h-8 w-full text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ESTADOS_RECEPCION.map((e) => (
-                    <SelectItem key={e} value={e}>
-                      {e}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            <Button
-              size="sm"
-              variant="outline"
-              className="w-full gap-1 text-amber-700 hover:bg-amber-50"
-              onClick={() => void reimprimirGuia(r)}
-              disabled={cargandoGuia}
-            >
-              {cargandoGuia ? <Loader2 className="h-3 w-3 animate-spin" /> : <Printer className="h-3 w-3" />}
-              Imprimir rótulos de la guía
-            </Button>
-            {puedeEliminar && (
+              <div className="grid grid-cols-2 gap-1 text-xs text-slate-500">
+                <span className="truncate">Por: {g.usuarioNombre || '—'}</span>
+                {g.fotoUrl && (
+                  <a
+                    href={g.fotoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-amber-600 font-semibold underline text-right"
+                  >
+                    Ver foto de la guía
+                  </a>
+                )}
+              </div>
+              {puedeEstado && g.estado && (
+                <Select value={g.estado} onValueChange={(v) => void handleEstadoGuia(g, v)}>
+                  <SelectTrigger className="h-8 w-full text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ESTADOS_RECEPCION.map((e) => (
+                      <SelectItem key={e} value={e}>
+                        {e}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               <Button
                 size="sm"
                 variant="outline"
-                className="w-full gap-1 text-rose-600 hover:bg-rose-50"
-                onClick={() => setDeleteTarget(r)}
+                className="w-full gap-1 text-amber-700 hover:bg-amber-50"
+                onClick={() => primera && void reimprimirGuia(primera)}
+                disabled={cargandoGuia || !primera}
               >
-                <Trash2 className="h-3 w-3" /> Eliminar
+                {cargandoGuia ? <Loader2 className="h-3 w-3 animate-spin" /> : <Printer className="h-3 w-3" />}
+                Imprimir rótulos de la guía
               </Button>
-            )}
-          </div>
-        ))}
+              {puedeEliminar && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full gap-1 text-rose-600 hover:bg-rose-50"
+                  onClick={() => setDeleteTarget(g)}
+                >
+                  <Trash2 className="h-3 w-3" /> Eliminar guía completa
+                </Button>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {/* ── Paginación ── */}
@@ -720,7 +850,7 @@ export function RecepcionModule() {
             className="gap-2"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Cargar más ({filas.length} de {total})
+            Cargar más ({filas.length} de {total} filas · agrupadas por guía)
           </Button>
         </div>
       )}
@@ -740,21 +870,22 @@ export function RecepcionModule() {
         nota={guardados?.nota}
       />
 
-      {/* ── Confirmar eliminación ── */}
+      {/* ── Confirmar eliminación POR GUÍA ── */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
         <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
           <AlertDialogHeader>
-            <AlertDialogTitle>Eliminar registro de recepción</AlertDialogTitle>
+            <AlertDialogTitle>Eliminar la guía completa</AlertDialogTitle>
             <AlertDialogDescription>
-              ¿Eliminar el registro {deleteTarget?.tipoDocumento}{' '}
+              ¿Eliminar {deleteTarget?.tipoDocumento}{' '}
               <strong>{deleteTarget?.numeroDocumento || '(sin número)'}</strong> de{' '}
-              <strong>{deleteTarget?.proveedor || 'proveedor sin nombre'}</strong>? Esta acción no se
-              puede deshacer.
+              <strong>{deleteTarget?.proveedor || 'proveedor sin nombre'}</strong> con{' '}
+              <strong>TODAS sus {deleteTarget?.filas.length ?? 0} fila(s)</strong> (artículos y
+              paletas registrados)? Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>Eliminar</AlertDialogAction>
+            <AlertDialogAction onClick={handleDeleteGuia}>Eliminar guía</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

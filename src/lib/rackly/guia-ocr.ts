@@ -7,13 +7,19 @@
  *
  *   1. OCR DE PÁGINA COMPLETA (el componente corre tesseract.js, idioma spa)
  *      → encabezado: nº de guía (T###-######), placa, proveedor.
- *   2. ZOOM DE LA TABLA DE ARTÍCULOS ("cuadro por cuadro"): localizando las
- *      anclas "…TRANSPORTADOS" y "NOTAS…" con las cajas de palabras del OCR,
- *      el componente RECORTA esa franja y la vuelve a leer escalada ×3
- *      (los códigos de la tabla son letra pequeña; con zoom se leen todos).
+ *   2. ZOOM DE LA TABLA DE ARTÍCULOS POR TRAMOS ("cuadro por cuadro"):
+ *      localizando las anclas "…TRANSPORTADOS" y "NOTAS…" con las cajas de
+ *      palabras del OCR, el componente RECORTA esa franja y la vuelve a leer
+ *      escalada ×3 — dividida en TRAMOS de ~900 px con solape (una tabla
+ *      larga a ×3 entera era una imagen enorme y el OCR perdía filas).
  *      Este módulo entrega las utilidades puras: extraerPalabras,
- *      extraerAnclasTabla y recortarFranjaTabla.
- *   3. RESOLUCIÓN INTELIGENTE de cada fila de la tabla:
+ *      extraerAnclasTabla, dividirFranjaEnBandas y recortarFranjaTabla.
+ *   3. FUSIÓN EXHAUSTIVA: se parsean la lectura del zoom Y la de la página
+ *      completa; `fusionarDatos` une los artículos de ambos pases sin
+ *      duplicados (antes el zoom ganaba todo y se perdían filas leídas solo
+ *      por la página completa) y un 2º pase de página completa (PSM AUTO)
+ *      se fusiona igual. Filas sin cantidad quedan marcadas "revisar".
+ *   4. RESOLUCIÓN INTELIGENTE de cada fila de la tabla:
  *        a. código exacto en catálogo + descripción coherente  → artículo OK
  *        b. código exacto con descripción INCOHERENTE          → se re-busca
  *           por descripción (evita códigos "cambiados" por el OCR)
@@ -688,13 +694,31 @@ export function extraerDatosGuiaDeTextos(
   const crudo = conT ? conT[0] : sinT ? sinT[0] : ''
 
   const indices = indicesDeCatalogo(catalogo)
+  // EXHAUSTIVO: se parsean AMBAS lecturas (zoom de la tabla y página
+  // completa) y se FUSIONAN con dedupe. Antes el zoom GANABA todo y las
+  // filas que solo la página completa había leído se perdían en silencio;
+  // ahora cada pase rescata filas que el otro perdió (la clave de dedupe
+  // elimina las que ambos leyeron idénticas).
+  const itemsZoom =
+    textoTabla && textoTabla.trim()
+      ? resolverFilas(extraerFilasDeTabla(textoTabla), catalogo, indices, false)
+      : []
+  const itemsPagina = resolverFilas(extraerFilasDeTabla(texto), catalogo, indices, true)
   let items: ItemGuia[] = []
-  if (textoTabla && textoTabla.trim()) {
-    items = resolverFilas(extraerFilasDeTabla(textoTabla), catalogo, indices, false)
+  {
+    const vistas = new Set<string>()
+    for (const it of [...itemsZoom, ...itemsPagina]) {
+      const clave = claveItem(it)
+      if (vistas.has(clave)) continue
+      vistas.add(clave)
+      items.push(it)
+    }
   }
-  if (items.length === 0) {
-    items = resolverFilas(extraerFilasDeTabla(texto), catalogo, indices, true)
-  }
+  if (items.length > MAX_ITEMS) items = items.slice(0, MAX_ITEMS)
+  // EXHAUSTIVIDAD visible: una fila leída SIN cantidad es una lectura
+  // incompleta (el OCR se comió el número) → queda marcada "revisar con la
+  // guía" en el formulario en vez de pasar desapercibida hasta el guardado.
+  items = items.map((it) => (it.cantidad.trim() ? it : { ...it, revision: true }))
 
   const cantidadSugerida = (items.length > 0 && items[0].cantidad) || extraerCantidadFallback(lineas)
   return {
@@ -712,6 +736,80 @@ export function extraerDatosGuiaDeTextos(
  */
 export function extraerDatosGuia(textoOcr: string, catalogo: CatalogoItem[]): DatosGuia {
   return extraerDatosGuiaDeTextos(textoOcr, null, catalogo)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 7bis. FUSIÓN Y TRAMOS (extracción EXHAUSTIVA)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Divide una franja vertical [y0, y1] (px de la foto original) en tramos
+ * de `altoMax` con `solape` px de superposición. El zoom de la tabla COMPLETA
+ * a ×3 produce imágenes enormes en guías de 15-30 artículos (el OCR pierde
+ * filas enteras al final); con tramos cada lectura queda en tamaño manejable
+ * y el solape garantiza que ninguna fila caiga exactamente en un corte.
+ */
+export function dividirFranjaEnBandas(
+  y0: number,
+  y1: number,
+  altoMax = 900,
+  solape = 60
+): Array<{ y0: number; y1: number }> {
+  const alto = y1 - y0
+  if (alto <= 0) return []
+  if (alto <= altoMax) return [{ y0, y1 }]
+  const bandas: Array<{ y0: number; y1: number }> = []
+  let inicio = y0
+  while (inicio < y1) {
+    const fin = Math.min(y1, inicio + altoMax)
+    bandas.push({ y0: inicio, y1: fin })
+    if (fin >= y1) break
+    inicio = fin - solape
+  }
+  return bandas
+}
+
+/** Clave de dedupe de un artículo (misma regla que resolverFilas.push). */
+function claveItem(it: ItemGuia): string {
+  const descClave = quitarAcentos(it.descripcion)
+    .replace(/[^A-Z0-9 ]/g, '')
+    .trim()
+  return it.codigo
+    ? `C:${it.codigo.toUpperCase().replace(/^0+/, '')}|${it.cantidad.trim()}|${descClave}`
+    : `D:${descClave}|${it.cantidad.trim()}`
+}
+
+/**
+ * FUSIÓN de 2 extracciones (pase principal vs 2º pase): toma los ARTÍCULOS
+ * DE AMBAS (unión sin duplicados — antes el "ganador por puntos" descartaba
+ * filas que el otro pase SÍ había leído) y completa el encabezado con el
+ * primer valor no vacío. Para el nº de guía, si difieren gana el formato
+ * canónico T###-###### (el OCR confunde la T inicial con 7/1).
+ */
+export function fusionarDatos(a: DatosGuia, b: DatosGuia): DatosGuia {
+  const items: ItemGuia[] = []
+  const vistas = new Set<string>()
+  for (const it of [...a.items, ...b.items]) {
+    const clave = claveItem(it)
+    if (vistas.has(clave)) continue
+    vistas.add(clave)
+    items.push(it)
+  }
+  const eligeGuia = (x: string, y: string): string => {
+    if (!x) return y
+    if (!y) return x
+    if (x === y) return x
+    if (/^T\d{3}-\d{5,8}$/.test(x)) return x
+    if (/^T\d{3}-\d{5,8}$/.test(y)) return y
+    return x
+  }
+  return {
+    numeroGuia: eligeGuia(a.numeroGuia, b.numeroGuia),
+    placa: a.placa || b.placa,
+    proveedor: a.proveedor || b.proveedor,
+    items,
+    cantidadSugerida: a.cantidadSugerida || b.cantidadSugerida,
+  }
 }
 
 /**

@@ -295,6 +295,55 @@ export async function eliminarRecepcion(id: string): Promise<void> {
   if (error) throw error
 }
 
+/**
+ * Referencia a UN documento completo (guía) de recepción. Misma identidad
+ * que listarRecepcionesPorDocumento: con Nº → tipo+número; sin Nº →
+ * fecha+tipo+proveedor (la huella más fiel sin agrupar guías ajenas).
+ */
+export type RefDocumentoRecepcion = {
+  tipoDocumento: string
+  numeroDocumento: string
+  fecha?: string
+  proveedor?: string
+}
+
+/** Condiciones [columna, valor] que identifican a UNA guía (sin Nº → fecha+proveedor). */
+function condicionesGuia(ref: RefDocumentoRecepcion): Array<[string, string]> {
+  const conds: Array<[string, string]> = [['tipo_documento', ref.tipoDocumento.trim()]]
+  if (ref.numeroDocumento.trim()) {
+    conds.push(['numero_documento', ref.numeroDocumento.trim()])
+  } else {
+    conds.push(['fecha', (ref.fecha ?? '').trim()])
+    conds.push(['proveedor', (ref.proveedor ?? '').trim()])
+  }
+  return conds
+}
+
+/**
+ * Cambia el estado de TODAS las filas de UNA guía (el registro agrupado
+ * muestra 1 fila por guía; el estado es del documento completo).
+ */
+export async function cambiarEstadoGuia(
+  ref: RefDocumentoRecepcion,
+  estado: string
+): Promise<void> {
+  let q = dataClient.from('recepcion_registros').update({ estado })
+  for (const [col, val] of condicionesGuia(ref)) q = q.eq(col, val)
+  const { error } = await q
+  if (error) throw error
+}
+
+/**
+ * Elimina TODAS las filas de UNA guía (el borrado agrupado espeja el
+ * registro agrupado: el documento completo entra y sale junto).
+ */
+export async function eliminarGuia(ref: RefDocumentoRecepcion): Promise<void> {
+  let q = dataClient.from('recepcion_registros').delete()
+  for (const [col, val] of condicionesGuia(ref)) q = q.eq(col, val)
+  const { error } = await q
+  if (error) throw error
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // ATENCIÓN — API
 // ═══════════════════════════════════════════════════════════════════

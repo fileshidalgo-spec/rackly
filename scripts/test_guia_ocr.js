@@ -302,6 +302,69 @@ check('espacios colapsados y recortados', terminoBusquedaSeguro('  ACIDO    CITR
 check('término solo de caracteres peligrosos → "" (se omite el filtro)', terminoBusquedaSeguro(',"()') === '')
 check('término normal pasa intacto', terminoBusquedaSeguro('AJEPER') === 'AJEPER')
 
+// ─── 13. FUSIÓN EXHAUSTIVA (nuevo): dividirFranjaEnBandas + fusionarDatos ───
+// El usuario reportó: "a veces me toma algunos datos o omite algunos".
+// Causas corregidas: (a) el zoom de tabla a ×3 entero perdía filas en
+// guías largas → ahora se divide en TRAMOS con solape; (b) el "ganador por
+// puntos" DESCARTABA las filas que solo el otro pase había leído → ahora
+// se FUSIONAN los artículos de ambos pases (unión sin duplicados).
+console.log('\n[13] dividirFranjaEnBandas — tramos de zoom con solape')
+const { dividirFranjaEnBandas, fusionarDatos } = require('@/lib/rackly/guia-ocr')
+
+const bandasCortas = dividirFranjaEnBandas(100, 800)
+check('franja corta (700px) → 1 solo tramo', bandasCortas.length === 1 && bandasCortas[0].y0 === 100 && bandasCortas[0].y1 === 800, JSON.stringify(bandasCortas))
+
+const bandas = dividirFranjaEnBandas(0, 2000)
+check('franja 2000px → 3 tramos de ≤900', bandas.length === 3 && bandas.every((b) => b.y1 - b.y0 <= 900), JSON.stringify(bandas))
+check('tramos consecutivos SOLAPADOS (ninguna fila cae en un corte)', bandas[1].y0 < bandas[0].y1 && bandas[2].y0 < bandas[1].y1, JSON.stringify(bandas))
+check('los tramos cubren TODA la franja (inicio=0, fin=2000)', bandas[0].y0 === 0 && bandas[bandas.length - 1].y1 === 2000, JSON.stringify(bandas))
+check('franja degenerada → []', dividirFranjaEnBandas(500, 500).length === 0)
+
+console.log('\n[14] fusionarDatos — unión de pases sin perder filas')
+const datosA = {
+  numeroGuia: 'T173-00004090',
+  placa: 'V3P-114',
+  proveedor: 'AJEPER',
+  items: [
+    { codigo: '5653', descripcion: 'PURE DE DURAZNO 30-32 ºBRIX', cantidad: '2,884.00', unidad: 'KG', enCatalogo: true },
+    { codigo: '118', descripcion: 'ACIDO CITRICO', cantidad: '50.00', unidad: 'KG', enCatalogo: true },
+  ],
+  cantidadSugerida: '2,884.00',
+}
+const datosB = {
+  numeroGuia: '7173-00004090', // OCR perdió la T inicial
+  placa: '',
+  proveedor: '',
+  items: [
+    // 5653 idéntico → NO duplica; 122 SOLO lo leyó el pase B → SE RESCATA.
+    { codigo: '5653', descripcion: 'PURE DE DURAZNO 30-32 ºBRIX', cantidad: '2,884.00', unidad: 'KG', enCatalogo: true },
+    { codigo: '122', descripcion: 'CITRATO DE SODIO', cantidad: '25.00', unidad: 'KG', enCatalogo: true },
+  ],
+  cantidadSugerida: '',
+}
+const fusion = fusionarDatos(datosA, datosB)
+check('unión: 3 artículos (2 de A + el exclusivo de B)', fusion.items.length === 3, `obtuvo ${fusion.items.length}`)
+check('el artículo exclusivo del 2º pase está presente', fusion.items.some((i) => i.codigo === '122'), JSON.stringify(fusion.items.map((i) => i.codigo)))
+check('sin duplicados del artículo común', fusion.items.filter((i) => i.codigo === '5653').length === 1)
+check('nº de guía: gana el formato canónico con T', fusion.numeroGuia === 'T173-00004090', fusion.numeroGuia)
+check('placa/proveedor completados desde el pase que los trajo', fusion.placa === 'V3P-114' && fusion.proveedor === 'AJEPER')
+
+console.log('\n[15] Filas sin cantidad quedan marcadas para revisión')
+const textoSinCantidad = `
+GUIA DE REMISION - ELECTRONICA
+RAZON SOCIAL : COMERCIAL AJEPER S.A.C.
+NUMERO DE GUIA : T173-00004090
+BIENES TRANSPORTADOS
+CODIGO    DESCRIPCION                        CANTIDAD    UNIDAD
+5653      PURE DE DURAZNO 30-32 ºBRIX        2,884.00    KGM
+118       ACIDO CITRICO                                  KGM
+`
+const sinCant = extraerDatosGuia(textoSinCantidad, CATALOGO)
+const filaSinCant = sinCant.items.find((i) => i.codigo === '118')
+check('la fila sin cantidad entra al formulario', Boolean(filaSinCant), JSON.stringify(sinCant.items.map((i) => [i.codigo, i.cantidad])))
+check('y queda marcada revision=true (visible "revisar con la guía")', Boolean(filaSinCant && filaSinCant.revision))
+check('la fila con cantidad NO se marca', !sinCant.items.find((i) => i.codigo === '5653')?.revision)
+
 // ─── Resumen ───
 console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)
 process.exit(fallidos > 0 ? 1 : 0)

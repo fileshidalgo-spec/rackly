@@ -13,6 +13,10 @@
  *                     sin match (antes se quedaba pegada del código anterior).
  *                     Si el usuario la escribió a mano, se respeta.
  *   · Cantidad      → editable (si llegó menor cantidad se ajusta aquí).
+ *   · DIVIDIR       → la guía trae la SUMA pero la mercadería llega en
+ *                     N paletas con cantidades distintas: "Dividir en
+ *                     paletas" parte el artículo y al registrar sale 1
+ *                     fila/rótulo POR PALETA con su cantidad propia.
  *   · Lote y fechas → manuales, por artículo; con acción "aplicar a todos"
  *                     para no repetir tecleo cuando coinciden.
  */
@@ -20,13 +24,31 @@
 import { useEffect, useRef, useState } from 'react'
 import { buscarCatalogo, fetchCatalogo, isCatalogoLoaded, searchCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
 import { aNumero } from '@/lib/rackly/formato'
+import {
+  distribuirEquitativo,
+  formatearCantidad,
+  MAX_PALETAS,
+  sumaPaletas,
+} from '@/lib/rackly/recepcion-filas'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
-import { Plus, Trash2, Check, ClipboardCopy, TriangleAlert, PackageSearch, SearchCheck } from 'lucide-react'
+import {
+  Plus,
+  Trash2,
+  Check,
+  ClipboardCopy,
+  TriangleAlert,
+  PackageSearch,
+  SearchCheck,
+  Scissors,
+  X,
+  Package,
+} from 'lucide-react'
 
-/** Artículo editable de una recepción (1 fila en BD al registrar). */
+/** Artículo editable de una recepción. Si se DIVIDE en paletas, al
+ *  registrar se genera 1 fila por paleta (mismo código; cantidad propia). */
 export type ItemRecepcion = {
   codigo: string
   descripcion: string
@@ -44,6 +66,8 @@ export type ItemRecepcion = {
   descripcionManual: boolean
   /** El usuario escribió la unidad a mano (no la pisa el catálogo). */
   unidadManual: boolean
+  /** Cantidades por paleta (DIVIDIR): vacío/ausente = artículo sin dividir. */
+  paletas?: string[]
 }
 
 export function itemVacio(): ItemRecepcion {
@@ -61,11 +85,21 @@ export function itemVacio(): ItemRecepcion {
   }
 }
 
-/** Filtra los artículos listos para registrar (con código/desc y cantidad > 0). */
+/**
+ * Filtra los artículos listos para registrar (código/desc + cantidad):
+ *   · sin dividir → cantidad total > 0.
+ *   · dividido    → basta que ALGUNA paleta tenga cantidad > 0 (el total
+ *                   puede quedar vacío; las paletas mandan al registrar).
+ */
 export function itemsValidos(items: ItemRecepcion[]): ItemRecepcion[] {
   return items.filter((it) => {
+    if (!it.codigo.trim() && !it.descripcion.trim()) return false
+    if (it.paletas && it.paletas.some((p) => {
+      const n = aNumero(p ?? '')
+      return !isNaN(n) && n > 0
+    })) return true
     const cantidad = aNumero(it.cantidad)
-    return Boolean(it.codigo.trim() || it.descripcion.trim()) && !isNaN(cantidad) && cantidad > 0
+    return !isNaN(cantidad) && cantidad > 0
   })
 }
 
@@ -193,6 +227,48 @@ export function RecepcionItemsEditor({
     }
     onChange(items.map((it) => ({ ...it, lote: aLote || it.lote, fechaProduccion: aProd || it.fechaProduccion, fechaVencimiento: aVenc || it.fechaVencimiento })))
     toast.success(`Aplicado a ${items.length} artículo(s)`)
+  }
+
+  // ─── DIVIDIR EN PALETAS ───────────────────────────────────────────
+  // La guía trae la SUMA; la mercadería llega en N paletas con cantidades
+  // distintas y CADA paleta se rotula con SU cantidad. Dividir pre-llena
+  // partes iguales (editable) y al registrar salen filas separadas.
+
+  const PALETAS_INICIALES = 3
+
+  function dividir(idx: number) {
+    const it = items[idx]
+    actualizar(idx, { paletas: distribuirEquitativo(it.cantidad, PALETAS_INICIALES) })
+  }
+
+  function quitarDivision(idx: number) {
+    actualizar(idx, { paletas: undefined })
+  }
+
+  function setPaleta(idx: number, pi: number, valor: string) {
+    const it = items[idx]
+    const prev = it.paletas ?? []
+    const next = [...prev]
+    next[pi] = valor
+    actualizar(idx, { paletas: next })
+  }
+
+  function agregarPaleta(idx: number) {
+    const it = items[idx]
+    const prev = it.paletas ?? []
+    if (prev.length >= MAX_PALETAS) return
+    actualizar(idx, { paletas: [...prev, ''] })
+  }
+
+  function quitarPaleta(idx: number, pi: number) {
+    const it = items[idx]
+    const prev = it.paletas ?? []
+    if (prev.length <= 2) {
+      // Con menos de 2 ya no tiene sentido dividir: se quita la división.
+      quitarDivision(idx)
+      return
+    }
+    actualizar(idx, { paletas: prev.filter((_, i) => i !== pi) })
   }
 
   return (
@@ -392,6 +468,93 @@ export function RecepcionItemsEditor({
                   <Input className="h-8 text-xs" type="date" value={it.fechaVencimiento} onChange={(e) => actualizar(idx, { fechaVencimiento: e.target.value })} />
                 </div>
               </div>
+              {/* DIVIDIR EN PALETAS: la guía trae la suma; la mercadería llega
+                  en N paletas con cantidades distintas y cada una se rotula
+                  con SU cantidad (al registrar: 1 fila por paleta). */}
+              {!(it.paletas && it.paletas.length > 0) ? (
+                <div className="pl-8">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 gap-1.5 text-[11px] text-slate-500 hover:text-amber-700 hover:bg-amber-50"
+                    onClick={() => dividir(idx)}
+                    title="La guía trae la suma: divide la cantidad por paleta para rotular paleta por paleta"
+                  >
+                    <Scissors className="h-3 w-3" /> Dividir en paletas
+                  </Button>
+                </div>
+              ) : (
+                <div className="pl-8">
+                  <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2.5 space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <p className="text-[11px] font-semibold text-sky-900 flex items-center gap-1.5">
+                        <Package className="h-3 w-3" />
+                        Paletas ({it.paletas.length}) — cada paleta sale como su propio rótulo
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-1.5 text-[10px] text-slate-500 hover:text-rose-600"
+                        onClick={() => quitarDivision(idx)}
+                      >
+                        <X className="h-3 w-3" /> Quitar división
+                      </Button>
+                    </div>
+                    <div className="space-y-1.5">
+                      {it.paletas.map((p, pi) => (
+                        <div key={pi} className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold text-slate-400 w-14 shrink-0">Paleta {pi + 1}</span>
+                          <Input
+                            className="h-7 flex-1 text-xs"
+                            inputMode="decimal"
+                            value={p}
+                            onChange={(e) => setPaleta(idx, pi, e.target.value)}
+                            placeholder="Cantidad en esta paleta"
+                            aria-label={`Cantidad de la paleta ${pi + 1}`}
+                          />
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 shrink-0 text-slate-400 hover:text-rose-600"
+                            onClick={() => quitarPaleta(idx, pi)}
+                            title={`Quitar paleta ${pi + 1}`}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 gap-1 px-2 text-[10px] border-dashed"
+                        disabled={it.paletas.length >= MAX_PALETAS}
+                        onClick={() => agregarPaleta(idx)}
+                      >
+                        <Plus className="h-2.5 w-2.5" /> Agregar paleta
+                      </Button>
+                      {(() => {
+                        const suma = sumaPaletas(it.paletas)
+                        const total = aNumero(it.cantidad)
+                        const difieren =
+                          suma > 0 && !isNaN(total) && total > 0 && Math.abs(suma - total) > 0.001
+                        return (
+                          <p className={`text-[10px] font-semibold ${difieren ? 'text-amber-700' : 'text-slate-500'}`}>
+                            Suma de paletas: {formatearCantidad(suma)}
+                            {!isNaN(total) && total > 0 ? ` · Total en la guía: ${formatearCantidad(total)}` : ''}
+                            {difieren ? ' — revisa las cantidades' : ''}
+                          </p>
+                        )
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )
         })}

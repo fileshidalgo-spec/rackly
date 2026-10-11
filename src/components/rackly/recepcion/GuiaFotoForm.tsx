@@ -27,6 +27,8 @@ import {
   extraerDatosGuiaDeTextos,
   extraerPalabras,
   extraerAnclasTabla,
+  dividirFranjaEnBandas,
+  fusionarDatos,
   mejorarImagenOCR,
   MARGEN_OCR,
   puntuarExtraccion,
@@ -34,6 +36,7 @@ import {
   reducirImagen,
   type DatosGuia,
 } from '@/lib/rackly/guia-ocr'
+import { expandirEnFilas } from '@/lib/rackly/recepcion-filas'
 import { crearRecepciones, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
 import {
   RecepcionItemsEditor,
@@ -43,7 +46,7 @@ import {
 } from '@/components/rackly/recepcion/RecepcionItemsEditor'
 import {
   ImprimirRotulosDialog,
-  rotulosDesdeItems,
+  filasARotulos,
   type RotuloAImprimir,
 } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
 import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
@@ -127,6 +130,7 @@ function itemDesdeOcr(item: DatosGuia['items'][number]): ItemRecepcion {
 function extraccionSuficiente(d: DatosGuia): boolean {
   return d.items.length > 0 && Boolean(d.numeroGuia) && Boolean(d.placa)
 }
+void extraccionSuficiente
 
 export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   const { perfil } = useAuth()
@@ -279,12 +283,13 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
 
         // PASADA ZOOM — "cuadro por cuadro": con las anclas del formato
         // estándar (…TRANSPORTADOS / NOTAS…) se recorta la franja de la
-        // tabla y se vuelve a leer escalada ×3. Es lo que rescata los
-        // códigos de letra pequeña (validado con la guía real AJER).
+        // tabla y se vuelve a leer escalada ×3, dividida en TRAMOS con
+        // solape (una tabla larga a ×3 entera era una imagen enorme y el
+        // OCR perdía filas enteras al final). Es lo que rescata los códigos
+        // de letra pequeña (validado con la guía real AJER).
         let textoTabla: string | null = null
         const anclas = extraerAnclasTabla(extraerPalabras(d1))
         if (anclas) {
-          setEtapa('Escaneando la tabla de artículos (zoom)…')
           try {
             const bitmap = await createImageBitmap(archivo)
             // La imagen leída por el OCR viene de mejorarImagenOCR: escalada
@@ -295,13 +300,23 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
             const escala = 2800 / Math.max(bitmap.width, bitmap.height)
             bitmap.close?.()
             const aOriginal = (yOcr: number) => Math.max(0, (yOcr - MARGEN_OCR) / escala)
-            const franja = await recortarFranjaTabla(
-              archivo,
-              aOriginal(anclas.yTop),
-              aOriginal(anclas.yBot),
-              3
-            )
-            textoTabla = await ocrTexto(PSM.SINGLE_BLOCK, franja)
+            const bandas = dividirFranjaEnBandas(aOriginal(anclas.yTop), aOriginal(anclas.yBot))
+            const textos: string[] = []
+            for (let bi = 0; bi < bandas.length; bi++) {
+              setEtapa(
+                bandas.length > 1
+                  ? `Escaneando la tabla (zoom, parte ${bi + 1} de ${bandas.length})…`
+                  : 'Escaneando la tabla de artículos (zoom)…'
+              )
+              try {
+                const franja = await recortarFranjaTabla(archivo, bandas[bi].y0, bandas[bi].y1, 3)
+                const t = await ocrTexto(PSM.SINGLE_BLOCK, franja)
+                if (t.trim()) textos.push(t)
+              } catch {
+                // Un tramo fallido no aborta los demás (exhaustivo por diseño).
+              }
+            }
+            textoTabla = textos.length > 0 ? textos.join('\n') : null
           } catch {
             textoTabla = null
           }
@@ -309,15 +324,29 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
 
         let datos = extraerDatosGuiaDeTextos(texto1, textoTabla, catalogoParaOCR)
 
-        // PASADA 3 — revisión más estricta: si faltan pilares (artículos,
-        // guía o placa) se relee la página completa con PSM 3 (layout
-        // automático) y gana la extracción con mejor puntuación.
-        if (!extraccionSuficiente(datos)) {
-          setEtapa('Revisando lectura con un segundo pase…')
+        // PASADA 3 — SIEMPRE: releer la página completa con PSM 3 (layout
+        // automático) y FUSIONAR (unión sin duplicados). Antes solo corría
+        // si faltaban pilares y el ganador por puntos DESCARTABA las filas
+        // que el otro pase sí había leído — esa era la fuente principal de
+        // datos omitidos. El 2º pase cuesta segundos y rescata filas.
+        {
+          setEtapa('Revisando la lectura con un segundo pase…')
           const imagenBase = await reducirImagen(archivo, 2800, 0.9)
           const texto2 = await ocrTexto(PSM.AUTO, imagenBase)
           const datos2 = extraerDatosGuiaDeTextos(texto2, textoTabla, catalogoParaOCR)
-          if (puntuarExtraccion(datos2) > puntuarExtraccion(datos)) {
+          const fusion = fusionarDatos(datos, datos2)
+          // La fusión gana si aporta algo (más artículos, guía o placa);
+          // si el 2º pase no añadió nada, se queda la lectura original.
+          if (
+            fusion.items.length > datos.items.length ||
+            (!datos.numeroGuia && fusion.numeroGuia) ||
+            (!datos.placa && fusion.placa) ||
+            (!datos.proveedor && fusion.proveedor)
+          ) {
+            datos = fusion
+          } else if (puntuarExtraccion(datos2) > puntuarExtraccion(datos)) {
+            // Sin aporte en cantidad pero mejor lectura cualitativa (más
+            // en catálogo): gana el 2º pase para encabezados/items coherentes.
             datos = datos2
           }
         }
@@ -373,32 +402,54 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         }
       }
       const fecha = form.fecha || hoyISO()
+      // DIVIDIR: cada artículo dividido en N paletas se expande a N filas
+      // (mismo código; cantidad propia; "Paleta i/N" en observaciones).
+      const filas = expandirEnFilas(validos)
+      // Aviso POR ARTÍCULO dividido: la suma de sus paletas debería
+      // cuadrar con el total de la guía (se permite guardar igual —
+      // mermas/parciales — pero nunca en silencio).
+      for (const it of validos) {
+        if (!it.paletas || it.paletas.length === 0) continue
+        const sumaP = it.paletas.reduce((acc, p) => {
+          const n = aNumero(p ?? '')
+          return acc + (isNaN(n) ? 0 : n)
+        }, 0)
+        const total = aNumero(it.cantidad)
+        if (sumaP > 0 && !isNaN(total) && total > 0 && Math.abs(sumaP - total) > 0.001) {
+          toast.warning('Las paletas no suman el total del artículo', {
+            description: `${it.codigo || it.descripcion}: paletas ${sumaP} ≠ total ${total}. Se registra lo digitado en las paletas.`,
+          })
+          break // un solo aviso basta (no spamear por cada artículo)
+        }
+      }
       await crearRecepciones(
-        validos.map((it) => ({
+        filas.map((f) => ({
           fecha,
           tipoDocumento: form.tipoDocumento,
           numeroDocumento: form.numeroGuia,
           proveedor: form.proveedor,
-          codigo: it.codigo,
-          descripcion: it.descripcion,
-          cantidad: aNumero(it.cantidad),
-          unidadMedida: it.unidad,
-          lote: it.lote,
-          fechaProduccion: it.fechaProduccion,
-          fechaVencimiento: it.fechaVencimiento,
+          codigo: f.codigo,
+          descripcion: f.descripcion,
+          cantidad: f.cantidadNum,
+          unidadMedida: f.unidad,
+          lote: f.lote,
+          fechaProduccion: f.fechaProduccion,
+          fechaVencimiento: f.fechaVencimiento,
           placa: form.placa,
           fotoUrl,
-          observaciones: form.observaciones,
+          observaciones: [form.observaciones, f.paleta].filter(Boolean).join(' · '),
         })),
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )
-      toast.success(`Recepción registrada con foto: ${validos.length} artículo(s)`)
+      toast.success(
+        `Recepción registrada con foto: ${validos.length} artículo(s) · ${filas.length} fila(s)`
+      )
       // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
-      // se abre solo, listo para digitar las etiquetas por artículo. La
-      // impresión solo existe DESPUÉS de registrar (carga ya validada).
+      // se abre solo, listo para digitar las etiquetas por artículo/paleta.
+      // La impresión solo existe DESPUÉS de registrar (carga ya validada).
       // Si lo guardado no trae ningún código no hay rótulos que imprimir:
       // se avisa en vez de abrir un modal vacío.
-      const rotulos = rotulosDesdeItems(validos)
+      const rotulos = filasARotulos(validos)
       if (rotulos.length > 0) {
         setGuardados({
           rotulos,
@@ -409,7 +460,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
             placa: form.placa,
             registradoPor: perfil.nombre,
           },
-          nota: `Recepción guardada: ${validos.length} artículo(s) en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
+          nota: `Recepción guardada: ${filas.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
         })
         setRotulosOpen(true)
       } else {

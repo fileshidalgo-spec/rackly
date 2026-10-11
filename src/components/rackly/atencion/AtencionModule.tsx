@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import {
   listarAtenciones,
@@ -114,22 +115,36 @@ export function AtencionModule() {
   // Guard generacional: descarta respuestas viejas cuando hay una carga más reciente
   const cargaGenRef = useRef(0)
 
+  // ── REFRESCO AUTOMÁTICO (realtime + polling) ──
+  // Misma mecánica que Recepción: solo se pisa la lista si el usuario está
+  // en la primera página, y con los filtros COMMITADOS de la última carga.
+  const offsetRef = useRef(0)
+  const filtrosActivosRef = useRef({ busqueda: '', estado: '' })
+
   const cargar = useCallback(
-    async (nuevoOffset: number, reemplazar: boolean) => {
+    async (
+      nuevoOffset: number,
+      reemplazar: boolean,
+      filtros?: { busqueda: string; estado: string }
+    ) => {
       // Guard generacional: la respuesta vieja (de un filtro/anterior Enter) no
       // debe pisar la lista cuando ya se pidió otra más reciente
       const gen = ++cargaGenRef.current
       setLoading(true)
       try {
+        const fBusqueda = filtros?.busqueda ?? busqueda
+        const fEstado = filtros ? filtros.estado : estadoFiltro === 'todos' ? '' : estadoFiltro
+        if (!filtros) filtrosActivosRef.current = { busqueda: fBusqueda, estado: fEstado }
         const { filas: filasNuevas, total: totalNuevo } = await listarAtenciones({
-          busqueda,
-          estado: estadoFiltro === 'todos' ? '' : estadoFiltro,
+          busqueda: fBusqueda,
+          estado: fEstado,
           limit: PAGE_SIZE,
           offset: nuevoOffset,
         })
         if (gen !== cargaGenRef.current) return // llegó una carga más reciente
         setFilas((prev) => (reemplazar ? filasNuevas : [...prev, ...filasNuevas]))
         setTotal(totalNuevo)
+        offsetRef.current = nuevoOffset
         setOffset(nuevoOffset)
       } catch (err: unknown) {
         if (gen !== cargaGenRef.current) return
@@ -141,6 +156,19 @@ export function AtencionModule() {
     },
     [busqueda, estadoFiltro]
   )
+
+  /** Refresco en segundo plano (realtime/polling), solo en página 1. */
+  const recargarLista = useCallback(() => {
+    if (offsetRef.current !== 0) return
+    void cargar(0, true, {
+      busqueda: filtrosActivosRef.current.busqueda,
+      estado: filtrosActivosRef.current.estado,
+    })
+  }, [cargar])
+
+  // Lo que registra otro usuario (o este mismo desde el celular) aparece
+  // sin recargar la página.
+  useRegistrosRealtime('atencion_registros', recargarLista)
 
   useEffect(() => {
     cargar(0, true)

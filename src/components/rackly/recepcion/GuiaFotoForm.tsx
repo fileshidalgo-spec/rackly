@@ -4,7 +4,12 @@
  * RACKLY — Recepción · Opción "Con foto de guía".
  *
  * Flujo:
- *   1. Usuario toma foto a la guía (cámara móvil o archivo).
+ *   1. Usuario toma foto a la guía (cámara móvil o archivo) — la galería usa
+ *      su PROPIO input sin `capture` (antes forzaba la cámara en el celular).
+ *   1b. RECORTE: la foto pasa primero por el diálogo de recorte (react-easy-
+ *      crop); solo la parte seleccionada de la guía se escanea y se guarda.
+ *      Se puede usar la foto completa o reajustar el recorte desde la
+ *      confirmación (originalRef conserva la fuente original).
  *   2. Se reduce la imagen (2800px, tablas largas con letra pequeña),
  *      corre OCR (tesseract.js, idioma spa) y el parser `extraerDatosGuia`
  *      recopila: nº guía, placa, proveedor y TODOS los códigos de artículo
@@ -49,6 +54,10 @@ import {
   filasARotulos,
   type RotuloAImprimir,
 } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
+import {
+  RecortarImagenDialog,
+  type OrigenRecorte,
+} from '@/components/rackly/recepcion/RecortarImagenDialog'
 import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -65,6 +74,7 @@ import {
 import { toast } from 'sonner'
 import {
   Camera,
+  Crop,
   Loader2,
   ScanLine,
   RotateCcw,
@@ -81,7 +91,7 @@ function hoyISO(): string {
   return `${d.getFullYear()}-${mes}-${dia}`
 }
 
-type Paso = 'elegir' | 'procesando' | 'confirmar'
+type Paso = 'elegir' | 'recortar' | 'procesando' | 'confirmar'
 
 /** Estado del formulario de confirmación: encabezado + lista de artículos. */
 type FormFoto = {
@@ -158,7 +168,17 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     setRotulosOpen(open)
     if (!open) setGuardados(null)
   }
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputCamaraRef = useRef<HTMLInputElement>(null)
+  const inputGaleriaRef = useRef<HTMLInputElement>(null)
+
+  // ── RECORTE previo al OCR ──
+  // La foto elegida pasa primero por el recorte (solo la parte de la guía
+  // se escanea y se guarda). `pendiente` es la foto original esperando
+  // recorte; `originalRef` conserva la fuente ORIGINAL para poder
+  // re-recortar desde la confirmación sin volver a tomar la foto.
+  const [pendiente, setPendiente] = useState<File | null>(null)
+  const [origenRecorte, setOrigenRecorte] = useState<OrigenRecorte>('inicio')
+  const originalRef = useRef<File | null>(null)
 
   useEffect(() => {
     fetchCatalogo().then((c) => setCatalogo(c))
@@ -221,6 +241,13 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     )
   }
 
+  /** Foto elegida (cámara o galería): abre el recorte ANTES de procesar. */
+  function alElegirFoto(f: File, origen: OrigenRecorte) {
+    setPendiente(f)
+    setOrigenRecorte(origen)
+    setPaso('recortar')
+  }
+
   async function procesar(archivo: File) {
     setPaso('procesando')
     setProgreso(0)
@@ -232,6 +259,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         setThumb('')
       }
       setEtapa('Preparando imagen (contraste)…')
+      // Fuente ORIGINAL conservada para "Recortar foto" desde la
+      // confirmación (re-encuadrar y re-escanear sin volver a fotografiar).
+      originalRef.current = archivo
       // Preprocesado: gris + contraste → mejora la lectura de la tabla
       const imagen = await mejorarImagenOCR(archivo, 2800)
       const liviana = await reducirImagen(archivo, 1200, 0.8)
@@ -370,7 +400,21 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     setFotoBlob(null)
     setForm(formVacio())
     setProgreso(0)
+    originalRef.current = null
+    setPendiente(null)
     setPaso('elegir')
+  }
+
+  /** Cancela el recorte: vuelve al paso desde donde se abrió. */
+  function cancelarRecorte() {
+    setPendiente(null)
+    setPaso(origenRecorte === 'confirmar' ? 'confirmar' : 'elegir')
+  }
+
+  /** Aplica el recorte elegido (o la foto completa) y corre el OCR. */
+  function usarFoto(f: File) {
+    setPendiente(null)
+    void procesar(f)
   }
 
   // Al desmontar (cambiar a modo Manual o salir del módulo), liberar el
@@ -481,6 +525,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   // ────────────────────────────────────────────────────────────
   // Modal de rótulos: visible en CUALQUIER paso (tras guardar, el
   // formulario vuelve al paso 1 con el modal abierto encima).
+  // Modal de recorte: se abre sobre el paso actual al elegir foto
+  // (o al reajustar desde la confirmación).
   // ────────────────────────────────────────────────────────────
   const dialogRotulos = (
     <ImprimirRotulosDialog
@@ -493,6 +539,19 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           : { fecha: '', numeroDocumento: '', proveedor: '', placa: '', registradoPor: '' }
       }
       nota={guardados?.nota}
+    />
+  )
+
+  const dialogRecorte = (
+    <RecortarImagenDialog
+      open={paso === 'recortar' && pendiente !== null}
+      archivo={pendiente}
+      origen={origenRecorte}
+      onCancelar={cancelarRecorte}
+      onAplicar={usarFoto}
+      onUsarCompleto={() => {
+        if (pendiente) usarFoto(pendiente)
+      }}
     />
   )
 
@@ -515,34 +574,71 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         </p>
         <p className="text-[11px] text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2.5 py-1.5 mb-4">
           Consejo: foto <b>directa y nítida</b>, guía completa y sin sombras. Las fotos reenviadas
-          por WhatsApp pierden resolución. El app escanea la tabla con zoom y verifica los códigos
-          contra el catálogo; lo que no se lea bien se marca para revisar.
+          por WhatsApp pierden resolución. Después de tomar la foto podrás <b>recortarla</b> para
+          dejar solo la guía (se escanea y se guarda solo esa parte). El app escanea la tabla con
+          zoom y verifica los códigos contra el catálogo; lo que no se lea bien se marca para revisar.
         </p>
         <input
-          ref={inputRef}
+          ref={inputCamaraRef}
           type="file"
           accept="image/*"
           capture="environment"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0]
-            if (f) void procesar(f)
+            if (f) alElegirFoto(f, 'inicio')
+            e.currentTarget.value = ''
+          }}
+        />
+        {/* La galería SIN `capture`: con capture el celular forzaba la cámara
+            también en este botón y no dejaba elegir de la galería. */}
+        <input
+          ref={inputGaleriaRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) alElegirFoto(f, 'inicio')
             e.currentTarget.value = ''
           }}
         />
         <div className="grid gap-2 sm:grid-cols-2">
           <Button
-            onClick={() => inputRef.current?.click()}
+            onClick={() => inputCamaraRef.current?.click()}
             className="gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
           >
             <Camera className="h-4 w-4" /> Tomar foto a la guía
           </Button>
-          <Button variant="outline" onClick={() => inputRef.current?.click()} className="gap-2">
+          <Button variant="outline" onClick={() => inputGaleriaRef.current?.click()} className="gap-2">
             <ImageIcon className="h-4 w-4" /> Elegir imagen de la galería
           </Button>
         </div>
       </div>
       {dialogRotulos}
+      {dialogRecorte}
+      </>
+    )
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // PASO 1b: recorte de la foto (el diálogo lleva la UI; el panel
+  // de fondo solo informa). Al aplicar se pasa al paso procesando.
+  // ────────────────────────────────────────────────────────────
+  if (paso === 'recortar') {
+    return (
+      <>
+      <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-6">
+        <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+          <Crop className="h-4 w-4" /> Encuadra la guía para escanear solo esa parte…
+        </div>
+        <p className="mt-1 text-xs text-slate-400">
+          Arrastra y ajusta el recorte en la ventana abierta. Allí puedes cancelar, usar la foto
+          completa o aplicar el recorte.
+        </p>
+      </div>
+      {dialogRotulos}
+      {dialogRecorte}
       </>
     )
   }
@@ -561,6 +657,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         <p className="text-xs text-slate-400">Esto puede tardar unos segundos según la foto.</p>
       </div>
       {dialogRotulos}
+      {dialogRecorte}
       </>
     )
   }
@@ -577,9 +674,27 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           <Camera className="h-4 w-4 text-amber-600" />
           <h3 className="text-sm font-bold text-amber-900">Confirmar datos de la guía</h3>
         </div>
-        <Button size="sm" variant="ghost" onClick={reiniciar} className="gap-1.5 text-xs">
-          <RotateCcw className="h-3.5 w-3.5" /> Otra foto
-        </Button>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Reajustar el recorte sobre la foto ORIGINAL (sin volver a
+              fotografiar): re-escanea con el nuevo encuadre. */}
+          {originalRef.current && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setPendiente(originalRef.current)
+                setOrigenRecorte('confirmar')
+                setPaso('recortar')
+              }}
+              className="gap-1.5 text-xs"
+            >
+              <Crop className="h-3.5 w-3.5" /> Recortar foto
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={reiniciar} className="gap-1.5 text-xs">
+            <RotateCcw className="h-3.5 w-3.5" /> Otra foto
+          </Button>
+        </div>
       </div>
 
       <div className="flex gap-4 flex-wrap">
@@ -681,9 +796,10 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
             REGISTRAR, cuando la carga ya fue validada y guardada. */}
       </div>
 
-      {/* Impresión de rótulos: renderizado compartido al final (dialogRotulos). */}
+      {/* Impresión de rótulos + recorte: renderizado compartido al final. */}
     </div>
     {dialogRotulos}
+    {dialogRecorte}
     </>
   )
 }

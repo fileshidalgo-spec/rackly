@@ -18,6 +18,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
 import { agruparGuias, avisosDePaletas, expandirEnFilas, filasAItems, obsSinMarcaPaleta, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
@@ -326,20 +327,36 @@ export function RecepcionModule() {
   // filtros y el conteo/paginación quedaban incoherentes)
   const cargaGenRef = useRef(0)
 
+  // ── REFRESCO AUTOMÁTICO (realtime + polling) ──
+  // offsetRef: ¿dónde está navegando el usuario? Si cargó más páginas
+  // ("Cargar más"), NO se le pisa la lista al refrescar: respetar su lectura.
+  // filtrosActivosRef: los filtros COMMITADOS en la última carga (no lo que
+  // el usuario esté tecleando a medio buscar) para re-refrescar igual.
+  const offsetRef = useRef(0)
+  const filtrosActivosRef = useRef({ busqueda: '', estado: '' })
+
   const cargar = useCallback(
-    async (nuevoOffset: number, reemplazar: boolean) => {
+    async (
+      nuevoOffset: number,
+      reemplazar: boolean,
+      filtros?: { busqueda: string; estado: string }
+    ) => {
       const gen = ++cargaGenRef.current
       setLoading(true)
       try {
+        const fBusqueda = filtros?.busqueda ?? busqueda
+        const fEstado = filtros ? filtros.estado : estadoFiltro === 'todos' ? '' : estadoFiltro
+        if (!filtros) filtrosActivosRef.current = { busqueda: fBusqueda, estado: fEstado }
         const { filas: filasNuevas, total: totalNuevo } = await listarRecepciones({
-          busqueda,
-          estado: estadoFiltro === 'todos' ? '' : estadoFiltro,
+          busqueda: fBusqueda,
+          estado: fEstado,
           limit: PAGE_SIZE,
           offset: nuevoOffset,
         })
         if (gen !== cargaGenRef.current) return // llegó una carga más reciente
         setFilas((prev) => (reemplazar ? filasNuevas : [...prev, ...filasNuevas]))
         setTotal(totalNuevo)
+        offsetRef.current = nuevoOffset
         setOffset(nuevoOffset)
       } catch (err: unknown) {
         if (gen !== cargaGenRef.current) return
@@ -351,6 +368,24 @@ export function RecepcionModule() {
     },
     [busqueda, estadoFiltro]
   )
+
+  /**
+   * Refresco en segundo plano (lo dispara el realtime/polling): SOLO cuando
+   * el usuario está en la primera página — si ya cargó más filas con "Cargar
+   * más", pisarle la lista cada evento le rompería la lectura. En ese caso
+   * el botón Buscar/actualizar sigue disponible.
+   */
+  const recargarLista = useCallback(() => {
+    if (offsetRef.current !== 0) return
+    void cargar(0, true, {
+      busqueda: filtrosActivosRef.current.busqueda,
+      estado: filtrosActivosRef.current.estado,
+    })
+  }, [cargar])
+
+  // Realtime: lo que registra OTRO usuario (o este mismo desde el celular)
+  // aparece sin recargar la página.
+  useRegistrosRealtime('recepcion_registros', recargarLista)
 
   useEffect(() => {
     cargar(0, true)

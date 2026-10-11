@@ -27,7 +27,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import type { PSM } from 'tesseract.js'
 import { fetchCatalogo, getCachedCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
-import { aNumero } from '@/lib/rackly/formato'
 import {
   extraerDatosGuiaDeTextos,
   extraerPalabras,
@@ -41,7 +40,7 @@ import {
   reducirImagen,
   type DatosGuia,
 } from '@/lib/rackly/guia-ocr'
-import { expandirEnFilas } from '@/lib/rackly/recepcion-filas'
+import { avisosDePaletas, expandirEnFilas } from '@/lib/rackly/recepcion-filas'
 import { crearRecepciones, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
 import {
   RecepcionItemsEditor,
@@ -451,20 +450,13 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
       const filas = expandirEnFilas(validos)
       // Aviso POR ARTÍCULO dividido: la suma de sus paletas debería
       // cuadrar con el total de la guía (se permite guardar igual —
-      // mermas/parciales — pero nunca en silencio).
-      for (const it of validos) {
-        if (!it.paletas || it.paletas.length === 0) continue
-        const sumaP = it.paletas.reduce((acc, p) => {
-          const n = aNumero(p ?? '')
-          return acc + (isNaN(n) ? 0 : n)
-        }, 0)
-        const total = aNumero(it.cantidad)
-        if (sumaP > 0 && !isNaN(total) && total > 0 && Math.abs(sumaP - total) > 0.001) {
-          toast.warning('Las paletas no suman el total del artículo', {
-            description: `${it.codigo || it.descripcion}: paletas ${sumaP} ≠ total ${total}. Se registra lo digitado en las paletas.`,
-          })
-          break // un solo aviso basta (no spamear por cada artículo)
-        }
+      // mermas/parciales — pero nunca en silencio). MISMA regla que la vía
+      // manual: una sola implementación (avisosDePaletas).
+      const avisos = avisosDePaletas(validos)
+      if (avisos.length > 0) {
+        toast.warning('Las paletas no suman el total del artículo', {
+          description: `${avisos[0]}. Se registra lo digitado en las paletas.`,
+        })
       }
       await crearRecepciones(
         filas.map((f) => ({

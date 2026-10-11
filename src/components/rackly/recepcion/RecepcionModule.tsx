@@ -35,6 +35,7 @@ import {
   type RotuloAImprimir,
 } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
 import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
+import { exportarGuiaExcel } from '@/lib/rackly/guia-excel'
 import {
   listarRecepciones,
   listarRecepcionesPorDocumento,
@@ -89,6 +90,7 @@ import {
   PencilLine,
   ExternalLink,
   Printer,
+  FileSpreadsheet,
   ChevronDown,
   ChevronRight,
   X,
@@ -155,6 +157,10 @@ export function RecepcionModule() {
   // trabajo de impresión). `cargandoGuia` evita dobles clicks mientras
   // se consulta la BD.
   const [cargandoGuia, setCargandoGuia] = useState(false)
+  // Exportación a EXCEL por guía: guarda la CLAVE de la guía en curso (un
+  // archivo a la vez; el botón de ESA guía muestra el spinner mientras se
+  // trae la guía completa de la BD y se genera el libro).
+  const [exportando, setExportando] = useState<string | null>(null)
   const [guardados, setGuardados] = useState<{
     rotulos: RotuloAImprimir[]
     encabezado: EncabezadoRotulo
@@ -244,9 +250,51 @@ export function RecepcionModule() {
     }
   }
 
+  /**
+   * Exporta la guía COMPLETA a Excel (pedido del usuario: "que en la guía
+   * registrada genere un archivo en excel que se pueda descargar, con toda
+   * la información registrada"). Antes de exportar trae TODAS las filas del
+   * documento desde la BD: la página visible puede estar paginada y el
+   * Excel debe contener TODO el documento, no solo lo ya cargado en memoria.
+   */
+  async function descargarExcelGuia(g: GuiaAgrupada) {
+    if (exportando) return
+    setExportando(g.clave)
+    try {
+      const filasGuia = await listarRecepcionesPorDocumento({
+        tipoDocumento: g.ref.tipoDocumento,
+        numeroDocumento: g.ref.numeroDocumento,
+        fecha: g.ref.fecha,
+        proveedor: g.ref.proveedor,
+      })
+      // Fallback defensivo (mismo criterio que la reimpresión): la guía
+      // clickeada SIEMPRE exporta aunque la consulta venga vacía.
+      const filas = filasGuia.length > 0 ? filasGuia : g.filas
+      const nombre = await exportarGuiaExcel({
+        fecha: g.fecha,
+        tipoDocumento: g.tipoDocumento,
+        numeroDocumento: g.numeroDocumento,
+        proveedor: g.proveedor,
+        placa: g.placa,
+        fotoUrl: g.fotoUrl,
+        estado: g.estado,
+        usuarioNombre: g.usuarioNombre,
+        usuarioCorreo: g.usuarioCorreo,
+        filas,
+        cantidadTotal: filas.reduce((s, f) => s + f.cantidad, 0),
+      })
+      toast.success(`Excel descargado: ${nombre}`, {
+        description: `${filas.length} fila(s) con toda la información registrada (artículos, paletas, lote y fechas).`,
+      })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('No se pudo generar el Excel', { description: message })
+    } finally {
+      setExportando(null)
+    }
+  }
+
   // Formulario manual: encabezado del documento + lista de artículos.
-  // Una guía puede traer 20+ artículos; cada artículo = 1 fila en BD
-  // (o N filas si se DIVIDE en paletas).
   const [fFecha, setFFecha] = useState(hoyISO())
   const [fDoc, setFDoc] = useState('Guia')
   const [fNumero, setFNumero] = useState('')
@@ -834,13 +882,14 @@ export function RecepcionModule() {
               <TableHead className="min-w-[130px]">Registró</TableHead>
               <TableHead className="w-[60px] text-center" title="Imprimir los rótulos de TODA la guía (todos sus artículos)">Rótulo</TableHead>
               <TableHead className="w-[60px] text-center" title="Revisar y EDITAR la guía completa (cantidades, paletas, lote, fechas…)">Editar</TableHead>
+              <TableHead className="w-[60px] text-center" title="Descargar esta guía completa en Excel (encabezado + todos los artículos y paletas)">Excel</TableHead>
               {puedeEliminar && <TableHead className="w-[60px]" />}
             </TableRow>
           </TableHeader>
           <TableBody>
             {grupos.length === 0 && !loading && (
               <TableRow>
-                <TableCell colSpan={puedeEliminar ? 12 : 11} className="text-center text-sm text-slate-400 py-10">
+                <TableCell colSpan={puedeEliminar ? 13 : 12} className="text-center text-sm text-slate-400 py-10">
                   <Inbox className="h-8 w-8 mx-auto mb-2 text-slate-300" />
                   No hay recepciones registradas con los filtros actuales.
                 </TableCell>
@@ -955,6 +1004,18 @@ export function RecepcionModule() {
                         {cargandoEdicion ? <Loader2 className="h-4 w-4 animate-spin" /> : <PencilLine className="h-4 w-4" />}
                       </Button>
                     </TableCell>
+                    <TableCell className="text-center">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                        onClick={() => void descargarExcelGuia(g)}
+                        disabled={!!exportando}
+                        title="Descargar esta guía completa en Excel: encabezado + todos los artículos y paletas (lote, fechas, estado…)"
+                      >
+                        {exportando === g.clave ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+                      </Button>
+                    </TableCell>
                     {puedeEliminar && (
                       <TableCell className="text-right">
                         <Button
@@ -971,7 +1032,7 @@ export function RecepcionModule() {
                   </TableRow>
                   {abierta && (
                     <TableRow className="bg-slate-50/70 hover:bg-slate-50/70">
-                      <TableCell colSpan={puedeEliminar ? 12 : 11} className="p-0">
+                      <TableCell colSpan={puedeEliminar ? 13 : 12} className="p-0">
                         <div className="px-4 py-3 space-y-1.5">
                           {g.filas.map((f, i) => {
                             const mPaleta = f.observaciones?.match(/Paleta \d+\/\d+/)
@@ -1117,6 +1178,16 @@ export function RecepcionModule() {
               >
                 {cargandoEdicion ? <Loader2 className="h-3 w-3 animate-spin" /> : <PencilLine className="h-3 w-3" />}
                 Revisar / editar la guía
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full gap-1 text-emerald-700 hover:bg-emerald-50"
+                onClick={() => void descargarExcelGuia(g)}
+                disabled={!!exportando}
+              >
+                {exportando === g.clave ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileSpreadsheet className="h-3 w-3" />}
+                Descargar Excel de la guía
               </Button>
               {puedeEliminar && (
                 <Button

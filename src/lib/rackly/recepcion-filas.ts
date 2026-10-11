@@ -17,9 +17,43 @@
 import { aNumero } from '@/lib/rackly/formato'
 
 /**
+ * Una PALETA del editor de división: SU cantidad y OPCIONALMENTE sus datos
+ * propios de lote/fechas (pedido del usuario: poder corregir el
+ * vencimiento/producción/lote de UNA paleta específica — o aplicar el mismo
+ * a todas — sin cambiar código, descripción ni la cantidad total que ya
+ * jaló la guía). Un campo vacío = esa paleta USA el dato del artículo.
+ */
+export type PaletaDividir = {
+  cantidad: string
+  lote: string
+  fechaProduccion: string
+  fechaVencimiento: string
+}
+
+/** Paleta vacía (hereda lote/fechas del artículo; sin cantidad). */
+export function paletaVacia(): PaletaDividir {
+  return { cantidad: '', lote: '', fechaProduccion: '', fechaVencimiento: '' }
+}
+
+/**
+ * Normaliza una paleta: acepta el formato antiguo (string = solo cantidad)
+ * por compatibilidad con datos ya construidos en memoria — nunca lanza.
+ */
+export function aPaleta(valor: string | PaletaDividir): PaletaDividir {
+  if (typeof valor === 'string') return { ...paletaVacia(), cantidad: valor }
+  return {
+    cantidad: valor.cantidad ?? '',
+    lote: valor.lote ?? '',
+    fechaProduccion: valor.fechaProduccion ?? '',
+    fechaVencimiento: valor.fechaVencimiento ?? '',
+  }
+}
+
+/**
  * Entrada: un artículo del editor (ItemRecepcion satisface esta forma;
  * se declara estructural para no acoplar la lib a la UI).
- * `paletas` = cantidades digitadas por paleta (vacío = artículo sin dividir).
+ * `paletas` = paletas digitadas (vacío/ausente = artículo sin dividir);
+ * cada una lleva su cantidad y opcionalmente su lote/fechas propios.
  */
 export type ItemConPaletas = {
   codigo: string
@@ -29,7 +63,7 @@ export type ItemConPaletas = {
   lote: string
   fechaProduccion: string
   fechaVencimiento: string
-  paletas?: string[]
+  paletas?: PaletaDividir[]
 }
 
 /** Fila concreta a registrar en la BD / a rotular. */
@@ -50,12 +84,32 @@ export type FilaRecepcion = {
 export const MAX_PALETAS = 10
 
 /** Suma de las cantidades válidas (> 0) digitadas en las paletas. */
-export function sumaPaletas(paletas: string[] | undefined): number {
+export function sumaPaletas(paletas: (string | PaletaDividir)[] | undefined): number {
   if (!paletas) return 0
   return paletas.reduce((s, p) => {
-    const n = aNumero(p ?? '')
+    const n = aNumero(aPaleta(p).cantidad)
     return s + (isNaN(n) ? 0 : n)
   }, 0)
+}
+
+/**
+ * Junta las cantidades del REPARTO con las paletas previas: conserva el
+ * lote/fechas PROPIO de cada posición existente (agregar/quitar NO borra lo
+ * digitado por paleta) y las paletas nuevas nacen heredando del artículo
+ * (override ''). Si no llega reparto (null) conserva las cantidades tal cual.
+ */
+export function combinarPaletas(
+  prev: (string | PaletaDividir)[],
+  cantidades: string[] | null
+): PaletaDividir[] {
+  const prevN = (prev ?? []).map(aPaleta)
+  const n = cantidades ? cantidades.length : prevN.length
+  return Array.from({ length: n }, (_, i) => ({
+    cantidad: cantidades?.[i] ?? prevN[i]?.cantidad ?? '',
+    lote: prevN[i]?.lote ?? '',
+    fechaProduccion: prevN[i]?.fechaProduccion ?? '',
+    fechaVencimiento: prevN[i]?.fechaVencimiento ?? '',
+  }))
 }
 
 /** Cantidad total digitada del artículo (NaN si está vacía). */
@@ -82,16 +136,26 @@ export function expandirEnFilas(items: ItemConPaletas[]): FilaRecepcion[] {
       fechaProduccion: (it.fechaProduccion ?? '').trim(),
       fechaVencimiento: (it.fechaVencimiento ?? '').trim(),
     }
-    const paletasValidas = (it.paletas ?? [])
-      .map((p) => aNumero(p ?? ''))
-      .filter((n) => !isNaN(n) && n > 0)
-    if (paletasValidas.length > 1) {
-      const n = paletasValidas.length
-      paletasValidas.forEach((cantidadNum, i) => {
+    // Datos propios POR PALETA: un campo lleno gana; vacío = hereda el del
+    // artículo (así editar el lote/fechas del artículo sigue moviendo a las
+    // paletas que no tengan dato propio — sin sorpresas).
+    const validas = (it.paletas ?? [])
+      .map(aPaleta)
+      .filter((p) => {
+        const n = aNumero(p.cantidad)
+        return !isNaN(n) && n > 0
+      })
+    if (validas.length > 1) {
+      const n = validas.length
+      validas.forEach((p, i) => {
+        const cantidadNum = aNumero(p.cantidad)
         filas.push({
           ...base,
           cantidad: formatearCantidad(cantidadNum),
           cantidadNum,
+          lote: (p.lote || base.lote).trim(),
+          fechaProduccion: (p.fechaProduccion || base.fechaProduccion).trim(),
+          fechaVencimiento: (p.fechaVencimiento || base.fechaVencimiento).trim(),
           paleta: `Paleta ${i + 1}/${n}`,
         })
       })
@@ -216,8 +280,15 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
     const marca = marcaPaletaDe(f.observaciones)
     const prev = items[items.length - 1]
     if (marca && prev && prev.codigo === f.codigo && prev.paletas && prev.paletas.length < marca.n) {
-      // Siguiente paleta del mismo artículo dividido.
-      prev.paletas.push(formatearCantidad(f.cantidad))
+      // Siguiente paleta del mismo artículo dividido: SU cantidad y sus
+      // datos PROPIOS solo si difieren de los del artículo (1ª fila del
+      // grupo = valores del artículo; igual → '' = hereda).
+      prev.paletas.push({
+        cantidad: formatearCantidad(f.cantidad),
+        lote: f.lote !== prev.lote ? f.lote : '',
+        fechaProduccion: f.fechaProduccion !== prev.fechaProduccion ? f.fechaProduccion : '',
+        fechaVencimiento: f.fechaVencimiento !== prev.fechaVencimiento ? f.fechaVencimiento : '',
+      })
       continue
     }
     if (marca) {
@@ -230,7 +301,7 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
         lote: f.lote,
         fechaProduccion: f.fechaProduccion,
         fechaVencimiento: f.fechaVencimiento,
-        paletas: [formatearCantidad(f.cantidad)],
+        paletas: [{ ...paletaVacia(), cantidad: formatearCantidad(f.cantidad) }],
       })
     } else {
       items.push({
@@ -252,6 +323,11 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
   }
   return items
 }
+
+// NOTA DE DISEÑO (lote/fechas por paleta): expandirEnFilas y filasAItems son
+// inversos — una guía guardada con lote/fechas distintos por paleta se
+// re-ensambla con esos overrides y al volver a expandir reproduce EXACTAMENTE
+// las mismas filas.
 
 // ═══════════════════════════════════════════════════════════════════
 // AGRUPADO DEL REGISTRO: UNA FILA POR GUÍA

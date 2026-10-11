@@ -17,19 +17,27 @@
  *                     N paletas con cantidades distintas: "Dividir en
  *                     paletas" parte el artículo y al registrar sale 1
  *                     fila/rótulo POR PALETA con su cantidad propia.
+ *                     Agregar/quitar paletas REPARTE el total solo.
  *   · Lote y fechas → manuales, por artículo; con acción "aplicar a todos"
  *                     para no repetir tecleo cuando coinciden.
+ *   · POR PALETA    → cada paleta puede llevar SU lote/producción/vencimiento
+ *                     (pedido del usuario: corregir una paleta específica, o
+ *                     aplicar el mismo a todas) SIN tocar código, descripción
+ *                     ni la cantidad total ya jalada; vacío = hereda del
+ *                     artículo.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import { buscarCatalogo, fetchCatalogo, isCatalogoLoaded, searchCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
 import { aNumero } from '@/lib/rackly/formato'
 import {
+  combinarPaletas,
   distribuirEquitativo,
   formatearCantidad,
   MAX_PALETAS,
   repartirEquitativo,
   sumaPaletas,
+  type PaletaDividir,
 } from '@/lib/rackly/recepcion-filas'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -68,8 +76,10 @@ export type ItemRecepcion = {
   descripcionManual: boolean
   /** El usuario escribió la unidad a mano (no la pisa el catálogo). */
   unidadManual: boolean
-  /** Cantidades por paleta (DIVIDIR): vacío/ausente = artículo sin dividir. */
-  paletas?: string[]
+  /** Paletas de la división (DIVIDIR): vacío/ausente = artículo sin dividir.
+   *  Cada paleta lleva su cantidad y opcionalmente su lote/fechas propios
+   *  ('' = usa los del artículo). */
+  paletas?: PaletaDividir[]
 }
 
 export function itemVacio(): ItemRecepcion {
@@ -97,7 +107,7 @@ export function itemsValidos(items: ItemRecepcion[]): ItemRecepcion[] {
   return items.filter((it) => {
     if (!it.codigo.trim() && !it.descripcion.trim()) return false
     if (it.paletas && it.paletas.some((p) => {
-      const n = aNumero(p ?? '')
+      const n = aNumero(p?.cantidad ?? '')
       return !isNaN(n) && n > 0
     })) return true
     const cantidad = aNumero(it.cantidad)
@@ -240,59 +250,13 @@ export function RecepcionItemsEditor({
 
   function dividir(idx: number) {
     const it = items[idx]
-    actualizar(idx, { paletas: distribuirEquitativo(it.cantidad, PALETAS_INICIALES) })
+    actualizar(idx, {
+      paletas: combinarPaletas([], distribuirEquitativo(it.cantidad, PALETAS_INICIALES)),
+    })
   }
 
   function quitarDivision(idx: number) {
     actualizar(idx, { paletas: undefined })
-  }
-
-  function setPaleta(idx: number, pi: number, valor: string) {
-    const it = items[idx]
-    const prev = it.paletas ?? []
-    const next = [...prev]
-    next[pi] = valor
-    actualizar(idx, { paletas: next })
-  }
-
-  /** REPARTO AUTOMÁTICO al cambiar el nº de paletas (pedido del usuario:
-   *  "si aumento la cantidad de paletas se vaya dividiendo a cada que
-   *  aumente — 100 en 4 paletas → 25 por paleta"). Al AGREGAR ya NO entra
-   *  una paleta vacía a rellenar a mano: el total del artículo se redistribuye
-   *  en partes iguales entre todas (la última absorbe el residuo). Si el
-   *  artículo no tiene total digitado ni suma en paletas, conserva los
-   *  valores y la paleta nueva queda vacía como antes. */
-  function agregarPaleta(idx: number) {
-    const it = items[idx]
-    const prev = it.paletas ?? []
-    if (prev.length >= MAX_PALETAS) return
-    const next = repartirEquitativo(it, prev.length + 1) ?? [...prev, '']
-    actualizar(idx, { paletas: next })
-  }
-
-  function quitarPaleta(idx: number, pi: number) {
-    const it = items[idx]
-    const prev = it.paletas ?? []
-    if (prev.length <= 2) {
-      // Con menos de 2 ya no tiene sentido dividir: se quita la división.
-      quitarDivision(idx)
-      return
-    }
-    // MISMA regla al quitar: las restantes se reparten el total en partes
-    // iguales (100 en 3 → borro 1 → quedan 50 y 50).
-    const restantes = prev.filter((_, i) => i !== pi)
-    const next = repartirEquitativo(it, restantes.length) ?? restantes
-    actualizar(idx, { paletas: next })
-  }
-
-  /** Vuelve a partes iguales sin cambiar el nº de paletas (deshace el
-   *  tecleo manual con un tap; usa el mismo total que el auto-reparto). */
-  function repartir(idx: number) {
-    const it = items[idx]
-    const prev = it.paletas ?? []
-    if (prev.length < 2) return
-    const next = repartirEquitativo(it, prev.length)
-    if (next) actualizar(idx, { paletas: next })
   }
 
   return (
@@ -520,90 +484,11 @@ export function RecepcionItemsEditor({
                 </div>
               ) : (
                 <div className="sm:pl-8">
-                  <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2.5 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="flex-1 min-w-[160px] text-[11px] font-semibold text-sky-900 flex items-start gap-1.5 leading-snug">
-                        <Package className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                        <span>
-                          Paletas ({it.paletas.length}) — al agregar o quitar se reparte el total en partes iguales (última absorbe el residuo)
-                        </span>
-                      </p>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 shrink-0 px-1.5 text-[10px] text-slate-500 hover:text-rose-600"
-                        onClick={() => quitarDivision(idx)}
-                      >
-                        <X className="h-3 w-3" /> Quitar división
-                      </Button>
-                    </div>
-                    <div className="space-y-1.5">
-                      {it.paletas.map((p, pi) => (
-                        <div key={pi} className="flex items-center gap-2">
-                          <span
-                            className="text-[10px] font-bold text-slate-400 w-8 shrink-0"
-                            title={`Paleta ${pi + 1}`}
-                          >
-                            P{pi + 1}
-                          </span>
-                          <Input
-                            className="h-8 flex-1 min-w-0 text-xs"
-                            inputMode="decimal"
-                            value={p}
-                            onChange={(e) => setPaleta(idx, pi, e.target.value)}
-                            placeholder="Cantidad"
-                            aria-label={`Cantidad de la paleta ${pi + 1}`}
-                          />
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7 shrink-0 text-slate-400 hover:text-rose-600"
-                            onClick={() => quitarPaleta(idx, pi)}
-                            title={`Quitar paleta ${pi + 1}`}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 gap-1 px-2 text-[10px] border-dashed"
-                        disabled={it.paletas.length >= MAX_PALETAS}
-                        onClick={() => agregarPaleta(idx)}
-                      >
-                        <Plus className="h-2.5 w-2.5" /> Agregar paleta
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 gap-1 px-2 text-[10px] text-sky-700 hover:bg-sky-100 hover:text-sky-800"
-                        onClick={() => repartir(idx)}
-                        title="Divide de nuevo el total del artículo en partes iguales entre todas las paletas"
-                      >
-                        <Scale className="h-2.5 w-2.5" /> Repartir en partes iguales
-                      </Button>
-                      {(() => {
-                        const suma = sumaPaletas(it.paletas)
-                        const total = aNumero(it.cantidad)
-                        const difieren =
-                          suma > 0 && !isNaN(total) && total > 0 && Math.abs(suma - total) > 0.001
-                        return (
-                          <p className={`flex-1 min-w-[140px] text-right text-[10px] font-semibold ${difieren ? 'text-amber-700' : 'text-slate-500'}`}>
-                            Suma de paletas: {formatearCantidad(suma)}
-                            {!isNaN(total) && total > 0 ? ` · Total en la guía: ${formatearCantidad(total)}` : ''}
-                            {difieren ? ' — revisa las cantidades' : ''}
-                          </p>
-                        )
-                      })()}
-                    </div>
-                  </div>
+                  <PanelPaletas
+                    it={it}
+                    onPaletas={(pl) => actualizar(idx, { paletas: pl })}
+                    onQuitarDivision={() => quitarDivision(idx)}
+                  />
                 </div>
               )}
             </div>
@@ -614,6 +499,262 @@ export function RecepcionItemsEditor({
       <Button type="button" variant="outline" className="w-full gap-1.5 text-xs border-dashed" onClick={agregar}>
         <Plus className="h-3.5 w-3.5" /> Agregar artículo ({items.length} en la guía)
       </Button>
+    </div>
+  )
+}
+
+/**
+ * Panel "DIVIDIR EN PALETAS" de UN artículo: una tarjeta por paleta con SU
+ * cantidad y — OPCIONALMENTE — SU lote/producción/vencimiento propios.
+ *
+ * Reglas (pedidas por el usuario):
+ *   · Agregar/quitar paletas REPARTE el total del artículo en partes iguales
+ *     (100 en 3 → quito 1 → 50 y 50; 100 → 4 → 25 por paleta).
+ *   · El lote/fechas de UNA paleta se corrige SOLO en esa paleta; el atajo
+ *     "Mismo lote/fechas para TODAS" cubre el caso de 3, 4 o 5 paletas que
+ *     comparten datos, y "Quitar diferencias" vuelve a hacerlas heredar.
+ *   · JAMÁS se toca código, descripción ni la cantidad total ya jalada de la
+ *     guía: esos datos viven en la tarjeta del artículo, no en este panel.
+ *     Vacío en un campo = esa paleta USA el dato del artículo (así editar el
+ *     lote/fechas del artículo sigue moviendo a las paletas sin dato propio).
+ */
+function PanelPaletas({
+  it,
+  onPaletas,
+  onQuitarDivision,
+}: {
+  it: ItemRecepcion
+  onPaletas: (paletas: PaletaDividir[]) => void
+  onQuitarDivision: () => void
+}) {
+  const paletas = it.paletas ?? []
+  // Atajo "mismo lote/fechas para todas": inputs del bloque inferior.
+  const [todasLote, setTodasLote] = useState('')
+  const [todasProd, setTodasProd] = useState('')
+  const [todasVenc, setTodasVenc] = useState('')
+
+  function editarPaleta(pi: number, patch: Partial<PaletaDividir>) {
+    onPaletas(paletas.map((p, i) => (i === pi ? { ...p, ...patch } : p)))
+  }
+
+  /** AGREGAR: el total se redistribuye en partes iguales (la última absorbe
+   *  el residuo); la paleta nueva hereda el lote/fechas del artículo. */
+  function agregarPaleta() {
+    if (paletas.length >= MAX_PALETAS) return
+    const n = paletas.length + 1
+    const cant = repartirEquitativo(it, n) ?? [...paletas.map((p) => p.cantidad), '']
+    onPaletas(combinarPaletas(paletas, cant))
+  }
+
+  /** QUITAR: las restantes se reparten el total en partes iguales (100 en
+   *  3 → borro 1 → 50 y 50); cada paleta conservadora SU lote/fechas propio. */
+  function quitarPaleta(pi: number) {
+    if (paletas.length <= 2) {
+      // Con menos de 2 ya no tiene sentido dividir: se quita la división.
+      onQuitarDivision()
+      return
+    }
+    const restantes = paletas.filter((_, i) => i !== pi)
+    const cant = repartirEquitativo(it, restantes.length) ?? restantes.map((p) => p.cantidad)
+    onPaletas(combinarPaletas(restantes, cant))
+  }
+
+  /** Vuelve a partes iguales sin cambiar el nº de paletas (deshace el
+   *  tecleo manual; NO toca los lote/fechas propios de cada paleta). */
+  function repartir() {
+    if (paletas.length < 2) return
+    const next = repartirEquitativo(it, paletas.length)
+    if (next) onPaletas(combinarPaletas(paletas, next))
+  }
+
+  /** Aplica el lote/fechas digitado a TODAS las paletas (solo campos llenos):
+   *  el atajo para guías donde las 3/4/5 paletas comparten datos. */
+  function aplicarATodas() {
+    if (!todasLote.trim() && !todasProd && !todasVenc) {
+      toast.error('Escribe al menos el lote o una fecha para aplicar')
+      return
+    }
+    const n = paletas.length
+    onPaletas(
+      paletas.map((p) => ({
+        ...p,
+        lote: todasLote.trim() || p.lote,
+        fechaProduccion: todasProd || p.fechaProduccion,
+        fechaVencimiento: todasVenc || p.fechaVencimiento,
+      }))
+    )
+    setTodasLote('')
+    setTodasProd('')
+    setTodasVenc('')
+    toast.success(`Aplicado a ${n} paleta(s)`)
+  }
+
+  /** Borra los datos propios de todas las paletas: vuelven a heredar del
+   *  artículo (el "reset" cómodo después de corregir a mano). */
+  function usarElDelArticulo() {
+    onPaletas(
+      paletas.map((p) => ({ ...p, lote: '', fechaProduccion: '', fechaVencimiento: '' }))
+    )
+  }
+
+  const conDatosPropios = paletas.some((p) => p.lote || p.fechaProduccion || p.fechaVencimiento)
+  const suma = sumaPaletas(paletas)
+  const total = aNumero(it.cantidad)
+  const difieren = suma > 0 && !isNaN(total) && total > 0 && Math.abs(suma - total) > 0.001
+
+  return (
+    <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2.5 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <p className="flex-1 min-w-[160px] text-[11px] font-semibold text-sky-900 flex items-start gap-1.5 leading-snug">
+          <Package className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>
+            Paletas ({paletas.length}) — al agregar o quitar se reparte el total en partes
+            iguales. Lote/fechas por paleta: opcional — vacío usa el del artículo.
+          </span>
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-6 shrink-0 px-1.5 text-[10px] text-slate-500 hover:text-rose-600"
+          onClick={onQuitarDivision}
+        >
+          <X className="h-3 w-3" /> Quitar división
+        </Button>
+      </div>
+      <div className="space-y-1.5">
+        {paletas.map((p, pi) => (
+          <div key={pi} className="rounded-md border border-sky-100 bg-white p-1.5 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span
+                className="text-[10px] font-bold text-slate-400 w-8 shrink-0"
+                title={`Paleta ${pi + 1}`}
+              >
+                P{pi + 1}
+              </span>
+              <Input
+                className="h-8 flex-1 min-w-0 text-xs"
+                inputMode="decimal"
+                value={p.cantidad}
+                onChange={(e) => editarPaleta(pi, { cantidad: e.target.value })}
+                placeholder="Cantidad"
+                aria-label={`Cantidad de la paleta ${pi + 1}`}
+              />
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7 shrink-0 text-slate-400 hover:text-rose-600"
+                onClick={() => quitarPaleta(pi)}
+                title={`Quitar paleta ${pi + 1}`}
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            </div>
+            {/* Datos PROPIOS de esta paleta (solo si difieren): al registrar,
+                esta fila sale con SU lote/fechas y su rótulo se imprime con
+                ellos — sin cambiar código/descripción/cantidad total. */}
+            <div className="grid grid-cols-2 min-[430px]:grid-cols-3 gap-1.5">
+              <div className="col-span-2 min-[430px]:col-span-1 space-y-0.5">
+                <Label className="text-[9px] text-slate-500">
+                  Lote propio{it.lote ? ` (= ${it.lote})` : ' (opcional)'}
+                </Label>
+                <Input
+                  className="h-8 text-xs"
+                  value={p.lote}
+                  onChange={(e) => editarPaleta(pi, { lote: e.target.value })}
+                  placeholder={it.lote ? `Usa ${it.lote}` : 'Del artículo'}
+                  aria-label={`Lote de la paleta ${pi + 1}`}
+                />
+              </div>
+              <div className="space-y-0.5">
+                <Label className="text-[9px] text-slate-500">F. producción</Label>
+                <Input
+                  className="h-8 text-xs"
+                  type="date"
+                  value={p.fechaProduccion}
+                  onChange={(e) => editarPaleta(pi, { fechaProduccion: e.target.value })}
+                  aria-label={`Fecha de producción de la paleta ${pi + 1}`}
+                />
+              </div>
+              <div className="space-y-0.5">
+                <Label className="text-[9px] text-slate-500">F. vencimiento</Label>
+                <Input
+                  className="h-8 text-xs"
+                  type="date"
+                  value={p.fechaVencimiento}
+                  onChange={(e) => editarPaleta(pi, { fechaVencimiento: e.target.value })}
+                  aria-label={`Fecha de vencimiento de la paleta ${pi + 1}`}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {/* Atajo del usuario: 3, 4 o 5 paletas que comparten lote/fechas — se
+          digita UNA vez y se aplica a todas (solo los campos llenos). */}
+      <div className="rounded-md border border-sky-200 bg-white p-2 space-y-1.5">
+        <p className="text-[10px] font-semibold text-sky-900 flex items-center gap-1.5">
+          <ClipboardCopy className="h-3 w-3 shrink-0" />
+          Mismo lote/fechas para TODAS las paletas
+        </p>
+        <div className="grid grid-cols-2 min-[430px]:grid-cols-4 gap-1.5">
+          <div className="space-y-0.5">
+            <Label className="text-[9px] text-slate-500">Lote</Label>
+            <Input className="h-8 text-xs" value={todasLote} onChange={(e) => setTodasLote(e.target.value)} placeholder="L-001" />
+          </div>
+          <div className="space-y-0.5">
+            <Label className="text-[9px] text-slate-500">F. producción</Label>
+            <Input className="h-8 text-xs" type="date" value={todasProd} onChange={(e) => setTodasProd(e.target.value)} />
+          </div>
+          <div className="space-y-0.5">
+            <Label className="text-[9px] text-slate-500">F. vencimiento</Label>
+            <Input className="h-8 text-xs" type="date" value={todasVenc} onChange={(e) => setTodasVenc(e.target.value)} />
+          </div>
+          <div className="flex items-end">
+            <Button type="button" size="sm" variant="outline" className="w-full h-8 text-xs" onClick={aplicarATodas}>
+              Aplicar a todas
+            </Button>
+          </div>
+        </div>
+        {conDatosPropios && (
+          <button
+            type="button"
+            className="text-[10px] text-slate-500 underline hover:text-sky-700"
+            onClick={usarElDelArticulo}
+            title="Borra los datos propios de las paletas: todas vuelven a usar el lote/fechas del artículo"
+          >
+            Quitar diferencias: todas usan el lote/fechas del artículo
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1 px-2 text-[10px] border-dashed"
+          disabled={paletas.length >= MAX_PALETAS}
+          onClick={agregarPaleta}
+        >
+          <Plus className="h-2.5 w-2.5" /> Agregar paleta
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="h-7 gap-1 px-2 text-[10px] text-sky-700 hover:bg-sky-100 hover:text-sky-800"
+          onClick={repartir}
+          title="Divide de nuevo el total del artículo en partes iguales entre todas las paletas (no toca los lote/fechas propios)"
+        >
+          <Scale className="h-2.5 w-2.5" /> Repartir en partes iguales
+        </Button>
+        <p className={`flex-1 min-w-[140px] text-right text-[10px] font-semibold ${difieren ? 'text-amber-700' : 'text-slate-500'}`}>
+          Suma de paletas: {formatearCantidad(suma)}
+          {!isNaN(total) && total > 0 ? ` · Total en la guía: ${formatearCantidad(total)}` : ''}
+          {difieren ? ' — revisa las cantidades' : ''}
+        </p>
+      </div>
     </div>
   )
 }

@@ -344,6 +344,14 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     setPaso('elegir')
   }
 
+  // Al desmontar (cambiar a modo Manual o salir del módulo), liberar el
+  // objectURL del thumbnail: el blob quedaba retenido hasta recargar la página
+  useEffect(() => {
+    return () => {
+      if (thumb) URL.revokeObjectURL(thumb)
+    }
+  }, [thumb])
+
   async function guardar() {
     const validos = itemsValidos(form.items)
     if (validos.length === 0) {

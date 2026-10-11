@@ -14,7 +14,7 @@
  * src/lib/rackly/modulos.ts. No toca Racks ni Piso.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import {
@@ -111,8 +111,14 @@ export function AtencionModule() {
   const [fAsunto, setFAsunto] = useState('')
   const [fDetalle, setFDetalle] = useState('')
 
+  // Guard generacional: descarta respuestas viejas cuando hay una carga más reciente
+  const cargaGenRef = useRef(0)
+
   const cargar = useCallback(
     async (nuevoOffset: number, reemplazar: boolean) => {
+      // Guard generacional: la respuesta vieja (de un filtro/anterior Enter) no
+      // debe pisar la lista cuando ya se pidió otra más reciente
+      const gen = ++cargaGenRef.current
       setLoading(true)
       try {
         const { filas: filasNuevas, total: totalNuevo } = await listarAtenciones({
@@ -121,14 +127,16 @@ export function AtencionModule() {
           limit: PAGE_SIZE,
           offset: nuevoOffset,
         })
+        if (gen !== cargaGenRef.current) return // llegó una carga más reciente
         setFilas((prev) => (reemplazar ? filasNuevas : [...prev, ...filasNuevas]))
         setTotal(totalNuevo)
         setOffset(nuevoOffset)
       } catch (err: unknown) {
+        if (gen !== cargaGenRef.current) return
         const message = err instanceof Error ? err.message : 'Error desconocido'
         toast.error('Error al cargar atenciones', { description: message })
       } finally {
-        setLoading(false)
+        if (gen === cargaGenRef.current) setLoading(false)
       }
     },
     [busqueda, estadoFiltro]
@@ -226,7 +234,7 @@ export function AtencionModule() {
       {/* ── Resumen rápido ── */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
-          <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide">Pendientes</p>
+          <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide">Pend. en lista</p>
           <p className="text-xl font-extrabold text-amber-900">{pendientes}</p>
         </div>
         <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
@@ -234,7 +242,7 @@ export function AtencionModule() {
           <p className="text-xl font-extrabold text-sky-900">{filas.length}</p>
         </div>
         <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
-          <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Atendidos</p>
+          <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Atend. en lista</p>
           <p className="text-xl font-extrabold text-emerald-900">{atendidos}</p>
         </div>
       </div>

@@ -108,6 +108,13 @@ function RacklyApp() {
 
   useMovimientosRealtime(setMovs)
 
+  // Los flujos masivos llaman onCreated([]) solo para forzar re-render: si se
+  // pasara tal cual, la lista global de movimientos se pisaba con vacío y
+  // mostraba "Aún no hay movimientos" hasta el siguiente poll (8s).
+  const onMovsCreados = useCallback((nuevos: Movimiento[]) => {
+    if (nuevos.length > 0) setMovs(nuevos)
+  }, [])
+
   // Usuarios únicos para el filtro
   const usuariosUnicos = Array.from(
     new Map(
@@ -351,19 +358,19 @@ function RacklyApp() {
                       ))}
                     </TabsList>
                     <TabsContent value="ingreso" className="mt-0">
-                      <MovimientoForm tipo="ingreso" onCreated={setMovs} />
+                      <MovimientoForm tipo="ingreso" onCreated={onMovsCreados} />
                     </TabsContent>
                     <TabsContent value="salida" className="mt-0">
-                      <MovimientoForm tipo="salida" onCreated={setMovs} />
+                      <MovimientoForm tipo="salida" onCreated={onMovsCreados} />
                     </TabsContent>
                     <TabsContent value="devolucion" className="mt-0">
-                      <MovimientoForm tipo="devolucion" onCreated={setMovs} />
+                      <MovimientoForm tipo="devolucion" onCreated={onMovsCreados} />
                     </TabsContent>
                     <TabsContent value="inc" className="mt-0">
-                      <MovimientoForm tipo="inc" onCreated={setMovs} />
+                      <MovimientoForm tipo="inc" onCreated={onMovsCreados} />
                     </TabsContent>
                     <TabsContent value="salida-inc" className="mt-0">
-                      <MovimientoForm tipo="salida-inc" onCreated={setMovs} />
+                      <MovimientoForm tipo="salida-inc" onCreated={onMovsCreados} />
                     </TabsContent>
                   </Tabs>
                 </CardContent>

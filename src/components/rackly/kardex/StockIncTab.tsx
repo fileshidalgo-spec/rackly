@@ -44,14 +44,16 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
     try {
       // Paginado explícito (antes .limit(5000): si una búsqueda amplia matcheaba más
       // de 5000 movimientos, el stock neto INC se calculaba con datos incompletos).
+      // PASO 1: filas que matchean el término (código, INC o descripción)
       const allRows: Record<string, unknown>[] = []
+      const idsVistos = new Set<string>()
       let from = 0
       const BATCH = 1000
       const MAX_PAGES = 50
       for (let page = 0; page < MAX_PAGES; page++) {
         const { data, error: dbError } = await dataClient
           .from('movimientos')
-          .select('bloque, torre, piso, posicion, codigo, descripcion, un, codigo_inc, tipo, cantidad')
+          .select('id, bloque, torre, piso, posicion, codigo, descripcion, un, codigo_inc, tipo, cantidad')
           .not('codigo_inc', 'is', null)
           .neq('codigo_inc', '')
           .or(`codigo.ilike.%${upper}%,codigo_inc.ilike.%${upper}%,descripcion.ilike.%${upper}%`)
@@ -63,10 +65,48 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
           return
         }
         const rows = data ?? []
+        for (const r of rows) idsVistos.add(String((r as { id: unknown }).id))
         allRows.push(...rows)
         if (rows.length < BATCH) break
         from += BATCH
       }
+
+      // PASO 2: completar los PARES ingreso/salida. Si el término solo matcheaba
+      // la descripción del ingreso, su fila de SALIDA (misma codigo_inc, distinta
+      // descripción) no venía y el stock INC quedaba SOBREESTIMADO. Se traen
+      // todas las filas de los codigo_inc detectados y se deduplica por id.
+      const incs = [...new Set(allRows.map((r) => String(r.codigo_inc ?? '').trim()).filter(Boolean))]
+      if (incs.length > 0) {
+        for (let i = 0; i < incs.length; i += 500) {
+          const chunk = incs.slice(i, i + 500)
+          let incFrom = 0
+          for (;;) {
+            const { data: extra, error: incErr } = await dataClient
+              .from('movimientos')
+              .select('id, bloque, torre, piso, posicion, codigo, descripcion, un, codigo_inc, tipo, cantidad')
+              .not('codigo_inc', 'is', null)
+              .neq('codigo_inc', '')
+              .in('codigo_inc', chunk)
+              .order('id', { ascending: true })
+              .range(incFrom, incFrom + BATCH - 1)
+            if (incErr) {
+              console.error('[StockIncTab] Error completando pares INC:', incErr.message)
+              break // degradación elegante: se netea solo con lo ya traído
+            }
+            const rows = extra ?? []
+            for (const r of rows) {
+              const rid = String((r as { id: unknown }).id)
+              if (!idsVistos.has(rid)) {
+                idsVistos.add(rid)
+                allRows.push(r)
+              }
+            }
+            if (rows.length < BATCH) break
+            incFrom += BATCH
+          }
+        }
+      }
+
       const data = allRows
 
       if (!data || data.length === 0) {

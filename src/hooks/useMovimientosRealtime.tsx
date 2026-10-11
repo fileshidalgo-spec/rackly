@@ -27,6 +27,8 @@ let listeners = new Set<(movs: Movimiento[]) => void>()
 let pollInterval: ReturnType<typeof setInterval> | null = null
 let realtimeChannel: ReturnType<typeof supabase.channel> | null = null
 let isRefreshing = false
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let refreshPendiente = false
 
 function broadcast(movs: Movimiento[]) {
   for (const fn of listeners) {
@@ -35,15 +37,26 @@ function broadcast(movs: Movimiento[]) {
 }
 
 function refreshAndBroadcast() {
-  if (isRefreshing || listeners.size === 0) return
+  if (isRefreshing) {
+    // Hay un fetch en vuelo (que pudo leer la BD ANTES del write que disparó
+    // este evento): encolar una pasada extra en lugar de descartar el evento
+    refreshPendiente = true
+    return
+  }
+  if (listeners.size === 0) return
   isRefreshing = true
   fetchMovimientos()
     .then((movs) => {
       isRefreshing = false
       broadcast(movs)
+      if (refreshPendiente) {
+        refreshPendiente = false
+        setTimeout(refreshAndBroadcast, 50)
+      }
     })
     .catch((err) => {
       isRefreshing = false
+      refreshPendiente = false
       console.warn('[Realtime] Error al refrescar movimientos:', err)
     })
 }
@@ -75,8 +88,10 @@ function startSharedRealtime() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'movimientos' },
         () => {
-          // Debounce: esperar 150ms antes de refrescar para evitar múltiples refrescos rápidos
-          setTimeout(refreshAndBroadcast, 150)
+          // Debounce REAL: reinicia el timer (antes cada evento en ráfaga creaba
+          // su propio setTimeout sin cancelar el anterior)
+          if (debounceTimer) clearTimeout(debounceTimer)
+          debounceTimer = setTimeout(refreshAndBroadcast, 150)
         }
       )
       .subscribe((status, err) => {

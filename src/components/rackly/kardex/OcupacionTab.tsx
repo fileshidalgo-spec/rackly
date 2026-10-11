@@ -662,9 +662,15 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
         codigoInc: stockItem.codigoInc || undefined,
       })
       toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
-      // Refrescar stock del destino
+      // Refrescar stock del destino — validar _error (patrón IngresoForm): sin
+      // esto se mostraba una fila fantasma con código vacío y stock 0
       const updated = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)
-      setTrDestStock(updated)
+      const consultaFallo = updated.length > 0 && '_error' in updated[0] && updated[0]._error
+      if (consultaFallo) {
+        toast.warning('No se pudo actualizar el stock del destino. Revise manualmente.', { duration: 6000 })
+      } else {
+        setTrDestStock(updated)
+      }
       await refreshDetail()
       refreshData()
     } catch (err: unknown) {

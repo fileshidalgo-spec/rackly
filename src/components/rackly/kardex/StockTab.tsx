@@ -286,16 +286,22 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
   // obtener datos server-side (sin límite de filas). Si falla, usar client-side.
   const [serverStock, setServerStock] = useState<typeof stock | null>(null)
   const [serverLoading, setServerLoading] = useState(false)
+  // Código de la última petición en vuelo: si el usuario cambió de código mientras
+  // llegaba la respuesta, la respuesta VIEJA no debe pisar serverStock (antes
+  // cambiando rápido A→B se mostraba el stock de otro producto)
+  const serverReqRef = useRef('')
 
   useEffect(() => {
     if (!selectedCodigo) { setServerStock(null); return }
     const code = selectedCodigo.trim().toUpperCase()
     const isInc = stockFilter === 'inc'
 
+    serverReqRef.current = `${code}|${isInc}`
     setServerLoading(true)
     fetchStockPorCodigoRPC(code, isInc)
       .then((rows) => {
         if (!mountedRef.current) return
+        if (serverReqRef.current !== `${code}|${isInc}`) return // respuesta obsoleta
         setServerLoading(false)
         if (rows === null) {
           // Server-side falló → usar client-side (stockData)
@@ -340,7 +346,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         setServerStock(mapped)
       })
       .catch(() => {
-        if (mountedRef.current) { setServerLoading(false); setServerStock(null) }
+        if (mountedRef.current && serverReqRef.current === `${code}|${isInc}`) { setServerLoading(false); setServerStock(null) }
       })
   }, [selectedCodigo, stockFilter, remInfoByPos])
 

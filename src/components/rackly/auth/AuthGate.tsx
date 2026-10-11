@@ -9,6 +9,7 @@ import {
   signOut,
   resetPassword,
   cambiarPasswordPropia,
+  buscarUsuarioEnAuth,
   type Perfil,
 } from '@/lib/rackly/auth'
 import { supabase, dataClient } from '@/lib/supabase/client'
@@ -76,35 +77,15 @@ function esErrorCorreoExistente(message: string): boolean {
 
 /**
  * Verifica si el correo ya está registrado EN SUPABASE AUTH.
- * Usa la Admin API para listar usuarios por email, que es más confiable
- * que consultar solo la tabla profiles (que puede tener registros huérfanos).
+ * Usa buscarUsuarioEnAuth (paginado + match exacto de email) porque la Admin
+ * API ignora el filtro `?email=`: revisar solo users[0]/primera página daba
+ * falsos negativos (usuario en otra página) que terminaban BORRANDO perfiles
+ * válidos en correoYaExiste/limpiarPerfilHuerfano.
+ * Tri-estado: 'encontrado' | 'ausente' | 'error' — NUNCA tratar 'error' como 'ausente'.
  */
-const SUPABASE_URL_ADMIN = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SERVICE_ROLE_KEY_ADMIN = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
-
-async function correoExisteEnAuth(email: string): Promise<boolean> {
-  if (!SERVICE_ROLE_KEY_ADMIN) return false
-  const lower = email.trim().toLowerCase()
-  try {
-    const res = await fetch(
-      `${SUPABASE_URL_ADMIN}/auth/v1/admin/users?email=${encodeURIComponent(lower)}`,
-      {
-        headers: {
-          'apikey': SERVICE_ROLE_KEY_ADMIN,
-          'Authorization': `Bearer ${SERVICE_ROLE_KEY_ADMIN}`,
-        },
-      }
-    )
-    if (!res.ok) return false
-    const adminData = await res.json()
-    // Verificar que el email retornado coincida exactamente (la API a veces retorna otros usuarios)
-    const exactMatch = (adminData.users ?? []).some(
-      (u: { email: string }) => u.email?.toLowerCase() === lower
-    )
-    return exactMatch
-  } catch {
-    return false
-  }
+async function correoExisteEnAuth(email: string): Promise<'encontrado' | 'ausente' | 'error'> {
+  const res = await buscarUsuarioEnAuth(email)
+  return res.estado
 }
 
 /**
@@ -122,15 +103,17 @@ async function limpiarPerfilHuerfano(email: string): Promise<boolean> {
       .maybeSingle()
     if (!perfil) return false
 
-    // Verificar si existe en Auth
+    // Verificar si existe en Auth — SOLO borrar si la consulta fue concluyente
     const existeEnAuth = await correoExisteEnAuth(lower)
-    if (!existeEnAuth) {
-      // Perfil huérfano: eliminarlo para permitir registro limpio
+    if (existeEnAuth === 'ausente') {
+      // Perfil huérfano confirmado (consulta exitosa + sin usuario en Auth):
+      // eliminarlo para permitir registro limpio
       console.log('[RACKLY] Limpiando perfil huérfano para:', lower)
       await dataClient.from('user_roles').delete().eq('user_id', perfil.id)
       await dataClient.from('profiles').delete().eq('id', perfil.id)
       return true
     }
+    // 'encontrado' → NO es huérfano; 'error' → no se sabe. En ambos casos NO borrar.
     return false
   } catch {
     return false
@@ -146,21 +129,26 @@ async function correoYaExiste(email: string): Promise<boolean> {
   try {
     // Primero verificar si existe en Supabase Auth
     const existeAuth = await correoExisteEnAuth(lower)
-    if (existeAuth) return true
+    if (existeAuth === 'encontrado') return true
 
-    // Si no existe en Auth pero sí en profiles, es un perfil huérfano
-    const { data } = await dataClient
-      .from('profiles')
-      .select('id')
-      .eq('correo', lower)
-      .maybeSingle()
-    if (data) {
-      // Limpiar el perfil huérfano silenciosamente
-      console.log('[RACKLY] Correo con perfil huérfano detectado, limpiando:', lower)
-      await dataClient.from('user_roles').delete().eq('user_id', data.id)
-      await dataClient.from('profiles').delete().eq('id', data.id)
-      // No bloquear el registro — se acaba de limpiar
-      return false
+    // Si no existe en Auth pero sí en profiles, es un perfil huérfano.
+    // SOLO limpiar cuando la consulta a Auth fue concluyente ('ausente').
+    // Si fue 'error' (rate-limit/red), NO borrar nada: dejar que signUp decida —
+    // si el usuario realmente existe, Supabase rechazará con 'already registered'.
+    if (existeAuth === 'ausente') {
+      const { data } = await dataClient
+        .from('profiles')
+        .select('id')
+        .eq('correo', lower)
+        .maybeSingle()
+      if (data) {
+        // Limpiar el perfil huérfano silenciosamente
+        console.log('[RACKLY] Correo con perfil huérfano detectado, limpiando:', lower)
+        await dataClient.from('user_roles').delete().eq('user_id', data.id)
+        await dataClient.from('profiles').delete().eq('id', data.id)
+        // No bloquear el registro — se acaba de limpiar
+        return false
+      }
     }
 
     return false
@@ -499,8 +487,13 @@ function PendingApprovalScreen({
             className="w-full"
             variant="ghost"
             onClick={async () => {
-              await signOut()
-              await onRefresh()
+              try {
+                await signOut()
+              } catch (err) {
+                console.error('[RACKLY] Error al cerrar sesión:', err)
+              } finally {
+                await onRefresh()
+              }
             }}
           >
             Cerrar sesión

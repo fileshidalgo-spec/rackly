@@ -21,6 +21,7 @@ import {
   type PosicionConStock,
   cargarVistaColumna,
   type VistaPosicion,
+  selectIn,
 } from '@/lib/piso/api'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { dataClient } from '@/lib/supabase/client'
@@ -247,8 +248,13 @@ export function PisoSectoresTab() {
   // Niveles de la posición seleccionada
   const [niveles, setNiveles] = useState<NivelInfo[]>([])
   const [selectedNivelId, setSelectedNivelId] = useState<string>('')
-  // Traslado: nivel destino
+  // Traslado: nivel destino (+ su PROPIA lista de niveles; antes se pasaba la
+  // lista del origen y el ID inicial del destino no matcheaba ninguna opción)
   const [trDestNivelId, setTrDestNivelId] = useState<string>('')
+  const [trDestNiveles, setTrDestNiveles] = useState<NivelInfo[]>([])
+  // Guard generacional para la carga de vista de columna: evita que una respuesta
+  // lenta de la columna A pise colDetail cuando ya se pidió la columna B
+  const colGenRef = useRef(0)
   // Stock por nivel (para vista desglosada)
   const [stockByNivel, setStockByNivel] = useState<Record<string, DetailStock[]>>({})
   // Codigos actuales en stock (para deteccion de rotacion en historial) — calculado una vez
@@ -299,13 +305,25 @@ export function PisoSectoresTab() {
     try {
       const nivelIds = niveles.map(n => n.id)
       if (nivelIds.length === 0) { setHistorialLoading(false); return }
-      // 1) Obtener todos los movimiento_ids que tienen detalles en estos niveles
-      const { data: idRows, error: idErr } = await dataClient
-        .from('piso_movimiento_detalles')
-        .select('movimiento_id')
-        .in('nivel_id', nivelIds)
-      if (idErr) throw idErr
-      const allMovIds = [...new Set((idRows ?? []).map((d: { movimiento_id: string }) => d.movimiento_id))]
+      // 1) Obtener todos los movimiento_ids que tienen detalles en estos niveles.
+      //    Paginado por id (orden estable): sin range, PostgREST puede truncar a
+      //    max_rows y el historial perdería movimientos antiguos silenciosamente.
+      const idRows: { movimiento_id: string }[] = []
+      let histFrom = 0
+      for (;;) {
+        const { data: chunk, error: idErr } = await dataClient
+          .from('piso_movimiento_detalles')
+          .select('movimiento_id')
+          .in('nivel_id', nivelIds)
+          .order('id')
+          .range(histFrom, histFrom + 999)
+        if (idErr) throw idErr
+        const rows = (chunk ?? []) as { movimiento_id: string }[]
+        idRows.push(...rows)
+        if (rows.length < 1000) break
+        histFrom += 1000
+      }
+      const allMovIds = [...new Set(idRows.map((d) => d.movimiento_id))]
       if (allMovIds.length === 0) {
         setHistorialAllItems([])
         setHistorialData([])
@@ -314,21 +332,26 @@ export function PisoSectoresTab() {
         return
       }
       // 2) Obtener TODOS los movimientos ordenados por fecha (orden cronologico real)
-      const { data: movData, error: movErr } = await dataClient
-        .from('piso_movimientos')
-        .select('id, tipo, turno, fecha, usuario_nombre, codigo_inc')
-        .in('id', allMovIds)
-        .order('fecha', { ascending: false })
-      if (movErr) throw movErr
+      //    selectIn trocea el .in() por 500 IDs: una URL con miles de UUIDs da 4xx
+      const movData = await selectIn<{ id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }>(
+        'piso_movimientos',
+        'id, tipo, turno, fecha, usuario_nombre, codigo_inc',
+        'id',
+        allMovIds,
+      )
+      movData.sort((a, b) => b.fecha.localeCompare(a.fecha))
       // 3) Obtener todos los detalles de estos movimientos en estos niveles
-      const { data: detData, error: detErr } = await dataClient
-        .from('piso_movimiento_detalles')
-        .select('movimiento_id, cantidad, fecha_vencimiento, lote, bloque_id, nivel_id')
-        .in('movimiento_id', allMovIds)
-        .in('nivel_id', nivelIds)
-      if (detErr) throw detErr
+      //    (chunk 200: cada movimiento puede tener varios detalles; evita truncado)
+      const detData = await selectIn<{ movimiento_id: string; cantidad: number; fecha_vencimiento: string | null; lote: string | null; bloque_id: string; nivel_id: string }>(
+        'piso_movimiento_detalles',
+        'movimiento_id, cantidad, fecha_vencimiento, lote, bloque_id, nivel_id',
+        'movimiento_id',
+        allMovIds,
+        200,
+      )
+      const detDataFiltrada = detData.filter(d => nivelIds.includes(d.nivel_id))
       // 4) Obtener info de bloques
-      const uniqueBloqueIds = [...new Set((detData ?? []).map((d: { bloque_id: string }) => d.bloque_id))]
+      const uniqueBloqueIds = [...new Set(detDataFiltrada.map((d) => d.bloque_id))]
       const { data: bloqData, error: bloqErr } = await dataClient
         .from('piso_bloques')
         .select('id, codigo, descripcion, unidad')
@@ -338,13 +361,16 @@ export function PisoSectoresTab() {
       const movMap = new Map<string, { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }>((movData ?? []).map((m: { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }) => [m.id, m]))
       // 5) Crear items por detalle, manteniendo orden cronologico del movimiento
       const allItems: HistorialItem[] = []
-      for (const mov of (movData ?? [])) {
-        const movDets = (detData ?? []).filter((d: { movimiento_id: string }) => d.movimiento_id === mov.id)
-        for (const d of movDets) {
+      for (const mov of movData) {
+        const movDets = detDataFiltrada.filter((d) => d.movimiento_id === mov.id)
+        for (let di = 0; di < movDets.length; di++) {
+          const d = movDets[di]
           const bloq = bloqMap.get(d.bloque_id)
           if (!bloq) continue
           allItems.push({
-            id: `${mov.id}-${d.bloque_id}-${d.nivel_id}`,
+            // Incluir vencimiento/lote/índice: un mismo movimiento con 2 detalles del
+            // mismo bloque y nivel (2 lotes o 2 vencimientos) generaba keys duplicadas
+            id: `${mov.id}-${d.bloque_id}-${d.nivel_id}-${d.fecha_vencimiento ?? ''}-${d.lote ?? ''}-${di}`,
             tipo: mov.tipo ?? '',
             fecha: mov.fecha ?? '',
             turno: mov.turno ?? '',
@@ -449,15 +475,16 @@ export function PisoSectoresTab() {
   // Cargar vista de columna cuando se selecciona una
   const loadColumnDetail = useCallback(async (letra: string) => {
     if (sectorFilter === 'all') return
+    const gen = ++colGenRef.current
     setColDetailLoading(true)
     try {
       const data = await cargarVistaColumna(sectorFilter, letra)
-      if (mountedRef.current) setColDetail(data)
+      if (mountedRef.current && gen === colGenRef.current) setColDetail(data)
     } catch (err) {
       console.error('[Piso] Error cargando vista columna:', err)
-      if (mountedRef.current) toast.error('Error al cargar columna')
+      if (mountedRef.current && gen === colGenRef.current) toast.error('Error al cargar columna')
     } finally {
-      if (mountedRef.current) setColDetailLoading(false)
+      if (mountedRef.current && gen === colGenRef.current) setColDetailLoading(false)
     }
   }, [sectorFilter])
 
@@ -477,8 +504,9 @@ export function PisoSectoresTab() {
     loadPosiciones(true)
     const sec = sectores.find(s => s.id === sectorFilter)
     if (selectedColumn && sectorFilter !== 'all' && (sec?.n_niveles ?? 0) > 1) {
+      const gen = ++colGenRef.current
       cargarVistaColumna(sectorFilter, selectedColumn).then(d => {
-        if (mountedRef.current) setColDetail(d)
+        if (mountedRef.current && gen === colGenRef.current) setColDetail(d)
       }).catch(() => {})
     }
   }, [loadPosiciones, selectedColumn, sectorFilter, sectores, mode])
@@ -632,8 +660,11 @@ export function PisoSectoresTab() {
   function openTraslado() {
     setTrDestPos(null)
     setTrDestNivelId('')
+    setTrDestNiveles([])
     setTrConfirmOpen(false)
-    setSelectedNivelId(niveles.length > 0 ? niveles[0].id : '')
+    // Conservar el nivel que el usuario tenía seleccionado (p. ej. clic en una
+    // celda de N3): resetearlo a niveles[0] atribuía la salida al nivel equivocado.
+    setSelectedNivelId(prev => niveles.some(n => n.id === prev) ? prev : (niveles.length > 0 ? niveles[0].id : ''))
     if (detail) setTrItems(detail.stock.map((s) => ({
       bloque_id: s.bloque_id,
       bloque_codigo: s.bloque_codigo,
@@ -1100,7 +1131,15 @@ export function PisoSectoresTab() {
         if (!nivelDeBloque.has(ns.bloque_id)) nivelDeBloque.set(ns.bloque_id, nivId)
       }
     }
-    const nivelOrigenDe = (bloqueId: string): string => nivelDeBloque.get(bloqueId) || origNivelId
+    const nivelOrigenDe = (bloqueId: string): string => {
+      // En modo nivel único, los items provienen del nivel clickeado: priorizarlo
+      // si el bloque realmente vive ahí (el mapa genérico puede apuntar a N1).
+      if (singleNivelMode) {
+        const enSeleccion = (stockByNivel[selectedNivelId] ?? []).some(ns => ns.bloque_id === bloqueId)
+        if (enSeleccion) return selectedNivelId
+      }
+      return nivelDeBloque.get(bloqueId) || origNivelId
+    }
     setBusy(true)
     let persistido = false
     try {
@@ -1111,10 +1150,23 @@ export function PisoSectoresTab() {
       const surplusItems = validRows.filter((r) => parseFloat(r.cantidad) > r.stockActual)
 
       // 1) Base transfer for ALL selected items (move the entered amount) — el lote viaja con la mercadería
-      const allDetSal = validRows.map((r) => ({ nivel_id: nivelOrigenDe(r.bloque_id), bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null, lote: r.lote || undefined }))
-      const allDetIng = validRows.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: parseFloat(r.cantidad), fecha_vencimiento: r.fecha_vencimiento || null, lote: r.lote || undefined }))
-      await registrarTrasladoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', allDetSal, allDetIng)
-      persistido = true
+      //    Para items con EXCEDENTE (cantidad > stock) el traslado base mueve solo
+      //    min(cantidad, stock): el ingreso extra del paso 2 ya cubre el excedente.
+      //    Antes la base movía la cantidad completa Y el paso 2 agregaba el exceso:
+      //    el destino recibía el excedente POR DUPLICADO (ej. stock 10, pide 15 →
+      //    destino +20) y el origen quedaba con salida de stock que no tenía.
+      const cantBase = (r: typeof validRows[number]) => surplusItems.includes(r)
+        ? Math.min(parseFloat(r.cantidad), r.stockActual)
+        : parseFloat(r.cantidad)
+      // Items con stock 0 (excedente puro) no participan del traslado base:
+      // van directo al ingreso extra del paso 2 (evita cabeceras con cantidad 0)
+      const filasBase = validRows.filter((r) => cantBase(r) > 0)
+      if (filasBase.length > 0) {
+        const allDetSal = filasBase.map((r) => ({ nivel_id: nivelOrigenDe(r.bloque_id), bloque_id: r.bloque_id, cantidad: cantBase(r), fecha_vencimiento: r.fecha_vencimiento || null, lote: r.lote || undefined }))
+        const allDetIng = filasBase.map((r) => ({ nivel_id: destNivelId!, bloque_id: r.bloque_id, cantidad: cantBase(r), fecha_vencimiento: r.fecha_vencimiento || null, lote: r.lote || undefined }))
+        await registrarTrasladoPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', allDetSal, allDetIng)
+        persistido = true
+      }
 
       // 2) For surplus items (qty > stock): create ingreso at destination for the excess
       for (const item of surplusItems) {
@@ -2630,7 +2682,7 @@ export function PisoSectoresTab() {
                           label="Nivel destino"
                           nivelId={trDestNivelId}
                           onNivelChange={setTrDestNivelId}
-                          nivelesList={niveles}
+                          nivelesList={trDestNiveles.length > 0 ? trDestNiveles : niveles}
                           accentColor="sky"
                         />
                       </div>
@@ -2782,11 +2834,14 @@ export function PisoSectoresTab() {
                       {posiciones.filter((p) => p.posicionId !== detail.posicionId).map((p) => (
                         <button key={p.posicionId} onClick={async () => {
                           setTrDestPos(p)
-                          // Cargar niveles del destino
+                          // Cargar los niveles PROPIOS del destino para el selector
                           try {
                             const destNivs = await obtenerNivelesPosicion(p.posicionId, p.columnaLetra)
+                            setTrDestNiveles(destNivs)
                             setTrDestNivelId(destNivs.length > 0 ? destNivs[0].id : '')
-                          } catch { /* ok */ }
+                          } catch {
+                            setTrDestNiveles([])
+                          }
                         }}
                           className={`px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-all duration-300 border ${trDestPos?.posicionId === p.posicionId
                             ? 'bg-sky-500 text-white border-sky-500 shadow-lg shadow-sky-500/20 scale-105'

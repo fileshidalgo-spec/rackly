@@ -754,6 +754,9 @@ function SalidaForm({
         }
         throw fetchErr
       }
+      // Guard de vigencia: si el usuario ya escribió otro código mientras llegaba
+      // esta respuesta, descartarla (evita "datos fantasma" de la búsqueda anterior)
+      if (searchCodeRef.current.trim() !== code) return
       const upperCode = code.toUpperCase()
       const locMap = new Map<string, {
         bloque: string; torre: string; piso: string; posicion: string;
@@ -1533,6 +1536,8 @@ function SalidaIncForm({
         }
         throw fetchErr
       }
+      // Guard de vigencia: descarta respuestas de una búsqueda ya reemplazada
+      if (searchCodeRef.current.trim() !== code) return
       const upperCode = code.toUpperCase()
       // Pools por (ubicación + codigoInc): ingresos por lote + salidas dirigidas
       const locMap = new Map<string, {

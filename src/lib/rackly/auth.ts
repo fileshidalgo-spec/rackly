@@ -89,6 +89,58 @@ export async function signUp(correo: string, password: string, nombre: string) {
   return data
 }
 
+/**
+ * Localiza un usuario de Supabase Auth por su email EXACTO usando la Admin API.
+ *
+ * IMPORTANTE: la Admin API IGNORA el parámetro `?email=` de GET /admin/users
+ * (devuelve la primera página completa, sin filtrar). Por eso hay que paginar
+ * y comparar el email lado cliente. Tomar `users[0]` de esa lista confirmaba
+ * (o evaluaba) el email de un usuario ARBITRARIO, no del solicitado.
+ *
+ * Devuelve un tri-estado para que los llamadores NUNCA actúen sobre una
+ * consulta fallida como si fuera un resultado definitivo:
+ *   - 'encontrado'  → existe un usuario con ese email exacto (devuelve su id)
+ *   - 'ausente'     → la consulta terminó bien y NO existe
+ *   - 'error'       → la consulta falló (red, rate-limit, key ausente): no se sabe
+ */
+export type ResultadoBusquedaAuth =
+  | { estado: 'encontrado'; id: string }
+  | { estado: 'ausente' }
+  | { estado: 'error' }
+
+export async function buscarUsuarioEnAuth(correo: string): Promise<ResultadoBusquedaAuth> {
+  const email = correo.trim().toLowerCase()
+  if (!email || !SERVICE_ROLE_KEY) return { estado: 'error' }
+  try {
+    const PER_PAGE = 200
+    const MAX_PAGES = 10 // hasta 2000 usuarios; el proyecto hoy tiene ~30
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await fetch(
+        `${SUPABASE_URL}/auth/v1/admin/users?per_page=${PER_PAGE}&page=${page}`,
+        {
+          headers: {
+            'apikey': SERVICE_ROLE_KEY,
+            'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
+          },
+        }
+      )
+      if (!res.ok) return { estado: 'error' }
+      const adminData = await res.json()
+      const users: { id?: string; email?: string }[] = adminData.users ?? []
+      const match = users.find((u) => u.email?.trim().toLowerCase() === email)
+      if (match?.id) return { estado: 'encontrado', id: match.id }
+      // Página incompleta = última página: el usuario no está en el listado
+      if (users.length < PER_PAGE) return { estado: 'ausente' }
+    }
+    // Más de MAX_PAGES × PER_PAGE usuarios: tratar como no concluyente
+    console.warn('[RACKLY] buscarUsuarioEnAuth: se agotaron las páginas de la Admin API')
+    return { estado: 'error' }
+  } catch (err) {
+    console.error('[RACKLY] buscarUsuarioEnAuth error:', err)
+    return { estado: 'error' }
+  }
+}
+
 export async function signIn(correo: string, password: string) {
   const { data, error } = await supabase.auth.signInWithPassword({
     email: correo,
@@ -99,37 +151,25 @@ export async function signIn(correo: string, password: string) {
     const msg = error.message.toLowerCase()
     if (msg.includes('email not confirmed') || msg.includes('not confirmed')) {
       console.warn('[RACKLY] Email no confirmado, intentando auto-confirmar vía Admin API...')
-      if (SERVICE_ROLE_KEY) {
-        try {
-          const adminRes = await fetch(
-            `${SUPABASE_URL}/auth/v1/admin/users?email=${encodeURIComponent(correo)}`,
-            {
-              headers: {
-                'apikey': SERVICE_ROLE_KEY,
-                'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
-              },
-            }
-          )
-          const adminData = await adminRes.json()
-          const user = adminData.users?.[0]
-          if (user?.id) {
-            const confirmed = await confirmarEmailUsuario(user.id)
-            if (confirmed) {
-              // Reintentar login después de confirmar
-              const retry = await supabase.auth.signInWithPassword({ email: correo, password })
-              if (!retry.error) return retry.data
-              console.error('[RACKLY] Login reintentado tras confirmar pero falló:', retry.error.message)
-            } else {
-              console.error('[RACKLY] No se pudo confirmar el email de', correo)
-            }
+      try {
+        // Localizar al usuario EXACTO por email (paginado + match exacto);
+        // nunca usar users[0] de una consulta sin filtro real.
+        const busqueda = await buscarUsuarioEnAuth(correo)
+        if (busqueda.estado === 'encontrado') {
+          const confirmed = await confirmarEmailUsuario(busqueda.id)
+          if (confirmed) {
+            // Reintentar login después de confirmar
+            const retry = await supabase.auth.signInWithPassword({ email: correo, password })
+            if (!retry.error) return retry.data
+            console.error('[RACKLY] Login reintentado tras confirmar pero falló:', retry.error.message)
           } else {
-            console.error('[RACKLY] Usuario no encontrado en Admin API para', correo)
+            console.error('[RACKLY] No se pudo confirmar el email de', correo)
           }
-        } catch (confirmErr) {
-          console.error('[RACKLY] Error en auto-confirmación durante login:', confirmErr)
+        } else {
+          console.error('[RACKLY] Usuario', correo, 'no localizable en Admin API (estado:', busqueda.estado, ')')
         }
-      } else {
-        console.error('[RACKLY] SERVICE_ROLE_KEY no disponible para auto-confirmar email')
+      } catch (confirmErr) {
+        console.error('[RACKLY] Error en auto-confirmación durante login:', confirmErr)
       }
     }
     throw error

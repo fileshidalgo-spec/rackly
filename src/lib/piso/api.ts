@@ -222,6 +222,7 @@ export type PisoMovimiento = {
   usuario_id: string | null
   usuario_nombre: string | null
   usuario_correo: string | null
+  uuid_sync?: string | null
 }
 
 export type MovimientoDetalle = {
@@ -520,11 +521,50 @@ export async function eliminarMovimiento(movimientoId: string): Promise<void> {
 }
 
 /**
+ * Elimina un movimiento y, si es MITAD de un traslado (comparte uuid_sync con
+ * otra cabecera), elimina el PAR COMPLETO. Borrar solo la salida o solo el
+ * ingreso dejaba el stock inconsistente (ingreso sin su salida o viceversa).
+ * Devuelve cuántas cabeceras se eliminaron (1 normal, 2 traslado).
+ */
+export async function eliminarMovimientoConPar(movimientoId: string): Promise<number> {
+  const { data: mov, error: errMov } = await dataClient
+    .from('piso_movimientos')
+    .select('id, uuid_sync')
+    .eq('id', movimientoId)
+    .maybeSingle()
+  if (errMov) throw errMov
+  if (!mov) return 0
+  const uuidSync = (mov as { uuid_sync?: string | null }).uuid_sync
+  let idsAEliminar = [movimientoId]
+  if (uuidSync) {
+    const { data: hermanos, error: errHer } = await dataClient
+      .from('piso_movimientos')
+      .select('id')
+      .eq('uuid_sync', uuidSync)
+    if (errHer) throw errHer
+    const ids = (hermanos ?? []).map((h: { id: string }) => h.id)
+    if (ids.length > 1) idsAEliminar = ids // traslado: salida + ingreso
+  }
+  const { error: detErr } = await dataClient
+    .from('piso_movimiento_detalles')
+    .delete()
+    .in('movimiento_id', idsAEliminar)
+  if (detErr) throw detErr
+  const { error: movErr } = await dataClient
+    .from('piso_movimientos')
+    .delete()
+    .in('id', idsAEliminar)
+  if (movErr) throw movErr
+  return idsAEliminar.length
+}
+
+/**
  * Select con filtro .in() por lotes de IDs. Una URL con miles de UUIDs puede
  * exceder límites del proxy (4xx) y PostgREST trunca a max_rows silenciosamente:
  * trocear garantiza resultados completos y error visible.
+ * Exportado: loadHistorial de PisoSectoresTab lo usa para sus consultas por IDs.
  */
-async function selectIn<T>(
+export async function selectIn<T>(
   table: string,
   select: string,
   idColumn: string,
@@ -2133,8 +2173,11 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
       return a.ubicacion.localeCompare(b.ubicacion)
     })
   } catch (err) {
+    // PROPAGAR el error (antes tragaba el fallo y devolvía []): StockIncPisoTab
+    // necesitaba distinguir "0 INC" de "fallo de consulta" para mostrar su panel
+    // de error; PisoStockTab ya tiene su propio try/catch y no cambia.
     console.error('[stockPisoGlobal] Error consultando stock de Piso:', err)
-    return []
+    throw err
   }
 }
 

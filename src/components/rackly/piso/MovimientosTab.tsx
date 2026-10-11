@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { listarMovimientos, eliminarMovimiento, type Sector } from '@/lib/piso/api'
+import { listarMovimientos, eliminarMovimientoConPar, type Sector } from '@/lib/piso/api'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { useAuth } from '@/hooks/useAuth'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
@@ -86,6 +86,7 @@ export function MovimientosTab() {
       usuario_id: string | null
       usuario_nombre: string | null
       usuario_correo: string | null
+      uuid_sync?: string | null
       detalles: { bloque_codigo?: string; cantidad: number; nivel_codigo?: string; sector_nombre?: string; posicion_label?: string; fecha_vencimiento?: string | null }[]
       codigo_inc?: string | null
     }[]
@@ -97,7 +98,7 @@ export function MovimientosTab() {
   const [filtroDesde, setFiltroDesde] = useState<string>('')
   const [filtroHasta, setFiltroHasta] = useState<string>('')
   const [filtroTexto, setFiltroTexto] = useState<string>('')
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; op: number; tipo: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; op: number; tipo: string; uuidSync?: string } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
 
   // Refresh function for realtime + polling
@@ -196,10 +197,23 @@ export function MovimientosTab() {
     }
     setDeleteBusy(true)
     try {
-      await eliminarMovimiento(deleteTarget.id)
-      setMovimientos((prev) => prev.filter((m) => m.id !== deleteTarget.id))
+      // eliminarMovimientoConPar borra el PAR COMPLETO si el movimiento es la mitad
+      // de un traslado (salida+ingreso comparten uuid_sync): borrar solo una mitad
+      // dejaba el stock inconsistente sin ningún aviso.
+      const eliminados = await eliminarMovimientoConPar(deleteTarget.id)
+      const idsAEliminar = new Set<string>()
+      if (eliminados > 1 && deleteTarget.uuidSync) {
+        // borrar también la cabecera hermana del estado local
+        setMovimientos((prev) => {
+          for (const m of prev) if (m.uuid_sync === deleteTarget.uuidSync) idsAEliminar.add(m.id)
+          return prev.filter((m) => !idsAEliminar.has(m.id))
+        })
+      } else {
+        idsAEliminar.add(deleteTarget.id)
+        setMovimientos((prev) => prev.filter((m) => m.id !== deleteTarget.id))
+      }
       setDeleteTarget(null)
-      toast.success('Movimiento eliminado')
+      toast.success(eliminados > 1 ? 'Traslado completo eliminado (salida + ingreso)' : 'Movimiento eliminado')
     } catch (err) {
       // Antes el error solo iba a console: el modal se cerraba sin borrar ni avisar
       toast.error('No se pudo eliminar el movimiento', { description: extractError(err) })
@@ -529,6 +543,9 @@ export function MovimientosTab() {
                 <AlertDialogDescription asChild>
                   <span>
                     ¿Eliminar el movimiento <strong className="font-mono">#{deleteTarget?.op}</strong> (tipo: <strong className="capitalize">{deleteTarget?.tipo}</strong>)?
+                    {deleteTarget?.uuidSync && (deleteTarget.tipo === 'salida' || deleteTarget.tipo === 'ingreso') && (
+                      <span className="block mt-1 text-amber-400">Este movimiento forma parte de un traslado: se eliminará el par completo (salida + ingreso).</span>
+                    )}
                     Se eliminarán todos los detalles asociados. Esta acción no se puede deshacer.
                   </span>
                 </AlertDialogDescription>
@@ -649,7 +666,7 @@ export function MovimientosTab() {
                           variant="ghost"
                           size="sm"
                           className="h-8 w-8 p-0 text-red-400/60 hover:text-red-400 hover:bg-red-950/40 hover:border-red-500/30 border border-transparent rounded-lg transition-all duration-200"
-                          onClick={() => setDeleteTarget({ id: m.id, op: m.numero_operacion, tipo: m.tipo })}
+                          onClick={() => setDeleteTarget({ id: m.id, op: m.numero_operacion, tipo: m.tipo, uuidSync: m.uuid_sync ?? undefined })}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>

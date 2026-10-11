@@ -115,6 +115,15 @@ export function ConfiguracionColumnasTab() {
     try {
       const data = await eliminarBloque(id)
       setBloques(data)
+      // Podar el bloque de TODAS las asignaciones: antes seguía apareciendo
+      // como asignado a sus columnas hasta cambiar de sector
+      setColBloques((prev) => {
+        const next = new Map(prev)
+        for (const [colId, blqs] of next) {
+          if (blqs.some((b) => b.id === id)) next.set(colId, blqs.filter((b) => b.id !== id))
+        }
+        return next
+      })
       toast.success('Bloque eliminado')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'

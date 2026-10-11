@@ -98,6 +98,8 @@ export function UsuariosModule() {
   const [loading, setLoading] = useState(false)
 
   const loadedRef = useRef(false)
+  // Guard generacional: la respuesta vieja no debe pisar la lista de actividad
+  const cargaGenRef = useRef(0)
 
   const cargarPerfiles = useCallback(async () => {
     try {
@@ -111,6 +113,7 @@ export function UsuariosModule() {
 
   const cargarActividad = useCallback(
     async (nuevoOffset: number, reemplazar: boolean) => {
+      const gen = ++cargaGenRef.current
       setLoading(true)
       try {
         const { filas: filasNuevas, total: totalNuevo } = await listarActividad(
@@ -119,14 +122,16 @@ export function UsuariosModule() {
           PAGE_SIZE,
           nuevoOffset
         )
+        if (gen !== cargaGenRef.current) return // llegó una carga más reciente
         setFilas((prev) => (reemplazar ? filasNuevas : [...prev, ...filasNuevas]))
         setTotal(totalNuevo)
         setOffset(nuevoOffset)
       } catch (err: unknown) {
+        if (gen !== cargaGenRef.current) return
         const message = err instanceof Error ? err.message : 'Error desconocido'
         toast.error('Error al cargar actividad', { description: message })
       } finally {
-        setLoading(false)
+        if (gen === cargaGenRef.current) setLoading(false)
       }
     },
     [modulo, usuarioId]

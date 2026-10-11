@@ -1094,6 +1094,53 @@ export async function deleteAllMovimientos(): Promise<{ deleted: boolean; error?
   return { deleted: true }
 }
 
+/**
+ * Snapshot de los IDs actuales de movimientos (paginado, orden estable por id).
+ * Lo usa la carga masiva de UP Data para borrar SOLO los registros antiguos
+ * DESPUÉS de insertar los nuevos (antes era delete-all-then-insert: si el insert
+ * fallaba a mitad, la tabla quedaba vacía o parcial e irrecuperable).
+ */
+export async function listarMovimientoIds(): Promise<string[]> {
+  const ids: string[] = []
+  let from = 0
+  const BATCH = 1000
+  for (let page = 0; page < 100; page++) {
+    const { data, error } = await dataClient
+      .from('movimientos')
+      .select('id')
+      .order('id')
+      .range(from, from + BATCH - 1)
+    if (error) throw error
+    const rows = (data ?? []) as { id: string }[]
+    ids.push(...rows.map((r) => r.id))
+    if (rows.length < BATCH) break
+    from += BATCH
+  }
+  return ids
+}
+
+/**
+ * Elimina movimientos por IDs explícitos, por lotes de 500 (una URL con miles
+ * de UUIDs excede límites del proxy). Devuelve el total eliminado y los errores
+ * por lote: si un lote falla, el resto continúa y el llamador informa lo que faltó.
+ */
+export async function eliminarMovimientosPorIds(
+  ids: string[]
+): Promise<{ eliminados: number; errores: string[] }> {
+  const errores: string[] = []
+  let eliminados = 0
+  const CHUNK = 500
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { error } = await dataClient
+      .from('movimientos')
+      .delete()
+      .in('id', ids.slice(i, i + CHUNK))
+    if (error) errores.push(`Lote ${Math.floor(i / CHUNK) + 1}: ${error.message}`)
+    else eliminados += Math.min(CHUNK, ids.length - i)
+  }
+  return { eliminados, errores }
+}
+
 export type UploadStockRow = {
   codigo: string
   descripcion: string

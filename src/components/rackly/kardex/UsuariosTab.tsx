@@ -82,7 +82,12 @@ export function UsuariosTab() {
     }
   }, [])
 
+  // IDs de usuario con operación en vuelo: evita doble-submit (rol/aprobado)
+  const [busyId, setBusyId] = useState<string | null>(null)
+
   async function handleRolChange(userId: string, nuevoRol: Rol) {
+    if (busyId) return
+    setBusyId(userId)
     try {
       await cambiarRol(userId, nuevoRol)
       toast.success('Rol actualizado')
@@ -91,10 +96,14 @@ export function UsuariosTab() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
       toast.error('Error al cambiar rol', { description: message })
+    } finally {
+      setBusyId(null)
     }
   }
 
   async function handleAprobado(userId: string, aprobado: boolean) {
+    if (busyId) return
+    setBusyId(userId)
     try {
       await cambiarAprobado(userId, aprobado)
       toast.success(aprobado ? 'Usuario aprobado' : 'Acceso revocado')
@@ -103,6 +112,8 @@ export function UsuariosTab() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
       toast.error('Error al cambiar estado', { description: message })
+    } finally {
+      setBusyId(null)
     }
   }
 
@@ -124,7 +135,13 @@ export function UsuariosTab() {
 
   async function handleSendResetEmail(email: string) {
     try {
-      await supabase.auth.resetPasswordForEmail(email)
+      // supabase-js v2 NO lanza: devuelve { data, error } — el catch nunca
+      // corría y siempre se mostraba "Correo enviado" aunque fallara
+      const { error } = await supabase.auth.resetPasswordForEmail(email)
+      if (error) {
+        toast.error('Error al enviar correo', { description: error.message })
+        return
+      }
       toast.success('Correo de recuperación enviado')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
@@ -163,7 +180,7 @@ export function UsuariosTab() {
                     <Select
                       value={p.rol}
                       onValueChange={(v) => handleRolChange(p.id, v as Rol)}
-                      disabled={p.id === perfil?.id}
+                      disabled={p.id === perfil?.id || busyId === p.id}
                     >
                       <SelectTrigger className="w-32">
                         <SelectValue />
@@ -190,6 +207,7 @@ export function UsuariosTab() {
                       size="sm"
                       variant={p.aprobado ? 'outline' : 'default'}
                       onClick={() => handleAprobado(p.id, !p.aprobado)}
+                      disabled={busyId === p.id}
                       className="gap-1"
                     >
                       <ShieldCheck className="h-3 w-3" />
@@ -257,6 +275,7 @@ export function UsuariosTab() {
                   size="sm"
                   variant={p.aprobado ? 'outline' : 'default'}
                   onClick={() => handleAprobado(p.id, !p.aprobado)}
+                  disabled={busyId === p.id}
                   className="shrink-0 gap-1"
                 >
                   <ShieldCheck className="h-3 w-3" />
@@ -276,7 +295,7 @@ export function UsuariosTab() {
                   <Select
                     value={p.rol}
                     onValueChange={(v) => handleRolChange(p.id, v as Rol)}
-                    disabled={p.id === perfil?.id}
+                    disabled={p.id === perfil?.id || busyId === p.id}
                   >
                     <SelectTrigger className="w-full max-w-[200px]">
                       <SelectValue />

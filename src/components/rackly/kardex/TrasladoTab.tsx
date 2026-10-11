@@ -246,15 +246,24 @@ export function TrasladoTab() {
         toast.warning('No se pudo verificar si el destino está ocupado. Revise manualmente antes de confirmar.', { duration: 6000 })
         setDestinoOcupado([])
         setSalidaParcialLote({})
+        setSalidaParcialCant({})
+        setSalidaParcialTotal({})
         setConfirm(true)
         return
       }
       setDestinoOcupado(destStock)
+      // Reset completo del estado de salidas parciales: antes solo se reseteaba
+      // salidaParcialLote y las cantidades/flag "Total" de un destino anterior
+      // reaparecían "fantasma" para otro destino con el mismo producto+lote
       setSalidaParcialLote({})
+      setSalidaParcialCant({})
+      setSalidaParcialTotal({})
     } catch {
       // Si falla la verificación, avisar pero permitir continuar
       toast.warning('No se pudo verificar si el destino está ocupado. Revise manualmente antes de confirmar.', { duration: 6000 })
       setDestinoOcupado([])
+      setSalidaParcialCant({})
+      setSalidaParcialTotal({})
     }
     setConfirm(true)
   }
@@ -293,7 +302,14 @@ export function TrasladoTab() {
       toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
       setMovs(await fetchMovimientos())
       const updated = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
-      setDestinoOcupado(updated)
+      // Validar fila-marker _error (como IngresoForm): sin esto se mostraba una
+      // fila fantasma con código vacío y stock 0 cuando la consulta fallaba
+      const consultaFallo = updated.length > 0 && '_error' in updated[0] && updated[0]._error
+      if (consultaFallo) {
+        toast.warning('No se pudo actualizar el stock del destino. Revise manualmente.', { duration: 6000 })
+      } else {
+        setDestinoOcupado(updated)
+      }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
         toast.error('Stock insuficiente', {

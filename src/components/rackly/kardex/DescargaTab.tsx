@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import { fetchMovimientos, addMovimientosBatch, deleteAllMovimientos, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
+import { fetchMovimientos, addMovimientosBatch, listarMovimientoIds, eliminarMovimientosPorIds, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
@@ -211,11 +211,55 @@ function UpDataSection() {
     if (inputRef.current) inputRef.current.value = ''
   }
 
+  /**
+   * Normaliza una celda de fecha de Excel a ISO (yyyy-mm-dd).
+   * Antes: String(celda) convertía fechas en número serial (ej. 45123) — esas
+   * filas fallaban en BD o guardaban basura que rompía el orden FEFO.
+   * Con cellDates:true XLSX entrega Date; se mantiene fallback para seriales
+   * y texto.
+   */
+  function fechaExcelAISO(v: unknown): string | undefined {
+    if (v == null || v === '') return undefined
+    if (v instanceof Date && !isNaN(v.getTime())) {
+      const y = v.getFullYear()
+      const m = String(v.getMonth() + 1).padStart(2, '0')
+      const d = String(v.getDate()).padStart(2, '0')
+      return `${y}-${m}-${d}`
+    }
+    if (typeof v === 'number' && v > 20000 && v < 80000) {
+      // Serial Excel (días desde 1900-01-00): convertir a fecha
+      const ms = Math.round((v - 25569) * 86400 * 1000)
+      const dt = new Date(ms)
+      if (!isNaN(dt.getTime())) {
+        const y = dt.getUTCFullYear()
+        const m = String(dt.getUTCMonth() + 1).padStart(2, '0')
+        const d = String(dt.getUTCDate()).padStart(2, '0')
+        return `${y}-${m}-${d}`
+      }
+      return undefined
+    }
+    const s = String(v).trim()
+    // Serial en texto ("45123")
+    if (/^\d{5}$/.test(s)) return fechaExcelAISO(Number(s))
+    // Ya es texto ISO o dd/mm/yyyy → devolver tal cual si parseable; si no, nada
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
+    const m = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})$/)
+    if (m) {
+      const dd = m[1].padStart(2, '0')
+      const mm = m[2].padStart(2, '0')
+      const yy = m[3].length === 2 ? `20${m[3]}` : m[3]
+      return `${yy}-${mm}-${dd}`
+    }
+    return undefined
+  }
+
   async function parseFile(f: File) {
     try {
       const XLSX = await import('xlsx')
       const buffer = await f.arrayBuffer()
-      const wb = XLSX.read(buffer, { type: 'array' })
+      // cellDates:true → las celdas de fecha llegan como Date (no como serial
+      // numérico que String() convertía en basura tipo "45123")
+      const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
       const ws = wb.Sheets[wb.SheetNames[0]]
       const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
 
@@ -287,7 +331,7 @@ function UpDataSection() {
           piso: String(row[pisoCol] ?? '').trim(),
           posicion: String(row[posCol] ?? '').trim(),
           cantidad,
-          fVencimiento: vencCol ? String(row[vencCol] ?? '').trim() : undefined,
+          fVencimiento: vencCol ? fechaExcelAISO(row[vencCol]) : undefined,
           codigoInc: incCol ? String(row[incCol] ?? '').trim() || undefined : undefined,
           proveedor: provCol ? String(row[provCol] ?? '').trim() : undefined,
         })
@@ -322,34 +366,57 @@ function UpDataSection() {
 
     setBusy(true)
     setErrors([])
-    setProgress('Paso 1/2: Eliminando movimientos anteriores...')
+    setProgress('Paso 1/3: Tomando snapshot de los movimientos actuales...')
     try {
-      // Paso 1: Borrar todos los movimientos (usa service_role)
-      const delResult = await deleteAllMovimientos()
-      if (!delResult.deleted) {
-        toast.error('Error al eliminar movimientos', { description: delResult.error })
-        setProgress('')
-        setBusy(false)
-        return
-      }
-      setProgress(`Paso 2/2: Insertando ${allRows.length} registros nuevos...`)
+      // SEGURO (antes era destructivo): se borraba TODO y recién después se
+      // insertaba; si el insert fallaba a mitad, la tabla quedaba vacía o parcial
+      // e irrecuperable. Ahora: 1) snapshot de IDs actuales, 2) insertar los
+      // nuevos (si falla, NO se borra nada), 3) podar los antiguos por lotes.
+      const idsAnteriores = await listarMovimientoIds()
+      setProgress(`Paso 2/3: Insertando ${allRows.length} registros nuevos...`)
 
-      // Paso 2: Insertar los nuevos movimientos
+      // Paso 2: Insertar los nuevos movimientos (sin borrar nada aún)
       const result = await addMovimientosBatch(
         allRows,
         perfil.id,
         perfil.nombre || undefined,
         perfil.correo || undefined,
       )
-      setProgress('')
-      if (result.errors.length > 0) {
+      if (result.inserted === 0) {
+        // Nada se insertó: no se toca la tabla actual
+        setProgress('')
         setErrors(result.errors)
+        toast.error('No se insertó ningún registro. Los datos actuales NO fueron modificados.', {
+          description: result.errors.slice(0, 3).join('\n'),
+          duration: 10000,
+        })
+        return
+      }
+
+      // Paso 3: Podar SOLO los movimientos anteriores (los recién insertados
+      // tienen IDs nuevos que no están en el snapshot)
+      setProgress('Paso 3/3: Retirando movimientos anteriores...')
+      const idsAPodar = idsAnteriores // el snapshot ya excluye los nuevos
+      const del = await eliminarMovimientosPorIds(idsAPodar)
+      setProgress('')
+
+      const faltantes = del.errores.length
+      if (result.errors.length > 0) {
+        setErrors([...result.errors, ...del.errores])
         toast.warning(
-          `Se insertaron ${result.inserted} de ${allRows.length}. Revisa los errores.`
+          `Se insertaron ${result.inserted} de ${allRows.length}. Anteriores retirados: ${del.eliminados}. Revisa los errores.`
+        )
+      } else if (faltantes > 0) {
+        setErrors(del.errores)
+        toast.warning(
+          `Carga completada (${result.inserted} ingreso(s)) pero NO se pudieron retirar ${idsAPodar.length - del.eliminados} movimiento(s) anterior(es): la tabla puede tener registros duplicados. Reintenta la carga o revisa la pestaña Movimientos.`,
+          { duration: 12000 }
         )
       } else {
         setDone(true)
-        toast.success(`${result.inserted} ingreso(s) registrado(s) correctamente. Stock actualizado.`)
+        toast.success(
+          `${result.inserted} ingreso(s) registrado(s) y ${del.eliminados} movimiento(s) anterior(es) retirado(s). Stock actualizado.`
+        )
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'

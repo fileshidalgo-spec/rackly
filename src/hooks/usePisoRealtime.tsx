@@ -93,7 +93,7 @@ export function usePisoRealtime(onChange: () => void) {
           if (status === 'SUBSCRIBED') {
             wsConnected = true
             stopPolling()
-          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
             wsConnected = false
             startPolling()
             console.warn('[Piso Realtime] WebSocket desconectado, reanudando polling de respaldo')

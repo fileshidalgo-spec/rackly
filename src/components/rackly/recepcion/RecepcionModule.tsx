@@ -182,9 +182,14 @@ export function RecepcionModule() {
   const [items, setItems] = useState<ItemRecepcion[]>([itemVacio()])
 
   const formRef = useRef<HTMLDivElement>(null)
+  // Guard generacional: si cambian los filtros mientras una carga está en vuelo,
+  // la respuesta VIEJA no debe pisar la lista (antes mezclaba filas de dos
+  // filtros y el conteo/paginación quedaban incoherentes)
+  const cargaGenRef = useRef(0)
 
   const cargar = useCallback(
     async (nuevoOffset: number, reemplazar: boolean) => {
+      const gen = ++cargaGenRef.current
       setLoading(true)
       try {
         const { filas: filasNuevas, total: totalNuevo } = await listarRecepciones({
@@ -193,14 +198,16 @@ export function RecepcionModule() {
           limit: PAGE_SIZE,
           offset: nuevoOffset,
         })
+        if (gen !== cargaGenRef.current) return // llegó una carga más reciente
         setFilas((prev) => (reemplazar ? filasNuevas : [...prev, ...filasNuevas]))
         setTotal(totalNuevo)
         setOffset(nuevoOffset)
       } catch (err: unknown) {
+        if (gen !== cargaGenRef.current) return
         const message = err instanceof Error ? err.message : 'Error desconocido'
         toast.error('Error al cargar recepciones', { description: message })
       } finally {
-        setLoading(false)
+        if (gen === cargaGenRef.current) setLoading(false)
       }
     },
     [busqueda, estadoFiltro]

@@ -185,6 +185,42 @@ export async function listarRecepciones(
 }
 
 /**
+ * Trae TODAS las filas registradas de UNA MISMA guía/documento. Sirve para
+ * la impresión de rótulos agrupada: el modal recibe la guía completa (no
+ * solo la fila clickeada) y imprime todos sus artículos en UN solo trabajo.
+ *
+ * Identidad de la guía:
+ *   · Con Nº de documento: tipo_documento + numero_documento (único por guía).
+ *   · Sin Nº (registro manual sin número): misma fecha + proveedor + tipo,
+ *     la huella más fiel sin riesgo de agrupar guías ajenas.
+ *
+ * Orden estable por created_at: los artículos aparecen en el orden en que
+ * se registraron. Solo devuelve datos YA registrados (regla de negocio:
+ * nunca se imprime desde el formulario sin guardar).
+ */
+export async function listarRecepcionesPorDocumento(ref: {
+  tipoDocumento: string
+  numeroDocumento: string
+  fecha?: string
+  proveedor?: string
+}): Promise<RegistroRecepcion[]> {
+  let q = dataClient
+    .from('recepcion_registros')
+    .select('*')
+    .eq('tipo_documento', ref.tipoDocumento.trim())
+  if (ref.numeroDocumento.trim()) {
+    q = q.eq('numero_documento', ref.numeroDocumento.trim())
+  } else {
+    q = q
+      .eq('fecha', (ref.fecha ?? '').trim())
+      .eq('proveedor', (ref.proveedor ?? '').trim())
+  }
+  const { data, error } = await q.order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []).map(mapRecepcion)
+}
+
+/**
  * Registra UNA recepción de N artículos: cada artículo se guarda como su
  * propia fila (compatible con búsqueda por código, actividad y listado)
  * compartiendo el encabezado del documento (guía, proveedor, placa, foto).

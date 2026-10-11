@@ -33,6 +33,7 @@ import {
 import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
 import {
   listarRecepciones,
+  listarRecepcionesPorDocumento,
   crearRecepciones,
   cambiarEstadoRecepcion,
   eliminarRecepcion,
@@ -128,6 +129,11 @@ export function RecepcionModule() {
   // (instantánea `guardados`) o con el botón de reimpresión de una fila ya
   // registrada en la lista. Nunca con datos sin registrar.
   const [rotulosOpen, setRotulosOpen] = useState(false)
+  // Impresión AGRUPADA POR GUÍA: un click en cualquier fila de una guía
+  // abre el modal con TODOS sus artículos (copias por artículo, un solo
+  // trabajo de impresión). `cargandoGuia` evita dobles clicks mientras
+  // se consulta la BD.
+  const [cargandoGuia, setCargandoGuia] = useState(false)
   const [guardados, setGuardados] = useState<{
     rotulos: RotuloAImprimir[]
     encabezado: EncabezadoRotulo
@@ -141,34 +147,62 @@ export function RecepcionModule() {
   }
 
   /**
-   * Reimpresión de rótulos de UNA fila ya REGISTRADA en la lista. Solo
-   * opera sobre datos guardados en la BD (la carga ya fue validada al
-   * registrarse); cumple la regla de negocio: imprimir solo lo registrado.
+   * Reimpresión de rótulos por GUÍA completa. Desde cualquier fila de la
+   * lista trae de la BD TODOS los artículos del mismo documento (la página
+   * visible puede estar paginada) y abre el modal con ellos: allí se
+   * confirman las copias de cada artículo y se imprime todo de una vez.
+   * Solo opera sobre datos YA registrados en la BD: se conserva la regla
+   * de negocio "imprimir solo lo registrado".
    */
-  function reimprimirFila(r: RegistroRecepcion) {
-    setGuardados({
-      rotulos: [
-        {
-          codigo: r.codigo.trim(),
-          descripcion: r.descripcion.trim(),
-          cantidad: String(r.cantidad),
-          unidad: r.unidadMedida.trim(),
-          lote: r.lote.trim(),
-          fechaProduccion: r.fechaProduccion,
-          fechaVencimiento: r.fechaVencimiento,
-          copias: 1,
-        },
-      ],
-      encabezado: {
-        fecha: r.fecha,
+  async function reimprimirGuia(r: RegistroRecepcion) {
+    if (cargandoGuia) return
+    setCargandoGuia(true)
+    try {
+      const filasGuia = await listarRecepcionesPorDocumento({
+        tipoDocumento: r.tipoDocumento,
         numeroDocumento: r.numeroDocumento,
+        fecha: r.fecha,
         proveedor: r.proveedor,
-        placa: r.placa,
-        registradoPor: r.usuarioNombre,
-      },
-      nota: `Reimpresión del artículo ${r.codigo.trim()} (registrado en la BD${r.numeroDocumento ? `, ${r.tipoDocumento} ${r.numeroDocumento}` : ''}). Digita cuántas etiquetas necesitas e imprime.`,
-    })
-    setRotulosOpen(true)
+      })
+      // Fallback defensivo: la fila clickeada SIEMPRE participa.
+      const vistas = filasGuia.length > 0 ? filasGuia : [r]
+      const rotulos: RotuloAImprimir[] = vistas
+        .filter((f) => f.codigo.trim())
+        .map((f) => ({
+          codigo: f.codigo.trim(),
+          descripcion: f.descripcion.trim(),
+          cantidad: String(f.cantidad),
+          unidad: f.unidadMedida.trim(),
+          lote: f.lote.trim(),
+          fechaProduccion: f.fechaProduccion,
+          fechaVencimiento: f.fechaVencimiento,
+          copias: 1,
+        }))
+      if (rotulos.length === 0) {
+        toast.info('Esa guía no tiene artículos con código', {
+          description: 'El código de barras es el identificador del rótulo; completa el código del artículo en el registro para poder imprimirlo.',
+        })
+        return
+      }
+      const doc = r.numeroDocumento ? `${r.tipoDocumento} ${r.numeroDocumento}` : r.tipoDocumento
+      setGuardados({
+        rotulos,
+        encabezado: {
+          fecha: r.fecha,
+          numeroDocumento: r.numeroDocumento,
+          proveedor: r.proveedor,
+          placa: r.placa,
+          registradoPor: r.usuarioNombre,
+        },
+        nota: `Reimpresión de la guía completa (${doc}): ${rotulos.length} artículo(s) ya registrados en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
+      })
+      setRotulosOpen(true)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('No se pudo cargar la guía completa', { description: message })
+    } finally {
+      setCargandoGuia(false)
+    }
   }
 
   // Formulario manual: encabezado del documento + lista de artículos.
@@ -491,7 +525,7 @@ export function RecepcionModule() {
               <TableHead className="w-[60px] text-center">Foto</TableHead>
               <TableHead className="w-[140px]">Estado</TableHead>
               <TableHead className="min-w-[130px]">Registró</TableHead>
-              <TableHead className="w-[60px] text-center" title="Reimprimir rótulo del artículo registrado">Rótulo</TableHead>
+              <TableHead className="w-[60px] text-center" title="Imprimir los rótulos de TODA la guía (todos sus artículos)">Rótulo</TableHead>
               {puedeEliminar && <TableHead className="w-[60px]" />}
             </TableRow>
           </TableHeader>
@@ -572,10 +606,11 @@ export function RecepcionModule() {
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                    onClick={() => reimprimirFila(r)}
-                    title="Reimprimir rótulo de este artículo ya registrado"
+                    onClick={() => void reimprimirGuia(r)}
+                    disabled={cargandoGuia}
+                    title="Imprimir los rótulos de TODA la guía, agrupados en una sola ventana"
                   >
-                    <Printer className="h-4 w-4" />
+                    {cargandoGuia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
                   </Button>
                 </TableCell>
                 {puedeEliminar && (
@@ -655,9 +690,11 @@ export function RecepcionModule() {
               size="sm"
               variant="outline"
               className="w-full gap-1 text-amber-700 hover:bg-amber-50"
-              onClick={() => reimprimirFila(r)}
+              onClick={() => void reimprimirGuia(r)}
+              disabled={cargandoGuia}
             >
-              <Printer className="h-3 w-3" /> Imprimir rótulos
+              {cargandoGuia ? <Loader2 className="h-3 w-3 animate-spin" /> : <Printer className="h-3 w-3" />}
+              Imprimir rótulos de la guía
             </Button>
             {puedeEliminar && (
               <Button
@@ -689,7 +726,8 @@ export function RecepcionModule() {
       )}
 
       {/* ── Impresión de rótulos (Zebra ZT411 por USB) — solo datos YA
-          registrados: instantánea post-guardado o reimpresión de fila ── */}
+          registrados: instantánea post-guardado o reimpresión AGRUPADA
+          por guía completa ── */}
       <ImprimirRotulosDialog
         open={rotulosOpen}
         onOpenChange={cerrarRotulos}

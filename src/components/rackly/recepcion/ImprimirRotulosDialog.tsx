@@ -12,10 +12,18 @@
  *      insumos.xlsm"), replicado en ZPL 1:1.
  *   3. "Imprimir" genera TODO el ZPL (^CI28 UTF-8) y lo envía en UN SOLO
  *      trabajo (un POST /write con todos los ^XA…^XZ concatenados).
- *      "Descargar .zpl" es el PLAN B sin middleware: el archivo se imprime
+ *      "Plan B: .zpl" es la vía sin middleware: el archivo se imprime
  *      con Zebra Setup Utilities (arrastrar al ícono de envío).
  *   4. La prop `nota` permite contextualizar el modal tras GUARDAR la
  *      recepción: se abre con los artículos ya registrados en la BD.
+ *   5. Agrupación por guía: `rotulos` llega SIEMPRE con la guía completa
+ *      (instantánea post-guardado o `listarRecepcionesPorDocumento` desde
+ *      la lista) — los artículos se confirman juntos en esta única ventana.
+ *
+ * Layout responsive (PC y móvil): caja flex con altura máxima en `dvh` —
+ *   · cabecera FIJA (título + ficha de la guía),
+ *   · contenido DESLIZABLE (copias por artículo + estado del servicio),
+ *   · pie FIJO (total + acciones): los botones nunca se van fuera de vista.
  *
  * Si el servicio no responde se muestra la guía de instalación/permisos en el
  * propio modal (no es un error del app: Browser Print corre en la PC de la
@@ -54,7 +62,6 @@ import {
   RefreshCw,
   Download,
   MonitorDown,
-  Package,
 } from 'lucide-react'
 
 type EstadoServicio = 'verificando' | 'activo' | 'no-encontrado'
@@ -80,6 +87,39 @@ export function rotulosDesdeItems(items: ItemRecepcion[]): RotuloAImprimir[] {
       fechaVencimiento: it.fechaVencimiento,
       copias: 1,
     }))
+}
+
+/**
+ * Ficha compacta de la guía en la cabecera fija del modal: documento,
+ * proveedor, fecha, placa y quién registró — el contexto del documento
+ * siempre visible mientras se revisan los artículos.
+ */
+function FichaGuia({ encabezado }: { encabezado: EncabezadoRotulo }) {
+  const { numeroDocumento, proveedor, fecha, placa, registradoPor } = encabezado
+  if (!numeroDocumento && !proveedor && !fecha && !placa) return null
+  return (
+    <div className="mt-2.5 rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2">
+      <p className="text-xs font-bold text-amber-900 truncate">
+        {numeroDocumento
+          ? `Guía ${numeroDocumento}`
+          : proveedor || 'Documento sin número'}
+      </p>
+      <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] sm:text-[11px] text-slate-500">
+        {numeroDocumento && proveedor && (
+          <span className="max-w-[14rem] truncate font-semibold text-slate-600" title={proveedor}>
+            {proveedor}
+          </span>
+        )}
+        {fecha && <span>Fecha: {fecha}</span>}
+        {placa && <span>Placa: {placa}</span>}
+        {registradoPor && (
+          <span className="max-w-[12rem] truncate" title={registradoPor}>
+            Registró: {registradoPor}
+          </span>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export function ImprimirRotulosDialog({
@@ -199,206 +239,214 @@ export function ImprimirRotulosDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[calc(100vw-1rem)] max-w-lg max-h-[85vh] overflow-y-auto overscroll-contain">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Printer className="h-4 w-4 text-amber-600" /> Imprimir rótulos
-          </DialogTitle>
-          <DialogDescription>
-            {rotulos.length} artículo(s) · etiqueta 10 × 15 cm · formato PERECIBLE de la empresa.
-          </DialogDescription>
-        </DialogHeader>
+      {/* Caja flex con techo en dvh: cabecera y pie fijos, solo el centro
+          se desliza. En móvil ocupa casi todo el alto útil del navegador. */}
+      <DialogContent className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-xl lg:max-w-2xl">
+        {/* ── Cabecera FIJA: título + ficha de la guía ── */}
+        <div className="shrink-0 border-b border-slate-100 pr-11 pl-4 pt-4 pb-3 sm:px-5 sm:pt-5">
+          <DialogHeader className="gap-1">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Printer className="h-4 w-4 text-amber-600" /> Imprimir rótulos
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {rotulos.length} artículo(s) de la guía · etiqueta 10 × 15 cm · formato PERECIBLE de la empresa.
+            </DialogDescription>
+          </DialogHeader>
+          <FichaGuia encabezado={encabezado} />
+        </div>
 
-        {nota && (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800">
-            {nota}
-          </p>
-        )}
+        {/* ── Contenido DESLIZABLE ── */}
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3 sm:px-5">
+          {nota && (
+            <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800">
+              {nota}
+            </p>
+          )}
 
-        {/* Copias por artículo: digitable SIEMPRE (con o sin Browser Print). */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <Label className="text-xs">Etiquetas por artículo</Label>
-            <div className="flex items-center gap-1">
-              <Input
-                type="number"
-                min={1}
-                max={999}
-                placeholder="N"
-                value={copiasTodos}
-                onChange={(e) => setCopiasTodos(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && aplicarCopiasATodos()}
-                className="h-7 w-14 text-xs text-right"
-                title="Misma cantidad de etiquetas para todos los artículos"
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 px-2 text-[11px]"
-                onClick={aplicarCopiasATodos}
-                disabled={rotulos.length === 0}
-              >
-                Aplicar a todos
-              </Button>
-            </div>
-          </div>
-          <div className="rounded-lg border divide-y max-h-44 overflow-y-auto">
-            {rotulos.map((r, i) => (
-              <div key={`${r.codigo}-${i}`} className="flex items-center gap-2 px-2.5 py-1.5">
-                <Package className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-semibold truncate">
-                    {r.codigo || '(sin código)'}
-                    {r.descripcion ? ` · ${r.descripcion}` : ''}
-                  </p>
-                  <p className="text-[10px] text-slate-400">
-                    Cant.: {r.cantidad}{r.unidad ? ` ${r.unidad}` : ''}
-                    {r.lote ? ` · Lote ${r.lote}` : ''}
-                  </p>
-                </div>
+          {/* Copias por artículo: digitable SIEMPRE (con o sin Browser Print). */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <Label className="text-xs">Etiquetas por artículo</Label>
+              <div className="flex items-center gap-1">
                 <Input
                   type="number"
                   min={1}
                   max={999}
-                  value={copias[i] ?? 1}
-                  onChange={(e) => setCopiasDe(i, Number(e.target.value))}
-                  className="h-7 w-16 text-xs text-right"
-                  title="Etiquetas de este artículo"
+                  placeholder="N"
+                  value={copiasTodos}
+                  onChange={(e) => setCopiasTodos(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && aplicarCopiasATodos()}
+                  className="h-8 w-14 text-xs text-right"
+                  title="Misma cantidad de etiquetas para todos los artículos"
                 />
-              </div>
-            ))}
-          </div>
-          <p className="text-[11px] text-slate-400">
-            Total: <b className="text-slate-600">{totalEtiquetas}</b> etiqueta(s) · se envían todas en
-            {' '}<b className="text-slate-600">un solo trabajo</b> de impresión.
-          </p>
-        </div>
-
-        {estado === 'verificando' && (
-          <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Buscando Zebra Browser Print en esta computadora…
-          </div>
-        )}
-
-        {estado === 'no-encontrado' && (
-          <div className="space-y-2 text-sm">
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-              <p className="font-semibold mb-1">
-                {motivo === 'permiso-bloqueado'
-                  ? 'Chrome bloqueó la conexión con la impresora local'
-                  : 'No se detectó Zebra Browser Print'}
-              </p>
-              <p className="text-xs leading-relaxed">
-                {motivo === 'permiso-bloqueado'
-                  ? 'El navegador denegó el salto del sitio hacia el programa local (protección de "red local"). Se concede UNA vez por computadora:'
-                  : 'El navegador no puede hablar con la impresora USB directamente. Hace falta el programa gratuito Zebra Browser Print corriendo en la PC donde está conectada la ZT411. Si YA lo tienes instalado, es casi seguro el bloqueo de red local de Chrome:'}
-              </p>
-            </div>
-            <ol className="list-decimal list-inside text-xs text-slate-600 space-y-1 py-1">
-              <li>
-                Instala o ACTUALIZA Browser Print:{' '}
-                <a
-                  className="text-sky-700 font-semibold underline"
-                  href="https://www.zebra.com/browserprint"
-                  target="_blank"
-                  rel="noreferrer"
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2.5 text-[11px]"
+                  onClick={aplicarCopiasATodos}
+                  disabled={rotulos.length === 0}
                 >
-                  zebra.com/browserprint
-                </a>{' '}
-                (versiones antiguas no pasan el control de seguridad de Chrome) y déjalo abierto
-                (ícono junto al reloj de Windows).
-              </li>
-              <li>
-                Concede el permiso local: ícono de la barra de direcciones → Permisos →{' '}
-                <b>Dispositivos de red local</b> → Permitir (o abre
-                <code className="mx-1 rounded bg-slate-100 px-1">chrome://settings/content/localNetworkAccess</code>
-                y permite rackly.pages.dev). Si Chrome pregunta "¿acceder a dispositivos de tu red
-                local?" → <b>Permitir</b>.
-              </li>
-              <li>
-                Enciende la ZT411. Si al imprimir pide certificado, abre{' '}
-                <a
-                  className="text-sky-700 underline"
-                  href="https://localhost:9101"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  https://localhost:9101
-                </a>{' '}
-                y acéptalo una sola vez.
-              </li>
-            </ol>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => void sondear()} className="flex-1 gap-2">
-                <RefreshCw className="h-4 w-4" /> Reintentar detección
-              </Button>
-              <Button variant="outline" onClick={descargar} className="flex-1 gap-2" title="Plan B: imprimir con Zebra Setup Utilities">
-                <Download className="h-4 w-4" /> Plan B: .zpl
-              </Button>
-            </div>
-            <p className="text-xs text-slate-500">
-              Plan B sin permisos: descarga los rótulos como archivo .zpl y envíalos a la impresora
-              con Zebra Setup Utilities (arrastrar al ícono de envío).
-            </p>
-          </div>
-        )}
-
-        {estado === 'activo' && (
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Impresora</Label>
-                <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => void sondear()}>
-                  <RefreshCw className="h-3 w-3" /> Buscar de nuevo
+                  Aplicar a todos
                 </Button>
               </div>
-              <Select value={seleccion} onValueChange={setSeleccion}>
-                <SelectTrigger className="h-9">
-                  <SelectValue placeholder="Selecciona impresora" />
-                </SelectTrigger>
-                <SelectContent>
-                  {impresoras.map((p) => (
-                    <SelectItem key={p.uid} value={p.uid}>
-                      {p.name}
-                      {p.connection ? ` (${p.connection})` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
             </div>
-
-            <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
-              <span className="text-xs text-slate-500">Tamaño de etiqueta</span>
-              <span className="text-xs font-bold text-slate-700">10 × 15 cm · formato PERECIBLE</span>
+            <div className="max-h-[38vh] min-h-20 overflow-y-auto overscroll-contain rounded-lg border divide-y">
+              {rotulos.map((r, i) => (
+                <div key={`${r.codigo}-${i}`} className="flex items-center gap-2.5 px-2.5 py-2">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[10px] font-bold text-slate-500">
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold truncate" title={`${r.codigo} · ${r.descripcion}`}>
+                      {r.codigo || '(sin código)'}
+                      {r.descripcion ? ` · ${r.descripcion}` : ''}
+                    </p>
+                    <p className="text-[10px] text-slate-400 truncate">
+                      Cant.: {r.cantidad}{r.unidad ? ` ${r.unidad}` : ''}
+                      {r.lote ? ` · Lote ${r.lote}` : ''}
+                    </p>
+                  </div>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={999}
+                    value={copias[i] ?? 1}
+                    onChange={(e) => setCopiasDe(i, Number(e.target.value))}
+                    className="h-8 w-16 shrink-0 text-xs text-right"
+                    title="Etiquetas de este artículo"
+                    aria-label={`Etiquetas de ${r.codigo}`}
+                  />
+                </div>
+              ))}
             </div>
-
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={() => void imprimir()}
-                disabled={imprimiendo || rotulos.length === 0}
-                className="flex-1 gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
-              >
-                {imprimiendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                Imprimir todo de una vez ({totalEtiquetas})
-              </Button>
-              <Button variant="outline" onClick={descargar} className="gap-2" title="Plan B: imprimir con Zebra Setup Utilities">
-                <Download className="h-4 w-4" /> .zpl
-              </Button>
-            </div>
-            <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-              <MonitorDown className="h-3 w-3" />
-              La impresión va directa por Zebra Browser Print instalado en la PC de la impresora.
-            </p>
-            <details className="text-[11px] text-slate-400">
-              <summary className="cursor-pointer hover:text-slate-600">
-                ¿Sin el programa? Descarga los rótulos como .zpl
-              </summary>
-              <Button variant="outline" onClick={descargar} className="mt-1.5 w-full gap-2">
-                <Download className="h-4 w-4" /> Descargar {totalEtiquetas} rótulo(s) en .zpl
-              </Button>
-            </details>
           </div>
-        )}
+
+          {estado === 'verificando' && (
+            <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" /> Buscando Zebra Browser Print en esta computadora…
+            </div>
+          )}
+
+          {estado === 'no-encontrado' && (
+            <div className="space-y-2 text-sm">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                <p className="font-semibold mb-1">
+                  {motivo === 'permiso-bloqueado'
+                    ? 'Chrome bloqueó la conexión con la impresora local'
+                    : 'No se detectó Zebra Browser Print'}
+                </p>
+                <p className="text-xs leading-relaxed">
+                  {motivo === 'permiso-bloqueado'
+                    ? 'El navegador denegó el salto del sitio hacia el programa local (protección de "red local"). Se concede UNA vez por computadora:'
+                    : 'El navegador no puede hablar con la impresora USB directamente. Hace falta el programa gratuito Zebra Browser Print corriendo en la PC donde está conectada la ZT411. Si YA lo tienes instalado, es casi seguro el bloqueo de red local de Chrome:'}
+                </p>
+              </div>
+              <ol className="list-decimal list-inside text-xs text-slate-600 space-y-1 py-1">
+                <li>
+                  Instala o ACTUALIZA Browser Print:{' '}
+                  <a
+                    className="text-sky-700 font-semibold underline"
+                    href="https://www.zebra.com/browserprint"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    zebra.com/browserprint
+                  </a>{' '}
+                  (versiones antiguas no pasan el control de seguridad de Chrome) y déjalo abierto
+                  (ícono junto al reloj de Windows).
+                </li>
+                <li>
+                  Concede el permiso local: ícono de la barra de direcciones → Permisos →{' '}
+                  <b>Dispositivos de red local</b> → Permitir (o abre
+                  <code className="mx-1 rounded bg-slate-100 px-1">chrome://settings/content/localNetworkAccess</code>
+                  y permite rackly.pages.dev). Si Chrome pregunta "¿acceder a dispositivos de tu red
+                  local?" → <b>Permitir</b>.
+                </li>
+                <li>
+                  Enciende la ZT411. Si al imprimir pide certificado, abre{' '}
+                  <a
+                    className="text-sky-700 underline"
+                    href="https://localhost:9101"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    https://localhost:9101
+                  </a>{' '}
+                  y acéptalo una sola vez.
+                </li>
+              </ol>
+              <Button variant="outline" onClick={() => void sondear()} className="w-full gap-2">
+                <RefreshCw className="h-4 w-4" /> Reintentar detección
+              </Button>
+              <p className="text-xs text-slate-500">
+                Mientras tanto, el botón <b>«Plan B: .zpl»</b> del pie descarga los rótulos para
+                imprimirlos con Zebra Setup Utilities (arrastrar al ícono de envío).
+              </p>
+            </div>
+          )}
+
+          {estado === 'activo' && (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">Impresora</Label>
+                  <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => void sondear()}>
+                    <RefreshCw className="h-3 w-3" /> Buscar de nuevo
+                  </Button>
+                </div>
+                <Select value={seleccion} onValueChange={setSeleccion}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Selecciona impresora" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {impresoras.map((p) => (
+                      <SelectItem key={p.uid} value={p.uid}>
+                        {p.name}
+                        {p.connection ? ` (${p.connection})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+                <span className="text-xs text-slate-500">Tamaño de etiqueta</span>
+                <span className="text-xs font-bold text-slate-700">10 × 15 cm · formato PERECIBLE</span>
+              </div>
+
+              <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                <MonitorDown className="h-3 w-3 shrink-0" />
+                La impresión va directa por Zebra Browser Print instalado en la PC de la impresora.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* ── Pie FIJO: total + acciones siempre a la vista ── */}
+        <div className="shrink-0 space-y-2 border-t border-slate-100 bg-slate-50/90 px-4 py-3 sm:px-5">
+          <p className="text-[11px] text-slate-500">
+            Total: <b className="text-slate-700">{totalEtiquetas}</b> etiqueta(s) · se envían todas en
+            {' '}<b className="text-slate-700">un solo trabajo</b> de impresión.
+          </p>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <Button
+              variant="outline"
+              onClick={descargar}
+              className="gap-2"
+              title="Plan B: imprimir con Zebra Setup Utilities"
+            >
+              <Download className="h-4 w-4" /> Plan B: .zpl
+            </Button>
+            <Button
+              onClick={() => void imprimir()}
+              disabled={estado !== 'activo' || imprimiendo || rotulos.length === 0}
+              className="flex-1 gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700 sm:flex-none sm:px-6"
+            >
+              {imprimiendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+              Imprimir todo de una vez ({totalEtiquetas})
+            </Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   )

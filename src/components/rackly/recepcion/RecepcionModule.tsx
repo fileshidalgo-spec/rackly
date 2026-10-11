@@ -18,7 +18,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
+import { useRegistrosRealtime, type MotivoRealtime } from '@/hooks/useRegistrosRealtime'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
 import { agruparGuias, avisosDePaletas, expandirEnFilas, filasAItems, obsSinMarcaPaleta, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
@@ -335,6 +335,18 @@ export function RecepcionModule() {
   const offsetRef = useRef(0)
   const filtrosActivosRef = useRef({ busqueda: '', estado: '' })
 
+  // EN VIVO: prueba VISIBLE del auto-refresco. El usuario pidió confirmar
+  // que "lo que agrego desde mi celular u otro usuario se vea solo": con la
+  // hora de la última actualización y el punto verde se comprueba de un
+  // vistazo (realtime + polling de respaldo, sin recargar la página).
+  const [enVivoHora, setEnVivoHora] = useState('')
+  // Novedades FUERA de la vista actual: si el usuario avanzó con "Cargar
+  // más" (offset ≠ 0) el refresco automático NO le pisa la lista (rompería
+  // su lectura), pero con un cambio REAL de la BD (evento realtime o vuelta
+  // a la pestaña) ahora se le AVISA — antes se saltaba en silencio y
+  // parecía que el realtime "no funciona".
+  const [nuevosPendientes, setNuevosPendientes] = useState(false)
+
   const cargar = useCallback(
     async (
       nuevoOffset: number,
@@ -358,6 +370,12 @@ export function RecepcionModule() {
         setTotal(totalNuevo)
         offsetRef.current = nuevoOffset
         setOffset(nuevoOffset)
+        if (reemplazar) {
+          setEnVivoHora(
+            new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          )
+          if (nuevoOffset === 0) setNuevosPendientes(false)
+        }
       } catch (err: unknown) {
         if (gen !== cargaGenRef.current) return
         const message = err instanceof Error ? err.message : 'Error desconocido'
@@ -375,13 +393,32 @@ export function RecepcionModule() {
    * más", pisarle la lista cada evento le rompería la lectura. En ese caso
    * el botón Buscar/actualizar sigue disponible.
    */
-  const recargarLista = useCallback(() => {
-    if (offsetRef.current !== 0) return
+  const recargarLista = useCallback(
+    (motivo: MotivoRealtime = 'evento') => {
+      if (offsetRef.current !== 0) {
+        // Lectura avanzada ("Cargar más"): no pisar la lista. Solo un cambio
+        // REAL de la BD (evento del canal o vuelta a la pestaña) levanta el
+        // aviso; el tic del polling NO (evita falsas alarmas).
+        if (motivo !== 'poll') setNuevosPendientes(true)
+        return
+      }
+      void cargar(0, true, {
+        busqueda: filtrosActivosRef.current.busqueda,
+        estado: filtrosActivosRef.current.estado,
+      })
+    },
+    [cargar]
+  )
+
+  /** Botón del aviso "Hay registros nuevos": recarga con los filtros
+   *  COMMITADOS (no con lo que esté a medio teclear en el buscador). */
+  function aplicarNuevos() {
+    setNuevosPendientes(false)
     void cargar(0, true, {
       busqueda: filtrosActivosRef.current.busqueda,
       estado: filtrosActivosRef.current.estado,
     })
-  }, [cargar])
+  }
 
   // Realtime: lo que registra OTRO usuario (o este mismo desde el celular)
   // aparece sin recargar la página.
@@ -750,6 +787,33 @@ export function RecepcionModule() {
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           Buscar
         </Button>
+      </div>
+
+      {/* ── EN VIVO: la lista se refresca sola (realtime + polling de
+          respaldo). El usuario debe poder COMPROBAR de un vistazo que la
+          actualización automática está activa — era invisible y por eso
+          parecía que "no sale". ── */}
+      <div className="flex items-center gap-2 flex-wrap -mt-1">
+        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700">
+          <span className="relative flex h-2 w-2 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+          En vivo{enVivoHora ? ` · actualizado ${enVivoHora}` : ''}
+          <span className="hidden min-[430px]:inline font-normal text-slate-500">
+            — lo que registre otro usuario (o tu celular) aparece solo
+          </span>
+        </span>
+        {nuevosPendientes && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 gap-1 px-2 text-[10px] border-amber-300 text-amber-800 hover:bg-amber-50"
+            onClick={aplicarNuevos}
+          >
+            <RefreshCw className="h-2.5 w-2.5" /> Hay registros nuevos — Ver actualizado
+          </Button>
+        )}
       </div>
 
       {/* ── Listado desktop AGRUPADO POR GUÍA: 1 fila por documento con

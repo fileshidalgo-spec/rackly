@@ -28,6 +28,7 @@ import {
   distribuirEquitativo,
   formatearCantidad,
   MAX_PALETAS,
+  repartirEquitativo,
   sumaPaletas,
 } from '@/lib/rackly/recepcion-filas'
 import { Input } from '@/components/ui/input'
@@ -45,6 +46,7 @@ import {
   Scissors,
   X,
   Package,
+  Scale,
 } from 'lucide-react'
 
 /** Artículo editable de una recepción. Si se DIVIDE en paletas, al
@@ -253,11 +255,19 @@ export function RecepcionItemsEditor({
     actualizar(idx, { paletas: next })
   }
 
+  /** REPARTO AUTOMÁTICO al cambiar el nº de paletas (pedido del usuario:
+   *  "si aumento la cantidad de paletas se vaya dividiendo a cada que
+   *  aumente — 100 en 4 paletas → 25 por paleta"). Al AGREGAR ya NO entra
+   *  una paleta vacía a rellenar a mano: el total del artículo se redistribuye
+   *  en partes iguales entre todas (la última absorbe el residuo). Si el
+   *  artículo no tiene total digitado ni suma en paletas, conserva los
+   *  valores y la paleta nueva queda vacía como antes. */
   function agregarPaleta(idx: number) {
     const it = items[idx]
     const prev = it.paletas ?? []
     if (prev.length >= MAX_PALETAS) return
-    actualizar(idx, { paletas: [...prev, ''] })
+    const next = repartirEquitativo(it, prev.length + 1) ?? [...prev, '']
+    actualizar(idx, { paletas: next })
   }
 
   function quitarPaleta(idx: number, pi: number) {
@@ -268,7 +278,21 @@ export function RecepcionItemsEditor({
       quitarDivision(idx)
       return
     }
-    actualizar(idx, { paletas: prev.filter((_, i) => i !== pi) })
+    // MISMA regla al quitar: las restantes se reparten el total en partes
+    // iguales (100 en 3 → borro 1 → quedan 50 y 50).
+    const restantes = prev.filter((_, i) => i !== pi)
+    const next = repartirEquitativo(it, restantes.length) ?? restantes
+    actualizar(idx, { paletas: next })
+  }
+
+  /** Vuelve a partes iguales sin cambiar el nº de paletas (deshace el
+   *  tecleo manual con un tap; usa el mismo total que el auto-reparto). */
+  function repartir(idx: number) {
+    const it = items[idx]
+    const prev = it.paletas ?? []
+    if (prev.length < 2) return
+    const next = repartirEquitativo(it, prev.length)
+    if (next) actualizar(idx, { paletas: next })
   }
 
   return (
@@ -501,7 +525,7 @@ export function RecepcionItemsEditor({
                       <p className="flex-1 min-w-[160px] text-[11px] font-semibold text-sky-900 flex items-start gap-1.5 leading-snug">
                         <Package className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                         <span>
-                          Paletas ({it.paletas.length}) — cada paleta sale como su propio rótulo
+                          Paletas ({it.paletas.length}) — al agregar o quitar se reparte el total en partes iguales (última absorbe el residuo)
                         </span>
                       </p>
                       <Button
@@ -554,6 +578,16 @@ export function RecepcionItemsEditor({
                         onClick={() => agregarPaleta(idx)}
                       >
                         <Plus className="h-2.5 w-2.5" /> Agregar paleta
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 px-2 text-[10px] text-sky-700 hover:bg-sky-100 hover:text-sky-800"
+                        onClick={() => repartir(idx)}
+                        title="Divide de nuevo el total del artículo en partes iguales entre todas las paletas"
+                      >
+                        <Scale className="h-2.5 w-2.5" /> Repartir en partes iguales
                       </Button>
                       {(() => {
                         const suma = sumaPaletas(it.paletas)

@@ -25,6 +25,19 @@
  *   · El REFRESCO lo hace cada módulo con su propio `cargar` (filtros y
  *     paginación propias): este hook solo AVISA. La decisión de refrescar
  *     (p. ej. solo si está en la página 1) la toma el módulo.
+ *
+ * MOTIVO de la notificación (MotivoRealtime): el módulo distingue por qué
+ * se pidió el refresco para decidir qué hacer cuando NO puede pisar la
+ * lista (p. ej. el usuario avanzó con "Cargar más"):
+ *   · 'evento'  → llegó un cambio REAL de la BD (INSERT/UPDATE/DELETE) por
+ *                 el canal realtime. Si no se puede refrescar, hay que
+ *                 AVISAR al usuario (hay datos nuevos fuera de su vista).
+ *   · 'poll'    → tic del polling de respaldo (cada 8 s, no sabe si hubo
+ *                 cambios). Si no se puede refrescar, NO avisa (evita
+ *                 falsas alarmas).
+ *   · 'visible' → el usuario volvió a esta pestaña (visibilitychange):
+ *                 probablemente pasó algo mientras estaba fuera; igual
+ *                 tratamiento que 'evento'.
  */
 
 import { useEffect, useRef } from 'react'
@@ -36,6 +49,9 @@ export type TablaRealtime =
   | 'atencion_registros'
   | 'movimientos'
 
+/** Por qué se pide el refresco (ver documentación del hook). */
+export type MotivoRealtime = 'evento' | 'poll' | 'visible'
+
 const CANAL_POR_TABLA: Record<TablaRealtime, string> = {
   recepcion_registros: 'recepcion-realtime-sync',
   atencion_registros: 'atencion-realtime-sync',
@@ -43,10 +59,11 @@ const CANAL_POR_TABLA: Record<TablaRealtime, string> = {
 }
 
 type EstadoTabla = {
-  listeners: Set<() => void>
+  listeners: Set<(motivo: MotivoRealtime) => void>
   intervalo: ReturnType<typeof setInterval> | null
   canal: ReturnType<typeof dataClient.channel> | null
   debounce: ReturnType<typeof setTimeout> | null
+  onVisible: (() => void) | null
 }
 
 const estados = new Map<TablaRealtime, EstadoTabla>()
@@ -54,17 +71,17 @@ const estados = new Map<TablaRealtime, EstadoTabla>()
 function estadoDe(tabla: TablaRealtime): EstadoTabla {
   let e = estados.get(tabla)
   if (!e) {
-    e = { listeners: new Set(), intervalo: null, canal: null, debounce: null }
+    e = { listeners: new Set(), intervalo: null, canal: null, debounce: null, onVisible: null }
     estados.set(tabla, e)
   }
   return e
 }
 
-function notificar(tabla: TablaRealtime) {
+function notificar(tabla: TablaRealtime, motivo: MotivoRealtime) {
   const e = estadoDe(tabla)
   for (const fn of e.listeners) {
     try {
-      fn()
+      fn(motivo)
     } catch {
       /* un listener roto no bloquea a los demás */
     }
@@ -77,7 +94,7 @@ function agendarRefresco(tabla: TablaRealtime) {
   if (e.debounce) clearTimeout(e.debounce)
   e.debounce = setTimeout(() => {
     e.debounce = null
-    notificar(tabla)
+    notificar(tabla, 'evento')
   }, 200)
 }
 
@@ -107,7 +124,23 @@ function iniciarPolling(tabla: TablaRealtime) {
   if (e.intervalo) return
   // Respaldo si el WebSocket está bloqueado (red corporativa) o el canal
   // muere: el módulo refresca igual cada POLLING_INTERVAL.
-  e.intervalo = setInterval(() => notificar(tabla), POLLING_INTERVAL)
+  e.intervalo = setInterval(() => notificar(tabla, 'poll'), POLLING_INTERVAL)
+}
+
+/**
+ * Refresco INMEDIATO al volver a la pestaña: mientras el usuario estuvo
+ * fuera (otra app del celular, otra pestaña) cualquiera pudo registrar algo;
+ * al regresar no debe esperar al próximo tic del polling.
+ */
+function iniciarVisible(tabla: TablaRealtime) {
+  const e = estadoDe(tabla)
+  if (e.onVisible) return
+  e.onVisible = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      notificar(tabla, 'visible')
+    }
+  }
+  document.addEventListener('visibilitychange', e.onVisible)
 }
 
 function detenerTodo(tabla: TablaRealtime) {
@@ -119,6 +152,10 @@ function detenerTodo(tabla: TablaRealtime) {
   if (e.debounce) {
     clearTimeout(e.debounce)
     e.debounce = null
+  }
+  if (e.onVisible) {
+    document.removeEventListener('visibilitychange', e.onVisible)
+    e.onVisible = null
   }
   if (e.canal) {
     try {
@@ -133,9 +170,14 @@ function detenerTodo(tabla: TablaRealtime) {
 /**
  * Suscribe `alCambiar` a los cambios de `tabla` mientras el componente esté
  * montado. `alCambiar` debe ser estable (useCallback) — se guarda en ref y
- * siempre se invoca la última versión.
+ * siempre se invoca la última versión. Recibe el `motivo` ('evento' |
+ * 'poll' | 'visible'); los callbacks antiguos que lo ignoran siguen
+ * funcionando sin cambios.
  */
-export function useRegistrosRealtime(tabla: TablaRealtime, alCambiar: () => void) {
+export function useRegistrosRealtime(
+  tabla: TablaRealtime,
+  alCambiar: (motivo: MotivoRealtime) => void
+) {
   const ref = useRef(alCambiar)
 
   useEffect(() => {
@@ -146,12 +188,13 @@ export function useRegistrosRealtime(tabla: TablaRealtime, alCambiar: () => void
     const e = estadoDe(tabla)
     const esPrimerListener = e.listeners.size === 0
 
-    const listener = () => ref.current()
+    const listener = (motivo: MotivoRealtime) => ref.current(motivo)
     e.listeners.add(listener)
 
     if (esPrimerListener) {
       iniciarCanal(tabla)
       iniciarPolling(tabla)
+      iniciarVisible(tabla)
     }
 
     return () => {

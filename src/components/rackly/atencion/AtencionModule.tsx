@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
+import { useRegistrosRealtime, type MotivoRealtime } from '@/hooks/useRegistrosRealtime'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import {
   listarAtenciones,
@@ -121,6 +121,11 @@ export function AtencionModule() {
   const offsetRef = useRef(0)
   const filtrosActivosRef = useRef({ busqueda: '', estado: '' })
 
+  // EN VIVO (misma mecánica que Recepción): hora de la última actualización
+  // y aviso de novedades cuando el refresco no pisa la lista ("Cargar más").
+  const [enVivoHora, setEnVivoHora] = useState('')
+  const [nuevosPendientes, setNuevosPendientes] = useState(false)
+
   const cargar = useCallback(
     async (
       nuevoOffset: number,
@@ -146,6 +151,12 @@ export function AtencionModule() {
         setTotal(totalNuevo)
         offsetRef.current = nuevoOffset
         setOffset(nuevoOffset)
+        if (reemplazar) {
+          setEnVivoHora(
+            new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          )
+          if (nuevoOffset === 0) setNuevosPendientes(false)
+        }
       } catch (err: unknown) {
         if (gen !== cargaGenRef.current) return
         const message = err instanceof Error ? err.message : 'Error desconocido'
@@ -158,13 +169,27 @@ export function AtencionModule() {
   )
 
   /** Refresco en segundo plano (realtime/polling), solo en página 1. */
-  const recargarLista = useCallback(() => {
-    if (offsetRef.current !== 0) return
+  const recargarLista = useCallback(
+    (motivo: MotivoRealtime = 'evento') => {
+      if (offsetRef.current !== 0) {
+        if (motivo !== 'poll') setNuevosPendientes(true)
+        return
+      }
+      void cargar(0, true, {
+        busqueda: filtrosActivosRef.current.busqueda,
+        estado: filtrosActivosRef.current.estado,
+      })
+    },
+    [cargar]
+  )
+
+  function aplicarNuevos() {
+    setNuevosPendientes(false)
     void cargar(0, true, {
       busqueda: filtrosActivosRef.current.busqueda,
       estado: filtrosActivosRef.current.estado,
     })
-  }, [cargar])
+  }
 
   // Lo que registra otro usuario (o este mismo desde el celular) aparece
   // sin recargar la página.
@@ -376,6 +401,30 @@ export function AtencionModule() {
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           Buscar
         </Button>
+      </div>
+
+      {/* ── EN VIVO (igual que Recepción): prueba visible del auto-refresco ── */}
+      <div className="flex items-center gap-2 flex-wrap -mt-1">
+        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700">
+          <span className="relative flex h-2 w-2 shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+          En vivo{enVivoHora ? ` · actualizado ${enVivoHora}` : ''}
+          <span className="hidden min-[430px]:inline font-normal text-slate-500">
+            — lo que registre otro usuario aparece solo
+          </span>
+        </span>
+        {nuevosPendientes && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 gap-1 px-2 text-[10px] border-amber-300 text-amber-800 hover:bg-amber-50"
+            onClick={aplicarNuevos}
+          >
+            <RefreshCw className="h-2.5 w-2.5" /> Hay registros nuevos — Ver actualizado
+          </Button>
+        )}
       </div>
 
       {/* ── Listado desktop ── */}

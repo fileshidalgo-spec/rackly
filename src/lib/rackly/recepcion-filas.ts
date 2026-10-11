@@ -129,6 +129,34 @@ export function distribuirEquitativo(total: string, n: number): string[] {
 }
 
 /**
+ * Total a usar al REDISTRIBUIR paletas: manda el total digitado del
+ * artículo (100 → 4 paletas = 25 c/u); si el total está vacío o en 0
+ * (artículo dividido sin total), usa la suma ACTUAL de las paletas.
+ * Devuelve NaN si no hay base para repartir.
+ */
+export function totalParaRedistribuir(item: ItemConPaletas): number {
+  const t = aNumero(item.cantidad ?? '')
+  if (!isNaN(t) && t > 0) return t
+  const s = sumaPaletas(item.paletas)
+  return s > 0 ? s : NaN
+}
+
+/**
+ * REPARTO AUTOMÁTICO al cambiar el Nº de paletas (pedido explícito:
+ * "si aumento la cantidad de paletas se vaya dividiendo a cada que
+ * aumente — 100 en 4 paletas → 25 por paleta"). Recalcula TODAS las
+ * paletas en partes iguales con el total del artículo; la última absorbe
+ * el residuo. Devuelve null si no hay base para repartir (sin total ni
+ * suma) — en ese caso la UI conserva los valores tal cual.
+ */
+export function repartirEquitativo(item: ItemConPaletas, n: number): string[] | null {
+  if (n < 2) return null
+  const total = totalParaRedistribuir(item)
+  if (isNaN(total)) return null
+  return distribuirEquitativo(formatearCantidad(total), n)
+}
+
+/**
  * AVISOS de coherencia por artículo dividido: la suma de sus paletas debería
  * cuadrar con el total digitado de la guía. Devuelve mensajes legibles
  * (vacío = todo cuadra); la UI decide cómo mostrarlos. Se permite guardar

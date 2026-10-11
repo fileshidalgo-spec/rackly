@@ -36,11 +36,20 @@ export function VersionBanner() {
       }
     }
     void verificar()
-    // Re-chequeo suave cada 15 min (turnos largos con la pestaña abierta).
-    const id = setInterval(verificar, 15 * 60 * 1000)
+    // Re-chequeo suave cada 5 min (antes 15): en almacén la pestaña queda
+    // abierta todo el turno y un deploy a mitad de turno tardaba demasiado
+    // en avisar. Además se re-chequea al VOLVER a la pestaña
+    // (visibilitychange): es el momento típico de "estuve fuera, despliegan
+    // algo y al regresar no lo veo".
+    const id = setInterval(verificar, 5 * 60 * 1000)
+    const alVolver = () => {
+      if (document.visibilityState === 'visible') void verificar()
+    }
+    document.addEventListener('visibilitychange', alVolver)
     return () => {
       vivo = false
       clearInterval(id)
+      document.removeEventListener('visibilitychange', alVolver)
     }
   }, [])
 

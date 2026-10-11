@@ -25,6 +25,8 @@ const {
   filasAItems,
   obsSinMarcaPaleta,
   marcaPaletaDe,
+  repartirEquitativo,
+  totalParaRedistribuir,
 } = require('@/lib/rackly/recepcion-filas')
 
 let pasados = 0
@@ -78,6 +80,27 @@ check('10,000 en 3 → 3333.333 / 3333.333 / 3333.334 (el residuo cae al final)'
 check('la distribución suma exactamente el total', Math.abs(sumaPaletas(eq) - 10000) < 0.001, String(sumaPaletas(eq)))
 check('total inválido → paletas vacías', distribuirEquitativo('', 3).every((p) => p === ''))
 check('sumaPaletas ignora vacíos', sumaPaletas(['2200', '', '1800']) === 4000, String(sumaPaletas(['2200', '', '1800'])))
+
+// ─── 4b. REPARTO AUTOMÁTICO al cambiar el nº de paletas ───
+// Pedido del usuario: "si aumento la cantidad de paletas a la que dividiré
+// se vaya dividiendo a cada que aumente — 100 en 4 paletas → 25 por paleta;
+// 100 en 3, borro 1 → quedan 50 y 50".
+console.log('\n[4b] repartirEquitativo / totalParaRedistribuir — reparto al agregar/quitar')
+const art100 = { ...base, cantidad: '100' }
+check('total manda: 100 → 4 paletas = 25 por paleta', JSON.stringify(repartirEquitativo(art100, 4)) === JSON.stringify(['25', '25', '25', '25']), JSON.stringify(repartirEquitativo(art100, 4)))
+check('100 en 3 → 33.333/33.333/33.334 (residuo al final)', JSON.stringify(repartirEquitativo(art100, 3)) === JSON.stringify(['33.333', '33.333', '33.334']), JSON.stringify(repartirEquitativo(art100, 3)))
+check('100 en 2 → 50 y 50 (caso "borro y quedan 50 y 50")', JSON.stringify(repartirEquitativo(art100, 2)) === JSON.stringify(['50', '50']), JSON.stringify(repartirEquitativo(art100, 2)))
+const editado = { ...base, cantidad: '100', paletas: ['60', '40', ''] }
+check('con paletas editadas a mano TAMBIÉN reparte (mandan las reglas, no lo tecleado)', JSON.stringify(repartirEquitativo(editado, 3)) === JSON.stringify(['33.333', '33.333', '33.334']), JSON.stringify(repartirEquitativo(editado, 3)))
+const sinTotal = { ...base, cantidad: '', paletas: ['30', '50'] }
+check('sin total digitado usa la SUMA actual de las paletas (80 → 3 = 26.666×2 + 26.668)', JSON.stringify(repartirEquitativo(sinTotal, 3)) === JSON.stringify(['26.666', '26.666', '26.668']), JSON.stringify(repartirEquitativo(sinTotal, 3)))
+check('sin total y con suma 0 → null (la UI conserva/agrega vacía)', repartirEquitativo({ ...base, cantidad: '', paletas: ['', ''] }, 3) === null)
+check('totalParaRedistribuir: total válido manda', totalParaRedistribuir(art100) === 100)
+check('totalParaRedistribuir: sin total → suma de paletas', totalParaRedistribuir(sinTotal) === 80)
+check('totalParaRedistribuir: sin nada → NaN', isNaN(totalParaRedistribuir({ ...base, cantidad: '', paletas: [''] })))
+check('reparto a 1 paleta → null (1 no es dividir)', repartirEquitativo(art100, 1) === null)
+const repartidoSuma = sumaPaletas(repartirEquitativo(art100, 4) ?? [])
+check('el reparto SIEMPRE suma el total del artículo', Math.abs(repartidoSuma - 100) < 0.001, String(repartidoSuma))
 
 const avisos = avisosDePaletas([{ ...base, paletas: ['2200', '1800', '2000'] }])
 check('paletas 6000 ≠ total 10000 → 1 aviso', avisos.length === 1 && avisos[0].includes('5653') && avisos[0].includes('6000'), JSON.stringify(avisos))

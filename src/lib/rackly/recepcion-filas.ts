@@ -150,6 +150,82 @@ export function avisosDePaletas(items: ItemConPaletas[]): string[] {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// EDICIÓN DE UNA GUÍA REGISTRADA: re-ensamblar filas → items
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Extrae la marca "Paleta i/N" de las observaciones de una fila registrada
+ * (la deja expandirEnFilas al guardar un artículo dividido). null si la
+ * fila no viene de una paleta.
+ */
+export function marcaPaletaDe(observaciones: string): { i: number; n: number } | null {
+  const m = (observaciones ?? '').match(/Paleta (\d+)\/(\d+)/)
+  if (!m) return null
+  const i = Number(m[1])
+  const n = Number(m[2])
+  return i >= 1 && n >= 2 && i <= n ? { i, n } : null
+}
+
+/** Observaciones SIN la marca "Paleta i/N" (texto que el usuario digitó). */
+export function obsSinMarcaPaleta(observaciones: string): string {
+  return (observaciones ?? '')
+    .replace(/\s*·?\s*Paleta \d+\/\d+/g, '')
+    .replace(/\s*·\s*$/, '')
+    .trim()
+}
+
+/**
+ * Operación INVERSA de expandirEnFilas sobre filas YA registradas: reconstruye
+ * los items del editor a partir de las filas de UNA guía en la BD. Las filas
+ * marcadas "Paleta i/N" del mismo artículo (consecutivas, orden created_at)
+ * vuelven a ser UN item con `paletas`; el resto son items de fila única.
+ * Así "Editar guía" reabre el documento tal cual se guardó (incluida la
+ * división en paletas) y el usuario puede revisar/ajustar y volver a guardar.
+ */
+export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
+  const items: ItemConPaletas[] = []
+  for (const f of filas) {
+    const marca = marcaPaletaDe(f.observaciones)
+    const prev = items[items.length - 1]
+    if (marca && prev && prev.codigo === f.codigo && prev.paletas && prev.paletas.length < marca.n) {
+      // Siguiente paleta del mismo artículo dividido.
+      prev.paletas.push(formatearCantidad(f.cantidad))
+      continue
+    }
+    if (marca) {
+      // Inicio de un grupo de paletas (nuevo o huérfano: la fila participa).
+      items.push({
+        codigo: f.codigo,
+        descripcion: f.descripcion,
+        cantidad: formatearCantidad(f.cantidad),
+        unidad: f.unidadMedida,
+        lote: f.lote,
+        fechaProduccion: f.fechaProduccion,
+        fechaVencimiento: f.fechaVencimiento,
+        paletas: [formatearCantidad(f.cantidad)],
+      })
+    } else {
+      items.push({
+        codigo: f.codigo,
+        descripcion: f.descripcion,
+        cantidad: formatearCantidad(f.cantidad),
+        unidad: f.unidadMedida,
+        lote: f.lote,
+        fechaProduccion: f.fechaProduccion,
+        fechaVencimiento: f.fechaVencimiento,
+      })
+    }
+  }
+  // El total del item dividido = suma de sus paletas (lo registrado manda).
+  for (const it of items) {
+    if (it.paletas && it.paletas.length > 0) {
+      it.cantidad = formatearCantidad(sumaPaletas(it.paletas))
+    }
+  }
+  return items
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // AGRUPADO DEL REGISTRO: UNA FILA POR GUÍA
 // ═══════════════════════════════════════════════════════════════════
 

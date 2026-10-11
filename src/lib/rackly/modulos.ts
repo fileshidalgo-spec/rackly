@@ -345,6 +345,117 @@ export async function eliminarGuia(ref: RefDocumentoRecepcion): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// RECEPCIÓN — EDICIÓN DE UNA GUÍA YA REGISTRADA
+// ═══════════════════════════════════════════════════════════════════
+
+/** Contenido editable de UNA fila de la guía (posicional sobre idsOriginales). */
+export type FilaEdicionGuia = {
+  codigo: string
+  descripcion: string
+  cantidad: number
+  unidadMedida: string
+  lote: string
+  fechaProduccion: string
+  fechaVencimiento: string
+  /** Observaciones del usuario + marca "Paleta i/N" si la fila es una paleta. */
+  observaciones: string
+}
+
+/** Encabezado (común a todas las filas) aplicado al guardar la edición. */
+export type EncabezadoEdicionGuia = {
+  fecha: string
+  tipoDocumento: string
+  numeroDocumento: string
+  proveedor: string
+  placa: string
+  /** Estado del documento: las filas nuevas lo heredan. */
+  estado: string
+  /** Foto de la guía: solo las filas NUEVAS la reciben (las viejas la conservan). */
+  fotoUrl: string
+}
+
+/**
+ * Guarda la edición de UNA guía ya registrada SIN riesgo de pérdida de datos.
+ *
+ * Sincronización POSICIONAL y por ID (nunca "borrar todo y reinsertar"):
+ *   1) UPDATE del contenido de las filas que persisten (ids en solape).
+ *   2) DELETE por id, SOLO de las filas que sobran (el usuario quitó
+ *      artículos/paletas).
+ *   3) INSERT de SOLO las filas nuevas (artículos/paletas agregados), con
+ *      el encabezado actual y heredando autor, foto y estado del documento.
+ *
+ * Cada paso es independiente y reintentable: si un paso falla, los demás
+ * quedan consistentes y el estado en pantalla (ids originales + items)
+ * permite reintentar sin duplicar ni perder nada. El cambio de Nº de guía
+ * viaja en el UPDATE (por id), así que renombrar el documento no rompe la
+ * identidad de las filas existentes.
+ */
+export async function guardarEdicionGuia(
+  idsOriginales: string[],
+  filasNuevas: FilaEdicionGuia[],
+  encabezado: EncabezadoEdicionGuia,
+  autor: UsuarioCtx
+): Promise<{ actualizadas: number; eliminadas: number; insertadas: number }> {
+  const solape = Math.min(idsOriginales.length, filasNuevas.length)
+
+  const contenidoDe = (f: FilaEdicionGuia) => ({
+    fecha: encabezado.fecha,
+    tipo_documento: encabezado.tipoDocumento,
+    numero_documento: encabezado.numeroDocumento.trim(),
+    proveedor: encabezado.proveedor.trim(),
+    placa: encabezado.placa.trim().toUpperCase(),
+    codigo: f.codigo.trim().toUpperCase(),
+    descripcion: f.descripcion.trim(),
+    cantidad: f.cantidad,
+    unidad_medida: (f.unidadMedida ?? '').trim().toUpperCase(),
+    lote: (f.lote ?? '').trim(),
+    fecha_produccion: f.fechaProduccion?.trim() || null,
+    fecha_vencimiento: f.fechaVencimiento?.trim() || null,
+    observaciones: f.observaciones.trim() || null,
+  })
+
+  // 1) UPDATE de las filas que persisten (por id — preserva usuario, foto,
+  //    estado y created_at de cada fila).
+  for (let i = 0; i < solape; i++) {
+    const { error } = await dataClient
+      .from('recepcion_registros')
+      .update(contenidoDe(filasNuevas[i]))
+      .eq('id', idsOriginales[i])
+    if (error) throw error
+  }
+
+  // 2) DELETE por id SOLO de las filas sobrantes.
+  const sobrantes = idsOriginales.slice(solape)
+  if (sobrantes.length > 0) {
+    const { error } = await dataClient
+      .from('recepcion_registros')
+      .delete()
+      .in('id', sobrantes)
+    if (error) throw error
+  }
+
+  // 3) INSERT de solo las filas nuevas (heredan encabezado, autor y estado).
+  const nuevas = filasNuevas.slice(solape)
+  if (nuevas.length > 0) {
+    const { error } = await dataClient
+      .from('recepcion_registros')
+      .insert(
+        nuevas.map((f) => ({
+          ...contenidoDe(f),
+          foto_url: encabezado.fotoUrl?.trim() || null,
+          estado: encabezado.estado || 'Pendiente',
+          usuario_id: autor.id,
+          usuario_nombre: autor.nombre,
+          usuario_correo: autor.correo,
+        }))
+      )
+    if (error) throw error
+  }
+
+  return { actualizadas: solape, eliminadas: sobrantes.length, insertadas: nuevas.length }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ATENCIÓN — API
 // ═══════════════════════════════════════════════════════════════════
 

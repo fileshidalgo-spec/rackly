@@ -20,7 +20,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useAuth } from '@/hooks/useAuth'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
-import { agruparGuias, avisosDePaletas, expandirEnFilas, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
+import { agruparGuias, avisosDePaletas, expandirEnFilas, filasAItems, obsSinMarcaPaleta, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
 import { GuiaFotoForm } from '@/components/rackly/recepcion/GuiaFotoForm'
 import {
   RecepcionItemsEditor,
@@ -38,6 +38,7 @@ import {
   listarRecepciones,
   listarRecepcionesPorDocumento,
   crearRecepciones,
+  guardarEdicionGuia,
   cambiarEstadoGuia,
   eliminarGuia,
   ESTADOS_RECEPCION,
@@ -89,6 +90,8 @@ import {
   Printer,
   ChevronDown,
   ChevronRight,
+  X,
+  Check,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
@@ -157,6 +160,21 @@ export function RecepcionModule() {
     nota?: string
   } | null>(null)
 
+  /**
+   * EDICIÓN de una guía YA registrada (el usuario pidió poder "revisar" el
+   * documento después de registrarlo). Trae TODAS las filas de la guía de la
+   * BD al formulario manual (re-ensamblando paletas), y al guardar las
+   * sincroniza por id SIN borrar todo (guardarEdicionGuia). null = modo alta.
+   */
+  const [editando, setEditando] = useState<{
+    ids: string[]
+    estado: string
+    autor: { id: string; nombre: string; correo: string }
+    fotoUrl: string
+    doc: string
+  } | null>(null)
+  const [cargandoEdicion, setCargandoEdicion] = useState(false)
+
   /** Cierra el modal y libera la instantánea post-guardado. */
   function cerrarRotulos(open: boolean) {
     setRotulosOpen(open)
@@ -193,6 +211,9 @@ export function RecepcionModule() {
           lote: f.lote.trim(),
           fechaProduccion: f.fechaProduccion,
           fechaVencimiento: f.fechaVencimiento,
+          // Marca "Paleta i/N" de las filas de artículos divididos: llega
+          // al modal (badge) y al ZPL (caja propia en la banda LOTE).
+          paleta: f.observaciones?.match(/Paleta \d+\/\d+/)?.[0] || undefined,
           copias: 1,
         }))
       if (rotulos.length === 0) {
@@ -234,6 +255,72 @@ export function RecepcionModule() {
   const [items, setItems] = useState<ItemRecepcion[]>([itemVacio()])
 
   const formRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * Reabre una guía registrada para REVISAR/EDITAR: encabezado + artículos
+   * (incluidas las paletas de los artículos divididos) vuelven al formulario.
+   * Al guardar, los cambios sincronizan por id (sin pérdida de datos) y el
+   * modal de rótulos se abre de nuevo para imprimir paleta por paleta.
+   */
+  async function abrirEdicion(g: GuiaAgrupada) {
+    if (cargandoEdicion) return
+    setCargandoEdicion(true)
+    try {
+      const filasGuia = await listarRecepcionesPorDocumento({
+        tipoDocumento: g.ref.tipoDocumento,
+        numeroDocumento: g.ref.numeroDocumento,
+        fecha: g.ref.fecha,
+        proveedor: g.ref.proveedor,
+      })
+      const filasCompletas = filasGuia.length > 0 ? filasGuia : g.filas
+      const primera = filasCompletas[0]
+      if (!primera) return
+      // Re-ensambla las filas en items editables (paletas incluidas).
+      const itemsGuia = filasAItems(filasCompletas)
+      const doc = g.numeroDocumento
+        ? `${g.tipoDocumento} ${g.numeroDocumento}`
+        : g.tipoDocumento
+      setEditando({
+        ids: filasCompletas.map((f) => f.id),
+        estado: g.estado || primera.estado || 'Pendiente',
+        autor: {
+          id: primera.usuarioId,
+          nombre: primera.usuarioNombre,
+          correo: primera.usuarioCorreo,
+        },
+        fotoUrl: g.fotoUrl || '',
+        doc,
+      })
+      // El editor vive en la vía manual: cámbiala y pre-llena el encabezado.
+      setModo('manual')
+      setFFecha(primera.fecha || hoyISO())
+      setFDoc(primera.tipoDocumento || 'Guia')
+      setFNumero(primera.numeroDocumento)
+      setFProveedor(primera.proveedor)
+      setFPlaca(g.placa || primera.placa || '')
+      setFObs(obsSinMarcaPaleta(primera.observaciones || ''))
+      setItems(itemsGuia.map((it) => ({ ...itemVacio(), ...it })))
+      toast.info(`Editando ${doc}`, {
+        description: 'Revisa los artículos y cantidades (puedes dividir en paletas) y pulsa "Guardar cambios".',
+      })
+      setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('No se pudo abrir la guía para editar', { description: message })
+    } finally {
+      setCargandoEdicion(false)
+    }
+  }
+
+  /** Sale del modo edición y limpia el formulario (sin tocar la BD). */
+  function cancelarEdicion() {
+    setEditando(null)
+    setFNumero('')
+    setFProveedor('')
+    setFPlaca('')
+    setFObs('')
+    setItems([itemVacio()])
+  }
   // Guard generacional: si cambian los filtros mientras una carga está en vuelo,
   // la respuesta VIEJA no debe pisar la lista (antes mezclaba filas de dos
   // filtros y el conteo/paginación quedaban incoherentes)
@@ -301,6 +388,59 @@ export function RecepcionModule() {
         })
         break // un solo aviso basta
       }
+
+      // ── EDICIÓN de una guía ya registrada: sincroniza por id ──
+      if (editando) {
+        const res = await guardarEdicionGuia(
+          editando.ids,
+          filasGuardar.map((f) => ({
+            codigo: f.codigo,
+            descripcion: f.descripcion,
+            cantidad: f.cantidadNum,
+            unidadMedida: f.unidad,
+            lote: f.lote,
+            fechaProduccion: f.fechaProduccion,
+            fechaVencimiento: f.fechaVencimiento,
+            observaciones: [fObs, f.paleta].filter(Boolean).join(' · '),
+          })),
+          {
+            fecha,
+            tipoDocumento: fDoc,
+            numeroDocumento: fNumero,
+            proveedor: fProveedor,
+            placa: fPlaca,
+            estado: editando.estado,
+            fotoUrl: editando.fotoUrl,
+          },
+          editando.autor
+        )
+        toast.success(
+          `Guía actualizada: ${res.actualizadas} fila(s) actualizada(s) · ${res.insertadas} nueva(s) · ${res.eliminadas} quitada(s)`
+        )
+        // Misma regla que al registrar: el modal de rótulos se abre con la
+        // instantánea recién guardada (ahora incluye las paletas) para
+        // configurar copias e imprimir de una vez.
+        const rotulos = filasARotulos(validos)
+        if (rotulos.length > 0) {
+          setGuardados({
+            rotulos,
+            encabezado: {
+              fecha,
+              numeroDocumento: fNumero,
+              proveedor: fProveedor,
+              placa: fPlaca,
+              registradoPor: editando.autor.nombre,
+            },
+            nota: `Guía actualizada: ${filasGuardar.length} fila(s) en la base de datos. Configura las etiquetas por rótulo/paleta e imprime todo de una vez.`,
+          })
+          setRotulosOpen(true)
+        }
+        cancelarEdicion()
+        cargar(0, true)
+        return
+      }
+
+      // ── ALTA normal: filas nuevas con el encabezado digitado ──
       await crearRecepciones(
         filasGuardar.map((f) => ({
           fecha,
@@ -429,16 +569,41 @@ export function RecepcionModule() {
 
       {/* ── Opción 2: formulario manual (encabezado + N artículos) ── */}
       {modo === 'manual' && (
-      <div ref={formRef} className="rounded-xl border border-amber-100 bg-amber-50/50 p-4 space-y-4">
+      <div ref={formRef} className="rounded-xl border border-amber-100 bg-amber-50/50 p-4 space-y-4 scroll-mt-20">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
-            <Plus className="h-4 w-4 text-amber-600" />
-            <h3 className="text-sm font-bold text-amber-900">Nueva recepción (manual)</h3>
+            {editando ? (
+              <PencilLine className="h-4 w-4 text-sky-600" />
+            ) : (
+              <Plus className="h-4 w-4 text-amber-600" />
+            )}
+            <h3 className="text-sm font-bold text-amber-900">
+              {editando ? `Editando ${editando.doc}` : 'Nueva recepción (manual)'}
+            </h3>
           </div>
-          <p className="text-[11px] text-slate-500">
-            Escribe el código y se autocompletan descripción y unidad desde el catálogo.
-          </p>
+          {editando ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={cancelarEdicion}
+              className="h-7 gap-1 text-xs text-slate-500"
+            >
+              <X className="h-3.5 w-3.5" /> Cancelar edición
+            </Button>
+          ) : (
+            <p className="text-[11px] text-slate-500">
+              Escribe el código y se autocompletan descripción y unidad desde el catálogo.
+            </p>
+          )}
         </div>
+        {editando && (
+          <p className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-800">
+            Modo revisión: ajusta cantidades, divide en paletas o corrige datos y pulsa
+            "Guardar cambios" — las filas registradas se actualizan sin perder quién registró
+            ni la foto de la guía.
+          </p>
+        )}
 
         {/* Encabezado del documento (compartido por todos los artículos) */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -503,10 +668,16 @@ export function RecepcionModule() {
           <Button
             onClick={handleRegistrar}
             disabled={saving}
-            className="flex-1 gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
+            className={`flex-1 gap-2 text-white ${
+              editando
+                ? 'bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700'
+                : 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700'
+            }`}
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
-            Registrar {itemsValidos(items).length > 0 ? `${itemsValidos(items).length} artículo(s)` : 'recepción'}
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : editando ? <Check className="h-4 w-4" /> : <PackageCheck className="h-4 w-4" />}
+            {editando
+              ? `Guardar cambios (${itemsValidos(items).length} artículo(s))`
+              : `Registrar ${itemsValidos(items).length > 0 ? `${itemsValidos(items).length} artículo(s)` : 'recepción'}`}
           </Button>
           {/* La impresión de rótulos NO va aquí: solo se ofrece tras REGISTRAR
               (el modal se abre solo al guardar, o desde la lista de
@@ -563,13 +734,14 @@ export function RecepcionModule() {
               <TableHead className="w-[140px]">Estado</TableHead>
               <TableHead className="min-w-[130px]">Registró</TableHead>
               <TableHead className="w-[60px] text-center" title="Imprimir los rótulos de TODA la guía (todos sus artículos)">Rótulo</TableHead>
+              <TableHead className="w-[60px] text-center" title="Revisar y EDITAR la guía completa (cantidades, paletas, lote, fechas…)">Editar</TableHead>
               {puedeEliminar && <TableHead className="w-[60px]" />}
             </TableRow>
           </TableHeader>
           <TableBody>
             {grupos.length === 0 && !loading && (
               <TableRow>
-                <TableCell colSpan={puedeEliminar ? 11 : 10} className="text-center text-sm text-slate-400 py-10">
+                <TableCell colSpan={puedeEliminar ? 12 : 11} className="text-center text-sm text-slate-400 py-10">
                   <Inbox className="h-8 w-8 mx-auto mb-2 text-slate-300" />
                   No hay recepciones registradas con los filtros actuales.
                 </TableCell>
@@ -672,6 +844,18 @@ export function RecepcionModule() {
                         {cargandoGuia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
                       </Button>
                     </TableCell>
+                    <TableCell className="text-center">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-sky-600 hover:text-sky-700 hover:bg-sky-50"
+                        onClick={() => void abrirEdicion(g)}
+                        disabled={cargandoEdicion}
+                        title="Revisar / EDITAR la guía completa: cantidades, paletas, lote y fechas — al guardar se actualizan las filas registradas"
+                      >
+                        {cargandoEdicion ? <Loader2 className="h-4 w-4 animate-spin" /> : <PencilLine className="h-4 w-4" />}
+                      </Button>
+                    </TableCell>
                     {puedeEliminar && (
                       <TableCell className="text-right">
                         <Button
@@ -688,7 +872,7 @@ export function RecepcionModule() {
                   </TableRow>
                   {abierta && (
                     <TableRow className="bg-slate-50/70 hover:bg-slate-50/70">
-                      <TableCell colSpan={puedeEliminar ? 11 : 10} className="p-0">
+                      <TableCell colSpan={puedeEliminar ? 12 : 11} className="p-0">
                         <div className="px-4 py-3 space-y-1.5">
                           {g.filas.map((f, i) => {
                             const mPaleta = f.observaciones?.match(/Paleta \d+\/\d+/)
@@ -824,6 +1008,16 @@ export function RecepcionModule() {
               >
                 {cargandoGuia ? <Loader2 className="h-3 w-3 animate-spin" /> : <Printer className="h-3 w-3" />}
                 Imprimir rótulos de la guía
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full gap-1 text-sky-700 hover:bg-sky-50"
+                onClick={() => void abrirEdicion(g)}
+                disabled={cargandoEdicion}
+              >
+                {cargandoEdicion ? <Loader2 className="h-3 w-3 animate-spin" /> : <PencilLine className="h-3 w-3" />}
+                Revisar / editar la guía
               </Button>
               {puedeEliminar && (
                 <Button

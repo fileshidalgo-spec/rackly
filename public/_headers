@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────────────
 # Headers para Cloudflare Pages
-# Evitar que el navegador o CDN sirvan versiones cacheadas
-# del HTML y los archivos JS/CSS principales.
+# Evitar que el navegador o la CDN sirvan versiones
+# cacheadas del HTML (causa #1 de "no veo la función nueva").
 # ──────────────────────────────────────────────────────
 
 # Punto de entrada raíz — JAMÁS cachear (es la ruta más importante)
@@ -25,10 +25,12 @@
   Expires: 0
   Surrogate-Control: no-store
 
+# version.json — el app lo consulta para detectar builds nuevos
+/version.json
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
+
 # Archivos JS y CSS con hash — cachear 1 año (son inmutables por hash)
 /_next/static/*
   Cache-Control: public, max-age=31536000, immutable
-
-# Todos los demás assets estáticos (imágenes, fuentes, etc.)
-/*
-  Cache-Control: public, max-age=86400

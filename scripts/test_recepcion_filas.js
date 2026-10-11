@@ -22,6 +22,9 @@ const {
   avisosDePaletas,
   agruparGuias,
   claveGuiaDe,
+  filasAItems,
+  obsSinMarcaPaleta,
+  marcaPaletaDe,
 } = require('@/lib/rackly/recepcion-filas')
 
 let pasados = 0
@@ -130,6 +133,36 @@ const sinNumero = agruparGuias([
 ])
 check('2 filas mismo día/proveedor → 1 guía; el proveedor distinto → otra', sinNumero.length === 2 && sinNumero[0].filas.length === 2, JSON.stringify(sinNumero.map((g) => g.filas.length)))
 check('clave distinta entre con-Nº y sin-Nº', claveGuiaDe({ tipoDocumento: 'Guia', numeroDocumento: 'T1-1', fecha: 'x', proveedor: 'y' }) !== claveGuiaDe({ tipoDocumento: 'Guia', numeroDocumento: '', fecha: 'x', proveedor: 'y' }))
+
+console.log('\n[7] filasAItems — re-ensamblado para EDITAR una guía registrada')
+const itemsReensamblados = filasAItems([
+  filaBd({ codigo: '5653', cantidad: 1000, observaciones: '' }),
+  filaBd({ codigo: '118', cantidad: 40, observaciones: 'obs usuario · Paleta 1/3' }),
+  filaBd({ codigo: '118', cantidad: 35, observaciones: 'obs usuario · Paleta 2/3' }),
+  filaBd({ codigo: '118', cantidad: 25, observaciones: 'obs usuario · Paleta 3/3' }),
+  filaBd({ codigo: '208', cantidad: 10, observaciones: '' }),
+])
+check('5 filas (1 dividida en 3) → 3 items (5653, 118 con paletas, 208)', itemsReensamblados.length === 3, JSON.stringify(itemsReensamblados.map((i) => i.codigo)))
+const it118 = itemsReensamblados[1]
+check('el item 118 queda con 3 paletas 40/35/25', it118.paletas && it118.paletas.length === 3 && it118.paletas.join(',') === '40,35,25', JSON.stringify(it118.paletas))
+check('el total del item dividido = suma de sus paletas (100)', it118.cantidad === '100', it118.cantidad)
+check('los items sin dividir conservan su cantidad', itemsReensamblados[0].cantidad === '1000' && itemsReensamblados[2].cantidad === '10')
+check('round-trip expandirEnFilas(filasAItems) reproduce las MISMAS cantidades', JSON.stringify(expandirEnFilas(itemsReensamblados).map((f) => [f.codigo, f.cantidadNum, f.paleta])) === JSON.stringify([['5653', 1000, ''], ['118', 40, 'Paleta 1/3'], ['118', 35, 'Paleta 2/3'], ['118', 25, 'Paleta 3/3'], ['208', 10, '']]))
+
+console.log('\n[8] filasAItems — casos borde')
+const mismoCodigoDosFilas = filasAItems([
+  filaBd({ codigo: '118', cantidad: 40, observaciones: 'Paleta 1/2' }),
+  filaBd({ codigo: '118', cantidad: 30, observaciones: 'Paleta 2/2' }),
+  filaBd({ codigo: '118', cantidad: 7, observaciones: '' }),
+])
+check('un código 2 paletas + misma código fila suelta LUEGO → items separados', mismoCodigoDosFilas.length === 2 && mismoCodigoDosFilas[0].paletas?.length === 2 && !mismoCodigoDosFilas[1].paletas, JSON.stringify(mismoCodigoDosFilas.map((i) => [i.cantidad, i.paletas?.length ?? 0])))
+const huerfana = filasAItems([
+  filaBd({ codigo: '118', cantidad: 5, observaciones: 'Paleta 2/3' }),
+  filaBd({ codigo: '118', cantidad: 6, observaciones: 'Paleta 3/3' }),
+])
+check('grupo de paletas huérfano (falta la 1ª) se re-ensambla igual', huerfana.length === 1 && huerfana[0].paletas?.length === 2, JSON.stringify(huerfana))
+check('obsSinMarcaPaleta quita la marca y deja el texto del usuario', obsSinMarcaPaleta('obs usuario · Paleta 2/3') === 'obs usuario', obsSinMarcaPaleta('obs usuario · Paleta 2/3'))
+check('marcaPaletaDe valida rangos', marcaPaletaDe('Paleta 3/3')?.i === 3 && marcaPaletaDe('Paleta 4/3') === null && marcaPaletaDe('sin marca') === null)
 
 // ─── Resumen ───
 console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)

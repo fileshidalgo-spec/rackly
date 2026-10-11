@@ -86,6 +86,8 @@ export type DatosRotulo = {
   lote: string
   fechaProduccion: string
   fechaVencimiento: string
+  /** Marca "Paleta i/N" cuando el artículo se DIVIDIÓ (opcional). */
+  paleta?: string
 }
 
 /** Encabezado compartido por los rótulos de una recepción.
@@ -359,6 +361,7 @@ export function construirZPLRotulo(
   const cantidad = sanearZPL(datos.cantidad)
   const unidad = sanearZPL(datos.unidad)
   const lote = sanearZPL(datos.lote)
+  const paleta = datos.paleta ? sanearZPL(datos.paleta) : ''
   const fProd = datos.fechaProduccion ? fechaCorta(datos.fechaProduccion) : ''
   const fVenc = datos.fechaVencimiento ? fechaCorta(datos.fechaVencimiento) : ''
 
@@ -418,13 +421,24 @@ export function construirZPLRotulo(
   }
 
   // ── 3) LOTE — banda visual Y 400..545 ──
+  // Si el rótulo es de UNA PALETA (artículo dividido), el extremo derecho
+  // de la banda lleva la marca "Paleta i/N" (caja propia 950..1200) y el
+  // valor del lote se acorta a 700 dots — el operario ve de un vistazo
+  // qué paleta es sin leer observaciones.
   lineas.push(cajaApaisada(0, 400, 250, 545, 3)) // caja "LOTE:"
-  lineas.push(cajaApaisada(250, 400, 1200, 545, 3)) // caja valor
+  lineas.push(cajaApaisada(250, 400, paleta ? 950 : 1200, 545, 3)) // caja valor
+  if (paleta) lineas.push(cajaApaisada(950, 400, 1200, 545, 2)) // caja paleta
   lineas.push(...campoApaisado(0, 400 + Math.floor((145 - 66) / 2), 66, 50, 'LOTE:', { fbAncho: 250 }))
   if (lote) {
-    const alto = altoParaCaja(lote, 950, 92)
+    const anchoValor = paleta ? 700 : 950
+    const alto = altoParaCaja(lote, anchoValor, 92)
     const y = 400 + Math.floor((145 - alto) / 2)
-    lineas.push(...campoApaisado(250, y, alto, Math.round(alto * 0.6), lote, { fbAncho: 950, negrita: true }))
+    lineas.push(...campoApaisado(250, y, alto, Math.round(alto * 0.6), lote, { fbAncho: anchoValor, negrita: true }))
+  }
+  if (paleta) {
+    const altoP = altoParaCaja(paleta, 250, 56, 28)
+    const yP = 400 + Math.floor((145 - altoP) / 2)
+    lineas.push(...campoApaisado(950, yP, altoP, Math.round(altoP * 0.6), paleta, { fbAncho: 250 }))
   }
 
   // ── 4) Bloque inferior: F.P / F.V · CANT · UM — banda visual Y 545..792 ──

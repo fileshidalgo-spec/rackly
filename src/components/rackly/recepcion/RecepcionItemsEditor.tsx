@@ -321,13 +321,18 @@ export function RecepcionItemsEditor({
           return (
             <div
               key={idx}
-              className={`rounded-lg border p-2.5 space-y-2 ${
+              className={`rounded-lg border p-2.5 sm:p-3 space-y-2 ${
                 it.enCatalogo ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200 bg-white'
               }`}
             >
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-slate-400 w-6 shrink-0">#{idx + 1}</span>
-                <div className="flex-1 relative space-y-1">
+              {/* Fila 1 (móvil): Nº + CÓDIGO ancho completo + quitar.
+                  Cantidad y Unidad bajan a la fila 2 al 50% cada una
+                  (en sm+ vuelven a la misma fila, compactas). Antes las
+                  3 columnas fijas dejaban el código de ~60px en móvil
+                  ("fuera de su sitio/margen"). */}
+              <div className="flex flex-wrap items-end gap-2">
+                <span className="text-[10px] font-bold text-slate-400 w-6 shrink-0 pb-2">#{idx + 1}</span>
+                <div className="flex-1 min-w-[140px] relative space-y-1">
                   <Label className="text-[10px] text-slate-500">Código del artículo</Label>
                   <Input
                     className="h-8 text-xs font-semibold"
@@ -387,7 +392,19 @@ export function RecepcionItemsEditor({
                     </div>
                   )}
                 </div>
-                <div className="w-24 shrink-0 space-y-1">
+                {items.length > 1 && (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 shrink-0 mb-0.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50"
+                    onClick={() => eliminar(idx)}
+                    title={`Quitar artículo #${idx + 1}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+                <div className="w-[calc(50%-0.25rem)] sm:w-24 space-y-1">
                   <Label className="text-[10px] text-slate-500">Cantidad</Label>
                   <Input
                     className="h-8 text-xs"
@@ -397,7 +414,7 @@ export function RecepcionItemsEditor({
                     placeholder="0"
                   />
                 </div>
-                <div className="w-20 shrink-0 space-y-1">
+                <div className="w-[calc(50%-0.25rem)] sm:w-20 space-y-1">
                   <Label className="text-[10px] text-slate-500">Unidad</Label>
                   <Input
                     className="h-8 text-xs"
@@ -406,18 +423,6 @@ export function RecepcionItemsEditor({
                     placeholder="KGM"
                   />
                 </div>
-                {items.length > 1 && (
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="h-8 w-8 shrink-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50"
-                    onClick={() => eliminar(idx)}
-                    title={`Quitar artículo #${idx + 1}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                )}
               </div>
               <div className="flex items-center gap-2 pl-8">
                 <div className="flex-1 space-y-1">
@@ -470,33 +475,40 @@ export function RecepcionItemsEditor({
               </div>
               {/* DIVIDIR EN PALETAS: la guía trae la suma; la mercadería llega
                   en N paletas con cantidades distintas y cada una se rotula
-                  con SU cantidad (al registrar: 1 fila por paleta). */}
+                  con SU cantidad (al registrar: 1 fila por paleta).
+                  BOTÓN PROMINENTE: antes era un texto gris casi invisible y
+                  el usuario no lo encontraba — ahora es un botón delineado
+                  ámbar, ancho completo en móvil. */}
               {!(it.paletas && it.paletas.length > 0) ? (
-                <div className="pl-8">
+                <div className="sm:pl-8">
                   <Button
                     type="button"
                     size="sm"
-                    variant="ghost"
-                    className="h-7 gap-1.5 text-[11px] text-slate-500 hover:text-amber-700 hover:bg-amber-50"
+                    variant="outline"
+                    className="h-9 w-full gap-1.5 border-dashed border-amber-300 text-xs font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-800 sm:w-auto sm:px-4"
                     onClick={() => dividir(idx)}
                     title="La guía trae la suma: divide la cantidad por paleta para rotular paleta por paleta"
                   >
-                    <Scissors className="h-3 w-3" /> Dividir en paletas
+                    <Scissors className="h-3.5 w-3.5" />
+                    Dividir en paletas
+                    <span className="hidden sm:inline font-normal text-slate-400">— la guía trae la suma; separa la cantidad por paleta</span>
                   </Button>
                 </div>
               ) : (
-                <div className="pl-8">
+                <div className="sm:pl-8">
                   <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2.5 space-y-2">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <p className="text-[11px] font-semibold text-sky-900 flex items-center gap-1.5">
-                        <Package className="h-3 w-3" />
-                        Paletas ({it.paletas.length}) — cada paleta sale como su propio rótulo
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="flex-1 min-w-[160px] text-[11px] font-semibold text-sky-900 flex items-start gap-1.5 leading-snug">
+                        <Package className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                        <span>
+                          Paletas ({it.paletas.length}) — cada paleta sale como su propio rótulo
+                        </span>
                       </p>
                       <Button
                         type="button"
                         size="sm"
                         variant="ghost"
-                        className="h-6 px-1.5 text-[10px] text-slate-500 hover:text-rose-600"
+                        className="h-6 shrink-0 px-1.5 text-[10px] text-slate-500 hover:text-rose-600"
                         onClick={() => quitarDivision(idx)}
                       >
                         <X className="h-3 w-3" /> Quitar división
@@ -505,20 +517,25 @@ export function RecepcionItemsEditor({
                     <div className="space-y-1.5">
                       {it.paletas.map((p, pi) => (
                         <div key={pi} className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold text-slate-400 w-14 shrink-0">Paleta {pi + 1}</span>
+                          <span
+                            className="text-[10px] font-bold text-slate-400 w-8 shrink-0"
+                            title={`Paleta ${pi + 1}`}
+                          >
+                            P{pi + 1}
+                          </span>
                           <Input
-                            className="h-7 flex-1 text-xs"
+                            className="h-8 flex-1 min-w-0 text-xs"
                             inputMode="decimal"
                             value={p}
                             onChange={(e) => setPaleta(idx, pi, e.target.value)}
-                            placeholder="Cantidad en esta paleta"
+                            placeholder="Cantidad"
                             aria-label={`Cantidad de la paleta ${pi + 1}`}
                           />
                           <Button
                             type="button"
                             size="icon"
                             variant="ghost"
-                            className="h-6 w-6 shrink-0 text-slate-400 hover:text-rose-600"
+                            className="h-7 w-7 shrink-0 text-slate-400 hover:text-rose-600"
                             onClick={() => quitarPaleta(idx, pi)}
                             title={`Quitar paleta ${pi + 1}`}
                           >
@@ -532,7 +549,7 @@ export function RecepcionItemsEditor({
                         type="button"
                         size="sm"
                         variant="outline"
-                        className="h-6 gap-1 px-2 text-[10px] border-dashed"
+                        className="h-7 gap-1 px-2 text-[10px] border-dashed"
                         disabled={it.paletas.length >= MAX_PALETAS}
                         onClick={() => agregarPaleta(idx)}
                       >
@@ -544,7 +561,7 @@ export function RecepcionItemsEditor({
                         const difieren =
                           suma > 0 && !isNaN(total) && total > 0 && Math.abs(suma - total) > 0.001
                         return (
-                          <p className={`text-[10px] font-semibold ${difieren ? 'text-amber-700' : 'text-slate-500'}`}>
+                          <p className={`flex-1 min-w-[140px] text-right text-[10px] font-semibold ${difieren ? 'text-amber-700' : 'text-slate-500'}`}>
                             Suma de paletas: {formatearCantidad(suma)}
                             {!isNaN(total) && total > 0 ? ` · Total en la guía: ${formatearCantidad(total)}` : ''}
                             {difieren ? ' — revisa las cantidades' : ''}

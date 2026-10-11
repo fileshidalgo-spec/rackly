@@ -19,6 +19,8 @@ import { PisoStockTab } from '@/components/rackly/piso/PisoStockTab'
 import { StockIncTab } from '@/components/rackly/kardex/StockIncTab'
 import { StockIncPisoTab } from '@/components/rackly/piso/StockIncPisoTab'
 import { ModulosHome, type VistaModulo } from '@/components/rackly/inicio/ModulosHome'
+import { VersionBanner } from '@/components/rackly/VersionBanner'
+import { SELLO_VERSION } from '@/lib/rackly/version-sello'
 import { UsuariosModule } from '@/components/rackly/usuarios/UsuariosModule'
 import { RecepcionModule } from '@/components/rackly/recepcion/RecepcionModule'
 import { AtencionModule } from '@/components/rackly/atencion/AtencionModule'
@@ -801,6 +803,9 @@ function RacklyApp() {
         )}
       </div>
 
+      {/* ═══ Aviso de versión nueva (anti-caché) ═══ */}
+      <VersionBanner />
+
       {/* ═══ FOOTER ═══ */}
       <footer className="mt-10 relative z-10 bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900">
         <div className="mx-auto max-w-7xl px-3 sm:px-4 py-3 sm:py-4 flex items-center justify-between">
@@ -810,6 +815,9 @@ function RacklyApp() {
             </div>
             <span className="text-xs font-semibold text-slate-400">
               RACKLY <span className="text-slate-600">·</span> Sistema de Gestión de Almacenes
+            </span>
+            <span className="hidden sm:inline text-[10px] text-slate-600" title="Sello del build instalado">
+              v{SELLO_VERSION}
             </span>
           </div>
           <p className="text-[10px] text-slate-600">

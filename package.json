@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
+    "prebuild": "node scripts/gen_version.mjs",
     "build": "next build",
     "start": "npx serve out -s -l 3000",
     "lint": "eslint .",

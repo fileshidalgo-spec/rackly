@@ -90,6 +90,7 @@ export function filasARotulos(items: ItemRecepcion[]): RotuloAImprimir[] {
       lote: f.lote,
       fechaProduccion: f.fechaProduccion,
       fechaVencimiento: f.fechaVencimiento,
+      paleta: f.paleta || undefined,
       copias: 1,
     }))
 }
@@ -311,6 +312,14 @@ export function ImprimirRotulosDialog({
                       {r.lote ? ` · Lote ${r.lote}` : ''}
                     </p>
                   </div>
+                  {r.paleta && (
+                    <span
+                      className="shrink-0 rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700"
+                      title="Rótulo de una paleta (artículo dividido) — se imprime con SU cantidad"
+                    >
+                      {r.paleta}
+                    </span>
+                  )}
                   <Input
                     type="number"
                     min={1}

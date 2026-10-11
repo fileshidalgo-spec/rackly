@@ -7,9 +7,10 @@
  *   1. Al abrir, sondea Zebra Browser Print (http://localhost:9100) y lista
  *      las impresoras; preselecciona la del sistema (GET /default).
  *   2. El usuario digita las etiquetas que necesita de CADA artículo
- *      (o "aplicar a todos"). El tamaño es FIJO: etiqueta de 10 × 15 cm
- *      con el formato PERECIBLE de la empresa (plantilla "ETIQUETA ALMACEN
- *      insumos.xlsm"), replicado en ZPL 1:1.
+ *      (o "aplicar a todos"). El tamaño es FIJO: etiqueta APaisada de
+ *      15 × 10 cm (impresa girada en la tira 10 × 15) con el formato
+ *      PERECIBLE de la empresa (plantilla "ETIQUETA ALMACEN insumos.xlsm"),
+ *      replicado en ZPL 1:1.
  *   3. "Imprimir" genera TODO el ZPL (^CI28 UTF-8) y lo envía en UN SOLO
  *      trabajo (un POST /write con todos los ^XA…^XZ concatenados).
  *      "Plan B: .zpl" es la vía sin middleware: el archivo se imprime
@@ -249,7 +250,7 @@ export function ImprimirRotulosDialog({
               <Printer className="h-4 w-4 text-amber-600" /> Imprimir rótulos
             </DialogTitle>
             <DialogDescription className="text-xs">
-              {rotulos.length} artículo(s) de la guía · etiqueta 10 × 15 cm · formato PERECIBLE de la empresa.
+              {rotulos.length} artículo(s) de la guía · etiqueta horizontal 15 × 10 cm · formato PERECIBLE de la empresa.
             </DialogDescription>
           </DialogHeader>
           <FichaGuia encabezado={encabezado} />
@@ -411,7 +412,7 @@ export function ImprimirRotulosDialog({
 
               <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
                 <span className="text-xs text-slate-500">Tamaño de etiqueta</span>
-                <span className="text-xs font-bold text-slate-700">10 × 15 cm · formato PERECIBLE</span>
+                <span className="text-xs font-bold text-slate-700">15 × 10 cm horizontal · formato PERECIBLE</span>
               </div>
 
               <p className="text-[11px] text-slate-400 flex items-center gap-1.5">

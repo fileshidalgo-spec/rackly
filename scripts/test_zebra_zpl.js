@@ -54,16 +54,17 @@ const DATOS = {
   fechaVencimiento: '2027-07-22',
 }
 
-console.log('\n── 1. Estructura ZPL (10×15 cm) ──')
+console.log('\n── 1. Estructura ZPL (tira 10×15 cm, diseño apaisado 15×10) ──')
 const z1 = construirZPLRotulo(DATOS, ENCABEZADO, { copias: 2 })
 check('empieza con ^XA', z1.startsWith('^XA'))
 check('termina con ^XZ', z1.trimEnd().endsWith('^XZ'))
 check('UTF-8 (^CI28)', z1.includes('^CI28'))
-check('ancho 800 dots (10 cm)', z1.includes('^PW800'))
-check('largo 1200 dots (15 cm)', z1.includes('^LL1200'))
+check('ancho físico 800 dots (tira 10 cm)', z1.includes('^PW800'))
+check('largo físico 1200 dots (tira 15 cm)', z1.includes('^LL1200'))
 check('marco exterior 800×1200 desde (0,0)', z1.includes('^FO0,0^GB800,1200,3'))
 check('SIN ^LH (desplazaba el marco fuera del área: bordes derecho/inferior no salían)', !z1.includes('^LH'))
-check('código gigante (alto 200)', z1.includes('^A0N,200,120'))
+check('texto ROTADO 90° horario (todo ^A0R, sin ^A0N)', !z1.includes('^A0N') && z1.includes('^A0R'))
+check('código gigante rotado (alto 190, glifo 114)', z1.includes('^A0R,190,114'))
 check('código presente como texto', z1.includes('^FD56119^FS'))
 
 console.log('\n── 2. Fidelidad a la plantilla PERECIBLE ──')
@@ -80,8 +81,20 @@ check('fecha vencimiento dd/mm/yyyy', z1.includes('^FD22/07/2027^FS'))
 check('cantidad presente', z1.includes('^FD193320^FS'))
 check('unidad presente', z1.includes('^FDUN^FS'))
 check('lote presente', z1.includes('^FD0869051017^FS'))
-check('descripción envuelta (^FB 3 líneas)', z1.includes('^FB752,3,10,C'))
+check('descripción 63 chars → 1 renglón a fuente 48 (^FB1152,1,10,C)', z1.includes('^FB1152,1,10,C'))
+const zDescLarga = construirZPLRotulo({ ...DATOS, descripcion: DATOS.descripcion + ' EXTRA LARGA' }, ENCABEZADO)
+check('descripción 75 chars → 2 renglones (^FB1152,2,10,C)', zDescLarga.includes('^FB1152,2,10,C'))
 check("descripción completa con Ñ", z1.includes('DISEÑO 202'))
+
+console.log('\n── 2b. Bandas y cajas del diseño apaisado (coordenadas físicas) ──')
+check('banda código (visual Y 0..240)', z1.includes('^FO560,0^GB240,1200,3'))
+check('banda descripción (visual Y 240..400)', z1.includes('^FO400,0^GB160,1200,3'))
+check('caja LOTE: (visual X 0..250)', z1.includes('^FO255,0^GB145,250,3'))
+check('caja valor lote (visual X 250..1200)', z1.includes('^FO255,250^GB145,950,3'))
+check('caja fecha F.P (fila superior)', z1.includes('^FO132,170^GB123,250,2'))
+check('caja fecha F.V (fila inferior)', z1.includes('^FO8,170^GB124,250,2'))
+check('caja cantidad (alta, X 540..1060)', z1.includes('^FO8,540^GB247,520,2'))
+check('caja UM (X 1060..1200)', z1.includes('^FO8,1060^GB247,140,2'))
 
 console.log('\n── 3. Copias y múltiples rótulos ──')
 check('2 copias (^PQ2)', z1.includes('^PQ2,0,0,N'))
@@ -123,25 +136,38 @@ check('fechas vacías → ^FD^FS', zVacio.includes('^FD^FS'))
 check('cantidad vacía → caja sin texto, unidad sí impresa', zVacio.includes('^FDKG^FS'))
 check('etiquetas LOTE:/F.P/F.V/CANT: siempre presentes', ['LOTE:', 'F.P', 'F.V', 'CANT:'].every((t) => zVacio.includes(t)))
 
-console.log('\n── 7. Auto-ajuste del código gigante (códigos 6+ dígitos) ──')
+console.log('\n── 7. Auto-ajuste y centrado del código gigante (apaisado) ──')
 const zCorto = construirZPLRotulo({ ...DATOS, codigo: '56119' }, ENCABEZADO)
 const zLargo = construirZPLRotulo({ ...DATOS, codigo: '1234567' }, ENCABEZADO)
-function altoCodigo(z) {
-  const m = z.match(/\^FO0,(\d+)\^A0N,(\d+),/)
-  return m ? { y: Number(m[1]), alto: Number(m[2]) } : null
+const zLargo12 = construirZPLRotulo({ ...DATOS, codigo: '123456789012' }, ENCABEZADO)
+function codigoFisico(z) {
+  const m = z.match(/\^FO(\d+),24\^A0R,(\d+),/)
+  return m ? { xFis: Number(m[1]), alto: Number(m[2]) } : null
 }
-const aCorto = altoCodigo(zCorto)
-const aLargo = altoCodigo(zLargo)
-check('código 5 dígitos usa el alto máximo (200)', aCorto && aCorto.alto === 200)
-check('código 7 dígitos se reduce (alto < 200)', aLargo && aLargo.alto < 200)
+const aCorto = codigoFisico(zCorto)
+const aLargo = codigoFisico(zLargo)
+const aLargo12 = codigoFisico(zLargo12)
+check('código 5 dígitos usa el alto máximo (190)', aCorto && aCorto.alto === 190)
+check('código 7 dígitos cabe en el ancho apaisado (7 × 0.6 × 190 = 798 < 1128)', aLargo && aLargo.alto === 190 && 7 * 0.6 * 190 < 1128)
+check('código 12 dígitos se reduce (alto 151 < 190) y cabe (1087 < 1128)', aLargo12 && aLargo12.alto === 151 && 12 * 0.6 * 151 < 1128)
 check(
-  'código 7 dígitos cabe en el ancho (7 × 0.6 × alto < 800)',
-  aLargo && 7 * 0.6 * aLargo.alto < 800
+  'código centrado en su banda: y_visual = 800 − x_fís − alto ∈ (0, 240−alto)',
+  aCorto && (() => { const y = 800 - aCorto.xFis - aCorto.alto; return y > 0 && y + aCorto.alto < 240 })()
 )
-check(
-  'código sigue centrado verticalmente en su banda (0 < y < 310-alto)',
-  aLargo && aLargo.y > 0 && aLargo.y < 310 - aLargo.alto
-)
+
+console.log('\n── 8. Límites físicos: nada sale del área 800×1200 ──')
+function limitesOK(z) {
+  const fos = [...z.matchAll(/\^FO(\d+),(\d+)/g)].map((m) => [Number(m[1]), Number(m[2])])
+  const gbs = [...z.matchAll(/\^GB(\d+),(\d+),/g)].map((m) => [Number(m[1]), Number(m[2])])
+  return (
+    fos.every(([x, y]) => x >= 0 && x <= 800 && y >= 0 && y <= 1200) &&
+    gbs.every(([w, h]) => w > 0 && w <= 800 && h > 0 && h <= 1200) &&
+    fos.length > 0 && gbs.length > 0
+  )
+}
+check('todos los ^FO y ^GB dentro de la tira (rótulo completo)', limitesOK(z1))
+check('límites respetados con campos vacíos', limitesOK(zVacio))
+check('límites respetados con código de 12 dígitos', limitesOK(zLargo12))
 
 console.log(`\n═══ RESULTADO: ${passed} pasados, ${failed} fallados ═══`)
 process.exit(failed > 0 ? 1 : 0)

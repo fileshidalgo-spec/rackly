@@ -34,9 +34,12 @@
  *   guía al usuario; el Plan B (.zpl con Zebra Setup Utilities) siempre
  *   queda disponible sin permisos.
  *
- * LENGUAJE: ZPL II con ^CI28 (UTF-8) para tildes/ñ. Etiqueta 10 × 15 cm
- * (800 × 1200 dots @203 dpi) con el FORMATO PERECIBLE de la empresa,
- * replicado de "ETIQUETA ALMACEN insumos.xlsm" (hoja PERECIBLE).
+ * LENGUAJE: ZPL II con ^CI28 (UTF-8) para tildes/ñ. Etiqueta APaisada
+ * 15 × 10 cm (formato PERECIBLE de la empresa, plantilla
+ * "ETIQUETA ALMACEN insumos.xlsm") impresa GIRADA 90° horario sobre la
+ * tira física 10 × 15 cm (800 × 1200 dots @203 dpi): la ZT411 tiene
+ * cabezal de 4" (104 mm), así que 15 cm de ancho solo se logran girando
+ * el diseño; al despegar el rótulo se lee horizontal.
  *
  * FALLBACK: sin el middleware, el app genera un archivo .zpl descargable
  * que se imprime con Zebra Setup Utilities (arrastrar y enviar).
@@ -253,28 +256,92 @@ function fechaCorta(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : sanearZPL(iso)
 }
 
+/** Ancho FÍSICO del rollo (10 cm @203 dpi). Eje que no puede crecer. */
+const ANCHO_FISICO = 800
+
+/**
+ * Caja de borde en coordenadas VISUALES apaisadas (x0,y0)-(x1,y1) sobre el
+ * lienzo 1200 × 800 → comando ^GB en coordenadas físicas. Los ^GB no se
+ * giran con el texto: se transforman aquí, en un solo lugar.
+ */
+function cajaApaisada(x0: number, y0: number, x1: number, y1: number, grosor = 3): string {
+  return `^FO${ANCHO_FISICO - y1},${x0}^GB${y1 - y0},${x1 - x0},${grosor}^FS`
+}
+
+type OpcionesCampoApaisado = {
+  /** Si se define, envuelve el texto en ^FB centrado de ese ancho visual. */
+  fbAncho?: number
+  /** Líneas del ^FB (default 1). */
+  fbLineas?: number
+  /** Espaciado entre líneas del ^FB (default 0). */
+  fbEspacio?: number
+  /** "Negrita" simulada: 2ª pasada a 2 dots en el flujo del texto. */
+  negrita?: boolean
+}
+
+/**
+ * Campo de texto ROTADO 90° horario (^A0R). `x0,y0` = esquina superior
+ * izquierda VISUAL de la CELDA del glifo en el lienzo apaisado; el texto
+ * fluye hacia la derecha visual (+Y físico) y la celda crece hacia abajo
+ * visual (−X físico). CALIBRADO con render Labelary: en ZPL, el ^FO de un
+ * campo girado es la esquina superior-izquierda en el marco FÍSICO, o sea
+ * la esquina inferior-izquierda VISUAL de la celda → para que la celda
+ * ocupe y_v ∈ [y0, y0+alto] hay que restar `alto`:
+ *   ^FO(800 − y0 − alto, x0)
+ * Devuelve 1 línea (o 2 si `negrita`).
+ */
+function campoApaisado(
+  x0: number,
+  y0: number,
+  alto: number,
+  anchoGlifo: number,
+  texto: string,
+  ops: OpcionesCampoApaisado = {}
+): string[] {
+  const fb = ops.fbAncho
+    ? `^FB${ops.fbAncho},${ops.fbLineas ?? 1},${ops.fbEspacio ?? 0},C`
+    : ''
+  const pasadas = ops.negrita ? [0, 2] : [0]
+  const xFis = ANCHO_FISICO - y0 - alto
+  return pasadas.map(
+    (dx) => `^FO${xFis},${x0 + dx}^A0R,${alto},${anchoGlifo}${fb}^FD${texto}^FS`
+  )
+}
+
 /**
  * Rótulo de RECEPCIÓN en ZPL II — FORMATO PERECIBLE de la empresa,
- * replicado 1:1 desde "ETIQUETA ALMACEN insumos.xlsm" (hoja PERECIBLE).
- * Etiqueta física: 10 × 15 cm (100 × 150 mm) = 800 × 1200 dots @203 dpi.
+ * replicado desde "ETIQUETA ALMACEN insumos.xlsm" (hoja PERECIBLE),
+ * en orientación HORIZONTAL (apaisada 15 × 10 cm).
  *
- *   ┌────────────────────────────┐
- *   │         56119              │  ← código, fuente gigante centrada
- *   ├────────────────────────────┤
- *   │  ENVASE TETRA PACK PULP…   │  ← descripción centrada (hasta 3 líneas)
- *   ├──────────┬─────────────────┤
- *   │  LOTE:   │   0869051017    │
- *   ├──────┬───┴─────┬─────┬────┴────┬──────┐
- *   │ F.P  │ 23/07/… │CANT:│ 193320  │  UN  │
- *   │ F.V  │ 22/07/… │     │         │      │
- *   └──────┴─────────┴─────┴─────────┴──────┘
+ * La tira física sigue siendo 10 × 15 cm (800 × 1200 dots @203 dpi) — la
+ * ZT411 no puede imprimir más de 104 mm de ancho — así que el diseño se
+ * dibuja en un LIENZO APAISADO de 1200 (ancho visual) × 800 (alto visual)
+ * dots y se imprime GIRADO 90° HORARIO dentro de la tira:
+ *
+ *   · flujo del texto (visual → derecha)  ⇒ avance del rollo (+Y físico)
+ *   · altura del glifo (visual ↓ abajo)   ⇒ hacia el borde izquierdo (−X físico)
+ *   · origen ^FO del campo = (800 − y_visual_sup, x_visual_izq)
+ *
+ * Al despegar el rótulo y girarlo 90° ANTIHORARIO se lee horizontal:
+ *
+ *   ┌────────────────────────────────────────────────────────────┐ Y 0
+ *   │                         49310                              │  código 0..240
+ *   ├────────────────────────────────────────────────────────────┤
+ *   │   LAMINA TERMOCONTRABLE 380 MM X 50 µ  (1-2 líneas)        │  desc 240..400
+ *   ├────────────┬───────────────────────────────────────────────┤
+ *   │   LOTE:    │                0869051017                     │  lote 400..545
+ *   ├─────┬──────┴────────┬───────┬────────────────────┬─────────┤ 545
+ *   │ F.P │  23/07/2026   │ CANT: │       193320       │   UN    │
+ *   │ F.V │  22/07/2027   │       │                    │         │
+ *   └─────┴───────────────┴───────┴────────────────────┴─────────┘ 792
+ *     X: 0  170            420     540                1060    1200
  *
  * FIDELIDAD al formato de la empresa:
  *   · SIN código de barras (el original es solo texto).
  *   · SIN guía/placa/proveedor/fecha de recepción (no están en la plantilla;
  *     `encabezado` queda en la firma por compatibilidad, no se imprime).
  *   · Todas las cajas con borde, textos centrados, "negrita" simulada
- *     (doble pasada con 3 dots de offset) en código, lote, cantidad y UM.
+ *     (doble pasada a 2 dots en el flujo) en código, lote y cantidad.
  *   · Campos vacíos (lote/fechas) salen en blanco, como en la plantilla.
  *
  * DPI: la ZT411 estándar es 203 dpi (8 dots/mm). Si la suya fuera 300 dpi,
@@ -295,96 +362,101 @@ export function construirZPLRotulo(
   const fProd = datos.fechaProduccion ? fechaCorta(datos.fechaProduccion) : ''
   const fVenc = datos.fechaVencimiento ? fechaCorta(datos.fechaVencimiento) : ''
 
-  // ── Geometría (dots @203dpi; 1 dot = 0.125 mm) ──
-  // Ancho total 800, alto 1200; marco exterior (0,0)-(800,1200).
-  // Bandas: código 0-310 · descripción 310-578 · lote 578-728 ·
-  //         inferior 728-1192 (fechas 2 filas de 232; cantidad/UM 464).
+  // ── Geometría ──
+  // Tira física: 800 (ancho, 10 cm) × 1200 (avance, 15 cm) dots @203dpi.
+  // Diseño APaisado 1200 × 800 girado 90° horario (ver diagrama arriba).
+  // Bandas visuales (Y): código 0-240 · descripción 240-400 ·
+  //   lote 400-545 · inferior 545-792 (fechas 2 filas de 123).
+  // Columnas visuales del bloque inferior (X): F.P/F.V 0-170 ·
+  //   fechas 170-420 · CANT: 420-540 · cantidad 540-1060 · UM 1060-1200.
+  // SIN ^LH: el label home por defecto es (0,0) (un ^LH desplaza TODOS los
+  // ^FO y saca los bordes del área imprimible — verificado con render).
 
   const lineas: string[] = []
   lineas.push('^XA')
   lineas.push('^CI28') // UTF-8: tildes y ñ (p. ej. "DISEÑO")
   lineas.push('^PW800')
   lineas.push('^LL1200')
-  // SIN ^LH: el label home por defecto es (0,0). Antes se usaba ^LH8,8 como
-  // "margen", pero desplaza TODOS los ^FO: el marco ^FO0,0^GB800,1200 quedaba
-  // en (8,8)-(808,1208), fuera del área 800×1200 → los bordes derecho e
-  // inferior NO salían impresos (verificado con render real). Todo el
-  // trazado ya está en coordenadas absolutas 0-based.
 
-  // Marco exterior
-  lineas.push('^FO0,0^GB800,1200,3^FS')
+  // Marco exterior (físicamente idéntico al formato vertical anterior)
+  lineas.push(cajaApaisada(0, 0, 1200, 800, 3))
 
-  // ── 1) CÓDIGO (gigante, centrado, "demi") ──
+  // ── 1) CÓDIGO (gigante, centrado, "demi") — banda visual Y 0..240 ──
   // El alto se AUTO-AJUSTA a la longitud: hoy el catálogo usa 3-5 dígitos
-  // (cabe a 200 dots), pero con códigos de 6+ el texto se saldría de la
-  // etiqueta — se reduce proporcionalmente y siempre queda centrado.
-  lineas.push('^FO0,0^GB800,310,3^FS')
+  // (cabe a 190 dots), pero con códigos largos se reduce proporcionalmente
+  // (holgura 0.62: margen del avance real 0.6 × alto) y queda centrado.
+  lineas.push(cajaApaisada(0, 0, 1200, 240, 3))
   if (codigo) {
-    const alto = altoParaCaja(codigo, 768, 200, 90)
-    const y = Math.floor((310 - alto) / 2) - 10
-    for (const dx of [0, 2]) {
-      lineas.push(`^FO${dx},${y}^A0N,${alto},${Math.round(alto * 0.6)}^FB800,1,0,C^FD${codigo}^FS`)
-    }
+    const alto = altoParaCaja(codigo, 1152, 190, 90, 0.62)
+    const y = Math.floor((240 - alto) / 2) - 10
+    lineas.push(...campoApaisado(24, y, alto, Math.round(alto * 0.6), codigo, { fbAncho: 1152, negrita: true }))
   }
 
-  // ── 2) DESCRIPCIÓN (centrada, hasta 3 líneas, bloque centrado vertical) ──
-  lineas.push('^FO0,310^GB800,268,3^FS')
+  // ── 2) DESCRIPCIÓN — banda visual Y 240..400 (1-2 líneas, centrada) ──
+  lineas.push(cajaApaisada(0, 240, 1200, 400, 3))
   if (descripcion) {
-    // Estimación de líneas con métricas de font 0 (avance ≈ 0.55 × ancho 42)
-    const anchoLinea = 752
-    const avanceDesc = Math.round(0.55 * 42)
-    const nLineas = Math.min(3, Math.max(1, Math.ceil((descripcion.length * avanceDesc) / anchoLinea)))
-    const altoBloque = nLineas * Math.round(58 * 1.15)
-    const yDesc = 310 + Math.floor((268 - altoBloque) / 2)
-    lineas.push(`^FO24,${yDesc}^A0N,58,42^FB752,3,10,C^FD${descripcion}^FS`)
+    // En apaisado el renglón es ancho (1152 dots). Cadena de decisión con
+    // avance conservador (0.5 × ancho de glifo, calibrado con Labelary):
+    //   1) fuente 58 si cabe en 1 renglón (≤ ~54 chars)
+    //   2) fuente 48 si cabe en 1 renglón (≤ ~65 chars)
+    //   3) fuente 48 en 2 renglones (el ^FB trunca si > ~130 chars)
+    const anchoLinea = 1152
+    const cabe58 = descripcion.length * 0.5 * 42 <= anchoLinea
+    const cabe48 = descripcion.length * 0.5 * 35 <= anchoLinea
+    const dosLineas = !cabe58 && !cabe48
+    const alto = cabe58 ? 58 : 48
+    const anchoGlifo = cabe58 ? 42 : 35
+    const altoBloque = dosLineas ? 2 * Math.round(alto * 1.15) + 10 : Math.round(alto * 1.15)
+    const y = 240 + Math.floor((160 - altoBloque) / 2)
+    lineas.push(
+      ...campoApaisado(24, y, alto, anchoGlifo, descripcion, {
+        fbAncho: anchoLinea,
+        fbLineas: dosLineas ? 2 : 1,
+        fbEspacio: 10,
+      })
+    )
   }
 
-  // ── 3) LOTE ──
-  lineas.push('^FO0,578^GB212,150,3^FS')
-  lineas.push('^FO212,578^GB588,150,3^FS')
-  lineas.push(`^FO0,612^A0N,66,50^FB212,1,0,C^FDLOTE:^FS`)
+  // ── 3) LOTE — banda visual Y 400..545 ──
+  lineas.push(cajaApaisada(0, 400, 250, 545, 3)) // caja "LOTE:"
+  lineas.push(cajaApaisada(250, 400, 1200, 545, 3)) // caja valor
+  lineas.push(...campoApaisado(0, 400 + Math.floor((145 - 66) / 2), 66, 50, 'LOTE:', { fbAncho: 250 }))
   if (lote) {
-    const alto = altoParaCaja(lote, 588, 92)
-    for (const dx of [0, 2]) {
-      lineas.push(`^FO${212 + dx},608^A0N,${alto},${Math.round(alto * 0.6)}^FB588,1,0,C^FD${lote}^FS`)
-    }
+    const alto = altoParaCaja(lote, 950, 92)
+    const y = 400 + Math.floor((145 - alto) / 2)
+    lineas.push(...campoApaisado(250, y, alto, Math.round(alto * 0.6), lote, { fbAncho: 950, negrita: true }))
   }
 
-  // ── 4) Bloque inferior: F.P / F.V · CANT · UM ──
-  // Columnas (métrica font 0: avance dígito ≈ 0.55 × ancho de glifo):
-  //   etiquetas 0-112 | fechas 112-332 | CANT: 332-452 |
-  //   cantidad 452-688 | UM 688-800
-  // Cajas de fechas (2 filas) y cajas de cantidad + UM (1 sola alta).
-  lineas.push('^FO112,728^GB220,232,2^FS')
-  lineas.push('^FO112,960^GB220,232,2^FS')
-  lineas.push('^FO452,728^GB236,464,2^FS')
-  lineas.push('^FO688,728^GB112,464,2^FS')
+  // ── 4) Bloque inferior: F.P / F.V · CANT · UM — banda visual Y 545..792 ──
+  // Cajas: fechas (2 filas apiladas) · cantidad (alta) · UM (alta).
+  lineas.push(cajaApaisada(170, 545, 420, 668, 2)) // fecha F.P
+  lineas.push(cajaApaisada(170, 668, 420, 792, 2)) // fecha F.V
+  lineas.push(cajaApaisada(540, 545, 1060, 792, 2)) // cantidad
+  lineas.push(cajaApaisada(1060, 545, 1200, 792, 2)) // UM
 
   // Etiquetas F.P / F.V (sin caja, como la plantilla)
-  lineas.push('^FO14,808^A0N,56,44^FDF.P^FS')
-  lineas.push('^FO14,1040^A0N,56,44^FDF.V^FS')
+  lineas.push(...campoApaisado(14, 545 + Math.floor((123 - 56) / 2), 56, 44, 'F.P'))
+  lineas.push(...campoApaisado(14, 668 + Math.floor((124 - 56) / 2), 56, 44, 'F.V'))
 
-  // Fechas (centradas en su caja; 10 caracteres a ancho 30 ≈ 165 dots < 220)
-  lineas.push(`^FO112,823^A0N,42,30^FB220,1,0,C^FD${fProd}^FS`)
-  lineas.push(`^FO112,1055^A0N,42,30^FB220,1,0,C^FD${fVenc}^FS`)
+  // Fechas (centradas en su caja; 10 caracteres a ancho 30 ≈ 165 dots < 226)
+  lineas.push(...campoApaisado(170, 545 + Math.floor((123 - 42) / 2), 42, 30, fProd, { fbAncho: 250 }))
+  lineas.push(...campoApaisado(170, 668 + Math.floor((124 - 42) / 2), 42, 30, fVenc, { fbAncho: 250 }))
 
   // CANT: (centrado vertical del bloque inferior; 5 glifos a ancho 34 ≈ 94 < 120)
-  lineas.push('^FO332,939^A0N,42,34^FB120,1,0,C^FDCANT:^FS')
+  lineas.push(...campoApaisado(420, 545 + Math.floor((247 - 42) / 2), 42, 34, 'CANT:', { fbAncho: 120 }))
 
   // Cantidad (grande, "demi", auto-ajustada a su caja)
   if (cantidad) {
-    const alto = altoParaCaja(cantidad, 236, 110)
-    const y = 728 + Math.floor((464 - alto) / 2)
-    for (const dx of [0, 2]) {
-      lineas.push(`^FO${452 + dx},${y}^A0N,${alto},${Math.round(alto * 0.6)}^FB236,1,0,C^FD${cantidad}^FS`)
-    }
+    const alto = altoParaCaja(cantidad, 520, 110)
+    const y = 545 + Math.floor((247 - alto) / 2)
+    lineas.push(...campoApaisado(540, y, alto, Math.round(alto * 0.6), cantidad, { fbAncho: 520, negrita: true }))
   }
 
   // Unidad de medida (grande, centrada)
   if (unidad) {
-    const alto = altoParaCaja(unidad, 112, 80)
-    const y = 728 + Math.floor((464 - alto) / 2)
-    lineas.push(`^FO688,${y}^A0N,${alto},${Math.round(alto * 0.6)}^FB112,1,0,C^FD${unidad}^FS`)
+    const alto = altoParaCaja(unidad, 140, 80)
+    const y = 545 + Math.floor((247 - alto) / 2)
+    lineas.push(...campoApaisado(1060, y, alto, Math.round(alto * 0.6), unidad, { fbAncho: 140 }))
   }
 
   lineas.push(`^PQ${copias},0,0,N`)
@@ -392,10 +464,14 @@ export function construirZPLRotulo(
   return lineas.join('\n')
 }
 
-/** Alto de fuente (font 0) para que `texto` quepa en una caja de `anchoCaja` dots. */
-function altoParaCaja(texto: string, anchoCaja: number, max: number, min = 34): number {
+/**
+ * Alto de fuente (font 0) para que `texto` quepa en una caja de `anchoCaja`
+ * dots. `holgura` (dots de avance por unidad de alto, ~0.58-0.62) permite
+ * endurecer el margen para textos largos.
+ */
+function altoParaCaja(texto: string, anchoCaja: number, max: number, min = 34, holgura = 0.58): number {
   const len = Math.max(1, texto.length)
-  return Math.max(min, Math.min(max, Math.floor((anchoCaja - 24) / (0.58 * len))))
+  return Math.max(min, Math.min(max, Math.floor((anchoCaja - 24) / (holgura * len))))
 }
 
 /**

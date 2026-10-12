@@ -302,8 +302,8 @@ export async function crearRecepciones(
  * storage.upload() de supabase-js devolvía 400 en este entorno.
  */
 export async function subirFotoGuia(archivo: Blob, usuarioId: string): Promise<string> {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
-  const key = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? ''
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/+$/, '')
+  const key = (process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? '').trim()
   const ruta = `${usuarioId}/${Date.now()}.jpg`
   const res = await fetch(`${base}/storage/v1/object/recepcion-guias/${ruta}`, {
     method: 'POST',
@@ -347,8 +347,10 @@ export function rutaObjetoGuia(fotoUrl: string): string | null {
 export async function urlFirmadaGuia(fotoUrl: string, segundos = 3600): Promise<string | null> {
   const ruta = rutaObjetoGuia(fotoUrl)
   if (!ruta) return null
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
-  const key = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? ''
+  // trim()/replace(): la env var de producción llegó con un espacio final —
+  // supabase-js lo limpia por dentro, pero fetch directo necesita la URL sana.
+  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/+$/, '')
+  const key = (process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? '').trim()
   if (!base || !key) return null
   try {
     // Fetch DIRECTO con la clave de servicio (mismo patrón probado de

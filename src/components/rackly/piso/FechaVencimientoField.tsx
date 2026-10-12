@@ -114,25 +114,50 @@ const FechaVencimientoField = function FechaVencimientoField({
   const inputContainerRef = useRef<HTMLDivElement>(null)
   const mountedRef = useRef(false)
 
-  // Sincronizar valor del padre (solo cuando el calendario está cerrado)
-  useEffect(() => {
+  // Sincronizar valor del padre (solo cuando el calendario está cerrado).
+  // M-2: patrón React "adjustar estado durante el render" en lugar de un
+  // setState síncrono dentro de un efecto (renderizado en cascada).
+  const [prevSync, setPrevSync] = useState({ value, calendarOpen })
+  if (prevSync.value !== value || prevSync.calendarOpen !== calendarOpen) {
+    setPrevSync({ value, calendarOpen })
     if (!calendarOpen) {
       const p = parseInternal(value)
       setDisplayValue(p ? toDisplay(p.y, p.m, p.d) : '')
     }
-  }, [value, calendarOpen])
+  }
 
-  // Cleanup al desmontar
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-      document.removeEventListener('mousedown', handleGlobalClick)
-      document.removeEventListener('keydown', handleEsc)
-    }
+  // ═══ Cerrar calendario / Click fuera / Escape ═══
+  // M-2 (auditoría): handleGlobalClick y closeCalendar se llaman
+  // mutuamente; la referencia circular se rompe con una ref que siempre
+  // apunta al closeCalendar vigente (estable por useCallback []).
+  const closeCalendarRef = useRef<() => void>(() => {})
+
+  const handleGlobalClick = (e: MouseEvent) => {
+    if (!mountedRef.current) return
+    const target = e.target as HTMLElement
+    if (target.closest('[data-cal-popup]')) return
+    if (inputContainerRef.current?.contains(target)) return
+    closeCalendarRef.current()
+  }
+
+  const handleEsc = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') closeCalendarRef.current()
+  }
+
+  const closeCalendar = useCallback(() => {
+    setCalendarOpen(false)
+    setCalState(null)
+    document.removeEventListener('mousedown', handleGlobalClick)
+    document.removeEventListener('keydown', handleEsc)
   }, [])
 
-  // ═══ Abrir / cerrar calendario ═══
+  // Los listeners solo se añaden tras abrir el calendario (después de
+  // montar): la ref ya apunta al closeCalendar real cuando se usa.
+  useEffect(() => {
+    closeCalendarRef.current = closeCalendar
+  }, [closeCalendar])
+
+  // ═══ Click fuera / Escape ═══
 
   const openCalendar = () => {
     if (disabled) return
@@ -162,26 +187,17 @@ const FechaVencimientoField = function FechaVencimientoField({
     }, 150)
   }
 
-  const closeCalendar = useCallback(() => {
-    setCalendarOpen(false)
-    setCalState(null)
-    document.removeEventListener('mousedown', handleGlobalClick)
-    document.removeEventListener('keydown', handleEsc)
+  // Cleanup al desmontar (M-2: movido DESPUÉS de las declaraciones que usa;
+  // antes se referenciaba handleGlobalClick/handleEsc antes de declararse).
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      document.removeEventListener('mousedown', handleGlobalClick)
+      document.removeEventListener('keydown', handleEsc)
+    }
   }, [])
 
-  // ═══ Click fuera / Escape ═══
-
-  const handleGlobalClick = (e: MouseEvent) => {
-    if (!mountedRef.current) return
-    const target = e.target as HTMLElement
-    if (target.closest('[data-cal-popup]')) return
-    if (inputContainerRef.current?.contains(target)) return
-    closeCalendar()
-  }
-
-  const handleEsc = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') closeCalendar()
-  }
 
   // ═══ Navegación del calendario ═══
 

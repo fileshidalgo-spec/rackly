@@ -6,6 +6,8 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
 const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
 const SERVICE_KEY = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? ''
 
+const ES_DEV = process.env.NODE_ENV === 'development'
+
 /** Verifica si la configuración de Supabase está completa */
 export function isSupabaseConfigured(): boolean {
   return Boolean(SUPABASE_URL && ANON_KEY)
@@ -18,13 +20,18 @@ export function getMissingConfigMessage(): string | null {
   if (!ANON_KEY) missing.push('NEXT_PUBLIC_SUPABASE_ANON_KEY')
   if (!SERVICE_KEY) missing.push('NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY')
   if (missing.length === 0) return null
+  // B-3 (auditoría): en producción solo un aviso genérico — los nombres
+  // internos de variables y la guía de configuración quedan en desarrollo.
+  if (!ES_DEV) {
+    return 'Configuración interna incompleta: la aplicación no puede conectarse. Contacta al administrador.'
+  }
   return `[RACKLY] Variables faltantes en el build: ${missing.join(', ')}. Agrégalas en Cloudflare Pages → Settings → Environment variables.`
 }
 
 function safeCreateClient() {
   try {
     if (!SUPABASE_URL || !ANON_KEY) {
-      console.error(getMissingConfigMessage())
+      if (ES_DEV) console.error(getMissingConfigMessage())
       return null
     }
     return createBrowserClient(SUPABASE_URL, ANON_KEY)
@@ -37,7 +44,7 @@ function safeCreateClient() {
 function safeCreateDataClient() {
   try {
     if (!SUPABASE_URL || !SERVICE_KEY) {
-      console.error(getMissingConfigMessage())
+      if (ES_DEV) console.error(getMissingConfigMessage())
       return null
     }
     return createBrowserClient(SUPABASE_URL, SERVICE_KEY)
@@ -90,7 +97,7 @@ export const dataClient = new Proxy({} as ReturnType<typeof createBrowserClient>
         return (table: string) => new Proxy({}, {
           get(__, method) {
             return (...args: unknown[]) => {
-              console.error(`[RACKLY] dataClient.${table}.${String(method)}() llamado sin config válida`)
+              if (ES_DEV) console.error(`[RACKLY] dataClient.${table}.${String(method)}() llamado sin config válida`)
               return Promise.resolve({ data: null, error: { message: configError } })
             }
           }
@@ -98,11 +105,11 @@ export const dataClient = new Proxy({} as ReturnType<typeof createBrowserClient>
       }
       if (prop === 'rpc') {
         return (fn: string, ...args: unknown[]) => {
-          console.error(`[RACKLY] dataClient.rpc('${fn}') llamado sin config válida`)
+          if (ES_DEV) console.error(`[RACKLY] dataClient.rpc('${fn}') llamado sin config válida`)
           return Promise.resolve({ data: null, error: { message: configError } })
         }
       }
-      console.error(`[RACKLY] dataClient.${String(prop)} accedido sin config válida`)
+      if (ES_DEV) console.error(`[RACKLY] dataClient.${String(prop)} accedido sin config válida`)
       return undefined
     }
     const value = Reflect.get(_dataClient, prop, receiver)

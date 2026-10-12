@@ -247,7 +247,6 @@ export async function enviarZPL(impresora: ImpresoraZebra, zpl: string): Promise
 export function sanearZPL(texto: string): string {
   return texto
     .replace(/[\^\~\\]/g, ' ')
-    // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x1f\x7f]/g, ' ')
     .trim()
 }

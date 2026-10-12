@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
+import { useHydrated } from '@/hooks/use-hydrated'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { AuthGate } from '@/components/rackly/auth/AuthGate'
 import { SesionBar } from '@/components/rackly/kardex/SesionBar'
@@ -844,11 +845,10 @@ function RacklyApp() {
  * then React hydrates cleanly and transitions to the real UI.
  */
 function HydrationGuard({ children }: { children: ReactNode }) {
-  const [mounted, setMounted] = useState(false)
+  // M-2: useHydrated (useSyncExternalStore) sustituye al setState síncrono
+  // dentro del efecto — mismo resultado sin renderizado en cascada.
+  const mounted = useHydrated()
   const [stuck, setStuck] = useState(false)
-  useEffect(() => {
-    setMounted(true)
-  }, [])
   useEffect(() => {
     if (mounted) return
     const timer = setTimeout(() => setStuck(true), 6000)

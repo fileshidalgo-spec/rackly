@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
+import { useHydrated } from '@/hooks/use-hydrated'
 import { Toaster } from '@/components/ui/sonner'
 import type { ToasterProps } from 'sonner'
 
@@ -11,11 +12,10 @@ import type { ToasterProps } from 'sonner'
  *    (errores en useEffect, setTimeout, promesas rechazadas, etc.)
  */
 export function ClientToaster(props: ToasterProps) {
-  const [mounted, setMounted] = useState(false)
+  // M-2: useHydrated en vez de setState síncrono en el efecto (auditoría).
+  const mounted = useHydrated()
 
   useEffect(() => {
-    setMounted(true)
-
     // Atrapar errores NO capturados por React ErrorBoundary
     // (errores en useEffect, timeouts, event handlers async, etc.)
     const handleError = (event: ErrorEvent) => {

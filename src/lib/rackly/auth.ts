@@ -196,7 +196,14 @@ export async function getPerfilActual(): Promise<Perfil | null> {
     error: userErr,
   } = await supabase.auth.getUser()
   if (userErr) {
-    console.error('[RACKLY] getUser error:', userErr.message)
+    // B-1 (auditoría): "Auth session missing" es el estado NORMAL al cargar
+    // el login o tras cerrar sesión — no es un error; se degrada a info para
+    // no acostumbrar a ignorar errores reales en la consola.
+    if (userErr.message.includes('Auth session missing')) {
+      console.info('[RACKLY] getUser: sin sesión activa (esperado en login/logout)')
+    } else {
+      console.error('[RACKLY] getUser error:', userErr.message)
+    }
     return null
   }
   if (!u?.user) return null

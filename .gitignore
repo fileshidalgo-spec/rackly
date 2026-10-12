@@ -26,7 +26,8 @@ node_modules
 
 # sello de versión (auto-generado por scripts/gen_version.mjs en prebuild)
 /public/version.json
-/src/lib/rackly/version-sello.ts
+# NOTA (M-3): version-sello.ts SÍ se compromete como stub para que tsc
+# funcione en frío; el prebuild lo sobrescribe con el sello real.
 
 # debug
 npm-debug.log*

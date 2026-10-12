@@ -182,7 +182,6 @@ export function ImprimirRotulosDialog({
       setCopias(rotulos.map(() => 1))
       void sondear()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   function setCopiasDe(idx: number, valor: number) {

@@ -43,10 +43,13 @@ import {
   guardarEdicionGuia,
   cambiarEstadoGuia,
   eliminarGuia,
+  abrirFotoGuia,
+  urlFirmadaGuia,
   ESTADOS_RECEPCION,
   TIPOS_DOCUMENTO_RECEPCION,
   type RegistroRecepcion,
 } from '@/lib/rackly/modulos'
+import { useLoteUuidSync } from '@/lib/rackly/recepcion-idempotencia'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -182,6 +185,13 @@ export function RecepcionModule() {
   } | null>(null)
   const [cargandoEdicion, setCargandoEdicion] = useState(false)
 
+  /**
+   * Lote de uuid_sync de la ALTA en curso (M-1): estable entre reintentos
+   * del mismo formulario; se libera tras un guardado exitoso para que la
+   * siguiente guía genere lotes nuevos.
+   */
+  const loteUuid = useLoteUuidSync()
+
   /** Cierra el modal y libera la instantánea post-guardado. */
   function cerrarRotulos(open: boolean) {
     setRotulosOpen(open)
@@ -270,13 +280,16 @@ export function RecepcionModule() {
       // Fallback defensivo (mismo criterio que la reimpresión): la guía
       // clickeada SIEMPRE exporta aunque la consulta venga vacía.
       const filas = filasGuia.length > 0 ? filasGuia : g.filas
+      // H-2: la foto ya no vive en una URL pública — se firma una URL
+      // (1 h) solo para este archivo; si falla, el Excel sale sin ella.
+      const fotoParaExcel = g.fotoUrl ? await urlFirmadaGuia(g.fotoUrl) : null
       const nombre = await exportarGuiaExcel({
         fecha: g.fecha,
         tipoDocumento: g.tipoDocumento,
         numeroDocumento: g.numeroDocumento,
         proveedor: g.proveedor,
         placa: g.placa,
-        fotoUrl: g.fotoUrl,
+        fotoUrl: fotoParaExcel ?? '',
         estado: g.estado,
         usuarioNombre: g.usuarioNombre,
         usuarioCorreo: g.usuarioCorreo,
@@ -502,6 +515,8 @@ export function RecepcionModule() {
       // DIVIDIR: cada artículo dividido en N paletas se expande a N filas
       // (mismo código; cantidad propia; "Paleta i/N" en observaciones).
       const filasGuardar = expandirEnFilas(validos)
+      // M-1: lote uuid_sync estable para esta alta (reintentos idempotentes).
+      const uuids = loteUuid.paraFilas(filasGuardar.length)
       for (const aviso of avisosDePaletas(validos)) {
         toast.warning('Las paletas no suman el total del artículo', {
           description: `${aviso}. Se registra lo digitado en las paletas.`,
@@ -562,7 +577,7 @@ export function RecepcionModule() {
 
       // ── ALTA normal: filas nuevas con el encabezado digitado ──
       await crearRecepciones(
-        filasGuardar.map((f) => ({
+        filasGuardar.map((f, i) => ({
           fecha,
           tipoDocumento: fDoc,
           numeroDocumento: fNumero,
@@ -576,9 +591,11 @@ export function RecepcionModule() {
           fechaVencimiento: f.fechaVencimiento,
           placa: fPlaca,
           observaciones: [fObs, f.paleta].filter(Boolean).join(' · '),
+          uuidSync: uuids[i],
         })),
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )
+      loteUuid.liberar()
       toast.success(
         `Recepción registrada: ${validos.length} artículo(s) · ${filasGuardar.length} fila(s)`
       )
@@ -614,7 +631,17 @@ export function RecepcionModule() {
       cargar(0, true)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
-      toast.error('No se pudo registrar', { description: message })
+      // M-1: la cancelación anti-duplicado no es un error — es una decisión
+      // del usuario (y el reintento bloqueado por uuid_sync, un aviso).
+      if (message.startsWith('REGISTRO_CANCELADO|')) {
+        toast.info('Registro cancelado', {
+          description: message.split('|')[1],
+        })
+      } else if (message.startsWith('REGISTRO_DUPLICADO|')) {
+        toast.warning('No se registró nada nuevo', { description: message.split('|')[1] })
+      } else {
+        toast.error('No se pudo registrar', { description: message })
+      }
     } finally {
       setSaving(false)
     }
@@ -941,15 +968,16 @@ export function RecepcionModule() {
                     </TableCell>
                     <TableCell className="text-center">
                       {g.fotoUrl ? (
-                        <a
-                          href={g.fotoUrl}
-                          target="_blank"
-                          rel="noreferrer"
+                        // H-2: bucket privado — la URL se firma al hacer clic
+                        // (nunca una URL pública persistente).
+                        <button
+                          type="button"
+                          onClick={() => void abrirFotoGuia(g.fotoUrl)}
                           title="Ver foto de la guía"
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md border text-slate-500 hover:bg-amber-50 hover:text-amber-600"
+                          className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border text-slate-500 hover:bg-amber-50 hover:text-amber-600"
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
+                        </button>
                       ) : (
                         <span className="text-slate-300">—</span>
                       )}
@@ -1135,14 +1163,14 @@ export function RecepcionModule() {
               <div className="grid grid-cols-2 gap-1 text-xs text-slate-500">
                 <span className="truncate">Por: {g.usuarioNombre || '—'}</span>
                 {g.fotoUrl && (
-                  <a
-                    href={g.fotoUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-amber-600 font-semibold underline text-right"
+                  // H-2: igual que la tabla — URL firmada solo al hacer clic.
+                  <button
+                    type="button"
+                    onClick={() => void abrirFotoGuia(g.fotoUrl)}
+                    className="cursor-pointer text-amber-600 font-semibold underline text-right"
                   >
                     Ver foto de la guía
-                  </a>
+                  </button>
                 )}
               </div>
               {puedeEstado && g.estado && (

@@ -42,6 +42,7 @@ import {
 } from '@/lib/rackly/guia-ocr'
 import { avisosDePaletas, expandirEnFilas } from '@/lib/rackly/recepcion-filas'
 import { crearRecepciones, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
+import { useLoteUuidSync } from '@/lib/rackly/recepcion-idempotencia'
 import {
   RecepcionItemsEditor,
   itemVacio,
@@ -151,6 +152,12 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   const [fotoBlob, setFotoBlob] = useState<Blob | null>(null)
   const [form, setForm] = useState<FormFoto>(formVacio())
   const [saving, setSaving] = useState(false)
+
+  /**
+   * Lote de uuid_sync del registro en curso (M-1): estable entre reintentos
+   * del mismo formulario; liberado tras un guardado exitoso o al reiniciar.
+   */
+  const loteUuid = useLoteUuidSync()
   // Modal de impresión de rótulos (Zebra ZT411). Se abre SOLO tras REGISTRAR
   // (la carga ya validada y guardada en la BD): automáticamente al guardar,
   // con la instantánea exacta de lo registrado (`guardados`). Nunca con
@@ -402,6 +409,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
     originalRef.current = null
     setPendiente(null)
     setPaso('elegir')
+    loteUuid.liberar() // M-1: nueva guía → nuevo lote de uuid_sync
   }
 
   /** Cancela el recorte: vuelve al paso desde donde se abrió. */
@@ -448,6 +456,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
       // DIVIDIR: cada artículo dividido en N paletas se expande a N filas
       // (mismo código; cantidad propia; "Paleta i/N" en observaciones).
       const filas = expandirEnFilas(validos)
+      // M-1: lote uuid_sync estable para esta alta (reintentos idempotentes).
+      const uuids = loteUuid.paraFilas(filas.length)
       // Aviso POR ARTÍCULO dividido: la suma de sus paletas debería
       // cuadrar con el total de la guía (se permite guardar igual —
       // mermas/parciales — pero nunca en silencio). MISMA regla que la vía
@@ -459,7 +469,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         })
       }
       await crearRecepciones(
-        filas.map((f) => ({
+        filas.map((f, i) => ({
           fecha,
           tipoDocumento: form.tipoDocumento,
           numeroDocumento: form.numeroGuia,
@@ -474,9 +484,11 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           placa: form.placa,
           fotoUrl,
           observaciones: [form.observaciones, f.paleta].filter(Boolean).join(' · '),
+          uuidSync: uuids[i],
         })),
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )
+      loteUuid.liberar()
       toast.success(
         `Recepción registrada con foto: ${validos.length} artículo(s) · ${filas.length} fila(s)`
       )
@@ -508,7 +520,16 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
       onRegistrado()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
-      toast.error('No se pudo registrar', { description: message })
+      // M-1: cancelación anti-duplicado y reintento bloqueado no son errores.
+      if (message.startsWith('REGISTRO_CANCELADO|')) {
+        toast.info('Registro cancelado', {
+          description: message.split('|')[1],
+        })
+      } else if (message.startsWith('REGISTRO_DUPLICADO|')) {
+        toast.warning('No se registró nada nuevo', { description: message.split('|')[1] })
+      } else {
+        toast.error('No se pudo registrar', { description: message })
+      }
     } finally {
       setSaving(false)
     }

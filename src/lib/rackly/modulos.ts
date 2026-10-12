@@ -15,6 +15,11 @@
 
 import { dataClient } from '@/lib/supabase/client'
 import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
+import {
+  extraerIndicePaleta,
+  hayDuplicadosRecientes,
+  nuevoUuid,
+} from '@/lib/rackly/recepcion-idempotencia'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS COMPARTIDOS
@@ -47,6 +52,8 @@ export type RegistroRecepcion = {
   usuarioId: string
   usuarioNombre: string
   usuarioCorreo: string
+  /** Número de paleta (i de "Paleta i/N"); null si la fila no es una paleta dividida (M-1). */
+  nPaleta?: number | null
 }
 
 export type RegistroAtencion = {
@@ -80,6 +87,10 @@ export type NuevoRecepcion = {
   placa?: string
   fotoUrl?: string
   observaciones: string
+  /** uuid_sync generado por el cliente (idempotencia M-1). */
+  uuidSync?: string
+  /** Número de paleta si la fila viene de un dividido (M-1). */
+  nPaleta?: number | null
 }
 
 export type NuevoAtencion = {
@@ -129,6 +140,7 @@ function mapRecepcion(r: Record<string, unknown>): RegistroRecepcion {
     usuarioId: str(r.usuario_id),
     usuarioNombre: str(r.usuario_nombre),
     usuarioCorreo: str(r.usuario_correo),
+    nPaleta: typeof r.n_paleta === 'number' ? r.n_paleta : null,
   }
 }
 
@@ -230,6 +242,20 @@ export async function crearRecepciones(
   usuario: UsuarioCtx
 ): Promise<void> {
   if (items.length === 0) return
+
+  // ANTI-DUPLICADO (M-1): si una fila idéntica se registró hace menos de
+  // 60 segundos, pedir confirmación antes de insertar (doble clic, doble
+  // pestaña o recarga a mitad del registro).
+  if (await hayDuplicadosRecientes(items)) {
+    const primera = items[0]
+    const ok = window.confirm(
+      'Ya existe una fila idéntica registrada hace menos de 1 minuto ' +
+        `(documento ${primera.numeroDocumento.trim() || '—'}, código ${primera.codigo.trim() || '—'}, ` +
+        `cantidad ${primera.cantidad}).\n\n¿Registrar de todos modos?`
+    )
+    if (!ok) throw new Error('REGISTRO_CANCELADO|Registro cancelado por posible duplicado.')
+  }
+
   const filas = items.map((datos) => ({
     fecha: datos.fecha,
     tipo_documento: datos.tipoDocumento,
@@ -249,14 +275,28 @@ export async function crearRecepciones(
     usuario_id: usuario.id,
     usuario_nombre: usuario.nombre,
     usuario_correo: usuario.correo,
+    // IDEMPOTENCIA (M-1): uuid_sync del cliente (índice único parcial en BD)
+    // y n_paleta persistido — antes solo vivía en memoria como "Paleta i/N".
+    uuid_sync: datos.uuidSync?.trim() || nuevoUuid(),
+    n_paleta: datos.nPaleta ?? extraerIndicePaleta(datos.observaciones),
   }))
   const { error } = await dataClient.from('recepcion_registros').insert(filas)
-  if (error) throw error
+  if (error) {
+    // Reintento tras éxito perdido: el índice único de uuid_sync marca el
+    // duplicado — se informa como aviso, no como error técnico.
+    if (String((error as { code?: string }).code ?? '').includes('23505')) {
+      throw new Error('REGISTRO_DUPLICADO|Estas filas ya fueron registradas (reintento detectado).')
+    }
+    throw error
+  }
 }
 
 /**
- * Sube la foto de la guía al bucket `recepcion-guias` y devuelve su URL
- * pública. Ruta por usuario + timestamp para evitar colisiones.
+ * Sube la foto de la guía al bucket `recepcion-guias` y devuelve SOLO LA
+ * RUTA del objeto (p. ej. "<usuarioId>/<timestamp>.jpg") — NUNCA una URL
+ * pública: el bucket es privado (H-2) y la imagen se sirve mediante URL
+ * firmada con expiración (ver urlFirmadaGuia/abrirFotoGuia).
+ * Ruta por usuario + timestamp para evitar colisiones.
  *
  * Usa fetch directo al Storage API (probado en producción): el cliente
  * storage.upload() de supabase-js devolvía 400 en este entorno.
@@ -279,7 +319,77 @@ export async function subirFotoGuia(archivo: Blob, usuarioId: string): Promise<s
     const detalle = await res.text().catch(() => '')
     throw new Error(`Storage ${res.status}: ${detalle.slice(0, 140)}`)
   }
-  return `${base}/storage/v1/object/public/recepcion-guias/${ruta}`
+  return ruta
+}
+
+/**
+ * Extrae la ruta del objeto a partir de lo almacenado en foto_url: acepta
+ * la forma nueva (solo ruta) y la heredada (URL pública completa previa a
+ * la privatización del bucket, H-2).
+ */
+export function rutaObjetoGuia(fotoUrl: string): string | null {
+  const valor = (fotoUrl ?? '').trim()
+  if (!valor) return null
+  const marcador = '/storage/v1/object/public/recepcion-guias/'
+  const i = valor.indexOf(marcador)
+  if (i >= 0) return valor.slice(i + marcador.length)
+  const marcadorPriv = '/storage/v1/object/authenticated/recepcion-guias/'
+  const j = valor.indexOf(marcadorPriv)
+  if (j >= 0) return valor.slice(j + marcadorPriv.length)
+  return valor.includes('/') ? valor : null
+}
+
+/**
+ * Genera una URL FIRMADA (1 hora por defecto) para ver la foto de una guía
+ * del bucket privado recepcion-guias (H-2). Devuelve null si no hay ruta
+ * válida o si la firma falla.
+ */
+export async function urlFirmadaGuia(fotoUrl: string, segundos = 3600): Promise<string | null> {
+  const ruta = rutaObjetoGuia(fotoUrl)
+  if (!ruta) return null
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+  const key = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? ''
+  if (!base || !key) return null
+  try {
+    // Fetch DIRECTO con la clave de servicio (mismo patrón probado de
+    // subirFotoGuia): el cliente @supabase/ssr sustituye la autorización
+    // por el token del usuario en sesión y sin políticas de Storage el
+    // endpoint responde 400/404; con la clave de servicio firma siempre.
+    const res = await fetch(`${base}/storage/v1/object/sign/recepcion-guias/${ruta}`, {
+      method: 'POST',
+      headers: {
+        apikey: key,
+        authorization: `Bearer ${key}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ expiresIn: segundos }),
+    })
+    if (!res.ok) {
+      const detalle = await res.text().catch(() => '')
+      console.warn('[modulos] sign', res.status, 'para', ruta, ':', detalle.slice(0, 140))
+      return null
+    }
+    const d = (await res.json()) as { signedURL?: string }
+    if (!d.signedURL) return null
+    return `${base}/storage/v1${d.signedURL}`
+  } catch (err) {
+    console.warn('[modulos] No se pudo firmar la foto de la guía:', err)
+    return null
+  }
+}
+
+/**
+ * Abre la foto de la guía en una pestaña nueva con URL firmada (H-2).
+ * Reemplaza al antiguo <a href=URL pública>: el bucket ya no sirve URLs
+ * públicas, así que la URL se firma en el momento del clic.
+ */
+export async function abrirFotoGuia(fotoUrl: string): Promise<void> {
+  const url = await urlFirmadaGuia(fotoUrl)
+  if (!url) {
+    console.warn('[modulos] Foto de la guía no disponible (sin ruta o sin firma)')
+    return
+  }
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 export async function cambiarEstadoRecepcion(id: string, estado: string): Promise<void> {
@@ -412,6 +522,9 @@ export async function guardarEdicionGuia(
     fecha_produccion: f.fechaProduccion?.trim() || null,
     fecha_vencimiento: f.fechaVencimiento?.trim() || null,
     observaciones: f.observaciones.trim() || null,
+    // M-1: el nº de paleta se recalcula desde la marca "Paleta i/N" de la
+    // propia fila (la edición puede re-dividir o unir paletas).
+    n_paleta: extraerIndicePaleta(f.observaciones),
   })
 
   // 1) UPDATE de las filas que persisten (por id — preserva usuario, foto,
@@ -435,6 +548,7 @@ export async function guardarEdicionGuia(
   }
 
   // 3) INSERT de solo las filas nuevas (heredan encabezado, autor y estado).
+  //    Cada fila nueva lleva SU uuid_sync (idempotencia M-1) y su n_paleta.
   const nuevas = filasNuevas.slice(solape)
   if (nuevas.length > 0) {
     const { error } = await dataClient
@@ -447,6 +561,7 @@ export async function guardarEdicionGuia(
           usuario_id: autor.id,
           usuario_nombre: autor.nombre,
           usuario_correo: autor.correo,
+          uuid_sync: nuevoUuid(),
         }))
       )
     if (error) throw error

@@ -184,33 +184,45 @@ export function ImprimirRotulosDialog({
     }
   }, [open])
 
+  /** REIMPRESIÓN PARCIAL (pedido 2026-10): 0 = ESE artículo NO se imprime.
+   *  Se permite digitar 0 (o vaciar el campo) para saltarlo; tope 999.
+   *  NaN-safe: input type=number vacío/inválido llega como NaN/'' → 0. */
   function setCopiasDe(idx: number, valor: number) {
-    setCopias((prev) => prev.map((c, i) => (i === idx ? Math.max(1, Math.min(999, Math.round(valor || 1))) : c)))
+    const v = Number.isFinite(valor) ? Math.max(0, Math.min(999, Math.round(valor))) : 0
+    setCopias((prev) => prev.map((c, i) => (i === idx ? v : c)))
   }
 
-  /** Misma cantidad de etiquetas para TODOS los artículos de una vez. */
+  /** Misma cantidad de etiquetas para TODOS los artículos de una vez.
+   *  Acepta 0 explícito (útil: "0 a todos, y luego los que sí quiero").
+   *  Campo vacío = no-op (nunca zera todo por accidente). */
   function aplicarCopiasATodos() {
-    const n = Number(copiasTodos)
-    if (!n || n < 1) return
+    const txt = copiasTodos.trim()
+    if (txt === '') return
+    const n = Number(txt)
+    if (!Number.isFinite(n) || n < 0) return
     const v = Math.min(999, Math.round(n))
     setCopias(rotulos.map(() => v))
     setCopiasTodos('')
   }
 
   const totalEtiquetas = rotulos.reduce((s, _r, i) => s + (copias[i] ?? 1), 0)
+  /** Artículos quedaron en 0 (reimpresión parcial: esos NO salen). */
+  const enCero = rotulos.reduce((s, _r, i) => s + ((copias[i] ?? 1) === 0 ? 1 : 0), 0)
 
   function zplActual(): string {
-    return construirZPLRotulos(
-      rotulos,
-      copias.map((c) => c || 1),
-      encabezado
-    )
+    // copias ya viene normalizada (0..999, sin NaN): el 0 queda tal cual y
+    // construirZPLRotulos OMITE esos rótulos — solo se imprimen los > 0.
+    return construirZPLRotulos(rotulos, copias, encabezado)
   }
 
   async function imprimir() {
     const impresora = impresoras.find((p) => p.uid === seleccion)
     if (!impresora) {
       toast.error('Selecciona una impresora')
+      return
+    }
+    if (totalEtiquetas === 0) {
+      toast.error('No hay etiquetas que imprimir', { description: 'Todos los artículos están en 0. Ponle copias a los que sí necesitas.' })
       return
     }
     setImprimiendo(true)
@@ -227,6 +239,10 @@ export function ImprimirRotulosDialog({
   }
 
   function descargar() {
+    if (totalEtiquetas === 0) {
+      toast.info('Nada que descargar', { description: 'Todos los artículos están en 0: ponle copias a los que sí necesitas.' })
+      return
+    }
     const blob = new Blob([zplActual()], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -271,18 +287,23 @@ export function ImprimirRotulosDialog({
           {/* Copias por artículo: digitable SIEMPRE (con o sin Browser Print). */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <Label className="text-xs">Etiquetas por artículo</Label>
+              <div className="min-w-0">
+                <Label className="text-xs">Etiquetas por artículo</Label>
+                <p className="text-[10px] leading-tight text-slate-400">
+                  Pon <b className="text-slate-500">0</b> a los que NO quieras — se imprimen solo los que quedan con copias
+                </p>
+              </div>
               <div className="flex items-center gap-1">
                 <Input
                   type="number"
-                  min={1}
+                  min={0}
                   max={999}
                   placeholder="N"
                   value={copiasTodos}
                   onChange={(e) => setCopiasTodos(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && aplicarCopiasATodos()}
                   className="h-8 w-14 text-xs text-right"
-                  title="Misma cantidad de etiquetas para todos los artículos"
+                  title="Misma cantidad para todos (0 = no imprime ninguno hasta que los cambies uno por uno)"
                 />
                 <Button
                   size="sm"
@@ -321,13 +342,13 @@ export function ImprimirRotulosDialog({
                   )}
                   <Input
                     type="number"
-                    min={1}
+                    min={0}
                     max={999}
                     value={copias[i] ?? 1}
                     onChange={(e) => setCopiasDe(i, Number(e.target.value))}
-                    className="h-8 w-16 shrink-0 text-xs text-right"
-                    title="Etiquetas de este artículo"
-                    aria-label={`Etiquetas de ${r.codigo}`}
+                    className={`h-8 w-16 shrink-0 text-xs text-right ${(copias[i] ?? 1) === 0 ? 'border-slate-300 bg-slate-100 text-slate-400 line-through' : ''}`}
+                    title="Etiquetas de este artículo (0 = no se imprime)"
+                    aria-label={`Etiquetas de ${r.codigo} (0 = no se imprime)`}
                   />
                 </div>
               ))}
@@ -440,6 +461,16 @@ export function ImprimirRotulosDialog({
           <p className="text-[11px] text-slate-500">
             Total: <b className="text-slate-700">{totalEtiquetas}</b> etiqueta(s) · se envían todas en
             {' '}<b className="text-slate-700">un solo trabajo</b> de impresión.
+            {enCero > 0 && (
+              <>
+                {' '}<span className="font-semibold text-slate-400">
+                  {enCero} artículo(s) en 0: no se imprimen.
+                </span>
+              </>
+            )}
+            {totalEtiquetas === 0 && (
+              <span className="font-semibold text-amber-700"> Todo está en 0 — ponle copias a los artículos que sí necesitas.</span>
+            )}
           </p>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button
@@ -452,7 +483,7 @@ export function ImprimirRotulosDialog({
             </Button>
             <Button
               onClick={() => void imprimir()}
-              disabled={estado !== 'activo' || imprimiendo || rotulos.length === 0}
+              disabled={estado !== 'activo' || imprimiendo || rotulos.length === 0 || totalEtiquetas === 0}
               className="flex-1 gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700 sm:flex-none sm:px-6"
             >
               {imprimiendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}

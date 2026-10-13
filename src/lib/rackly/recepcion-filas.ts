@@ -80,8 +80,11 @@ export type FilaRecepcion = {
   paleta: string
 }
 
-/** Límite de paletas por artículo (la operación real reporta hasta 5). */
-export const MAX_PALETAS = 10
+/**
+ * Límite de paletas por artículo (pedido del usuario 2026-10: hasta 44 —
+ * guías que llegan en camiones completos paleta por paleta).
+ */
+export const MAX_PALETAS = 44
 
 /** Suma de las cantidades válidas (> 0) digitadas en las paletas. */
 export function sumaPaletas(paletas: (string | PaletaDividir)[] | undefined): number {

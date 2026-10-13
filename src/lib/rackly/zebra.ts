@@ -490,6 +490,10 @@ function altoParaCaja(texto: string, anchoCaja: number, max: number, min = 34, h
 /**
  * Construye el ZPL de VARIOS rótulos (uno por artículo), cada uno con su
  * cantidad de copias. `rotulos[i]` se empareja con `copias[i]`.
+ * REIMPRESIÓN PARCIAL (pedido 2026-10): copias 0 = ESE rótulo no se imprime
+ * (se omite el bloque completo — nunca sale un ^PQ0). Los que quedan en 0
+ * no afectan a los demás: "quiero solo algunos artículos" se resuelve
+ * poniendo 0 en el resto.
  */
 export function construirZPLRotulos(
   rotulos: DatosRotulo[],
@@ -497,6 +501,8 @@ export function construirZPLRotulos(
   encabezado: EncabezadoRotulo
 ): string {
   return rotulos
-    .map((r, i) => construirZPLRotulo(r, encabezado, { copias: copias[i] ?? 1 }))
+    .map((r, i) => ({ r, copias: copias[i] ?? 1 }))
+    .filter(({ copias }) => Number.isFinite(copias) && copias > 0)
+    .map(({ r, copias }) => construirZPLRotulo(r, encabezado, { copias }))
     .join('\n')
 }

@@ -29,6 +29,7 @@ const {
   totalParaRedistribuir,
   combinarPaletas,
   aPaleta,
+  MAX_PALETAS,
 } = require('@/lib/rackly/recepcion-filas')
 
 let pasados = 0
@@ -70,6 +71,19 @@ check('5 paletas → 5 filas (el usuario rota paleta por paleta)', dividido.leng
 check('cada fila lleva SU cantidad', dividido.map((f) => f.cantidadNum).join(',') === '2200,1800,2000,2500,1500', JSON.stringify(dividido.map((f) => f.cantidad)))
 check('etiquetas Paleta 1/5 … Paleta 5/5', dividido[0].paleta === 'Paleta 1/5' && dividido[4].paleta === 'Paleta 5/5', JSON.stringify(dividido.map((f) => f.paleta)))
 check('el encabezado (código/lote/fechas) se replica en cada paleta', dividido.every((f) => f.codigo === '5653' && f.lote === 'L-77' && f.fechaVencimiento === '2027-10-01'))
+
+console.log('\n[2b] LÍMITE 44 paletas (pedido 2026-10: camión completo paleta por paleta)')
+check('MAX_PALETAS = 44', MAX_PALETAS === 44, String(MAX_PALETAS))
+const cantidades44 = Array.from({ length: 44 }, (_, i) => String(227 + i)) // 227..270 → suma 10934
+const dividido44 = expandirEnFilas([{ ...base, cantidad: '10934', paletas: pal(cantidades44) }])
+check('44 paletas → 44 filas', dividido44.length === 44, `obtuvo ${dividido44.length}`)
+check('marcas Paleta 1/44 … Paleta 44/44', dividido44[0].paleta === 'Paleta 1/44' && dividido44[43].paleta === 'Paleta 44/44', `${dividido44[0].paleta} .. ${dividido44[dividido44.length - 1].paleta}`)
+check('cada paleta conserva SU cantidad (índice 43 → 270)', dividido44[43].cantidadNum === 270)
+check('marcaPaletaDe entiende i de 2 dígitos', JSON.stringify(marcaPaletaDe('Paleta 44/44')) === '{"i":44,"n":44}')
+check('reparto equitativo de 10934 en 44 → suma exacta', (() => {
+  const rep = distribuirEquitativo('10934', 44)
+  return rep.length === 44 && Math.abs(sumaPaletas(rep) - 10934) < 0.001
+})())
 
 console.log('\n[3] expandirEnFilas — paletas con vacíos y ceros')
 const conVacias = expandirEnFilas([{ ...base, paletas: pal(['3000', '', '0', '7000']) }])

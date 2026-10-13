@@ -105,6 +105,18 @@ const zMulti = construirZPLRotulos([DATOS, DATOS2], [1, 3], ENCABEZADO)
 check('2 etiquetas (2 ^XA)', (zMulti.match(/\^XA/g) || []).length === 2)
 check('copias por rótulo (1 y 3)', zMulti.includes('^PQ1,0,0,N') && zMulti.includes('^PQ3,0,0,N'))
 
+// ── Reimpresión parcial: copias 0 = ese rótulo NO sale (pedido 2026-10) ──
+console.log('\n── 3b. Copias 0 = reimpresión parcial (omite el rótulo) ──')
+const zParcial = construirZPLRotulos([DATOS, DATOS2], [1, 0], ENCABEZADO)
+check('el rótulo con 0 se omite (1 ^XA)', (zParcial.match(/\^XA/g) || []).length === 1)
+check('solo sale el que tiene copias > 0', zParcial.includes('56119') && !zParcial.includes('11688'))
+check('nunca se genera ^PQ0', !/\^PQ0,/.test(zParcial))
+const zSoloAlgunos = construirZPLRotulos([DATOS, DATOS2, { ...DATOS, codigo: '77001' }], [0, 2, 0], ENCABEZADO)
+check('solo el del medio sale (con sus 2 copias)', (zSoloAlgunos.match(/\^XA/g) || []).length === 1 && zSoloAlgunos.includes('^PQ2,0,0,N') && zSoloAlgunos.includes('11688') && !zSoloAlgunos.includes('56119') && !zSoloAlgunos.includes('77001'))
+check('todos en 0 → ZPL vacío (sin ^XA)', construirZPLRotulos([DATOS, DATOS2], [0, 0], ENCABEZADO) === '')
+check('copias faltante en el array → 1 por defecto (compat)', (construirZPLRotulos([DATOS], [], ENCABEZADO).match(/\^XA/g) || []).length === 1)
+check('singular: clamp 1..999 intacto (0 → 1 para llamadas directas)', construirZPLRotulo(DATOS, ENCABEZADO, { copias: 0 }).includes('^PQ1,0,0,N'))
+
 console.log('\n── 4. Saneo ZPL ──')
 check('^ reemplazado', sanearZPL('A^B') === 'A B')
 check('~ reemplazado', sanearZPL('A~B') === 'A B')

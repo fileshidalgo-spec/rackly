@@ -555,7 +555,7 @@ function PanelPaletas({
           <X className="h-3 w-3" /> Quitar división
         </Button>
       </div>
-      <div className="space-y-1.5">
+      <div className="max-h-72 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5">
         {paletas.map((p, pi) => (
           <div key={pi} className="rounded-md border border-sky-100 bg-white p-1.5 space-y-1.5">
             <div className="flex items-center gap-2">
@@ -632,6 +632,7 @@ function PanelPaletas({
           className="h-7 gap-1 px-2 text-[10px] border-dashed"
           disabled={paletas.length >= MAX_PALETAS}
           onClick={agregarPaleta}
+          title={paletas.length >= MAX_PALETAS ? `Máximo ${MAX_PALETAS} paletas por artículo` : `Agrega una paleta más (máximo ${MAX_PALETAS})`}
         >
           <Plus className="h-2.5 w-2.5" /> Agregar paleta
         </Button>

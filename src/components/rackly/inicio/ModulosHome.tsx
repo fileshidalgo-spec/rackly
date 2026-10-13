@@ -3,8 +3,8 @@
 /**
  * RACKLY — Pantalla de ingreso de módulos (home tras el login).
  *
- * Muestra las 5 puertas de entrada del sistema:
- *   Racks · Piso · Usuarios · Recepción · Atención
+ * Muestra las 6 puertas de entrada del sistema:
+ *   Racks · Piso · Usuarios · Recepción · Atención · Tránsito
  *
  * Cada tarjeta navega a su módulo de forma independiente: este componente
  * no carga datos de ningún módulo, solo enruta (aislamiento total).
@@ -20,11 +20,12 @@ import {
   Users,
   PackageCheck,
   HeartHandshake,
+  Truck,
   ChevronRight,
   CalendarDays,
 } from 'lucide-react'
 
-export type VistaModulo = 'racks' | 'piso' | 'usuarios' | 'recepcion' | 'atencion'
+export type VistaModulo = 'racks' | 'piso' | 'usuarios' | 'recepcion' | 'atencion' | 'transito'
 
 type ModuloDef = {
   vista: VistaModulo
@@ -92,6 +93,17 @@ const MODULOS: ModuloDef[] = [
     sombra: 'shadow-teal-500/25',
     etiqueta: 'Nuevo',
     etiquetaClase: 'bg-teal-50 text-teal-700 border-teal-200',
+  },
+  {
+    vista: 'transito',
+    nombre: 'Tránsito',
+    descripcion:
+      'Puente Recepción → Racks/Pisos: transferencia por artículo con mapa visual, semáforo y trazabilidad.',
+    icono: Truck,
+    gradiente: 'from-fuchsia-500 to-purple-600',
+    sombra: 'shadow-fuchsia-500/25',
+    etiqueta: 'Nuevo',
+    etiquetaClase: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
   },
 ]
 

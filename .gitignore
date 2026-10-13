@@ -60,3 +60,4 @@ server.log
 # Old project reference
 cuadraje/
 spa.traineddata
+scripts/.testbuild/

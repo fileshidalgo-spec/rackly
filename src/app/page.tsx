@@ -25,6 +25,7 @@ import { SELLO_VERSION } from '@/lib/rackly/version-sello'
 import { UsuariosModule } from '@/components/rackly/usuarios/UsuariosModule'
 import { RecepcionModule } from '@/components/rackly/recepcion/RecepcionModule'
 import { AtencionModule } from '@/components/rackly/atencion/AtencionModule'
+import { TransitoModule } from '@/components/rackly/transito/TransitoModule'
 import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Button } from '@/components/ui/button'
@@ -79,6 +80,7 @@ import {
   Users,
   PackageCheck,
   HeartHandshake,
+  Truck,
 } from 'lucide-react'
 
 function fmtCantidad(n: number) {
@@ -218,6 +220,12 @@ function RacklyApp() {
                 <span className="hidden sm:inline">Atención</span>
               </Badge>
             )}
+            {view === 'transito' && (
+              <Badge variant="outline" className="ml-2 border-fuchsia-400/40 bg-fuchsia-400/10 text-fuchsia-200 gap-1.5 font-semibold">
+                <Truck className="h-3 w-3" />
+                <span className="hidden sm:inline">Tránsito</span>
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <SesionBar />
@@ -288,6 +296,27 @@ function RacklyApp() {
               </div>
             </CardHeader>
             <CardContent><AtencionModule /></CardContent>
+          </Card>
+        )}
+
+        {/* ═══ MÓDULO TRÁNSITO (puente Recepción → Racks/Pisos) ═══ */}
+        {view === 'transito' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 flex items-center justify-center shadow-md shadow-fuchsia-500/20">
+                  <Truck className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Módulo Tránsito</CardTitle>
+                  <CardDescription>
+                    Puente entre Recepción y Racks/Pisos: transfiere por artículo con mapa visual,
+                    semáforo de estado y trazabilidad completa. Funciona de forma independiente.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent><TransitoModule /></CardContent>
           </Card>
         )}
 

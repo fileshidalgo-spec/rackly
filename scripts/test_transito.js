@@ -40,8 +40,8 @@ function t(nombre, fn) {
 console.log('— transito-core —')
 
 // ── Constantes ──
-t('FECHA_INICIO_TRANSITO = 2026-10-14 (fecha de implementación)', () => {
-  assert.strictEqual(FECHA_INICIO_TRANSITO, '2026-10-14')
+t('FECHA_INICIO_TRANSITO = 2026-10-13 (fecha de implementación)', () => {
+  assert.strictEqual(FECHA_INICIO_TRANSITO, '2026-10-13')
 })
 t('EPS_TRANSITO = 0.0005', () => {
   assert.strictEqual(EPS_TRANSITO, 0.0005)

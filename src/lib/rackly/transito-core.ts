@@ -11,7 +11,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 /** Fecha de implementación del módulo: SOLO guías desde este día entran a Tránsito. */
-export const FECHA_INICIO_TRANSITO = '2026-10-14'
+export const FECHA_INICIO_TRANSITO = '2026-10-13'
 
 export type DestinoTransito = 'rack' | 'piso'
 

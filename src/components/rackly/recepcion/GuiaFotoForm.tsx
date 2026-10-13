@@ -6,8 +6,9 @@
  * Flujo:
  *   1. Usuario toma foto a la guía (cámara móvil o archivo) — la galería usa
  *      su PROPIO input sin `capture` (antes forzaba la cámara en el celular).
- *   1b. RECORTE: la foto pasa primero por el diálogo de recorte (react-easy-
- *      crop); solo la parte seleccionada de la guía se escanea y se guarda.
+ *   1b. RECORTE: la foto pasa primero por el diálogo de recorte (marco
+ *      móvil con esquinas — recorte-marco.ts); solo la parte seleccionada
+ *      de la guía se escanea y se guarda.
  *      Se puede usar la foto completa o reajustar el recorte desde la
  *      confirmación (originalRef conserva la fuente original).
  *   2. Se reduce la imagen (2800px, tablas largas con letra pequeña),

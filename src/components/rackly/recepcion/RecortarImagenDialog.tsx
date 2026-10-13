@@ -193,7 +193,10 @@ export function RecortarImagenDialog({
   const [preparando, setPreparando] = useState(false)
   const [aplicando, setAplicando] = useState(false)
   const [errorPrep, setErrorPrep] = useState('')
-  const contRef = useRef<HTMLDivElement>(null)
+  /** Nodo del escenario — callback ref: Radix monta el portal ASINCRÓNICO, un
+   *  effect por [open] llegaba a contRef null y la caja quedaba en 0×0 (el
+   *  escenario jamás se dibujaba). El callback ref dispara al montar el nodo. */
+  const [contEl, setContEl] = useState<HTMLDivElement | null>(null)
   /** Escala aplicada al construir la imagen de trabajo (trabajo → original girada). */
   const escalaRef = useRef(1)
   const dragRef = useRef<{
@@ -235,19 +238,19 @@ export function RecortarImagenDialog({
     }
   }, [archivo, open, rotacion])
 
-  // ── Medición del contenedor (ResizeObserver: giro del celular incluido) ──
+  // ── Medición del contenedor (callback ref + ResizeObserver: giro del
+  //    celular incluido; se re-mide si el nodo se remonta) ──
   useEffect(() => {
-    const cont = contRef.current
-    if (!cont) return
+    if (!contEl) return
     const medir = () => {
-      const r = cont.getBoundingClientRect()
-      setCaja({ w: r.width, h: r.height })
+      const r = contEl.getBoundingClientRect()
+      if (r.width > 0 && r.height > 0) setCaja({ w: r.width, h: r.height })
     }
     medir()
     const ro = new ResizeObserver(medir)
-    ro.observe(cont)
+    ro.observe(contEl)
     return () => ro.disconnect()
-  }, [open])
+  }, [contEl])
 
   // ── Encaje del <img> dentro de la caja ──
   useEffect(() => {
@@ -336,7 +339,7 @@ export function RecortarImagenDialog({
 
         {/* ── Escenario de recorte: img encajada + marco móvil con esquinas ── */}
         <div
-          ref={contRef}
+          ref={setContEl}
           className="relative h-[44dvh] max-h-[420px] min-h-[240px] w-full select-none overflow-hidden rounded-lg bg-slate-900"
         >
           {url && caja.w > 0 && fit.w > 0 && (

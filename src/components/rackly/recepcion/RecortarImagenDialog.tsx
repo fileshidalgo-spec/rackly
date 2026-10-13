@@ -257,10 +257,12 @@ export function RecortarImagenDialog({
     setFit(encajar(caja.w, caja.h, dims.w, dims.h))
   }, [caja, dims])
 
-  // ── Marco: nace/reinicia centrado con el aspecto elegido ──
+  // ── Marco: nace/reinicia centrado con el aspecto elegido. `url` en deps:
+  //    con la MISMA imagen 2ª vez, fit no cambia de valor y sin url el marco
+  //    quedaba null para siempre (segunda foto = sin marco). ──
   useEffect(() => {
-    if (fit.w > 0 && fit.h > 0) setMarco(marcoInicial(fit.w, fit.h, aspecto))
-  }, [fit.w, fit.h, aspecto])
+    if (url && fit.w > 0 && fit.h > 0) setMarco(marcoInicial(fit.w, fit.h, aspecto))
+  }, [url, fit.w, fit.h, aspecto])
 
   // ── Arrastre (Pointer Events unificados: mouse + táctil + lápiz) ──
   function iniciarArrastre(modo: 'mover' | 'resize', esquina?: Esquina) {

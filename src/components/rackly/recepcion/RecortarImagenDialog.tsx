@@ -199,12 +199,27 @@ export function RecortarImagenDialog({
   const [contEl, setContEl] = useState<HTMLDivElement | null>(null)
   /** Escala aplicada al construir la imagen de trabajo (trabajo → original girada). */
   const escalaRef = useRef(1)
+  /** objectURL VIGENTE de la imagen de trabajo — para revocarlo al CERRAR el
+   *  diálogo (antes el último blob (varios MB en móvil) quedaba retenido hasta
+   *  recargar la página: las rotaciones superadas ya se revocan en setUrl). */
+  const urlRef = useRef('')
   const dragRef = useRef<{
     modo: 'mover' | 'resize'
     esquina?: Esquina
     lastX: number
     lastY: number
   } | null>(null)
+
+  // ── Cierre del diálogo: revocar el objectURL VIGENTE (el último blob
+  //    retenido hasta recargar la página). Unmount-only ([]). ──
+  useEffect(() => {
+    return () => {
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current)
+        urlRef.current = ''
+      }
+    }
+  }, [])
 
   // ── Construcción de la imagen de trabajo (al abrir y al rotar) ──
   useEffect(() => {
@@ -216,6 +231,7 @@ export function RecortarImagenDialog({
       .then(({ blob, w, h, escala }) => {
         if (!vigente) return
         const u = URL.createObjectURL(blob)
+        urlRef.current = u
         escalaRef.current = escala
         setUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev)

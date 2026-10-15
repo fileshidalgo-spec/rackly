@@ -48,9 +48,23 @@ export function targetDesdeStockItem(item: StockPisoItem): PisoTargetPosicion | 
 }
 
 /**
+ * Limpia el prefijo del código de subcolumna ('BA1' → 'A1' cuando la columna
+ * es 'A'): las filas de stock traen el código CRUDO de piso_subcolumnas, pero
+ * PosicionConStock.subcolumnaCodigo viene limpiado (cleanSubcolCode en api.ts).
+ * Sin esto el fallback por coordenadas NUNCA matchea ('A1' === 'BA1' → falso).
+ * Idempotente y tolerante: si no encuentra la letra, devuelve el código tal cual.
+ */
+function limpiarSubcol(codigo: string, columnaLetra: string): string {
+  if (!codigo || !columnaLetra) return codigo
+  const idx = codigo.indexOf(columnaLetra)
+  return idx >= 0 ? codigo.substring(idx) : codigo
+}
+
+/**
  * Resuelve el target contra la lista de posiciones YA cargada del sector
  * destino. Primero por ID (canónico); si el ID ya no existe (datos migrados),
- * reintenta por coordenadas (columna + número + subcolumna).
+ * reintenta por coordenadas (columna + número + subcolumna — comparando el
+ * código de subcolumna LIMPIO por ambos lados).
  */
 export function resolverPosicionTarget(
   posiciones: PosicionConStock[],
@@ -59,12 +73,15 @@ export function resolverPosicionTarget(
   const porId = posiciones.find((p) => p.posicionId === target.posicion_id)
   if (porId) return porId
   if (target.columna_letra && target.posicion_numero != null) {
+    const subTarget = target.subcolumna_codigo
+      ? limpiarSubcol(target.subcolumna_codigo, target.columna_letra)
+      : ''
     return (
       posiciones.find(
         (p) =>
           p.columnaLetra === target.columna_letra &&
           p.posicionNumero === target.posicion_numero &&
-          (!target.subcolumna_codigo || p.subcolumnaCodigo === target.subcolumna_codigo)
+          (!subTarget || limpiarSubcol(p.subcolumnaCodigo, target.columna_letra) === subTarget)
       ) ?? null
     )
   }

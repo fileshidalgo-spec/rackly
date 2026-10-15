@@ -79,6 +79,9 @@ export type ItemRecepcion = {
    *  Cada paleta lleva su cantidad y opcionalmente su lote/fechas propios
    *  ('' = usa los del artículo). */
   paletas?: PaletaDividir[]
+  /** Id de la fila YA registrada de la que nació este artículo (solo edición
+   *  de guía: lo adjunta filasAItems; null/ausente = artículo nuevo). */
+  filaId?: string | null
 }
 
 export function itemVacio(): ItemRecepcion {

@@ -226,13 +226,29 @@ export async function enviarZPL(impresora: ImpresoraZebra, zpl: string): Promise
     )
   }
   const device: ImpresoraZebra = { ...impresora, version: impresora.version ?? 2 }
-  const res = await fetch(`${base}/write`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json;charset=UTF-8' },
-    body: JSON.stringify({ device, data: zpl }),
-  })
-  if (!res.ok) {
-    throw new Error(`La impresora rechazó la impresión (HTTP ${res.status}).`)
+  // Timeout: sin signal, un Browser Print que acepta la conexión y no responde
+  // dejaba `imprimiendo=true` indefinidamente (botón bloqueado, sin feedback).
+  // 15s: la impresión local tarda ms; si no responde en 15s, no va a responder.
+  const { signal, limpiar } = abortar(15000)
+  try {
+    const res = await fetch(`${base}/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json;charset=UTF-8' },
+      body: JSON.stringify({ device, data: zpl }),
+      signal,
+    })
+    if (!res.ok) {
+      throw new Error(`La impresora rechazó la impresión (HTTP ${res.status}).`)
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error(
+        'La impresión no respondió en 15 segundos. Verifica que la impresora esté encendida y conectada, y vuelve a intentar.'
+      )
+    }
+    throw err
+  } finally {
+    limpiar()
   }
 }
 

@@ -20,6 +20,7 @@ import {
   hayDuplicadosRecientes,
   nuevoUuid,
 } from '@/lib/rackly/recepcion-idempotencia'
+import { planSyncEdicionPorId } from '@/lib/rackly/recepcion-filas'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS COMPARTIDOS
@@ -54,6 +55,9 @@ export type RegistroRecepcion = {
   usuarioCorreo: string
   /** Número de paleta (i de "Paleta i/N"); null si la fila no es una paleta dividida (M-1). */
   nPaleta?: number | null
+  /** Nº de envíos de Tránsito registrados sobre ESTA fila (columna transito
+   *  jsonb, escrita por la RPC transito_registrar_envio). 0 = sin transferir. */
+  enviosTransito?: number
 }
 
 export type RegistroAtencion = {
@@ -118,6 +122,14 @@ function str(v: unknown): string {
   return (v as string | null)?.toString() ?? ''
 }
 
+/** Nº de envíos de Tránsito en la columna transito (jsonb {v:1, envios:[…]}).
+ *  Tolerante a formas viejas/nulas — nunca lanza. */
+function contarEnviosTransito(raw: unknown): number {
+  if (!raw || typeof raw !== 'object') return 0
+  const envios = (raw as Record<string, unknown>).envios
+  return Array.isArray(envios) ? envios.length : 0
+}
+
 function mapRecepcion(r: Record<string, unknown>): RegistroRecepcion {
   return {
     id: r.id as string,
@@ -141,6 +153,7 @@ function mapRecepcion(r: Record<string, unknown>): RegistroRecepcion {
     usuarioNombre: str(r.usuario_nombre),
     usuarioCorreo: str(r.usuario_correo),
     nPaleta: typeof r.n_paleta === 'number' ? r.n_paleta : null,
+    enviosTransito: contarEnviosTransito(r.transito),
   }
 }
 
@@ -460,7 +473,9 @@ export async function eliminarGuia(ref: RefDocumentoRecepcion): Promise<void> {
 // RECEPCIÓN — EDICIÓN DE UNA GUÍA YA REGISTRADA
 // ═══════════════════════════════════════════════════════════════════
 
-/** Contenido editable de UNA fila de la guía (posicional sobre idsOriginales). */
+/** Contenido editable de UNA fila de la guía. `filaId` (opcional) es el id
+ *  de la fila YA registrada que esta fila actualiza (edición por identidad;
+ *  adjuntado por filasAItems → expandirEnFilas). null/ausente = fila nueva. */
 export type FilaEdicionGuia = {
   codigo: string
   descripcion: string
@@ -471,6 +486,7 @@ export type FilaEdicionGuia = {
   fechaVencimiento: string
   /** Observaciones del usuario + marca "Paleta i/N" si la fila es una paleta. */
   observaciones: string
+  filaId?: string | null
 }
 
 /** Encabezado (común a todas las filas) aplicado al guardar la edición. */
@@ -487,19 +503,26 @@ export type EncabezadoEdicionGuia = {
 }
 
 /**
- * Guarda la edición de UNA guía ya registrada SIN riesgo de pérdida de datos.
+ * Guarda la edición de UNA guía ya registrada SIN riesgo de pérdida de datos
+ * y SIN cruzar contenido entre filas.
  *
- * Sincronización POSICIONAL y por ID (nunca "borrar todo y reinsertar"):
- *   1) UPDATE del contenido de las filas que persisten (ids en solape).
- *   2) DELETE por id, SOLO de las filas que sobran (el usuario quitó
- *      artículos/paletas).
- *   3) INSERT de SOLO las filas nuevas (artículos/paletas agregados), con
- *      el encabezado actual y heredando autor, foto y estado del documento.
+ * Sincronización POR IDENTIDAD (nunca posicional, nunca "borrar todo y
+ * reinsertar"): cada fila trae el `filaId` de la fila de la BD de la que
+ * nació (filasAItems → expandirEnFilas), así que quitar/dividir/agregar
+ * artículos o paletas NO desplaza el alineamiento (el antiguo sincronizado
+ * posicional escribía el artículo N sobre la fila M — corrupción silenciosa
+ * que además desenganchaba el historial de Tránsito).
  *
- * Cada paso es independiente y reintentable: si un paso falla, los demás
- * quedan consistentes y el estado en pantalla (ids originales + items)
- * permite reintentar sin duplicar ni perder nada. El cambio de Nº de guía
- * viaja en el UPDATE (por id), así que renombrar el documento no rompe la
+ * El plan (planSyncEdicionPorId) separa 3 pasos, en este orden:
+ *   1) UPDATE por SU PROPIO id de las filas que persisten — verificando que
+ *      cada update efectivamente tocó su fila (si otro usuario borró la guía
+ *      mientras se editaba, se ABORTA antes de tocar nada más).
+ *   2) INSERT de SOLO las filas nuevas (artículos/paletas agregados).
+ *   3) DELETE por id, SOLO de las filas sobrantes (al final: si un paso
+ *      falla a mitad, quedan filas de más — recuperables — nunca de menos).
+ *
+ * Cada paso es independiente y reintentable. El cambio de Nº de guía viaja
+ * en el UPDATE (por id), así que renombrar el documento no rompe la
  * identidad de las filas existentes.
  */
 export async function guardarEdicionGuia(
@@ -508,7 +531,7 @@ export async function guardarEdicionGuia(
   encabezado: EncabezadoEdicionGuia,
   autor: UsuarioCtx
 ): Promise<{ actualizadas: number; eliminadas: number; insertadas: number }> {
-  const solape = Math.min(idsOriginales.length, filasNuevas.length)
+  const plan = planSyncEdicionPorId(idsOriginales, filasNuevas)
 
   const contenidoDe = (f: FilaEdicionGuia) => ({
     fecha: encabezado.fecha,
@@ -530,33 +553,30 @@ export async function guardarEdicionGuia(
   })
 
   // 1) UPDATE de las filas que persisten (por id — preserva usuario, foto,
-  //    estado y created_at de cada fila).
-  for (let i = 0; i < solape; i++) {
-    const { error } = await dataClient
+  //    estado y created_at de cada fila). Se pide la fila de vuelta para
+  //    detectar el caso "la fila ya no existe" (guía borrada/renombrada por
+  //    otro usuario mientras se editaba): abortar ANTES de insertar/borrar.
+  for (const { id, fila } of plan.actualizar) {
+    const { data, error } = await dataClient
       .from('recepcion_registros')
-      .update(contenidoDe(filasNuevas[i]))
-      .eq('id', idsOriginales[i])
+      .update(contenidoDe(fila))
+      .eq('id', id)
+      .select('id', { count: 'exact' })
     if (error) throw error
+    if (!data || data.length === 0) {
+      throw new Error(
+        'La fila ya no existe en la guía (otro usuario la modificó o la borró). Recarga el registro y vuelve a intentarlo.'
+      )
+    }
   }
 
-  // 2) DELETE por id SOLO de las filas sobrantes.
-  const sobrantes = idsOriginales.slice(solape)
-  if (sobrantes.length > 0) {
-    const { error } = await dataClient
-      .from('recepcion_registros')
-      .delete()
-      .in('id', sobrantes)
-    if (error) throw error
-  }
-
-  // 3) INSERT de solo las filas nuevas (heredan encabezado, autor y estado).
+  // 2) INSERT de solo las filas nuevas (heredan encabezado, autor y estado).
   //    Cada fila nueva lleva SU uuid_sync (idempotencia M-1) y su n_paleta.
-  const nuevas = filasNuevas.slice(solape)
-  if (nuevas.length > 0) {
+  if (plan.insertar.length > 0) {
     const { error } = await dataClient
       .from('recepcion_registros')
       .insert(
-        nuevas.map((f) => ({
+        plan.insertar.map((f) => ({
           ...contenidoDe(f),
           foto_url: encabezado.fotoUrl?.trim() || null,
           estado: encabezado.estado || 'Pendiente',
@@ -569,7 +589,20 @@ export async function guardarEdicionGuia(
     if (error) throw error
   }
 
-  return { actualizadas: solape, eliminadas: sobrantes.length, insertadas: nuevas.length }
+  // 3) DELETE por id SOLO de las filas sobrantes (al final — ver docstring).
+  if (plan.eliminar.length > 0) {
+    const { error } = await dataClient
+      .from('recepcion_registros')
+      .delete()
+      .in('id', plan.eliminar)
+    if (error) throw error
+  }
+
+  return {
+    actualizadas: plan.actualizar.length,
+    eliminadas: plan.eliminar.length,
+    insertadas: plan.insertar.length,
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

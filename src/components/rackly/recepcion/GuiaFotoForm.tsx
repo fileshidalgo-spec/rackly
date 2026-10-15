@@ -268,7 +268,13 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
       setEtapa('Preparando imagen (contraste)…')
       // Fuente ORIGINAL conservada para "Recortar foto" desde la
       // confirmación (re-encuadrar y re-escanear sin volver a fotografiar).
-      originalRef.current = archivo
+      // SOLO se fija la PRIMERA vez: si `archivo` ya ES un recorte
+      // (re-escaneo tras "Aplicar recorte"), el original auténtico se
+      // conserva — antes el recorte PISABA el original y "Reajustar el
+      // recorte" solo permitía ENCOGER más (la zona perdida del primer
+      // encuadre quedaba irrecuperable) y cada re-escaneo re-comprimía el
+      // JPEG degradándolo. `reiniciar()` (Otra foto) sí lo limpia.
+      if (!originalRef.current) originalRef.current = archivo
       // Preprocesado: gris + contraste → mejora la lectura de la tabla
       const imagen = await mejorarImagenOCR(archivo, 2800)
       const liviana = await reducirImagen(archivo, 1200, 0.8)
@@ -466,7 +472,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
       const avisos = avisosDePaletas(validos)
       if (avisos.length > 0) {
         toast.warning('Las paletas no suman el total del artículo', {
-          description: `${avisos[0]}. Se registra lo digitado en las paletas.`,
+          // Mismo texto VERAZ que la vía manual (una paleta → total; varias →
+          // lo digitado en las paletas).
+          description: `${avisos[0]}. Con UNA sola paleta con cantidad se registra el total del artículo; con varias paletas, lo digitado en ellas.`,
         })
       }
       await crearRecepciones(

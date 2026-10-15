@@ -24,17 +24,26 @@ export function StockIncPisoTab({ onGotoPosicion }: { onGotoPosicion?: (target: 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
   const loadedRef = useRef(false)
+  // Guard de desmonte: la pestaña puede cerrarse a mitad de stockPisoGlobal()
+  // (hasta 40K filas) — sin esto se actualizaba estado de un componente muerto.
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   async function load() {
     setLoading(true)
     setError(false)
     try {
       const data = await stockPisoGlobal()
+      if (!mountedRef.current) return
       setItems(data)
     } catch {
+      if (!mountedRef.current) return
       setError(true)
     } finally {
-      setLoading(false)
+      if (mountedRef.current) setLoading(false)
     }
   }
 

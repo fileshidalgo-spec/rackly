@@ -110,17 +110,27 @@ type ArgsTransferir = {
   /** piso → nivel_id (+ posicion_id opcional) */
   nivel?: { nivel_id: string; posicion_id?: string; nivelNumero?: number }
   etiqueta: string
+  /**
+   * Uuid del envío — OPCIONAL pero la UI DEBE pasarlo: si el llamador genera
+   * uno por INTENTO, un timeout con éxito real en BD reintentaría con OTRO
+   * uuid y la idempotencia de la RPC (duplicado:true) queda muerta (el
+   * usuario vería OVER_ISSUE confuso en vez de “ya estaba registrado”).
+   * DialogoTransferir lo genera UNA vez por artículo al confirmar.
+   */
+  uuidSync?: string
 }
 
 /** Ejecuta UN envío (1 artículo → 1 ubicación) con uuid propio e idempotencia. */
 export async function transferirArticulo(args: ArgsTransferir): Promise<ResultadoEnvio> {
-  const { articulo, destino, cantidad, turno, usuario, rack, nivel, etiqueta } = args
+  const { articulo, destino, cantidad, turno, usuario, rack, nivel, etiqueta, uuidSync } = args
   // Falla rápido en cliente (la RPC revalida todo)
   if (!articulo.transferible) throw new Error(articulo.razonNoTransferible)
   const v = validarCantidad(cantidad, articulo.pendiente)
   if (v) throw new Error(v)
 
-  const uuid = nuevoUuid()
+  // El llamador (diálogo) fija el uuid UNA vez por artículo (reintentos
+  // idempotentes); fallback interno por compatibilidad de llamadas sueltas.
+  const uuid = uuidSync?.trim() || nuevoUuid()
   const { data, error } = await dataClient.rpc('transito_registrar_envio', {
     p_recepcion_id: articulo.id,
     p_tipo_destino: destino,

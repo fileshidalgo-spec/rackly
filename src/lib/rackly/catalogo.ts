@@ -48,6 +48,9 @@ export function fetchCatalogo(): Promise<CatalogoItem[]> {
 
       return _cache
     } catch (err) {
+      // Antes: fallo de red = [] silencioso — los formularios autocompletaban
+      // "sin resultados" y nadie sabía por qué. Al menos dejar rastro.
+      console.warn('[catalogo] No se pudo cargar el catálogo:', err)
       if (_cache.length > 0) return _cache
       return []
     } finally {

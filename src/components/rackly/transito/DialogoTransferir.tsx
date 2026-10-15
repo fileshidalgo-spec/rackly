@@ -11,7 +11,7 @@
  * uno por uno sin bloquear a los demás artículos.
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -35,6 +35,7 @@ import {
 } from '@/lib/rackly/transito'
 import { MapaRackSelector, type SeleccionRack } from './MapaRackSelector'
 import { MapaPisoSelector, type SeleccionPiso } from './MapaPisoSelector'
+import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 
 type Paso = 'destino' | 'mapaRack' | 'mapaPiso' | 'confirmar' | 'ejecutando' | 'resultado'
 
@@ -65,6 +66,10 @@ export function DialogoTransferir({
   const [seleccionRack, setSeleccionRack] = useState<SeleccionRack | null>(null)
   const [seleccionPiso, setSeleccionPiso] = useState<SeleccionPiso | null>(null)
   const [resultados, setResultados] = useState<ResultadoPorArticulo[]>([])
+  // Uuid FIJO por artículo (uno al confirmar, estable entre reintentos):
+  // la idempotencia de la RPC depende de que el reintento del MISMO envío
+  // lleve el MISMO uuid (nuevoUuid() por intento la mataba).
+  const uuidsRef = useRef<Record<string, string>>({})
 
   const esBatch = items.length > 1
   const titulo = useMemo(
@@ -105,6 +110,10 @@ export function DialogoTransferir({
       return
     }
     setPaso('ejecutando')
+    // Un uuid POR ARTÍCULO, generado UNA vez al confirmar (idempotencia real).
+    uuidsRef.current = Object.fromEntries(
+      items.map((a) => [a.id, uuidsRef.current[a.id] || nuevoUuid()])
+    )
     const res: ResultadoPorArticulo[] = []
     for (const a of items) {
       const cantidad = cantidadDe(a)
@@ -120,6 +129,7 @@ export function DialogoTransferir({
             ? { nivel_id: seleccionPiso.nivel_id, posicion_id: seleccionPiso.posicion_id, nivelNumero: seleccionPiso.nivelNumero }
             : undefined,
           etiqueta: seleccionPiso ? seleccionPiso.etiqueta : seleccionRack?.etiqueta ?? '',
+          uuidSync: uuidsRef.current[a.id],
         })
         res.push({
           articulo: a,
@@ -149,7 +159,13 @@ export function DialogoTransferir({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && cerrar()}>
+    <Dialog open onOpenChange={(open) => {
+      // Durante EJECUCIÓN el diálogo no se cierra (ESC/click-fuera): el bucle
+      // de RPCs sigue en vuelo — cerrarlo dejaba al usuario sin resultados y
+      // la lista sin refrescar (semáforo stale sin indicación).
+      if (!open && paso === 'ejecutando') return
+      if (!open) cerrar()
+    }}>
       <DialogContent className="max-w-2xl max-h-[92dvh] p-0 gap-0 overflow-hidden flex flex-col">
         <DialogHeader className="px-5 pt-5 pb-3 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">

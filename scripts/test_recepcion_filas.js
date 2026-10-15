@@ -29,6 +29,7 @@ const {
   totalParaRedistribuir,
   combinarPaletas,
   aPaleta,
+  planSyncEdicionPorId,
   MAX_PALETAS,
 } = require('@/lib/rackly/recepcion-filas')
 
@@ -256,6 +257,103 @@ const mismaTodo = filasAItems([
   filaBd({ codigo: '208', cantidad: 5, observaciones: 'Paleta 2/2', lote: 'LX', fechaVencimiento: '2027-03-03' }),
 ])
 check('paletas con el MISMO lote/fechas → sin overrides (heredan)', mismaTodo[0].lote === 'LX' && mismaTodo[0].paletas.every((p) => p.lote === '' && p.fechaVencimiento === ''))
+
+// ─── [10] SINCRONIZACIÓN DE EDICIÓN POR IDENTIDAD (bug P0 corregido) ───
+console.log('\n[10] planSyncEdicionPorId — identidad, nunca posición')
+{
+  const p = (filaId, codigo) => ({ filaId, codigo, cantidad: 1 })
+
+  // REORDENAMIENTO: el contenido de cada fila va a SU PROPIO id (antes el
+  // sincronizado posicional cruzaba contenido al desplazarse la lista).
+  const reorden = planSyncEdicionPorId(['id-A', 'id-B'], [p('id-B', 'COD-B'), p('id-A', 'COD-A')])
+  check('reordenado: 2 updates, 0 insert/delete', reorden.actualizar.length === 2 && reorden.insertar.length === 0 && reorden.eliminar.length === 0)
+  check('COD-B va al id-B (no cruza)', reorden.actualizar.some((u) => u.id === 'id-B' && u.fila.codigo === 'COD-B'))
+  check('COD-A va al id-A (no cruza)', reorden.actualizar.some((u) => u.id === 'id-A' && u.fila.codigo === 'COD-A'))
+
+  // QUITAR un artículo del medio: la fila sobrante se DELETEa, las demás
+  // conservan su identidad (antes: todo se desplazaba y se cruzaba).
+  const quitar = planSyncEdicionPorId(['id-A', 'id-B', 'id-C'], [p('id-A', 'COD-A'), p('id-C', 'COD-C')])
+  check('quitar del medio: 2 updates + 1 delete (id-B)', quitar.actualizar.length === 2 && JSON.stringify(quitar.eliminar) === JSON.stringify(['id-B']))
+  check('sin cruces tras quitar', quitar.actualizar.every((u) => u.fila.codigo === 'COD-' + u.id.slice(3)))
+
+  // AGREGAR: sin filaId → INSERT.
+  const agregar = planSyncEdicionPorId(['id-A'], [p('id-A', 'COD-A'), { filaId: null, codigo: 'NUEVO', cantidad: 1 }])
+  check('agregar: 1 update + 1 insert + 0 delete', agregar.actualizar.length === 1 && agregar.insertar.length === 1 && agregar.eliminar.length === 0)
+
+  // DIVIDIR (1 fila → 2 paletas): la paleta 1 conserva el id de la fila;
+  // la paleta 2 nace sin id → INSERT.
+  const dividir = planSyncEdicionPorId(['id-A'], [p('id-A', 'COD-A'), { filaId: null, codigo: 'COD-A', cantidad: 1 }])
+  check('dividir: paleta 1 actualiza id-A, paleta 2 inserta', dividir.actualizar.length === 1 && dividir.actualizar[0].id === 'id-A' && dividir.insertar.length === 1)
+
+  // UNIR paletas (2 filas → 1 fila): la fila sobrante se DELETEa.
+  const unir = planSyncEdicionPorId(['id-A', 'id-B'], [p('id-A', 'COD-A')])
+  check('unir paletas: 1 update + delete id-B', unir.actualizar.length === 1 && JSON.stringify(unir.eliminar) === JSON.stringify(['id-B']))
+
+  // SEGURIDAD: dos filas reclamando el mismo id → la 1ª actualiza, la 2ª
+  // inserta (nunca doble escritura sobre una misma fila).
+  const dupli = planSyncEdicionPorId(['id-A'], [p('id-A', 'UNO'), p('id-A', 'DOS')])
+  check('id reclamado 2 veces: 1º update, 2º insert', dupli.actualizar.length === 1 && dupli.actualizar[0].fila.codigo === 'UNO' && dupli.insertar.length === 1)
+
+  // SEGURIDAD: filaId ajeno a la guía → INSERT (jamás escribe sobre una
+  // fila que no es suya).
+  const ajeno = planSyncEdicionPorId(['id-A'], [p('id-X', 'AJENO')])
+  check('filaId ajeno → insert seguro (no toca id-X)', ajeno.actualizar.length === 0 && ajeno.insertar.length === 1 && ajeno.eliminar.length === 1)
+}
+
+console.log('\n[10b] filaId viaja por TODO el pipeline de edición')
+{
+  // filasAItems adjunta identidades → el editor las preserva en las
+  // paletas → expandirEnFilas las re-adjunta a las filas.
+  const f1 = filaBd({ codigo: '301', cantidad: 40, observaciones: 'Paleta 1/2' })
+  const f2 = filaBd({ codigo: '301', cantidad: 60, observaciones: 'Paleta 2/2' })
+  const items = filasAItems([f1, f2])
+  check('paleta 1 conserva el id de su fila', items[0].paletas[0].filaId === f1.id)
+  check('paleta 2 conserva el id de su fila', items[0].paletas[1].filaId === f2.id)
+  const filas = expandirEnFilas(items)
+  check('expandir: fila 1 lleva filaId de paleta 1', filas[0].filaId === f1.id)
+  check('expandir: fila 2 lleva filaId de paleta 2', filas[1].filaId === f2.id)
+  check('round-trip 2 filas → 2 filas con las MISMAS identidades', filas.length === 2 && filas.every((f) => !!f.filaId))
+
+  // combinarPaletas preserva identidades por POSICIÓN (quitar paleta 1
+  // deja la identidad de la paleta 2 en su posición — el par (filaId,
+  // cantidad) no se re-asigna).
+  const comb = combinarPaletas(items[0].paletas, ['25', '75'])
+  check('combinar: identidades intactas por posición', comb[0].filaId === f1.id && comb[1].filaId === f2.id)
+  const quitarPrimera = combinarPaletas(items[0].paletas.slice(1), null)
+  check('tras quitar la 1ª paleta, la restante conserva SU id', quitarPrimera.length === 1 && quitarPrimera[0].filaId === f2.id)
+  const conNuevaId = combinarPaletas(items[0].paletas, ['20', '40', '40'])
+  check('paleta NUEVA nace sin identidad (filaId null)', conNuevaId[2].filaId === null && conNuevaId[0].filaId === f1.id)
+
+  // Artículo sin dividir: fila única lleva el id del item.
+  const simple = filasAItems([filaBd({ codigo: '5653', cantidad: 100 })])
+  const filaSimple = expandirEnFilas(simple)
+  check('artículo sin dividir: filaId = id de su fila', filaSimple[0].filaId === simple[0].filaId)
+}
+
+console.log('\n[10c] expandirEnFilas — total VACÍO con UNA paleta válida (antes: 0 silencioso)')
+{
+  const caso = [
+    {
+      codigo: '118', descripcion: 'X', cantidad: '', unidad: 'KG', lote: 'L-BASE',
+      fechaProduccion: '', fechaVencimiento: '', filaId: 'id-CAB',
+      paletas: [{ cantidad: '60', lote: 'L-P1', fechaProduccion: '', fechaVencimiento: '', filaId: 'id-P1' }],
+    },
+  ]
+  const filas = expandirEnFilas(caso)
+  check('total vacío + 1 paleta → registra la PALETA (60), no 0', filas.length === 1 && filas[0].cantidadNum === 60, JSON.stringify(filas))
+  check('...y usa el lote PROPIO de la paleta', filas[0].lote === 'L-P1')
+  check('...y conserva la identidad de la paleta', filas[0].filaId === 'id-P1')
+
+  // Con total DIGITADO manda el total (comportamiento fijado por tests).
+  const conTotal = expandirEnFilas([{ ...caso[0], cantidad: '100' }])
+  check('con total digitado: manda el total (100)', conTotal[0].cantidadNum === 100 && conTotal[0].paleta === '')
+  check('con total digitado: identidad = fila cabecera del item', conTotal[0].filaId === 'id-CAB')
+
+  // Sin total y SIN paletas válidas → sigue viniendo itemsValidos antes;
+  // la fila única con 0 se mantiene como último recurso (sin cambio).
+  const vacio = expandirEnFilas([{ ...caso[0], paletas: [] }])
+  check('sin total y sin paletas: fila 0 (sin cambio de contrato)', vacio[0].cantidadNum === 0)
+}
 
 // ─── Resumen ───
 console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)

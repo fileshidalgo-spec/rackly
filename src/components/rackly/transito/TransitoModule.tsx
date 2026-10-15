@@ -67,7 +67,10 @@ export function TransitoModule() {
   const [dialogoItems, setDialogoItems] = useState<ArticuloTransito[] | null>(null)
 
   const cargar = useCallback(async () => {
-    setEstado('cargando')
+    // Sin setEstado('cargando') síncrono: el estado inicial YA es 'cargando',
+    // y en refrescos (realtime/botón) mantener 'listo' evita el flash de la
+    // pantalla de carga (regla react-hooks/set-state-in-effect: setState
+    // síncrono dentro del effect dispara renders en cascada).
     try {
       const data = await listarArticulosTransito()
       setArticulos(data)
@@ -80,7 +83,12 @@ export function TransitoModule() {
   }, [])
 
   useEffect(() => {
-    cargar()
+    // Diferido (macrotask): la carga arranca tras el primer render y ningún
+    // setState ocurre síncronamente en el cuerpo del effect (regla
+    // react-hooks/set-state-in-effect). Limpieza: si el módulo se desmonta
+    // antes del tick, no se carga.
+    const t = setTimeout(() => { void cargar() }, 0)
+    return () => clearTimeout(t)
   }, [cargar])
 
   const guias = useMemo(() => agruparEnGuias(filtrarArticulos(articulos, busqueda)), [articulos, busqueda])
@@ -568,17 +576,27 @@ function formatearFecha(v: string | null | undefined): string {
   return `${m[3]}/${m[2]}/${m[1].slice(2)}`
 }
 
-/** ISO/timestamptz o 'YYYY-MM-DD HH:MI' → 'DD/MM/YY HH:MM'. */
+/** ISO/timestamptz o 'YYYY-MM-DD HH:MI' → 'DD/MM/YY HH:MM'.
+ *  El timestamptz se formatea SIEMPRE en hora Lima (America/Lima): antes usaba
+ *  getHours() — la TZ del DISPOSITIVO — y en equipos fuera de Lima la fila
+ *  "Registrado…" se mostraba en hora local mientras "Trasladado…" (texto
+ *  sellado por la RPC en hora Lima) se mostraba tal cual: dos horas distintas
+ *  en la MISMA tarjeta de trazabilidad. */
+const FMT_LIMA = new Intl.DateTimeFormat('es-PE', {
+  timeZone: 'America/Lima',
+  day: '2-digit', month: '2-digit', year: '2-digit',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+})
 function formatearFechaHora(v: string | null | undefined): string {
   if (!v) return '—'
   const iso = new Date(v)
   if (!isNaN(iso.getTime())) {
-    const d = String(iso.getDate()).padStart(2, '0')
-    const mo = String(iso.getMonth() + 1).padStart(2, '0')
-    const y = String(iso.getFullYear()).slice(2)
-    const hh = String(iso.getHours()).padStart(2, '0')
-    const mm = String(iso.getMinutes()).padStart(2, '0')
-    return `${d}/${mo}/${y} ${hh}:${mm}`
+    // es-PE con hour12:false puede anteponer "24:" a medianoche en algunos
+    // motores: normalizar a 00.
+    const parts = FMT_LIMA.formatToParts(iso)
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
+    const hh = get('hour') === '24' ? '00' : get('hour')
+    return `${get('day')}/${get('month')}/${get('year')} ${hh}:${get('minute')}`
   }
   const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}:\d{2})/.exec(v)
   if (m) return `${m[3]}/${m[2]}/${m[1].slice(2)} ${m[4]}`

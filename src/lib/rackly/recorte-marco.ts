@@ -109,9 +109,15 @@ export function redimensionarMarco(
     }
   }
 
+  // Posición desde el ancla. Cuando el espacio disponible es MENOR que
+  // minLado (imagen pequeña), w/h ya quedaron >= dispX/dispY y sin este
+  // clamp final el marco SALÍA de la imagen (x<0 o se pasaba del borde) —
+  // el recorte real no era lo que se veía.
+  const xFinal = clamp(creceX === 1 ? ax : ax - w, 0, Math.max(0, imgW - w))
+  const yFinal = clamp(creceY === 1 ? ay : ay - h, 0, Math.max(0, imgH - h))
   return {
-    x: creceX === 1 ? ax : ax - w,
-    y: creceY === 1 ? ay : ay - h,
+    x: xFinal,
+    y: yFinal,
     w,
     h,
   }

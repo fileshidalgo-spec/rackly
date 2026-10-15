@@ -28,11 +28,17 @@ export type PaletaDividir = {
   lote: string
   fechaProduccion: string
   fechaVencimiento: string
+  /**
+   * Id de la fila YA registrada de la que nació esta paleta (solo edición
+   * de guía: `filasAItems` lo adjunta). undefined/null = paleta NUEVA →
+   * al guardar se INSERTA; ausente en el plan = fila sobrante → DELETE.
+   */
+  filaId?: string | null
 }
 
-/** Paleta vacía (hereda lote/fechas del artículo; sin cantidad). */
+/** Paleta vacía (hereda lote/fechas del artículo; sin cantidad; NUEVA). */
 export function paletaVacia(): PaletaDividir {
-  return { cantidad: '', lote: '', fechaProduccion: '', fechaVencimiento: '' }
+  return { cantidad: '', lote: '', fechaProduccion: '', fechaVencimiento: '', filaId: null }
 }
 
 /**
@@ -46,6 +52,9 @@ export function aPaleta(valor: string | PaletaDividir): PaletaDividir {
     lote: valor.lote ?? '',
     fechaProduccion: valor.fechaProduccion ?? '',
     fechaVencimiento: valor.fechaVencimiento ?? '',
+    // Identidad de edición: PRESERVAR (agregar/quitar/repartir paletas no
+    // debe perder de qué fila de la BD nació cada paleta).
+    filaId: valor.filaId ?? null,
   }
 }
 
@@ -64,6 +73,12 @@ export type ItemConPaletas = {
   fechaProduccion: string
   fechaVencimiento: string
   paletas?: PaletaDividir[]
+  /**
+   * Id de la fila de la BD de la que nació este artículo (solo edición de
+   * guía). En artículos SIN dividir es la fila única; en divididos es la
+   * fila "cabecera" (paleta 1) — usada si la división cae a fila única.
+   */
+  filaId?: string | null
 }
 
 /** Fila concreta a registrar en la BD / a rotular. */
@@ -78,6 +93,8 @@ export type FilaRecepcion = {
   fechaVencimiento: string
   /** "Paleta i/N" cuando la fila viene de un artículo dividido. */
   paleta: string
+  /** Id de la fila ya registrada que esta fila ACTUALIZA (edición; null = nueva). */
+  filaId?: string | null
 }
 
 /**
@@ -112,6 +129,10 @@ export function combinarPaletas(
     lote: prevN[i]?.lote ?? '',
     fechaProduccion: prevN[i]?.fechaProduccion ?? '',
     fechaVencimiento: prevN[i]?.fechaVencimiento ?? '',
+    // Identidad de edición: cada posición conserva la fila de la BD de la
+    // que nació (agregar/quitar/repartir NO re-asigna identidades: la
+    // paleta nueva nace sin id → INSERT; la quitada desaparece → DELETE).
+    filaId: prevN[i]?.filaId ?? null,
   }))
 }
 
@@ -160,15 +181,30 @@ export function expandirEnFilas(items: ItemConPaletas[]): FilaRecepcion[] {
           fechaProduccion: (p.fechaProduccion || base.fechaProduccion).trim(),
           fechaVencimiento: (p.fechaVencimiento || base.fechaVencimiento).trim(),
           paleta: `Paleta ${i + 1}/${n}`,
+          filaId: p.filaId ?? null,
         })
       })
     } else {
-      const cantidadNum = totalArticulo(it)
+      // Fila única. Si el total quedó VACÍO (NaN) pero hay UNA paleta válida,
+      // esa paleta es la única verdad disponible: usar SU cantidad (y sus
+      // overrides de lote/fechas) en vez de registrar un 0 silencioso.
+      // Con total digitado manda el total (comportamiento fijado por tests).
+      const totalNum = totalArticulo(it)
+      const unica = validas.length === 1 && isNaN(totalNum) ? validas[0] : null
+      const cantidadNum = unica ? aNumero(unica.cantidad) : totalNum
       filas.push({
         ...base,
-        cantidad: (it.cantidad ?? '').trim(),
+        cantidad: unica ? unica.cantidad : (it.cantidad ?? '').trim(),
         cantidadNum: isNaN(cantidadNum) ? 0 : cantidadNum,
+        lote: unica ? ((unica.lote || base.lote) as string).trim() : base.lote,
+        fechaProduccion: unica
+          ? ((unica.fechaProduccion || base.fechaProduccion) as string).trim()
+          : base.fechaProduccion,
+        fechaVencimiento: unica
+          ? ((unica.fechaVencimiento || base.fechaVencimiento) as string).trim()
+          : base.fechaVencimiento,
         paleta: '',
+        filaId: unica ? (unica.filaId ?? null) : ((it.filaId ?? null) as string | null | undefined),
       })
     }
   }
@@ -285,17 +321,21 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
     if (marca && prev && prev.codigo === f.codigo && prev.paletas && prev.paletas.length < marca.n) {
       // Siguiente paleta del mismo artículo dividido: SU cantidad y sus
       // datos PROPIOS solo si difieren de los del artículo (1ª fila del
-      // grupo = valores del artículo; igual → '' = hereda).
+      // grupo = valores del artículo; igual → '' = hereda). Cada paleta
+      // conserva la IDENTIDAD de su fila (filaId) para la edición.
       prev.paletas.push({
         cantidad: formatearCantidad(f.cantidad),
         lote: f.lote !== prev.lote ? f.lote : '',
         fechaProduccion: f.fechaProduccion !== prev.fechaProduccion ? f.fechaProduccion : '',
         fechaVencimiento: f.fechaVencimiento !== prev.fechaVencimiento ? f.fechaVencimiento : '',
+        filaId: f.id,
       })
       continue
     }
     if (marca) {
       // Inicio de un grupo de paletas (nuevo o huérfano: la fila participa).
+      // El item hereda el id de la fila cabecera (paleta 1): si la división
+      // cae a fila única al re-guardar, esa fila sigue siendo la anfitriona.
       items.push({
         codigo: f.codigo,
         descripcion: f.descripcion,
@@ -304,7 +344,8 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
         lote: f.lote,
         fechaProduccion: f.fechaProduccion,
         fechaVencimiento: f.fechaVencimiento,
-        paletas: [{ ...paletaVacia(), cantidad: formatearCantidad(f.cantidad) }],
+        paletas: [{ ...paletaVacia(), cantidad: formatearCantidad(f.cantidad), filaId: f.id }],
+        filaId: f.id,
       })
     } else {
       items.push({
@@ -315,6 +356,7 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
         lote: f.lote,
         fechaProduccion: f.fechaProduccion,
         fechaVencimiento: f.fechaVencimiento,
+        filaId: f.id,
       })
     }
   }
@@ -331,6 +373,57 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
 // inversos — una guía guardada con lote/fechas distintos por paleta se
 // re-ensambla con esos overrides y al volver a expandir reproduce EXACTAMENTE
 // las mismas filas.
+
+// ═══════════════════════════════════════════════════════════════════
+// SINCRONIZACIÓN DE EDICIÓN POR IDENTIDAD (no posicional)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Resultado del plan de sincronización de una edición de guía. */
+export type PlanSyncEdicion<T> = {
+  /** Filas que persisten: UPDATE por SU PROPIO id (contenido de su fila). */
+  actualizar: Array<{ id: string; fila: T }>
+  /** Filas nuevas o sin identidad válida: INSERT. */
+  insertar: T[]
+  /** Ids originales que ninguna fila reclama ya (artículo/paleta quitada): DELETE. */
+  eliminar: string[]
+}
+
+/**
+ * Planifica la sincronización de UNA guía editada por IDENTIDAD, nunca por
+ * posición: cada fila expandida lleva el `filaId` de la fila de la BD de la
+ * que nació (adjuntado por `filasAItems`), así quitar/dividir/agregar
+ * artículos o paletas NUNCA cruza contenido entre filas (bug P0 corregido:
+ * el sincronizado posicional escribía el artículo N sobre la fila M al
+ * desplazarse la lista).
+ *
+ * Reglas:
+ *   · filaId presente Y perteneciente a la guía → UPDATE de esa fila.
+ *   · dos filas reclamando el mismo id → la primera lo conserva (la otra
+ *     INSERTA — nunca doble escritura sobre una misma fila).
+ *   · filaId apuntando a un id ajeno a la guía (residuo raro) → INSERT
+ *     seguro (jamás escribe sobre una fila que no es suya).
+ *   · ids originales no reclamados → DELETE (filas quitadas por el usuario).
+ */
+export function planSyncEdicionPorId<T extends { filaId?: string | null }>(
+  idsOriginales: string[],
+  filas: T[]
+): PlanSyncEdicion<T> {
+  const originales = new Set(idsOriginales)
+  const usados = new Set<string>()
+  const actualizar: Array<{ id: string; fila: T }> = []
+  const insertar: T[] = []
+  for (const f of filas) {
+    const id = (f.filaId ?? '').trim()
+    if (id && originales.has(id) && !usados.has(id)) {
+      usados.add(id)
+      actualizar.push({ id, fila: f })
+    } else {
+      insertar.push(f)
+    }
+  }
+  const eliminar = idsOriginales.filter((id) => !usados.has(id))
+  return { actualizar, insertar, eliminar }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // AGRUPADO DEL REGISTRO: UNA FILA POR GUÍA
@@ -362,6 +455,9 @@ export type FilaRegistrada = {
   fechaVencimiento: string
   /** Observaciones (trae "Paleta i/N" cuando la fila viene de un dividido). */
   observaciones: string
+  /** Nº de envíos de Tránsito sobre la fila (0/ausente = sin transferir).
+   *  Estructural: RegistroRecepcion (modulos.ts) lo satisface. */
+  enviosTransito?: number
 }
 
 /** Una guía completa del registro: encabezado compartido + sus filas. */

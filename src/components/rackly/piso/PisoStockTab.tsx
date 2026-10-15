@@ -26,6 +26,11 @@ export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: Pis
   const [hasSearched, setHasSearched] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
+  const seqRef = useRef(0)
+  // Guard por Nº de petición: una respuesta LENTA de un término anterior jamás
+  // pisa el resultado del término actual (antes mountedRef se re-activaba en
+  // cada tecleo y la respuesta vieja sobrescribía `items` con resultados de
+  // otra búsqueda — mismo patrón que StockTab ya corrigió con serverReqRef).
 
   // Búsqueda BAJO DEMANDA (debounced): stockPisoBuscar consulta en SERVIDOR solo
   // los bloques que matchean (código o descripción). Antes se llamaba
@@ -42,22 +47,23 @@ export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: Pis
       return
     }
     debounceRef.current = setTimeout(async () => {
+      const req = ++seqRef.current
       setLoading(true)
       try {
         // El catálogo solo alimenta la tarjeta Big Magic: se resuelve en paralelo
         // sin bloquear la consulta de stock.
         const catTask = isCatalogoLoaded() ? Promise.resolve() : fetchCatalogo().catch(() => {})
         const [data] = await Promise.all([stockPisoBuscar(term), catTask])
-        if (mountedRef.current) {
-          setItems(data)
-          setHasSearched(true)
-          setLastRefresh(new Date())
-        }
+        if (req !== seqRef.current || !mountedRef.current) return // llegó una búsqueda más reciente (o desmontó)
+        setItems(data)
+        setHasSearched(true)
+        setLastRefresh(new Date())
       } catch (err) {
         console.error('Error cargando stock Piso:', err)
-        if (mountedRef.current) setHasSearched(true)
+        if (req !== seqRef.current || !mountedRef.current) return
+        setHasSearched(true)
       } finally {
-        if (mountedRef.current) setLoading(false)
+        if (req === seqRef.current && mountedRef.current) setLoading(false)
       }
     }, 400)
     return () => {
@@ -92,9 +98,11 @@ export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: Pis
     return true
   })
 
-  // Aggregate total stock per code
+  // Aggregate total stock per code — sobre las filas FILTRADAS visibles (antes
+  // sumaba `items` completos: con filtro "Solo INC" o "Disponibles" el badge
+  // del header mostraba la suma de ambos, contradiciendo las filas).
   const stockPorCodigo = new Map<string, number>()
-  for (const item of items) {
+  for (const item of filtered) {
     stockPorCodigo.set(item.bloque_codigo, (stockPorCodigo.get(item.bloque_codigo) ?? 0) + item.cantidad)
   }
 

@@ -151,10 +151,14 @@ function SkeletonShimmer() {
   )
 }
 
-export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel }: {
+export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, onTargetConsumido }: {
   targetPosicion?: PisoTargetPosicion | null
   onVolverAStock?: () => void
   volverLabel?: string
+  /** Avisa a page.tsx que el deep-link YA se consumió (para limpiarlo):
+   *  sin esto, al re-montar Sectores (Radix desmonta TabsContent al cambiar
+   *  de pestaña) el target persistente reabría solo el último diálogo. */
+  onTargetConsumido?: () => void
 }) {
   const { perfil } = useAuth()
   const [sectores, setSectores] = useState<Sector[]>([])
@@ -504,18 +508,20 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel }:
     const pending = pendingPosRef.current
     if (!pending) return
     // El usuario cambió de sector antes de que cargara: el deep-link quedó obsoleto
-    if (pending.sector !== sectorFilter) { pendingPosRef.current = null; return }
+    if (pending.sector !== sectorFilter) { pendingPosRef.current = null; onTargetConsumido?.(); return }
     if (loading || posiciones.length === 0) return
     pendingPosRef.current = null
     const pos = resolverPosicionTarget(posiciones, { sector_id: sectorFilter, posicion_id: pending.pid, columna_letra: targetPosicion?.columna_letra, posicion_numero: targetPosicion?.posicion_numero, subcolumna_codigo: targetPosicion?.subcolumna_codigo })
     if (!pos) {
       toast.error(`No se encontró la posición ${targetPosicion?.ubicacion ?? ''} en este sector`)
+      onTargetConsumido?.()
       return
     }
     // Dejar la vista de columna coherente por detrás del diálogo (al cerrarlo
     // el usuario ve la columna donde está la posición)
     handleSelectColumn(pos.columnaLetra)
     handleClick(pos)
+    onTargetConsumido?.() // consumido: limpiar el target en page.tsx
   }, [posiciones, loading, sectorFilter])
 
   // Cargar vista de columna cuando se selecciona una
@@ -953,7 +959,13 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel }:
     }
   }
 
-  // Auto-create manual_ bloques in piso_bloques before registering movement
+  // Auto-create manual_ bloques in piso_bloques before registering movement.
+  // También resuelve ids VIRTUALES `cat_<codigo>` (artículos que existen solo
+  // en el catálogo de Racks, de listarBloquesParaSelect): antes pasaban tal
+  // cual al INSERT de piso_movimiento_detalles y morían con violación de FK
+  // (bloque_id es UUID NOT NULL REFERENCES piso_bloques) — el ingreso se
+  // perdía con un error críptico. buscarBloquePorCodigo auto-crea el bloque
+  // real desde el catálogo (misma ruta que el onBlur).
   async function ensureManualBloqueCreated(rows: RowEntry[]): Promise<RowEntry[]> {
     const resolved: RowEntry[] = []
     for (const r of rows) {
@@ -978,6 +990,27 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel }:
           resolved.push({ ...r, bloque_id: existing.id })
         } else {
           resolved.push(r)
+        }
+      } else if (r.bloque_id.startsWith('cat_')) {
+        // Artículo solo-catalogo elegido del dropdown: resolver el bloque
+        // real (lo busca en piso_bloques y, si no existe, lo AUTO-CREA desde
+        // el catálogo). Si no se puede resolver, se descarta la fila con
+        // aviso — jamás registrar con un id virtual que viola la FK.
+        const code = r.bloque_id.replace('cat_', '')
+        try {
+          const existing = await buscarBloquePorCodigo(code)
+          if (existing) {
+            resolved.push({ ...r, bloque_id: existing.id })
+          } else {
+            toast.error(
+              `No se pudo crear la ubicación para ${code}; la fila no se registrará`
+            )
+          }
+        } catch (err) {
+          console.error('[Piso] No se pudo resolver el artículo de catálogo:', err)
+          toast.error(`No se pudo verificar el artículo ${code} en el catálogo`, {
+            description: extractError(err),
+          })
         }
       } else {
         resolved.push(r)

@@ -857,7 +857,7 @@ function RacklyApp() {
             </TabsContent>
 
             <TabsContent value="sectores" className="mt-5">
-              <PisoSectoresTab targetPosicion={pisoTarget} onVolverAStock={pisoOrigen ? volverAPisoStock : undefined} volverLabel={pisoOrigen?.label} />
+              <PisoSectoresTab targetPosicion={pisoTarget} onTargetConsumido={() => setPisoTarget(null)} onVolverAStock={pisoOrigen ? volverAPisoStock : undefined} volverLabel={pisoOrigen?.label} />
             </TabsContent>
 
             <TabsContent value="config" className="mt-5">

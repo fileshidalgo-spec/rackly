@@ -182,6 +182,8 @@ export function RecepcionModule() {
     autor: { id: string; nombre: string; correo: string }
     fotoUrl: string
     doc: string
+    /** Nº de filas con envíos de Tránsito al abrir la edición (guard de guardado). */
+    conEnvios: number
   } | null>(null)
   const [cargandoEdicion, setCargandoEdicion] = useState(false)
 
@@ -352,6 +354,7 @@ export function RecepcionModule() {
         },
         fotoUrl: g.fotoUrl || '',
         doc,
+        conEnvios: filasCompletas.filter((f) => (f.enviosTransito ?? 0) > 0).length,
       })
       // El editor vive en la vía manual: cámbiala y pre-llena el encabezado.
       setModo('manual')
@@ -362,8 +365,16 @@ export function RecepcionModule() {
       setFPlaca(g.placa || primera.placa || '')
       setFObs(obsSinMarcaPaleta(primera.observaciones || ''))
       setItems(itemsGuia.map((it) => ({ ...itemVacio(), ...it })))
+      // AVISO Tránsito: la guía ya tiene envíos registrados. Se permite
+      // abrir/revisar (corregir observaciones, etc.), pero al GUARDAR se
+      // exigirá confirmación explícita — bajar cantidades por debajo de lo
+      // enviado descuaradría el semáforo de Tránsito.
+      const conEnvios = filasCompletas.filter((f) => (f.enviosTransito ?? 0) > 0).length
       toast.info(`Editando ${doc}`, {
-        description: 'Revisa los artículos y cantidades (puedes dividir en paletas) y pulsa "Guardar cambios".',
+        description:
+          conEnvios > 0
+            ? `ATENCIÓN: ${conEnvios} fila(s) ya fueron transferidas por Tránsito. Al guardar se pedirá confirmación; no bajes cantidades por debajo de lo enviado.`
+            : 'Revisa los artículos y cantidades (puedes dividir en paletas) y pulsa "Guardar cambios".',
       })
       setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
     } catch (err: unknown) {
@@ -486,7 +497,12 @@ export function RecepcionModule() {
   useRegistrosRealtime('recepcion_registros', recargarLista)
 
   useEffect(() => {
-    cargar(0, true)
+    // Con los filtros COMMITADOS (filtrosActivosRef), NO con lo que el usuario
+    // esté tecleando a medio buscar: antes cambiar el filtro de estado
+    // aplicaba también la búsqueda no confirmada (filtro fantasma que el
+    // realtime heredaba en los refrescos siguientes).
+    const f = filtrosActivosRef.current
+    cargar(0, true, { busqueda: f.busqueda, estado: estadoFiltro === 'todos' ? '' : estadoFiltro })
   }, [estadoFiltro])
 
   // Catálogo en cache para el auto-llenado de descripción/unidad al
@@ -519,13 +535,34 @@ export function RecepcionModule() {
       const uuids = loteUuid.paraFilas(filasGuardar.length)
       for (const aviso of avisosDePaletas(validos)) {
         toast.warning('Las paletas no suman el total del artículo', {
-          description: `${aviso}. Se registra lo digitado en las paletas.`,
+          // Texto VERAZ en ambos casos: con UNA sola paleta con cantidad se
+          // registra el TOTAL del artículo (no la paleta); con varias, lo
+          // digitado en las paletas (o el total si quedó vacío).
+          description: `${aviso}. Con UNA sola paleta con cantidad se registra el total del artículo; con varias paletas, lo digitado en ellas.`,
         })
         break // un solo aviso basta
       }
 
-      // ── EDICIÓN de una guía ya registrada: sincroniza por id ──
+      // ── EDICIÓN de una guía ya registrada: sincroniza POR IDENTIDAD ──
+      // Cada fila expandida lleva el filaId de la fila de la BD de la que
+      // nació (filasAItems adjuntó las identidades al abrir la edición):
+      // quitar/dividir/agregar ya NO cruza contenido entre filas.
       if (editando) {
+        // GUARD Tránsito (edición): si la guía ya tiene envíos, exigir
+        // confirmación explícita — el historial de Tránsito queda pegado a
+        // estas filas (el UPDATE no re-atribuye transito) y bajar cantidades
+        // por debajo de lo enviado descuaradría el semáforo.
+        if (editando.conEnvios > 0) {
+          const ok = window.confirm(
+            `Esta guía ya tiene ${editando.conEnvios} fila(s) transferida(s) por Tránsito.\n\n` +
+              'Al guardar, el historial de Tránsito sigue pegado a estas filas. Si bajas cantidades por debajo de lo ya enviado, el semáforo de Tránsito quedará descuadrado.\n\n' +
+              '¿Guardar los cambios de todos modos?'
+          )
+          if (!ok) {
+            setSaving(false)
+            return
+          }
+        }
         const res = await guardarEdicionGuia(
           editando.ids,
           filasGuardar.map((f) => ({
@@ -537,6 +574,7 @@ export function RecepcionModule() {
             fechaProduccion: f.fechaProduccion,
             fechaVencimiento: f.fechaVencimiento,
             observaciones: [fObs, f.paleta].filter(Boolean).join(' · '),
+            filaId: f.filaId ?? null,
           })),
           {
             fecha,
@@ -672,6 +710,18 @@ export function RecepcionModule() {
     const target = deleteTarget
     setDeleteTarget(null)
     try {
+      // GUARD Tránsito: re-lee la guía COMPLETA (la lista paginada puede ser
+      // parcial) y bloquea el borrado si ALGUNA fila ya tiene envíos de
+      // Tránsito — borrarla dejaría el ingreso en kardex/piso como stock
+      // huérfano sin trazabilidad (el semáforo perdería su origen).
+      const completas = await listarRecepcionesPorDocumento(target.ref)
+      const conEnvios = completas.filter((f) => (f.enviosTransito ?? 0) > 0).length
+      if (conEnvios > 0) {
+        toast.error('No se puede eliminar: la guía ya fue transferida por Tránsito', {
+          description: `${conEnvios} fila(s) tienen envíos registrados. Primero revierte/anula los traslados en el módulo Tránsito (o contacta al administrador) — eliminar la guía dejaría stock huérfano sin trazabilidad.`,
+        })
+        return
+      }
       await eliminarGuia(target.ref)
       toast.success(`Guía eliminada (${target.filas.length} fila(s))`)
       cargar(0, true)

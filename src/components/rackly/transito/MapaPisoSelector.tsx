@@ -85,7 +85,6 @@ export function MapaPisoSelector({
 
   useEffect(() => {
     cargarSectores()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const cargarPosiciones = async (sid: string) => {

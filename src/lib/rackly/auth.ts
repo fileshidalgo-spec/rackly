@@ -317,11 +317,15 @@ export async function cambiarAprobado(userId: string, aprobado: boolean) {
 }
 
 export async function cambiarRol(userId: string, rol: Rol) {
-  const { error: delErr } = await dataClient.from('user_roles').delete().eq('user_id', userId)
-  if (delErr) throw delErr
-  const { error } = await dataClient
-    .from('user_roles')
-    .insert({ user_id: userId, role: rol })
+  // RPC ATÓMICA (cambiar_rol_usuario, migración 20261016_hardening): antes era
+  // delete+insert desde el cliente — si el insert fallaba (red, restart), el
+  // usuario quedaba SIN rol y getPerfilActual lo degradaba a 'operario' (un
+  // admin afectado perdía permisos hasta corrección manual). La RPC es
+  // SECURITY DEFINER con guard: service_role (la app) o admin autenticado.
+  const { error } = await dataClient.rpc('cambiar_rol_usuario', {
+    p_user_id: userId,
+    p_rol: rol,
+  })
   if (error) throw error
 }
 

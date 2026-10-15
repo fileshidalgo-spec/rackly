@@ -151,7 +151,18 @@ export function FefoPisoTab() {
         (i.codigo_inc && i.codigo_inc.toUpperCase().includes(q)))
     }
     if (sector) data = data.filter((i) => i.sector_nombre === sector)
-    return data.filter((i) => filtros[i.status] !== false)
+    // ORDEN FEFO REAL: vencidos primero → ≤15 → ≤30 → vigente; sin fecha al final.
+    // stockPisoGlobal agrupa por código (para la búsqueda); esta pestaña promete
+    // "lo más próximo a vencer primero", así que re-ordena por días restantes.
+    return data
+      .filter((i) => filtros[i.status] !== false)
+      .sort((a, b) => {
+        if (a.status === 'sin_fecha' && b.status !== 'sin_fecha') return 1
+        if (a.status !== 'sin_fecha' && b.status === 'sin_fecha') return -1
+        if (a.diasRestantes !== b.diasRestantes) return a.diasRestantes - b.diasRestantes
+        if (a.bloque_codigo !== b.bloque_codigo) return a.bloque_codigo.localeCompare(b.bloque_codigo)
+        return a.ubicacion.localeCompare(b.ubicacion)
+      })
   }, [items, search, sector, filtros])
 
   const counts = useMemo(() => {

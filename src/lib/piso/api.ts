@@ -22,16 +22,6 @@ async function rollbackCabeceras(ids: string[], tag: string): Promise<void> {
   }
 }
 
-/** Elimina detalles huérfanos para un set de movimiento_ids.
- *  Usado como rollback cuando la segunda parte de un traslado falla. */
-async function rollbackDetalles(movIds: string[], tag: string): Promise<void> {
-  for (const movId of movIds) {
-    await dataClient.from('piso_movimiento_detalles').delete().eq('movimiento_id', movId).catch((rbErr) => {
-      console.error(`[${tag}] rollback de detalles ${movId} falló:`, rbErr)
-    })
-  }
-}
-
 /** Normaliza el lote físico digitado: TRIM; vacío => no viaja (queda NULL en BD). */
 function loteLimpio(lote?: string | null): string {
   return (lote || '').trim()
@@ -1588,34 +1578,44 @@ async function validarStockSuficiente(
   }
 }
 
-/**
- * Registra un ingreso directo a una posición (sin pasar por el RPC completo).
- * Permite múltiples bloques en una sola posición.
- * Incluye uuid_sync para idempotencia: si ya existe una cabecera con el mismo
- * uuid_sync, la operación se considera exitosa (no duplica).
- * Si los detalles fallan, hace rollback de la cabecera.
- */
-export async function registrarIngresoPosicion(
+/** Normaliza los detalles para las RPC de Piso (jsonb seguro):
+ *  fecha_vencimiento vacía → null; lote con trim, vacío → null. */
+function detallesParaRpc(detalles: DetalleInput[]): Record<string, unknown>[] {
+  return detalles.map((d) => ({
+    nivel_id: d.nivel_id,
+    bloque_id: d.bloque_id,
+    cantidad: d.cantidad,
+    fecha_vencimiento: d.fecha_vencimiento || null,
+    lote: loteLimpio(d.lote) || null,
+  }))
+}
+
+/** Detecta si la RPC aún no existe en la BD (migración 20261016_piso_rpc_salidas
+ *  pendiente) para degradar a la ruta directa sin perder el movimiento.
+ *  PostgREST responde PGRST202 ("Could not find the function...") en ese caso. */
+function esRpcNoDisponible(err: unknown): boolean {
+  const rec = err as { code?: string; message?: string } | null
+  if (!rec) return false
+  if (rec.code === 'PGRST202' || rec.code === 'PGRST404' || rec.code === '404') return true
+  return /could not find the function/i.test(rec.message ?? '')
+}
+
+// ═══ Ruta DIRECTA (respaldo si la RPC no existe): cabecera + detalles en
+// ═══ 2 requests con rollback manual. Es la lógica que existía antes de la
+// ═══ migración a RPC; la RPC es la vía principal (atómica en servidor).
+
+/** Inserta una cabecera de movimiento simple y devuelve su id. */
+async function insertarCabeceraSimple(
+  tipo: string,
   turno: string,
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detalles: DetalleInput[],
+  uuidSync: string,
   opts?: { posicion_id?: string; codigo_inc?: string }
-): Promise<void> {
-  const uuidSync = generateUuidSync()
-
-  // Idempotencia: verificar si ya existe una cabecera con este uuid_sync
-  const { data: existing } = await dataClient
-    .from('piso_movimientos')
-    .select('id')
-    .eq('uuid_sync', uuidSync)
-    .maybeSingle()
-  if (existing) return // Ya registrado, operación idempotente
-
-  // Crear cabecera
+): Promise<string> {
   const insertPayload: Record<string, unknown> = {
-    tipo: 'ingreso',
+    tipo,
     turno,
     usuario_id: usuarioId,
     usuario_nombre: usuarioNombre,
@@ -1631,26 +1631,147 @@ export async function registrarIngresoPosicion(
     .select('id')
     .single()
   if (movErr) throw movErr
-  const movimientoId = (movData as { id: string }).id
+  return (movData as { id: string }).id
+}
 
-  // Crear detalles (con lote físico si se digitó; fallback sin lote si la columna no existe)
-  const { rows: detRows, tieneLote } = buildDetRows(movimientoId, detalles)
-  if (detRows.length > 0) {
-    try {
-      await insertDetallesPiso(detRows, tieneLote, 'registrarIngresoPosicion')
-    } catch (detErr) {
-      // Rollback: eliminar cabecera huérfana
-      console.error('[registrarIngresoPosicion] Error insertando detalles, haciendo rollback:', (detErr as { message?: string }).message)
-      await rollbackCabeceras([movimientoId], 'registrarIngresoPosicion')
-      throw detErr
-    }
+/** Inserta los detalles de una cabecera; si falla, elimina las cabeceras de
+ *  rollback (huérfanas) y relanza el error. */
+async function insertarDetallesConRollback(
+  movimientoId: string,
+  detalles: DetalleInput[],
+  tag: string,
+  cabecerasRollback: string[]
+): Promise<void> {
+  const { rows, tieneLote } = buildDetRows(movimientoId, detalles)
+  if (rows.length === 0) return
+  try {
+    await insertDetallesPiso(rows, tieneLote, tag)
+  } catch (detErr) {
+    console.error(`[${tag}] Error insertando detalles, haciendo rollback:`, (detErr as { message?: string }).message)
+    await rollbackCabeceras(cabecerasRollback, tag)
+    throw detErr
   }
+}
+
+/** Respaldo directo de registrarIngresoPosicion (RPC no disponible). */
+async function registrarIngresoPosicionDirecto(
+  turno: string,
+  usuarioId: string,
+  usuarioNombre: string,
+  usuarioCorreo: string,
+  detalles: DetalleInput[],
+  uuidSync: string,
+  opts?: { posicion_id?: string; codigo_inc?: string }
+): Promise<void> {
+  const movimientoId = await insertarCabeceraSimple(
+    'ingreso', turno, usuarioId, usuarioNombre, usuarioCorreo, uuidSync, opts
+  )
+  await insertarDetallesConRollback(movimientoId, detalles, 'registrarIngresoPosicion', [movimientoId])
+}
+
+/** Respaldo directo de registrarSalidaPosicion (RPC no disponible). */
+async function registrarSalidaPosicionDirecto(
+  turno: string,
+  usuarioId: string,
+  usuarioNombre: string,
+  usuarioCorreo: string,
+  detalles: DetalleInput[],
+  uuidSync: string
+): Promise<void> {
+  const movimientoId = await insertarCabeceraSimple(
+    'salida', turno, usuarioId, usuarioNombre, usuarioCorreo, uuidSync
+  )
+  await insertarDetallesConRollback(movimientoId, detalles, 'registrarSalidaPosicion', [movimientoId])
+}
+
+/** Respaldo directo de registrarDevolucionPosicion (RPC no disponible). */
+async function registrarDevolucionPosicionDirecto(
+  turno: string,
+  usuarioId: string,
+  usuarioNombre: string,
+  usuarioCorreo: string,
+  detalles: DetalleInput[],
+  uuidSync: string
+): Promise<void> {
+  const movimientoId = await insertarCabeceraSimple(
+    'devolucion', turno, usuarioId, usuarioNombre, usuarioCorreo, uuidSync
+  )
+  await insertarDetallesConRollback(movimientoId, detalles, 'registrarDevolucionPosicion', [movimientoId])
+}
+
+/** Respaldo directo de registrarTrasladoPosicion (RPC no disponible).
+ *  Salida en origen + ingreso en destino; rollback completo ante cualquier fallo. */
+async function registrarTrasladoPosicionDirecto(
+  turno: string,
+  usuarioId: string,
+  usuarioNombre: string,
+  usuarioCorreo: string,
+  detallesSalida: DetalleInput[],
+  detallesIngreso: DetalleInput[],
+  uuidSync: string
+): Promise<void> {
+  const salId = await insertarCabeceraSimple('salida', turno, usuarioId, usuarioNombre, usuarioCorreo, uuidSync)
+
+  let ingId: string
+  try {
+    ingId = await insertarCabeceraSimple('ingreso', turno, usuarioId, usuarioNombre, usuarioCorreo, uuidSync)
+  } catch (ingErr) {
+    console.error('[registrarTrasladoPosicion] Error creando ingreso, haciendo rollback de salida:', (ingErr as { message?: string }).message)
+    await rollbackCabeceras([salId], 'registrarTrasladoPosicion')
+    throw ingErr
+  }
+
+  try {
+    await insertarDetallesConRollback(salId, detallesSalida, 'registrarTrasladoPosicion', [salId, ingId])
+    await insertarDetallesConRollback(ingId, detallesIngreso, 'registrarTrasladoPosicion', [salId, ingId])
+  } finally {
+    // insertarDetallesConRollback ya hace rollback de cabeceras ante fallo
+  }
+}
+
+// ═══ API PÚBLICA DE ESCRITURA — RPC-FIRST (atómicas en servidor;
+// ═══ migración 20261016_piso_rpc_salidas.sql) con respaldo directo.
+
+/**
+ * Registra un ingreso directo a una posición (permite múltiples bloques).
+ * RPC atómica piso_registrar_movimiento: cabecera + detalles en UNA transacción
+ * (idempotencia por uuid_sync en servidor; numero_operacion por secuencia).
+ * Si la RPC no existe aún (migración pendiente), degrada a la ruta directa.
+ */
+export async function registrarIngresoPosicion(
+  turno: string,
+  usuarioId: string,
+  usuarioNombre: string,
+  usuarioCorreo: string,
+  detalles: DetalleInput[],
+  opts?: { posicion_id?: string; codigo_inc?: string }
+): Promise<void> {
+  const uuidSync = generateUuidSync()
+
+  const { error } = await dataClient.rpc('piso_registrar_movimiento', {
+    _tipo: 'ingreso',
+    _turno: turno,
+    _detalles: detallesParaRpc(detalles),
+    _uuid_sync: uuidSync,
+    _codigo_inc: opts?.codigo_inc ?? null,
+    _usuario_id: usuarioId,
+    _usuario_nombre: usuarioNombre,
+    _usuario_correo: usuarioCorreo,
+    _posicion_id: opts?.posicion_id ?? null,
+  })
+  if (!error) return
+  if (!esRpcNoDisponible(error)) throw error
+  console.warn('[registrarIngresoPosicion] RPC no disponible — ruta directa. Aplicar 20261016_piso_rpc_salidas.sql.')
+  await registrarIngresoPosicionDirecto(turno, usuarioId, usuarioNombre, usuarioCorreo, detalles, uuidSync, opts)
 }
 
 /**
  * Registra una salida de stock de una posición.
- * Incluye uuid_sync para idempotencia.
- * Si los detalles fallan, hace rollback de la cabecera.
+ * RPC atómica piso_salida_posicion: valida stock EN SERVIDOR dentro de locks
+ * por nivel (sin TOCTOU), inserta cabecera + detalles en una transacción,
+ * con lote físico y numero_operacion por secuencia. La validación client-side
+ * (validarStockSuficiente) se conserva como barrera rápida con mensaje claro;
+ * la del servidor es la autoridad.
  */
 export async function registrarSalidaPosicion(
   turno: string,
@@ -1661,44 +1782,26 @@ export async function registrarSalidaPosicion(
 ): Promise<void> {
   const uuidSync = generateUuidSync()
 
-  // Idempotencia
-  const { data: existing } = await dataClient
-    .from('piso_movimientos')
-    .select('id')
-    .eq('uuid_sync', uuidSync)
-    .maybeSingle()
-  if (existing) return
-
-  // Barrera anti-datos-desactualizados: validar contra el stock REAL de la BD
-  // justo antes de insertar (diálogo abierto mientras otra sesión retira stock
-  // registraba salidas imposibles → lotes fantasma pegados a 0).
+  // Barrera anti-datos-desactualizados (fail rápido; la RPC re-valida igual)
   await validarStockSuficiente(detalles, 'registrarSalidaPosicion')
 
-  const { data: movData, error: movErr } = await dataClient
-    .from('piso_movimientos')
-    .insert({ tipo: 'salida', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo, uuid_sync: uuidSync })
-    .select('id')
-    .single()
-  if (movErr) throw movErr
-  const movimientoId = (movData as { id: string }).id
-
-  const { rows: detRows, tieneLote } = buildDetRows(movimientoId, detalles)
-  if (detRows.length > 0) {
-    try {
-      await insertDetallesPiso(detRows, tieneLote, 'registrarSalidaPosicion')
-    } catch (detErr) {
-      console.error('[registrarSalidaPosicion] Error insertando detalles, haciendo rollback:', (detErr as { message?: string }).message)
-      await rollbackCabeceras([movimientoId], 'registrarSalidaPosicion')
-      throw detErr
-    }
-  }
+  const { error } = await dataClient.rpc('piso_salida_posicion', {
+    p_turno: turno,
+    p_usuario_id: usuarioId,
+    p_usuario_nombre: usuarioNombre,
+    p_usuario_correo: usuarioCorreo,
+    p_uuid_sync: uuidSync,
+    p_detalles: detallesParaRpc(detalles),
+  })
+  if (!error) return
+  if (!esRpcNoDisponible(error)) throw error
+  console.warn('[registrarSalidaPosicion] RPC no disponible — ruta directa. Aplicar 20261016_piso_rpc_salidas.sql.')
+  await registrarSalidaPosicionDirecto(turno, usuarioId, usuarioNombre, usuarioCorreo, detalles, uuidSync)
 }
 
 /**
- * Registra una devolución de stock a una posición.
- * Funciona como un ingreso pero con tipo 'devolucion'.
- * Incluye uuid_sync para idempotencia.
- * Si los detalles fallan, hace rollback de la cabecera.
+ * Registra una devolución de stock a una posición (ingreso con tipo 'devolucion').
+ * RPC atómica piso_registrar_movimiento; fallback directo si no existe.
  */
 export async function registrarDevolucionPosicion(
   turno: string,
@@ -1709,39 +1812,29 @@ export async function registrarDevolucionPosicion(
 ): Promise<void> {
   const uuidSync = generateUuidSync()
 
-  // Idempotencia
-  const { data: existing } = await dataClient
-    .from('piso_movimientos')
-    .select('id')
-    .eq('uuid_sync', uuidSync)
-    .maybeSingle()
-  if (existing) return
-
-  const { data: movData, error: movErr } = await dataClient
-    .from('piso_movimientos')
-    .insert({ tipo: 'devolucion', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo, uuid_sync: uuidSync })
-    .select('id')
-    .single()
-  if (movErr) throw movErr
-  const movimientoId = (movData as { id: string }).id
-
-  const { rows: detRows, tieneLote } = buildDetRows(movimientoId, detalles)
-  if (detRows.length > 0) {
-    try {
-      await insertDetallesPiso(detRows, tieneLote, 'registrarDevolucionPosicion')
-    } catch (detErr) {
-      console.error('[registrarDevolucionPosicion] Error insertando detalles, haciendo rollback:', (detErr as { message?: string }).message)
-      await rollbackCabeceras([movimientoId], 'registrarDevolucionPosicion')
-      throw detErr
-    }
-  }
+  const { error } = await dataClient.rpc('piso_registrar_movimiento', {
+    _tipo: 'devolucion',
+    _turno: turno,
+    _detalles: detallesParaRpc(detalles),
+    _uuid_sync: uuidSync,
+    _codigo_inc: null,
+    _usuario_id: usuarioId,
+    _usuario_nombre: usuarioNombre,
+    _usuario_correo: usuarioCorreo,
+    _posicion_id: null,
+  })
+  if (!error) return
+  if (!esRpcNoDisponible(error)) throw error
+  console.warn('[registrarDevolucionPosicion] RPC no disponible — ruta directa. Aplicar 20261016_piso_rpc_salidas.sql.')
+  await registrarDevolucionPosicionDirecto(turno, usuarioId, usuarioNombre, usuarioCorreo, detalles, uuidSync)
 }
 
 /**
- * Registra un traslado entre posiciones del mismo sector.
- * Crea una salida en el origen y un ingreso en el destino.
- * Ambas cabeceras comparten un uuid_sync para detectar traslados parciales.
- * Si cualquier paso falla, hace rollback completo.
+ * Registra un traslado entre posiciones del mismo sector (salida en origen +
+ * ingreso en destino). RPC atómica piso_traslado_posicion: AMBAS cabeceras y
+ * sus detalles en UNA transacción (antes podían quedar pares parciales),
+ * valida stock de origen y saldo total en servidor, propaga el lote y limpia
+ * parciales residuales del mismo uuid_sync. Fallback directo si no existe.
  */
 export async function registrarTrasladoPosicion(
   turno: string,
@@ -1753,74 +1846,23 @@ export async function registrarTrasladoPosicion(
 ): Promise<void> {
   const uuidSync = generateUuidSync()
 
-  // Idempotencia: si ya existen 2 movimientos con este uuid_sync, ya fue procesado
-  const { data: existingMovs, error: checkErr } = await dataClient
-    .from('piso_movimientos')
-    .select('id')
-    .eq('uuid_sync', uuidSync)
-  if (checkErr) throw checkErr
-  if (existingMovs && existingMovs.length >= 2) return // Traslado ya registrado
-
-  // Si hay exactamente 1 movimiento, es un traslado parcial — limpiar y reintentar
-  if (existingMovs && existingMovs.length === 1) {
-    console.warn('[registrarTrasladoPosicion] Traslado parcial detectado, limpiando:', uuidSync)
-    const partialId = (existingMovs[0] as { id: string }).id
-    await rollbackDetalles([partialId], 'registrarTrasladoPosicion-partial')
-    await rollbackCabeceras([partialId], 'registrarTrasladoPosicion-partial')
-  }
-
-  // Validar la salida contra el stock REAL de la BD (mismo criterio que
-  // registrarSalidaPosicion; el traslado min() contra datos del diálogo puede
-  // quedar viejo si otra sesión retiró mercadería mientras se elegía destino).
+  // Validación client-side de la salida contra stock REAL (fail rápido;
+  // la RPC re-valida en servidor dentro de locks)
   await validarStockSuficiente(detallesSalida, 'registrarTrasladoPosicion')
 
-  // Crear movimiento de salida (origen)
-  const { data: salData, error: salErr } = await dataClient
-    .from('piso_movimientos')
-    .insert({ tipo: 'salida', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo, uuid_sync: uuidSync })
-    .select('id')
-    .single()
-  if (salErr) throw salErr
-  const salId = (salData as { id: string }).id
-
-  // Crear movimiento de ingreso (destino)
-  const { data: ingData, error: ingErr } = await dataClient
-    .from('piso_movimientos')
-    .insert({ tipo: 'ingreso', turno, usuario_id: usuarioId, usuario_nombre: usuarioNombre, usuario_correo: usuarioCorreo, uuid_sync: uuidSync })
-    .select('id')
-    .single()
-  if (ingErr) {
-    console.error('[registrarTrasladoPosicion] Error creando ingreso, haciendo rollback de salida:', ingErr.message)
-    await rollbackCabeceras([salId], 'registrarTrasladoPosicion')
-    throw ingErr
-  }
-  const ingId = (ingData as { id: string }).id
-
-  // Insertar detalles de salida (con lote si se digitó; el traslado lo propaga al destino)
-  const salRows = buildDetRows(salId, detallesSalida)
-  if (salRows.rows.length > 0) {
-    try {
-      await insertDetallesPiso(salRows.rows, salRows.tieneLote, 'registrarTrasladoPosicion')
-    } catch (salDetErr) {
-      console.error('[registrarTrasladoPosicion] Error en detalles salida, rollback completo:', (salDetErr as { message?: string }).message)
-      await rollbackDetalles([salId, ingId], 'registrarTrasladoPosicion')
-      await rollbackCabeceras([salId, ingId], 'registrarTrasladoPosicion')
-      throw salDetErr
-    }
-  }
-
-  // Insertar detalles de ingreso (destino)
-  const ingRows = buildDetRows(ingId, detallesIngreso)
-  if (ingRows.rows.length > 0) {
-    try {
-      await insertDetallesPiso(ingRows.rows, ingRows.tieneLote, 'registrarTrasladoPosicion')
-    } catch (ingDetErr) {
-      console.error('[registrarTrasladoPosicion] Error en detalles ingreso, rollback completo:', (ingDetErr as { message?: string }).message)
-      await rollbackDetalles([salId, ingId], 'registrarTrasladoPosicion')
-      await rollbackCabeceras([salId, ingId], 'registrarTrasladoPosicion')
-      throw ingDetErr
-    }
-  }
+  const { error } = await dataClient.rpc('piso_traslado_posicion', {
+    p_turno: turno,
+    p_usuario_id: usuarioId,
+    p_usuario_nombre: usuarioNombre,
+    p_usuario_correo: usuarioCorreo,
+    p_uuid_sync: uuidSync,
+    p_detalles_salida: detallesParaRpc(detallesSalida),
+    p_detalles_ingreso: detallesParaRpc(detallesIngreso),
+  })
+  if (!error) return
+  if (!esRpcNoDisponible(error)) throw error
+  console.warn('[registrarTrasladoPosicion] RPC no disponible — ruta directa. Aplicar 20261016_piso_rpc_salidas.sql.')
+  await registrarTrasladoPosicionDirecto(turno, usuarioId, usuarioNombre, usuarioCorreo, detallesSalida, detallesIngreso, uuidSync)
 }
 
 /**

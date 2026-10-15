@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import { toast } from 'sonner'
 import { stockPisoBuscar, type StockPisoItem } from '@/lib/piso/api'
 import { targetDesdeStockItem, type PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { findCatalogoByCodigo, fetchCatalogo, isCatalogoLoaded } from '@/lib/rackly/catalogo'
@@ -61,7 +62,13 @@ export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: Pis
       } catch (err) {
         console.error('Error cargando stock Piso:', err)
         if (req !== seqRef.current || !mountedRef.current) return
+        // Error VISIBLE (p.ej. timeout real de la consulta): antes solo
+        // setHasSearched(true) mostraba "Sin resultados" — un fallo y una
+        // lista vacía real se veían idénticos.
         setHasSearched(true)
+        toast.error('No se pudo completar la búsqueda', {
+          description: err instanceof Error ? err.message : 'Error desconocido',
+        })
       } finally {
         if (req === seqRef.current && mountedRef.current) setLoading(false)
       }

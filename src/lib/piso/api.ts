@@ -2299,16 +2299,32 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
  */
 export async function stockPisoBuscar(term: string): Promise<StockPisoItem[]> {
   const TIMEOUT_MS = QUERY_TIMEOUT_MS
-  const result = await Promise.race([
-    _stockPisoBuscarImpl(term),
-    new Promise<StockPisoItem[]>((resolve) =>
-      setTimeout(() => {
-        console.warn('[stockPisoBuscar] TIMEOUT', TIMEOUT_MS, 'ms')
-        resolve([])
-      }, TIMEOUT_MS)
-    ),
-  ])
-  return result
+  // Antes: Promise.race con un setTimeout que resolvía [] y NUNCA se limpiaba —
+  // 1) una consulta lenta "ganaba" el [] del timeout y la UI mostraba
+  //    "Sin resultados" FALSO aunque los datos existieran;
+  // 2) cuando la consulta sí ganaba, el setTimeout zombie disparaba igual el
+  //    warn "TIMEOUT 15000 ms" 15 s después (ruido de consola engañoso).
+  // Ahora: éxito/fallo limpia el temporizador; un timeout REAL rechaza con un
+  // error claro (la UI lo muestra como error, no como "sin datos").
+  return new Promise<StockPisoItem[]>((resolve, reject) => {
+    const t = setTimeout(() => {
+      console.warn('[stockPisoBuscar] TIMEOUT', TIMEOUT_MS, 'ms')
+      reject(
+        new Error(
+          `La búsqueda tardó más de ${Math.round(TIMEOUT_MS / 1000)} s y fue cancelada. Refina el término e intenta de nuevo.`
+        )
+      )
+    }, TIMEOUT_MS)
+    _stockPisoBuscarImpl(term)
+      .then((r) => {
+        clearTimeout(t)
+        resolve(r)
+      })
+      .catch((e) => {
+        clearTimeout(t)
+        reject(e)
+      })
+  })
 }
 
 async function _stockPisoBuscarImpl(term: string): Promise<StockPisoItem[]> {

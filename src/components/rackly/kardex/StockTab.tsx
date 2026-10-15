@@ -6,6 +6,9 @@ import {
   eliminarUbicacion,
   fetchStockPorCodigoRPC,
   calcularLotesRemanentes,
+  proveedorPorVenc,
+  compararFEFO,
+  compararUbicacionNum,
 } from '@/lib/rackly/kardex'
 // Decoupled: Kardex Racks ya no consulta stock de Kardex Piso
 import {
@@ -88,19 +91,23 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
     return findCatalogoByCodigo(selectedCodigo)
   }, [selectedCodigo])
 
-  // Info FEFO por posición (fecha + lotes) calculada con el MISMO algoritmo que
-  // Ocupación y la pestaña FEFO: lotes remanentes (salida dirigida al lote elegido
-  // + desborde FEFO). Así la fecha mostrada en Stock es la del PRIMER LOTE REAL
-  // disponible, no una fecha histórica de un lote ya agotado.
+  // Info FEFO por posición (fecha + lotes + PROVEEDOR REAL) calculada con el
+  // MISMO algoritmo que Ocupación y la pestaña FEFO: lotes remanentes (salida
+  // dirigida al lote elegido + desborde FEFO). Así la fecha mostrada en Stock
+  // es la del PRIMER LOTE REAL disponible, no una fecha histórica de un lote
+  // ya agotado (lotes antiguos), y el proveedor es el del lote FEFO que queda
+  // (antes mostraba el del primer movimiento histórico — p.ej. lámina
+  // termocontraible con proveedor equivocado).
   const remInfoByPos = useMemo(() => {
-    const info = new Map<string, { fVencimiento: string; lotesInfo: string }>()
+    const info = new Map<string, { fVencimiento: string; lotesInfo: string; proveedor?: string }>()
     if (!selectedCodigo) return info
     const code = selectedCodigo.trim().toUpperCase()
     const isIncMode = stockFilter === 'inc'
     const ENTRADAS = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
-    const fmtInfo = (rem: { venc: string; cantidad: number }[]) => ({
+    const fmtInfo = (rem: { venc: string; cantidad: number }[], provPorVenc: Map<string, string>) => ({
       fVencimiento: rem[0]?.venc || '',
       lotesInfo: rem.map(l => `${l.venc || 'S/F'}: ${Math.round(l.cantidad * 1000) / 1000}`).join(' | '),
+      proveedor: rem[0] ? provPorVenc.get(rem[0].venc) || undefined : undefined,
     })
 
     if (isIncMode) {
@@ -108,18 +115,30 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       // remanentes combinados por posición para el desglose informativo.
       type Pool = { ing: Map<string, number>; sal: Array<{ venc: string; qty: number; ts: string; id: string }> }
       const pools = new Map<string, Pool>()
+      // Proveedores de ingresos por posición (todas las INC combinadas)
+      const provInByPos = new Map<string, Array<{ venc: string; proveedor?: string; ts: string }>>()
       for (const m of movs) {
         if (!m.codigoInc) continue
         if (m.codigo.trim().toUpperCase() !== code) continue
         const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
         const key = `${posKey}||${m.codigoInc}`
-        let p = pools.get(key)
-        if (!p) { p = { ing: new Map(), sal: [] }; pools.set(key, p) }
         const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
         if (!(qty > 0)) continue
         const venc = m.fVencimiento || ''
-        if (ENTRADAS.includes(m.tipo)) p.ing.set(venc, (p.ing.get(venc) ?? 0) + qty)
-        else p.sal.push({ venc, qty, ts: m.fModificacion, id: m.id })
+        if (ENTRADAS.includes(m.tipo)) {
+          let p = pools.get(key)
+          if (!p) { p = { ing: new Map(), sal: [] }; pools.set(key, p) }
+          p.ing.set(venc, (p.ing.get(venc) ?? 0) + qty)
+          if (m.proveedor) {
+            const list = provInByPos.get(posKey) ?? []
+            list.push({ venc, proveedor: m.proveedor, ts: m.fModificacion })
+            provInByPos.set(posKey, list)
+          }
+        } else {
+          let p = pools.get(key)
+          if (!p) { p = { ing: new Map(), sal: [] }; pools.set(key, p) }
+          p.sal.push({ venc, qty, ts: m.fModificacion, id: m.id })
+        }
       }
       const merged = new Map<string, Map<string, number>>() // posKey → (venc → qty)
       for (const [key, p] of pools) {
@@ -132,17 +151,13 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       }
       for (const [posKey, mm] of merged) {
         const rem = [...mm.entries()].map(([venc, cantidad]) => ({ venc, cantidad }))
-        rem.sort((a, b) => {
-          if (a.venc && b.venc) return a.venc.localeCompare(b.venc)
-          if (a.venc && !b.venc) return -1
-          if (!a.venc && b.venc) return 1
-          return 0
-        })
-        info.set(posKey, fmtInfo(rem))
+        rem.sort((a, b) => compararFEFO(a.venc, b.venc))
+        info.set(posKey, fmtInfo(rem, proveedorPorVenc(provInByPos.get(posKey) ?? [])))
       }
     } else {
       const ing = new Map<string, Map<string, number>>() // posKey → (fv → qty)
       const sal = new Map<string, Array<{ venc: string; qty: number; ts: string; id: string }>>()
+      const provIn = new Map<string, Array<{ venc: string; proveedor?: string; ts: string }>>()
       for (const m of movs) {
         if (m.codigoInc) continue
         if (m.codigo.trim().toUpperCase() !== code) continue
@@ -154,6 +169,11 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
           const pool = ing.get(posKey) ?? new Map<string, number>()
           pool.set(venc, (pool.get(venc) ?? 0) + qty)
           ing.set(posKey, pool)
+          if (m.proveedor) {
+            const list = provIn.get(posKey) ?? []
+            list.push({ venc, proveedor: m.proveedor, ts: m.fModificacion })
+            provIn.set(posKey, list)
+          }
         } else {
           const list = sal.get(posKey) ?? []
           list.push({ venc, qty, ts: m.fModificacion, id: m.id })
@@ -164,7 +184,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         const s = (sal.get(posKey) ?? []).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
         const rem = calcularLotesRemanentes(pool, s)
         if (rem.length === 0) continue
-        info.set(posKey, fmtInfo(rem))
+        info.set(posKey, fmtInfo(rem, proveedorPorVenc(provIn.get(posKey) ?? [])))
       }
     }
     return info
@@ -236,7 +256,10 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         const remInfo = remInfoByPos.get(posKey)
         result.push({
           bloque, torre, piso, posicion, stock,
-          descripcion: desc.descripcion, un: desc.un, proveedor: desc.proveedor,
+          descripcion: desc.descripcion, un: desc.un,
+          // Proveedor REAL del lote FEFO remanente (el histórico puede ser de
+          // otro lote ya consumido — p.ej. lámina termocontraible)
+          proveedor: remInfo?.proveedor ?? desc.proveedor,
           fVencimiento: remInfo?.fVencimiento ?? '', lotesInfo: remInfo?.lotesInfo ?? '', codigoInc: code,
         })
       }
@@ -256,26 +279,19 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
 
         result.push({
           bloque, torre, piso, posicion, stock: posStock,
-          descripcion: desc.descripcion, un: desc.un, proveedor: desc.proveedor,
+          descripcion: desc.descripcion, un: desc.un,
+          // Proveedor REAL del lote FEFO remanente (el histórico puede ser de
+          // otro lote ya consumido — p.ej. lámina termocontraible)
+          proveedor: remInfo?.proveedor ?? desc.proveedor,
           fVencimiento, lotesInfo, codigoInc: undefined,
         })
       }
     }
 
-    return result.sort((a, b) => {
-      const aB = parseInt(a.bloque, 10) || 0
-      const bB = parseInt(b.bloque, 10) || 0
-      if (aB !== bB) return aB - bB
-      const aT = parseInt(a.torre, 10) || 0
-      const bT = parseInt(b.torre, 10) || 0
-      if (aT !== bT) return aT - bT
-      const aP = parseInt(a.piso, 10) || 0
-      const bP = parseInt(b.piso, 10) || 0
-      if (aP !== bP) return aP - bP
-      const aPos = parseInt(a.posicion, 10) || 0
-      const bPos = parseInt(b.posicion, 10) || 0
-      return aPos - bPos
-      })
+    // Orden: MÁS PRÓXIMO A VENCER PRIMERO (FEFO), sin fecha al final;
+    // desempate por ubicación (bloque → torre → piso → posición).
+    return result.sort((a, b) =>
+      compararFEFO(a.fVencimiento, b.fVencimiento) || compararUbicacionNum(a, b))
   }, [selectedCodigo, movs, stockFilter, remInfoByPos])
 
   useEffect(() => {
@@ -323,26 +339,22 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
           codigoInc: r.codigoInc || undefined,
         }))
         // Enriquecer con la info FEFO de lotes remanentes (misma fuente que
-        // Ocupación y pestaña FEFO) para que las 3 pestañas muestren lo mismo
+        // Ocupación y pestaña FEFO) para que las 3 pestañas muestren lo mismo.
+        // También el PROVEEDOR: el RPC trae uno histórico (primer movimiento,
+        // lote posiblemente ya consumido) — el real es el del lote FEFO.
         for (const row of mapped) {
           const key = `${row.bloque}-${row.torre}-${row.piso}-${row.posicion}`
           const remInfo = remInfoByPos.get(key)
           if (remInfo) {
             row.fVencimiento = remInfo.fVencimiento || row.fVencimiento || ''
             row.lotesInfo = remInfo.lotesInfo || ''
+            if (remInfo.proveedor) row.proveedor = remInfo.proveedor
           }
         }
-        // Ordenar por bloque, torre, piso, posición
-        mapped.sort((a, b) => {
-          const aB = parseInt(a.bloque, 10) || 0; const bB = parseInt(b.bloque, 10) || 0
-          if (aB !== bB) return aB - bB
-          const aT = parseInt(a.torre, 10) || 0; const bT = parseInt(b.torre, 10) || 0
-          if (aT !== bT) return aT - bT
-          const aP = parseInt(a.piso, 10) || 0; const bP = parseInt(b.piso, 10) || 0
-          if (aP !== bP) return aP - bP
-          const aPos = parseInt(a.posicion, 10) || 0; const bPos = parseInt(b.posicion, 10) || 0
-          return aPos - bPos
-        })
+        // Orden: MÁS PRÓXIMO A VENCER PRIMERO (FEFO), sin fecha al final;
+        // desempate por ubicación (bloque → torre → piso → posición).
+        mapped.sort((a, b) =>
+          compararFEFO(a.fVencimiento, b.fVencimiento) || compararUbicacionNum(a, b))
         setServerStock(mapped)
       })
       .catch(() => {

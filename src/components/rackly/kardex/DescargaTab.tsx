@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import { fetchMovimientos, addMovimientosBatch, listarMovimientoIds, eliminarMovimientosPorIds, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
+import { fetchMovimientos, addMovimientosBatch, listarMovimientoIds, eliminarMovimientosPorIds, calcularLotesRemanentes, proveedorPorVenc, compararFEFO, compararUbicacionNum, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
@@ -50,68 +50,88 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
       const ws1 = XLSX.utils.json_to_sheet(movData)
       XLSX.utils.book_append_sheet(wb, ws1, 'Movimientos')
 
-      // Sheet 2: Stock REAL — 1 fila = 1 combinación única
-      // Clave: (código, bloque, torre, piso, posición, f_vencimiento, codigo_inc)
-      // Esto separa lotes por fecha de vencimiento e INCs en filas distintas.
+      // Sheet 2: Stock REAL — 1 fila = 1 LOTE REMANENTE (FEFO)
+      // FIX Buscar Stock: antes se neteaba por (código, ubicación, f_vencimiento)
+      // sin dirección FEFO: una salida dirigida que desbordaba dejaba el lote
+      // destino en negativo (descartado) y sobrestaba el lote dirigido, y el
+      // proveedor era el del PRIMER movimiento (lote ya consumido). Ahora usa
+      // el MISMO algoritmo que Stock/Ocupación/FEFO (calcularLotesRemanentes)
+      // y el proveedor del ingreso más reciente de cada lote remanente.
       const ENTRADA_TYPES = new Set(['ingreso', 'devolucion', 'traslado', 'stock_inicial'])
-      const stockMap = new Map<string, {
+      type PoolRow = {
         code: string; desc: string; un: string;
         bloque: string; torre: string; piso: string; posicion: string;
-        stock: number; fVencimiento: string; codigoInc: string; proveedor: string;
-      }>()
+        inc: string;
+        ing: Map<string, number>;
+        sal: Array<{ venc: string; qty: number; ts: string; id: string }>;
+        provIn: Array<{ venc: string; proveedor?: string; ts: string }>;
+      }
+      const stockMap = new Map<string, PoolRow>()
       for (const m of movs) {
-        const vencKey = m.fVencimiento || ''
         const incKey = m.codigoInc || ''
-        const key = `${m.codigo}|${m.bloque}|${m.torre}|${m.piso}|${m.posicion}|${vencKey}|${incKey}`
-        const delta = ENTRADA_TYPES.has(m.tipo) ? m.cantidad : -m.cantidad
-        const entry = stockMap.get(key)
-        if (entry) {
-          entry.stock += delta
+        const key = `${m.codigo}|${m.bloque}|${m.torre}|${m.piso}|${m.posicion}|${incKey}`
+        const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
+        if (!(qty > 0)) continue
+        let p = stockMap.get(key)
+        if (!p) {
+          p = { code: m.codigo, desc: m.descripcion, un: m.un, bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion, inc: incKey, ing: new Map(), sal: [], provIn: [] }
+          stockMap.set(key, p)
+        }
+        if (!p.desc && m.descripcion) p.desc = m.descripcion
+        const vencKey = m.fVencimiento || ''
+        if (ENTRADA_TYPES.has(m.tipo)) {
+          p.ing.set(vencKey, (p.ing.get(vencKey) ?? 0) + qty)
+          if (m.proveedor) p.provIn.push({ venc: vencKey, proveedor: m.proveedor, ts: m.fModificacion })
         } else {
-          stockMap.set(key, {
-            code: m.codigo,
-            desc: m.descripcion,
-            un: m.un,
-            bloque: m.bloque,
-            torre: m.torre,
-            piso: m.piso,
-            posicion: m.posicion,
-            stock: delta,
-            fVencimiento: m.fVencimiento || '',
-            codigoInc: incKey,
-            proveedor: m.proveedor || '',
-          })
+          p.sal.push({ venc: vencKey, qty, ts: m.fModificacion, id: m.id })
         }
       }
       const stockData = Array.from(stockMap.values())
-        .filter((e) => e.stock > 0.001)
+        .flatMap((p) => {
+          const sal = p.sal.sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+          const rem = calcularLotesRemanentes(p.ing, sal)
+          const provPorVenc = proveedorPorVenc(p.provIn)
+          return rem.map((l) => ({
+            'CÓDIGO': p.code,
+            'BLOQUE': p.bloque,
+            'TORRE': p.torre,
+            'PISO': p.piso,
+            'POSICIÓN': p.posicion,
+            'DESCRIPCIÓN': p.desc,
+            'UN': p.un,
+            'CANTIDAD': Math.round(l.cantidad * 1000) / 1000,
+            'NUMERO DE INC': p.inc,
+            'FECHA DE VENCIMIENTO': l.venc,
+            'PROVEEDOR': provPorVenc.get(l.venc) ?? '',
+            _bloque: p.bloque, _torre: p.torre, _piso: p.piso, _posicion: p.posicion,
+            _code: p.code, _inc: p.inc, _venc: l.venc,
+          }))
+        })
         .sort((a, b) => {
-          // Ordenar por ubicación, luego código, luego fecha vencimiento
-          const locCmp = `${a.bloque}-${a.torre}-${a.piso}-${a.posicion}`.localeCompare(`${b.bloque}-${b.torre}-${b.piso}-${b.posicion}`)
+          // Orden: ubicación → código → INCs al final → MÁS PRÓXIMO A VENCER PRIMERO
+          const locCmp = compararUbicacionNum(
+            { bloque: a._bloque, torre: a._torre, piso: a._piso, posicion: a._posicion },
+            { bloque: b._bloque, torre: b._torre, piso: b._piso, posicion: b._posicion },
+          )
           if (locCmp !== 0) return locCmp
-          const codeCmp = a.code.localeCompare(b.code)
+          const codeCmp = a._code.localeCompare(b._code)
           if (codeCmp !== 0) return codeCmp
-          // INCs al final
-          if (a.codigoInc && !b.codigoInc) return 1
-          if (!a.codigoInc && b.codigoInc) return -1
-          // Con fecha antes que sin fecha
-          if (a.fVencimiento && !b.fVencimiento) return -1
-          if (!a.fVencimiento && b.fVencimiento) return 1
-          if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
-          return 0
+          if (a._inc && !b._inc) return 1
+          if (!a._inc && b._inc) return -1
+          return compararFEFO(a._venc, b._venc)
         })
         .map((e) => ({
-          'CÓDIGO': e.code,
-          'BLOQUE': e.bloque,
-          'TORRE': e.torre,
-          'PISO': e.piso,
-          'POSICIÓN': e.posicion,
-          'DESCRIPCIÓN': e.desc,
-          'UN': e.un,
-          'CANTIDAD': Math.round(e.stock * 1000) / 1000,
-          'NUMERO DE INC': e.codigoInc,
-          'FECHA DE VENCIMIENTO': e.fVencimiento,
-          'PROVEEDOR': e.proveedor,
+          'CÓDIGO': e['CÓDIGO'],
+          'BLOQUE': e['BLOQUE'],
+          'TORRE': e['TORRE'],
+          'PISO': e['PISO'],
+          'POSICIÓN': e['POSICIÓN'],
+          'DESCRIPCIÓN': e['DESCRIPCIÓN'],
+          'UN': e['UN'],
+          'CANTIDAD': e['CANTIDAD'],
+          'NUMERO DE INC': e['NUMERO DE INC'],
+          'FECHA DE VENCIMIENTO': e['FECHA DE VENCIMIENTO'],
+          'PROVEEDOR': e['PROVEEDOR'],
         }))
       if (stockData.length > 0) {
         const ws2 = XLSX.utils.json_to_sheet(stockData)

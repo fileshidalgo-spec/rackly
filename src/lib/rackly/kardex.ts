@@ -141,6 +141,8 @@ export type StockRacksPorCodigoItem = {
   descripcion: string
   un: string
   fVencimiento: string
+  /** Proveedor del lote FEFO remanente (no histórico). */
+  proveedor?: string
   codigo_inc?: string
 }
 
@@ -148,47 +150,78 @@ export type StockRacksPorCodigoItem = {
  * Calcula el stock neto en Racks para un código dado.
  * Usado por PisoStockTab para mostrar "También en Kardex Racks".
  * Solo lectura, no modifica nada.
+ *
+ * FIX Buscar Stock (v3.4): el f_vencimiento ya NO es el mínimo histórico de la
+ * posición (que incluía lotes YA CONSUMIDOS y mostraba "lotes antiguos"), sino
+ * el del PRIMER LOTE REMANENTE (FEFO real) calculado con el mismo algoritmo que
+ * Stock/Ocupación/FEFO (calcularLotesRemanentes). Las posiciones INC se excluyen
+ * (igual que en Stock normal) y el proveedor es el del lote FEFO remanente.
  */
 export async function buscarStockRacksPorCodigo(codigo: string): Promise<StockRacksPorCodigoItem[]> {
   const movs = await fetchMovimientosByCodigo(codigo)
-  const locMap = new Map<string, StockRacksPorCodigoItem>()
+  return calcularStockRacksDesdeMovs(movs)
+}
+
+/** Núcleo puro de buscarStockRacksPorCodigo (testeable sin BD). */
+export function calcularStockRacksDesdeMovs(movs: Movimiento[]): StockRacksPorCodigoItem[] {
+  const ENTRADAS = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
+  // Pools por posición (excluye INC): ingresos por venc + salidas ordenadas
+  const ingMap = new Map<string, Map<string, number>>()
+  const salMap = new Map<string, Array<{ venc: string; qty: number; ts: string; id: string }>>()
+  const provInMap = new Map<string, Array<{ venc: string; proveedor?: string; ts: string }>>()
+  const metaMap = new Map<string, StockRacksPorCodigoItem>()
 
   for (const m of movs) {
-    // Agrupar por ubicación SOLAMENTE — f_vencimiento NO participa.
-    // Se rastrea la fecha más próxima (FEFO) para display.
+    if (m.codigoInc) continue // INC no participa en el stock normal (igual que Stock/Ocupación)
     const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-    const current = locMap.get(posKey)
-    const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
-    if (current) {
-      current.stock += delta
-      // Rastrear fecha FEFO (más próxima)
-      if (m.fVencimiento && (!current.fVencimiento || m.fVencimiento < current.fVencimiento)) {
-        current.fVencimiento = m.fVencimiento
+    const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
+    if (!(qty > 0)) continue
+    if (!metaMap.has(posKey)) {
+      metaMap.set(posKey, {
+        bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
+        stock: 0, descripcion: m.descripcion, un: m.un, fVencimiento: '',
+      })
+    }
+    const venc = m.fVencimiento || ''
+    if (ENTRADAS.includes(m.tipo)) {
+      const pool = ingMap.get(posKey) ?? new Map<string, number>()
+      pool.set(venc, (pool.get(venc) ?? 0) + qty)
+      ingMap.set(posKey, pool)
+      if (m.proveedor) {
+        const list = provInMap.get(posKey) ?? []
+        list.push({ venc, proveedor: m.proveedor, ts: m.fModificacion })
+        provInMap.set(posKey, list)
       }
     } else {
-      locMap.set(posKey, {
-        bloque: m.bloque,
-        torre: m.torre,
-        piso: m.piso,
-        posicion: m.posicion,
-        stock: delta,
-        descripcion: m.descripcion,
-        un: m.un,
-        fVencimiento: m.fVencimiento || '',
-        codigo_inc: m.codigoInc || undefined,
-      })
+      const list = salMap.get(posKey) ?? []
+      list.push({ venc, qty, ts: m.fModificacion, id: m.id })
+      salMap.set(posKey, list)
     }
   }
 
-  return Array.from(locMap.values())
-    .filter(l => l.stock > 0)
-    .sort((a, b) => {
-      // FEFO primero
-      if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
-      if (a.fVencimiento && !b.fVencimiento) return -1
-      if (!a.fVencimiento && b.fVencimiento) return 1
-      return 0
+  const result: StockRacksPorCodigoItem[] = []
+  for (const [posKey, pool] of ingMap) {
+    const meta = metaMap.get(posKey)
+    if (!meta) continue
+    const salidas = (salMap.get(posKey) ?? []).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+    const rem = calcularLotesRemanentes(pool, salidas)
+    const stockTotal = rem.reduce((s, l) => s + l.cantidad, 0)
+    if (stockTotal <= 0) continue
+    // Proveedor del lote FEFO remanente (no del movimiento histórico primero)
+    const provPorVenc = proveedorPorVenc(provInMap.get(posKey) ?? [])
+    const fefoVenc = rem[0]?.venc ?? ''
+    const proveedorFefo = provPorVenc.get(fefoVenc)
+    result.push({
+      bloque: meta.bloque, torre: meta.torre, piso: meta.piso, posicion: meta.posicion,
+      stock: Math.round(stockTotal * 1000) / 1000,
+      descripcion: meta.descripcion, un: meta.un,
+      fVencimiento: fefoVenc,
+      proveedor: proveedorFefo,
     })
+  }
+
+  return result.sort((a, b) =>
+    compararFEFO(a.fVencimiento, b.fVencimiento) || compararUbicacionNum(a, b))
 }
 
 /** Fallback: insert directo cuando la RPC no existe en Supabase */
@@ -427,6 +460,61 @@ export type LoteInfo = {
   /** Códigos de lote FÍSICOS (digitados en ingresos) presentes en este grupo de fecha.
    *  Solo trazabilidad: no participa en el descuento ni en el orden FEFO. */
   lotesFisicos?: string[]
+  /** Proveedor del ingreso más reciente que forma este lote remanente.
+   *  Fix Buscar Stock: antes se mostraba el proveedor del PRIMER movimiento
+   *  (histórico, lote ya consumido) — p.ej. lámina termocontraible mostraba
+   *  UNION PLAST cuando el material restante era de DAMAR. */
+  proveedor?: string
+}
+
+// ═══ Helpers compartidos FEFO (Buscar Stock v3.4) ═══
+
+/**
+ * Mapa venc → proveedor del ingreso MÁS RECIENTE que aportó a ese lote.
+ *
+ * Las salidas NO registran proveedor, así que el proveedor real del material
+ * que queda en un lote es el del ingreso que lo forma. Si un mismo venc
+ * recibió ingresos de varios proveedores, gana el más reciente (asunción
+ * FIFO dentro del lote, consistente con el desborde FEFO).
+ */
+export function proveedorPorVenc(
+  entradas: Array<{ venc: string; proveedor?: string; ts: string }>
+): Map<string, string> {
+  const m = new Map<string, string>()
+  const orden = [...entradas].sort((a, b) => a.ts.localeCompare(b.ts))
+  for (const e of orden) {
+    const prov = e.proveedor?.trim()
+    if (prov) m.set(e.venc || '', prov)
+  }
+  return m
+}
+
+/** Comparador FEFO para fechas de vencimiento (strings YYYY-MM-DD o '').
+ *  Con fecha antes que sin fecha; entre fechas, ascendente (vence primero).
+ *  Único punto de verdad — usado por Stock, FEFO, Descarga y Piso. */
+export function compararFEFO(a: string, b: string): number {
+  if (a && b) return a.localeCompare(b)
+  if (a && !b) return -1
+  if (!a && b) return 1
+  return 0
+}
+
+/** Comparador numérico de ubicación (bloque → torre → piso → posición).
+ *  Tolerante a ceros a la izquierda ('02' == 2). */
+export function compararUbicacionNum(
+  a: { bloque: string; torre: string; piso: string; posicion: string },
+  b: { bloque: string; torre: string; piso: string; posicion: string }
+): number {
+  const aB = parseInt(a.bloque, 10) || 0
+  const bB = parseInt(b.bloque, 10) || 0
+  if (aB !== bB) return aB - bB
+  const aT = parseInt(a.torre, 10) || 0
+  const bT = parseInt(b.torre, 10) || 0
+  if (aT !== bT) return aT - bT
+  const aP = parseInt(a.piso, 10) || 0
+  const bP = parseInt(b.piso, 10) || 0
+  if (aP !== bP) return aP - bP
+  return (parseInt(a.posicion, 10) || 0) - (parseInt(b.posicion, 10) || 0)
 }
 
 /**
@@ -582,6 +670,8 @@ export async function stockEnUbicacion(
     const salidasMap = new Map<string, Array<{ venc: string; qty: number }>>()
     // Códigos de lote FÍSICOS (digitados en ingresos) por (key -> venc): solo trazabilidad
     const lotesFisMap = new Map<string, Map<string, Set<string>>>()
+    // Ingresos con proveedor por key (para el proveedor REAL del lote remanente)
+    const provInMap = new Map<string, Array<{ venc: string; proveedor?: string; ts: string }>>()
     const metaMap = new Map<string, {
       codigo: string; descripcion: string; un: string;
       usuarioPrimerNombre: string; proveedor: string; codigoInc: string;
@@ -620,6 +710,12 @@ export async function stockEnUbicacion(
           set.add(m.lote)
           porKey.set(venc, set)
         }
+        // Registrar el proveedor del ingreso (el lote remanente hereda el del más reciente)
+        if (m.proveedor) {
+          const list = provInMap.get(key) ?? []
+          list.push({ venc, proveedor: m.proveedor, ts: m.fModificacion })
+          provInMap.set(key, list)
+        }
       } else {
         // Las salidas conservan su orden temporal (allRows viene ordenado por f_modificacion ASC)
         const list = salidasMap.get(key) ?? []
@@ -645,17 +741,28 @@ export async function stockEnUbicacion(
       const stockTotal = remanentes.reduce((s, l) => s + l.cantidad, 0)
       if (stockTotal <= 0) continue
       const porVenc = lotesFisMap.get(key)
+      // Proveedor REAL por lote: el del ingreso más reciente de ese venc.
+      // Antes se usaba meta.proveedor (primer movimiento histórico — puede ser
+      // de un lote YA CONSUMIDO de otro proveedor). Fallback: meta.proveedor.
+      const provPorVenc = proveedorPorVenc(provInMap.get(key) ?? [])
       const lotesConFisico: LoteInfo[] = remanentes.map(l => {
         const codigos = porVenc?.get(l.venc)
         const fisicos = codigos && codigos.size > 0 ? Array.from(codigos).sort() : undefined
-        return fisicos ? { fVencimiento: l.venc, cantidad: Math.round(l.cantidad * 1000) / 1000, lotesFisicos: fisicos } : { fVencimiento: l.venc, cantidad: Math.round(l.cantidad * 1000) / 1000 }
+        const prov = provPorVenc.get(l.venc)
+        const base = { fVencimiento: l.venc, cantidad: Math.round(l.cantidad * 1000) / 1000 }
+        if (fisicos && prov) return { ...base, lotesFisicos: fisicos, proveedor: prov }
+        if (fisicos) return { ...base, lotesFisicos: fisicos }
+        if (prov) return { ...base, proveedor: prov }
+        return base
       })
       const fefoFisicos = lotesConFisico[0]?.lotesFisicos
+      const fefoVenc = remanentes.find(l => l.venc)?.venc || ''
       groups.set(key, {
         codigo: meta.codigo, descripcion: meta.descripcion, un: meta.un,
         stock: Math.round(stockTotal * 1000) / 1000,
-        fVencimientoMasProxima: remanentes.find(l => l.venc)?.venc || '',
-        usuarioPrimerNombre: meta.usuarioPrimerNombre, proveedor: meta.proveedor, codigoInc: meta.codigoInc,
+        fVencimientoMasProxima: fefoVenc,
+        usuarioPrimerNombre: meta.usuarioPrimerNombre,
+        proveedor: provPorVenc.get(fefoVenc) ?? meta.proveedor, codigoInc: meta.codigoInc,
         lotes: lotesConFisico,
         loteFisico: fefoFisicos && fefoFisicos.length > 0 ? fefoFisicos.join(', ') : undefined,
       })

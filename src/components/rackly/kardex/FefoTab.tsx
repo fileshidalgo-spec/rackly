@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { fetchMovimientos, calcularLotesRemanentes, type Movimiento } from '@/lib/rackly/kardex'
+import { fetchMovimientos, calcularLotesRemanentes, proveedorPorVenc, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -122,6 +122,8 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
     const salidasMap = new Map<string, Array<{ venc: string; qty: number; ts: string; id: string }>>()
     // Códigos de lote FÍSICOS (digitados en ingresos) por key → (fv → Set): trazabilidad
     const lotesFisMap = new Map<string, Map<string, Set<string>>>()
+    // Ingresos con proveedor por key → proveedor REAL de cada lote remanente
+    const provInMap = new Map<string, Array<{ venc: string; proveedor?: string; ts: string }>>()
     const metaMap = new Map<string, { posKey: string; code: string; descripcion: string; un: string; proveedor?: string }>()
 
     for (const m of movs) {
@@ -139,6 +141,11 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
         const pool = ingresosMap.get(key) ?? new Map<string, number>()
         pool.set(venc, (pool.get(venc) ?? 0) + qty)
         ingresosMap.set(key, pool)
+        if (m.proveedor) {
+          const list = provInMap.get(key) ?? []
+          list.push({ venc, proveedor: m.proveedor, ts: m.fModificacion })
+          provInMap.set(key, list)
+        }
         if (m.lote) {
           let porKey = lotesFisMap.get(key)
           if (!porKey) { porKey = new Map(); lotesFisMap.set(key, porKey) }
@@ -168,6 +175,9 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
 
       const [bloque, torre, piso, posicion] = meta.posKey.split('-')
       const porVenc = lotesFisMap.get(key)
+      // Proveedor REAL por lote (ingreso más reciente de ese venc) — no el del
+      // primer movimiento histórico, que puede ser de un lote ya consumido.
+      const provPorVenc = proveedorPorVenc(provInMap.get(key) ?? [])
       for (const lote of remanentes) {
         const fv = lote.venc
         let status: FefoStatus = 'sin_fecha'
@@ -182,7 +192,9 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
           codigo: meta.code, descripcion: meta.descripcion,
           bloque, torre, piso, posicion,
           stock: round3(lote.cantidad), diasRestantes: dias, fVencimiento: fv,
-          un: meta.un, proveedor: meta.proveedor,
+          un: meta.un,
+          // Proveedor del lote FEFO (ingreso más reciente de ese venc); fallback al histórico
+          proveedor: provPorVenc.get(fv) ?? meta.proveedor,
           loteFisico: fis && fis.size > 0 ? Array.from(fis).sort().join(', ') : undefined,
           status,
         })

@@ -17,6 +17,7 @@ import { SectoresConfigTab } from '@/components/rackly/piso/SectoresTab'
 import { MovimientosTab } from '@/components/rackly/piso/MovimientosTab'
 import { PisoSectoresTab } from '@/components/rackly/piso/PisoSectoresTab'
 import { PisoStockTab } from '@/components/rackly/piso/PisoStockTab'
+import { FefoPisoTab } from '@/components/rackly/piso/FefoPisoTab'
 import { StockIncTab } from '@/components/rackly/kardex/StockIncTab'
 import { StockIncPisoTab } from '@/components/rackly/piso/StockIncPisoTab'
 import { ModulosHome, type VistaModulo } from '@/components/rackly/inicio/ModulosHome'
@@ -738,6 +739,7 @@ function RacklyApp() {
                 { val: 'movimientos', icon: History, label: 'Movimientos', shortLabel: 'Mov', color: 'from-emerald-500 to-green-600' },
                 { val: 'sectores', icon: Layers3, label: 'Sectores', shortLabel: 'Sector', color: 'from-sky-500 to-blue-600' },
                 { val: 'stock', icon: PackageSearch, label: 'Stock', shortLabel: 'Stock', color: 'from-cyan-500 to-teal-600' },
+                { val: 'fefo', icon: CalendarClock, label: 'FEFO', shortLabel: 'FEFO', color: 'from-orange-500 to-red-500' },
                 { val: 'stock-inc', icon: TriangleAlert, label: 'Stock INC', shortLabel: 'INC', color: 'from-rose-500 to-amber-600' },
                 { val: 'config', icon: Settings, label: 'Configuración', shortLabel: 'Config', color: 'from-slate-400 to-slate-600' },
               ].map((tab) => (
@@ -788,6 +790,24 @@ function RacklyApp() {
                   </div>
                 </CardHeader>
                 <CardContent><PisoStockTab /></CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* ═══ FEFO PISO ═══ */}
+            <TabsContent value="fefo" className="mt-5">
+              <Card className="border border-slate-700 shadow-xl shadow-slate-900/30 bg-slate-900">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center shadow-md shadow-orange-500/20">
+                      <CalendarClock className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg text-white">FEFO Piso — Control de vencimientos</CardTitle>
+                      <CardDescription className="text-slate-400">Lotes reales por ubicación, lo más próximo a vencer primero. Salida dirigida al lote elegido con desborde FEFO.</CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent><FefoPisoTab /></CardContent>
               </Card>
             </TabsContent>
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { stockPisoGlobal, type StockPisoItem } from '@/lib/piso/api'
+import { stockPisoBuscar, type StockPisoItem } from '@/lib/piso/api'
 import { findCatalogoByCodigo, fetchCatalogo, isCatalogoLoaded } from '@/lib/rackly/catalogo'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -20,7 +20,11 @@ export function PisoStockTab() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
 
-  // Only fetch stock when user types a search term (debounced)
+  // Búsqueda BAJO DEMANDA (debounced): stockPisoBuscar consulta en SERVIDOR solo
+  // los bloques que matchean (código o descripción). Antes se llamaba
+  // stockPisoGlobal() — descargaba TODOS los detalles del almacén (hasta 40K filas
+  // paginadas + FEFO + ubicaciones de todo) y filtraba en cliente: carga visual y
+  // de proceso innecesaria en cada tecleo.
   useEffect(() => {
     mountedRef.current = true
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -33,8 +37,10 @@ export function PisoStockTab() {
     debounceRef.current = setTimeout(async () => {
       setLoading(true)
       try {
-        if (!isCatalogoLoaded()) await fetchCatalogo().catch(() => {})
-        const data = await stockPisoGlobal()
+        // El catálogo solo alimenta la tarjeta Big Magic: se resuelve en paralelo
+        // sin bloquear la consulta de stock.
+        const catTask = isCatalogoLoaded() ? Promise.resolve() : fetchCatalogo().catch(() => {})
+        const [data] = await Promise.all([stockPisoBuscar(term), catTask])
         if (mountedRef.current) {
           setItems(data)
           setHasSearched(true)
@@ -56,7 +62,8 @@ export function PisoStockTab() {
   // Get Big Magic stock for the search term
   const bmItem = query.trim() ? findCatalogoByCodigo(query.trim()) : null
 
-  // Filter items by code or description
+  // Filtro local de afinado (el resultado ya viene filtrado por servidor; esto
+  // cubre búsqueda incremental SIN re-consultar mientras el usuario teclea más)
   const term = query.trim().toUpperCase()
   const bySearch = term
     ? items.filter(

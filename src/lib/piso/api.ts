@@ -1172,6 +1172,11 @@ export async function cargarPosicionesSector(
  *    (fechas más antiguas primero, lote sin fecha al final).
  * Ningún lote queda en negativo y el stock total (suma de remanentes) siempre
  * es igual a ingresos - salidas. Igual que calcularLotesRemanentes() en Racks.
+ *
+ * EXPORTADO: fuente única de verdad FEFO de Piso — la usan el detalle de
+ * posición/nivel (Sectores), stockPisoGlobal (Stock/INC/FEFO), stockPisoBuscar
+ * y los tests de regresión. Las SALIDAS se procesan en el orden en que llegan:
+ * el llamador DEBE ordenar por fecha de movimiento ASC (orden temporal real).
  */
 type PisoDetalleRow = {
   bloque_id: string
@@ -1198,7 +1203,7 @@ export type StockDetalleFila = {
   lote?: string
 }
 
-function lotesRestantesPorBloque(
+export function lotesRestantesPorBloque(
   detalles: PisoDetalleRow[]
 ): Map<string, { fecha: string; qty: number }[]> {
   const isIngresoType = (tipo: string) => PISO_TIPOS_INGRESO.has(tipo)
@@ -1517,6 +1522,73 @@ export async function stockDetalleNivel(
 }
 
 /**
+ * Valida que cada (nivel_id, bloque_id) de las salidas propuestas tenga stock
+ * neto SUFICIENTE consultando la BD en ese instante (no los datos del diálogo).
+ * Por qué: un diálogo abierto mientras otra sesión retira stock quedaba con
+ * stockActual viejo y permitía registrar salidas imposibles → lotes fantasma y
+ * "artículos en 0 que no desaparecen". La RPC piso_registrar_salida ya validaba
+ * esto en servidor, pero la app registra con INSERT directo; esta barrera
+ * client-side (datos frescos justo antes del insert) elimina el caso real sin
+ * cambiar la ruta de escritura ni la semántica de INC.
+ * Lanza Error('STOCK_INSUFICIENTE|...') si algo excede lo disponible.
+ */
+async function validarStockSuficiente(
+  detalles: { nivel_id: string; bloque_id: string; cantidad: number }[],
+  tag: string
+): Promise<void> {
+  if (detalles.length === 0) return
+  const round3 = (n: number) => Math.round(n * 1000) / 1000
+
+  // 1. Cantidad solicitada por (nivel_id, bloque_id)
+  const solicitado = new Map<string, number>()
+  for (const d of detalles) {
+    const key = `${d.nivel_id}__${d.bloque_id}`
+    solicitado.set(key, (solicitado.get(key) ?? 0) + (d.cantidad || 0))
+  }
+
+  const nivelIds = [...new Set(detalles.map((d) => d.nivel_id))]
+  const bloqueIds = [...new Set(detalles.map((d) => d.bloque_id))]
+
+  // 2. Stock neto ACTUAL por (nivel_id, bloque_id) desde la BD (selectIn trocea .in())
+  const rows = await selectIn<{ nivel_id: string; bloque_id: string; cantidad: unknown; tipo: string }>(
+    'piso_movimiento_detalles',
+    'nivel_id, bloque_id, cantidad, piso_movimientos(tipo)',
+    'nivel_id',
+    nivelIds
+  )
+  const neto = new Map<string, number>()
+  for (const r of rows as unknown as { nivel_id: string; bloque_id: string; cantidad: unknown; piso_movimientos: { tipo: string } | { tipo: string }[] | null }[]) {
+    if (!bloqueIds.includes(r.bloque_id)) continue
+    const tipo = Array.isArray(r.piso_movimientos) ? (r.piso_movimientos[0]?.tipo ?? '') : (r.piso_movimientos?.tipo ?? '')
+    if (!tipo) continue
+    const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
+    const delta = PISO_TIPOS_INGRESO.has(tipo) ? qty : -qty
+    const key = `${r.nivel_id}__${r.bloque_id}`
+    neto.set(key, (neto.get(key) ?? 0) + delta)
+  }
+
+  // 3. Códigos de bloque para el mensaje (1 query, tolerante a fallo)
+  const codigos = new Map<string, string>()
+  try {
+    const { data: bs } = await dataClient.from('piso_bloques').select('id, codigo').in('id', bloqueIds)
+    for (const b of (bs ?? []) as { id: string; codigo: string }[]) codigos.set(b.id, b.codigo)
+  } catch { /* mensaje con UUID como fallback */ }
+
+  // 4. Comparar (tolerancia de redondeo a 3 decimales = precisión de la BD)
+  for (const [key, req] of solicitado) {
+    if (!(req > 0)) continue
+    const disp = round3(neto.get(key) ?? 0)
+    if (round3(req) > disp + 1e-9) {
+      const [nivelId, bloqueId] = key.split('__')
+      throw new Error(
+        `STOCK_INSUFICIENTE|${codigos.get(bloqueId) ?? bloqueId}: disponible ${disp}, solicitado ${round3(req)}. ` +
+        `La vista estaba desactualizada (nivel ${nivelId.slice(0, 8)}). Actualice y reintente. [${tag}]`
+      )
+    }
+  }
+}
+
+/**
  * Registra un ingreso directo a una posición (sin pasar por el RPC completo).
  * Permite múltiples bloques en una sola posición.
  * Incluye uuid_sync para idempotencia: si ya existe una cabecera con el mismo
@@ -1596,6 +1668,11 @@ export async function registrarSalidaPosicion(
     .eq('uuid_sync', uuidSync)
     .maybeSingle()
   if (existing) return
+
+  // Barrera anti-datos-desactualizados: validar contra el stock REAL de la BD
+  // justo antes de insertar (diálogo abierto mientras otra sesión retira stock
+  // registraba salidas imposibles → lotes fantasma pegados a 0).
+  await validarStockSuficiente(detalles, 'registrarSalidaPosicion')
 
   const { data: movData, error: movErr } = await dataClient
     .from('piso_movimientos')
@@ -1691,6 +1768,11 @@ export async function registrarTrasladoPosicion(
     await rollbackDetalles([partialId], 'registrarTrasladoPosicion-partial')
     await rollbackCabeceras([partialId], 'registrarTrasladoPosicion-partial')
   }
+
+  // Validar la salida contra el stock REAL de la BD (mismo criterio que
+  // registrarSalidaPosicion; el traslado min() contra datos del diálogo puede
+  // quedar viejo si otra sesión retiró mercadería mientras se elegía destino).
+  await validarStockSuficiente(detallesSalida, 'registrarTrasladoPosicion')
 
   // Crear movimiento de salida (origen)
   const { data: salData, error: salErr } = await dataClient
@@ -1833,8 +1915,10 @@ export async function stockPorNivelPosicion(
 
   const results: { nivel_id: string; nivel_numero: number; bloque_codigo: string; cantidad: number }[] = []
   for (const [nivelId, stock] of stockMap) {
-    if (stock > 0) {
-      results.push({ nivel_id: nivelId, nivel_numero: nivelMap.get(nivelId) ?? 0, bloque_codigo: '', cantidad: stock })
+    // Redondeo defensivo ANTES del filtro > 0 (evita "artículos en 0" por residuos)
+    const q = Math.round(stock * 1000) / 1000
+    if (q > 0) {
+      results.push({ nivel_id: nivelId, nivel_numero: nivelMap.get(nivelId) ?? 0, bloque_codigo: '', cantidad: q })
     }
   }
   return results
@@ -1984,7 +2068,7 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
     const detTo = detFrom + DET_PAGE_SIZE - 1
     const { data: pageData, error: detErr } = await dataClient
       .from('piso_movimiento_detalles')
-      .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)')
+      .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc, fecha)')
       .range(detFrom, detTo)
     if (detErr) throw detErr
     const rows = pageData ?? []
@@ -1995,8 +2079,6 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
   if (allDetData.length === 0) return []
 
   // 2. Group by (bloque_id, nivel_id)
-  const isIngresoType = (tipo: string) =>
-    tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion'
   const getTipo = (pm: unknown): string => {
     if (!pm) return ''
     if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { tipo: string }).tipo : ''
@@ -2009,11 +2091,11 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
     cantidad: unknown
     fecha_vencimiento?: string | null
     movimiento_id: string
-    piso_movimientos: { tipo: string; codigo_inc?: string | null } | null | { tipo: string; codigo_inc?: string | null }[]
+    piso_movimientos: { tipo: string; codigo_inc?: string | null; fecha?: string | null } | null | { tipo: string; codigo_inc?: string | null; fecha?: string | null }[]
   }
   const rawDets = allDetData as RawDet[]
 
-  const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[]>()
+  const blockNivelMap = new Map<string, { bloque_id: string; nivel_id: string; tipo: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string; fechaMov: string }[]>()
   for (const d of rawDets) {
     const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
     if (qty <= 0) continue
@@ -2025,46 +2107,52 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
       if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { codigo_inc?: string | null }).codigo_inc || '' : ''
       return (pm as { codigo_inc?: string | null }).codigo_inc || ''
     }
+    const getFechaMov = (pm: unknown): string => {
+      if (!pm) return ''
+      if (Array.isArray(pm)) return pm.length > 0 ? (pm[0] as { fecha?: string | null }).fecha ?? '' : ''
+      return (pm as { fecha?: string | null }).fecha ?? ''
+    }
     const codigoInc = getCodigoInc(d.piso_movimientos)
     const key = `${d.bloque_id}__${d.nivel_id}`
     const arr = blockNivelMap.get(key) ?? []
-    arr.push({ bloque_id: d.bloque_id, nivel_id: d.nivel_id, tipo, cantidad: qty, fecha_vencimiento: fv, codigo_inc: codigoInc })
+    arr.push({ bloque_id: d.bloque_id, nivel_id: d.nivel_id, tipo, cantidad: qty, fecha_vencimiento: fv, codigo_inc: codigoInc, fechaMov: getFechaMov(d.piso_movimientos) })
     blockNivelMap.set(key, arr)
   }
 
-  // 3. FEFO per (bloque_id, nivel_id)
+  // 3. FEFO DIRIGIDO per (bloque_id, nivel_id) — misma semántica que el detalle de
+  //    posición/nivel en Sectores (lotesRestantesPorBloque): la salida descuenta
+  //    PRIMERO el lote con SU fecha registrada y solo el remanente desborda FEFO.
+  //    Antes se agrupaban TODAS las salidas como totalExit y se descontaban FEFO
+  //    puro: la pestaña Stock mostraba lotes distintos a los reales de la posición
+  //    (lotes antiguos "pegados" de ingresos ya consumidos, 19 grupos reales).  
   const fefoResults: { bloque_id: string; nivel_id: string; cantidad: number; fecha_vencimiento: string; codigo_inc: string }[] = []
-  for (const [key, details] of blockNivelMap) {
-    const ingresoPool = new Map<string, { cantidad: number; codigo_inc: string }>()
-    let totalExit = 0
-    for (const d of details) {
-      if (isIngresoType(d.tipo)) {
-        const existing = ingresoPool.get(d.fecha_vencimiento)
-        if (existing) {
-          existing.cantidad += d.cantidad
-          if (!existing.codigo_inc && d.codigo_inc) existing.codigo_inc = d.codigo_inc
-        } else {
-          ingresoPool.set(d.fecha_vencimiento, { cantidad: d.cantidad, codigo_inc: d.codigo_inc })
-        }
-      } else {
-        totalExit += d.cantidad
-      }
+  for (const [, details] of blockNivelMap) {
+    // Orden temporal real (requisito de lotesRestantesPorBloque para las salidas)
+    const rows = [...details].sort((a, b) =>
+      (a.fechaMov || '').localeCompare(b.fechaMov || ''))
+    const remanentes = lotesRestantesPorBloque(rows.map((d) => ({
+      bloque_id: d.bloque_id,
+      cantidad: d.cantidad,
+      fecha_vencimiento: d.fecha_vencimiento,
+      tipo: d.tipo,
+      fechaMov: d.fechaMov,
+    })))
+    // codigo_inc REAL por lote remanente: primer ingreso (temporal) de esa fecha que lo traiga
+    const incPorFecha = new Map<string, string>()
+    for (const d of rows) {
+      if (!PISO_TIPOS_INGRESO.has(d.tipo) || !d.codigo_inc) continue
+      if (!incPorFecha.has(d.fecha_vencimiento)) incPorFecha.set(d.fecha_vencimiento, d.codigo_inc)
     }
-    const sortedLots = [...ingresoPool.entries()].sort(([a], [b]) => {
-      if (!a && b) return 1
-      if (a && !b) return -1
-      return a.localeCompare(b)
-    })
-    let pendiente = totalExit
-    for (const [fecha, pool] of sortedLots) {
-      if (pendiente <= 0) {
-        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
-      } else if (pool.cantidad <= pendiente) {
-        pendiente -= pool.cantidad
-      } else {
-        fefoResults.push({ bloque_id: details[0].bloque_id, nivel_id: details[0].nivel_id, cantidad: pool.cantidad - pendiente, fecha_vencimiento: fecha, codigo_inc: pool.codigo_inc })
-        pendiente = 0
-      }
+    const bloqueId = details[0].bloque_id
+    const nivelId = details[0].nivel_id
+    for (const lot of remanentes.get(bloqueId) ?? []) {
+      fefoResults.push({
+        bloque_id: bloqueId,
+        nivel_id: nivelId,
+        cantidad: lot.qty,
+        fecha_vencimiento: lot.fecha,
+        codigo_inc: incPorFecha.get(lot.fecha) ?? '',
+      })
     }
   }
 
@@ -2182,21 +2270,22 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
 }
 
 /**
- * Busca stock en Piso para UN código específico.
- * Usa dataClient (service role) con JOINs profundos para resolver
- * toda la cadena de ubicación en una sola query, evitando la cadena
- * de 6-7 queries secuenciales que causaba loading infinito.
+ * Busca stock en Piso por término (código O descripción) — CONSULTA BAJO DEMANDA.
+ * Solo descarga los detalles de los bloques que matchean (filtro server-side con
+ * JOIN profundo de ubicación), en vez de traer toda la base de datos y filtrar en
+ * cliente (comportamiento anterior de PisoStockTab: cargaba TODOS los detalles
+ * paginados + FEFO + ubicaciones de todo el almacén en cada tecleo).
+ * FEFO DIRIGIDO por (bloque, nivel): la salida descuenta primero el lote con SU
+ * fecha registrada y solo el remanente desborda FEFO — idéntico al detalle de
+ * Sectores (lotesRestantesPorBloque), así la búsqueda muestra los lotes reales.
  */
-export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[]> {
-  const code = codigo.trim().toUpperCase()
-
-  // ─── TIMEOUT: seguridad contra hang ───
+export async function stockPisoBuscar(term: string): Promise<StockPisoItem[]> {
   const TIMEOUT_MS = QUERY_TIMEOUT_MS
   const result = await Promise.race([
-    _stockPisoPorCodigoImpl(code),
+    _stockPisoBuscarImpl(term),
     new Promise<StockPisoItem[]>((resolve) =>
       setTimeout(() => {
-        console.warn('[stockPisoPorCodigo] TIMEOUT', TIMEOUT_MS, 'ms')
+        console.warn('[stockPisoBuscar] TIMEOUT', TIMEOUT_MS, 'ms')
         resolve([])
       }, TIMEOUT_MS)
     ),
@@ -2204,31 +2293,31 @@ export async function stockPisoPorCodigo(codigo: string): Promise<StockPisoItem[
   return result
 }
 
-async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
+async function _stockPisoBuscarImpl(term: string): Promise<StockPisoItem[]> {
   try {
-    // ─── 1. Buscar bloque por código ───
+    const t = term.trim()
+    if (!t) return []
+    // Sanitizar para el .or() de PostgREST: comas/paréntesis rompen la sintaxis
+    const safe = t.replace(/[,()]/g, ' ').trim()
+    if (!safe) return []
+
+    // ─── 1. Bloques que matchean (código o descripción), techo razonable ───
     const { data: bloques, error: errB } = await dataClient
       .from('piso_bloques')
       .select('id, codigo, descripcion, unidad')
-      .ilike('codigo', code)
-    if (errB) {
-      console.warn('[stockPisoPorCodigo] Error buscando bloques:', errB.message)
-      return []
-    }
+      .or(`codigo.ilike.%${safe}%,descripcion.ilike.%${safe}%`)
+      .order('codigo')
+      .limit(80)
+    if (errB) throw errB
     if (!bloques || bloques.length === 0) return []
 
-    const bloqueIds = bloques.map((b: { id: string }) => b.id)
+    const bloqueIds = (bloques as { id: string; codigo: string; descripcion: string; unidad: string }[]).map((b) => b.id)
     const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
     for (const b of bloques as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
-      bloqueInfoMap.set(b.id, {
-        codigo: b.codigo ?? '',
-        descripcion: b.descripcion ?? '',
-        unidad: b.unidad ?? 'KG',
-      })
+      bloqueInfoMap.set(b.id, { codigo: b.codigo ?? '', descripcion: b.descripcion ?? '', unidad: b.unidad ?? 'KG' })
     }
 
-    // ─── 2. Detalles de movimiento con JOIN profundo: movimiento + nivel → posicion → subcolumna → columna → sector ───
-    // Una sola query que resuelve toda la cadena de ubicación
+    // ─── 2. Detalles SOLO de esos bloques + ubicación resuelta en 1 query ───
     const { data: detalles, error: errD } = await dataClient
       .from('piso_movimiento_detalles')
       .select(`
@@ -2236,7 +2325,7 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
         nivel_id,
         cantidad,
         fecha_vencimiento,
-        piso_movimientos(tipo, codigo_inc),
+        piso_movimientos(tipo, codigo_inc, fecha),
         piso_niveles!inner(
           posicion_id,
           piso_posiciones!inner(
@@ -2259,35 +2348,34 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
         )
       `)
       .in('bloque_id', bloqueIds)
-    if (errD) {
-      console.warn('[stockPisoPorCodigo] Error detalles:', errD.message)
-      return []
-    }
+    if (errD) throw errD
     if (!detalles || detalles.length === 0) return []
 
-    // ─── 3. FEFO calculation ───
-    type DetRow = {
+    // ─── 3. FEFO DIRIGIDO por (bloque_id, nivel_id) con orden temporal ───
+    type BusqRow = {
       bloque_id: string
       nivel_id: string
       cantidad: unknown
       fecha_vencimiento?: string | null
-      piso_movimientos: { tipo: string; codigo_inc: string | null } | null | { tipo: string; codigo_inc: string | null }[]
+      piso_movimientos: { tipo: string; codigo_inc: string | null; fecha?: string | null } | null | { tipo: string; codigo_inc: string | null; fecha?: string | null }[]
       piso_niveles: PisoNivelLoc
     }
-
-    const getTipo = (pm: { tipo?: string } | { tipo?: string }[] | null): string => {
+    const getTipo = (pm: BusqRow['piso_movimientos']): string => {
       if (!pm) return ''
       if (Array.isArray(pm)) return pm.length > 0 ? pm[0].tipo ?? '' : ''
       return pm.tipo ?? ''
     }
-    const getCodigoInc = (pm: { codigo_inc?: string | null } | { codigo_inc?: string | null }[] | null): string => {
+    const getCodigoInc = (pm: BusqRow['piso_movimientos']): string => {
       if (!pm) return ''
       if (Array.isArray(pm)) return pm.length > 0 ? pm[0].codigo_inc || '' : ''
       return pm.codigo_inc || ''
     }
-    const isIngreso = (t: string) => t === 'ingreso' || t === 'stock_inicial' || t === 'devolucion'
+    const getFechaMov = (pm: BusqRow['piso_movimientos']): string => {
+      if (!pm) return ''
+      if (Array.isArray(pm)) return pm.length > 0 ? pm[0].fecha ?? '' : ''
+      return pm.fecha ?? ''
+    }
 
-    // Group by (bloque_id, nivel_id)
     const groups = new Map<string, {
       bloque_id: string
       nivel_id: string
@@ -2295,10 +2383,11 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
       cantidad: number
       fecha_vencimiento: string
       codigo_inc: string
-      loc: DetRow['piso_niveles']
+      fechaMov: string
+      loc: PisoNivelLoc
     }[]>()
 
-    for (const d of detalles as DetRow[]) {
+    for (const d of detalles as BusqRow[]) {
       const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
       if (qty <= 0) continue
       const tipo = getTipo(d.piso_movimientos)
@@ -2313,78 +2402,60 @@ async function _stockPisoPorCodigoImpl(code: string): Promise<StockPisoItem[]> {
         cantidad: qty,
         fecha_vencimiento: fv,
         codigo_inc: getCodigoInc(d.piso_movimientos),
+        fechaMov: getFechaMov(d.piso_movimientos),
         loc: d.piso_niveles,
       })
       groups.set(key, arr)
     }
 
-    // FEFO per group
     const results: StockPisoItem[] = []
     for (const [, entries] of groups) {
-      const ingresoPool = new Map<string, { cantidad: number; codigo_inc: string }>()
-      let totalExit = 0
-      for (const e of entries) {
-        if (isIngreso(e.tipo)) {
-          const existing = ingresoPool.get(e.fecha_vencimiento)
-          if (existing) {
-            existing.cantidad += e.cantidad
-            if (!existing.codigo_inc && e.codigo_inc) existing.codigo_inc = e.codigo_inc
-          } else {
-            ingresoPool.set(e.fecha_vencimiento, { cantidad: e.cantidad, codigo_inc: e.codigo_inc })
-          }
-        } else {
-          totalExit += e.cantidad
-        }
+      // Orden temporal real (requisito de lotesRestantesPorBloque para las salidas)
+      const rows = [...entries].sort((a, b) => (a.fechaMov || '').localeCompare(b.fechaMov || ''))
+      const remanentes = lotesRestantesPorBloque(rows.map((d) => ({
+        bloque_id: d.bloque_id,
+        cantidad: d.cantidad,
+        fecha_vencimiento: d.fecha_vencimiento,
+        tipo: d.tipo,
+        fechaMov: d.fechaMov,
+      })))
+      // codigo_inc REAL por lote remanente: primer ingreso (temporal) de esa fecha que lo traiga
+      const incPorFecha = new Map<string, string>()
+      for (const d of rows) {
+        if (!PISO_TIPOS_INGRESO.has(d.tipo) || !d.codigo_inc) continue
+        if (!incPorFecha.has(d.fecha_vencimiento)) incPorFecha.set(d.fecha_vencimiento, d.codigo_inc)
       }
-      const sortedLots = [...ingresoPool.entries()].sort(([a], [b]) => {
-        if (!a && b) return 1
-        if (a && !b) return -1
-        return a.localeCompare(b)
-      })
-      let pendiente = totalExit
-      for (const [fecha, pool] of sortedLots) {
-        if (pendiente <= 0) {
-          // Lote completo disponible
-          const e = entries[0]
-          results.push({
-            bloque_codigo: bloqueInfoMap.get(e.bloque_id)?.codigo ?? e.bloque_id,
-            bloque_descripcion: bloqueInfoMap.get(e.bloque_id)?.descripcion ?? '',
-            bloque_unidad: bloqueInfoMap.get(e.bloque_id)?.unidad ?? 'KG',
-            ubicacion: buildUbicacion(e.loc),
-            sector_nombre: e.loc?.piso_posiciones?.piso_subcolumnas?.piso_columnas?.piso_sectores?.nombre ?? '',
-            cantidad: Math.round(pool.cantidad * 1000) / 1000,
-            fecha_vencimiento: fecha,
-            codigo_inc: pool.codigo_inc || undefined,
-          })
-        } else if (pool.cantidad <= pendiente) {
-          pendiente -= pool.cantidad
-        } else {
-          const remaining = pool.cantidad - pendiente
-          pendiente = 0
-          const e = entries[0]
-          results.push({
-            bloque_codigo: bloqueInfoMap.get(e.bloque_id)?.codigo ?? e.bloque_id,
-            bloque_descripcion: bloqueInfoMap.get(e.bloque_id)?.descripcion ?? '',
-            bloque_unidad: bloqueInfoMap.get(e.bloque_id)?.unidad ?? 'KG',
-            ubicacion: buildUbicacion(e.loc),
-            sector_nombre: e.loc?.piso_posiciones?.piso_subcolumnas?.piso_columnas?.piso_sectores?.nombre ?? '',
-            cantidad: Math.round(remaining * 1000) / 1000,
-            fecha_vencimiento: fecha,
-            codigo_inc: pool.codigo_inc || undefined,
-          })
-        }
+      const bloqueId = entries[0].bloque_id
+      const info = bloqueInfoMap.get(bloqueId)
+      if (!info) continue
+      for (const lot of remanentes.get(bloqueId) ?? []) {
+        results.push({
+          bloque_codigo: info.codigo,
+          bloque_descripcion: info.descripcion,
+          bloque_unidad: info.unidad,
+          ubicacion: buildUbicacion(entries[0].loc),
+          sector_nombre: entries[0].loc?.piso_posiciones?.piso_subcolumnas?.piso_columnas?.piso_sectores?.nombre ?? '',
+          cantidad: lot.qty,
+          fecha_vencimiento: lot.fecha,
+          codigo_inc: incPorFecha.get(lot.fecha) || undefined,
+        })
       }
     }
 
-    return results.sort((a, b) => {
-      if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
-      if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
-      if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
-      return a.ubicacion.localeCompare(b.ubicacion)
-    })
+    // ─── 4. Orden FEFO global: lo más próximo a vencer primero, sin fecha al final ───
+    return results
+      .map((r) => ({ ...r, cantidad: Math.round(r.cantidad * 1000) / 1000 }))
+      .filter((r) => r.cantidad > 0)
+      .sort((a, b) => {
+        if (a.fecha_vencimiento && b.fecha_vencimiento) return a.fecha_vencimiento.localeCompare(b.fecha_vencimiento)
+        if (a.fecha_vencimiento && !b.fecha_vencimiento) return -1
+        if (!a.fecha_vencimiento && b.fecha_vencimiento) return 1
+        if (a.bloque_codigo !== b.bloque_codigo) return a.bloque_codigo.localeCompare(b.bloque_codigo)
+        return a.ubicacion.localeCompare(b.ubicacion)
+      })
   } catch (err) {
-    console.error('[stockPisoPorCodigo] Error:', err)
-    return []
+    console.error('[stockPisoBuscar] Error:', err)
+    throw err
   }
 }
 
@@ -2587,16 +2658,19 @@ export async function cargarVistaColumna(
     const pos = posMap.get(n.posicionId)!
 
     // Find stock items for this nivel
+    // Redondeo defensivo a 3 decimales (precisión BD) ANTES del filtro > 0:
+    // sin esto, un residuo flotante futuro se colaría como "artículo en 0" pegado.
     const items: VistaNivelStock['bloques'] = []
     for (const [key, val] of stockMap) {
       const [nId, bId] = key.split('::')
-      if (nId !== n.id || val.cantidad <= 0) continue
+      const cant = Math.round(val.cantidad * 1000) / 1000
+      if (nId !== n.id || cant <= 0) continue
       const info = bloqueInfoMap.get(bId) || { codigo: bId, descripcion: '', unidad: '' }
       items.push({
         bloque_codigo: info.codigo,
         bloque_descripcion: info.descripcion,
         bloque_unidad: info.unidad,
-        cantidad: Math.round(val.cantidad * 1000) / 1000,
+        cantidad: cant,
         codigo_inc: val.codigo_inc,
       })
       if (val.codigo_inc) pos.tieneInc = true

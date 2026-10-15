@@ -103,6 +103,11 @@ export function MovimientosTab() {
 
   // Refresh function for realtime + polling
   const refreshMovimientos = useCallback(async () => {
+    // Pestaña oculta (otro módulo/tab visible): saltar el refresco pesado (hasta
+    // 5.000 cabeceras + detalles + resolución de ubicaciones). Ya hay datos en
+    // pantalla; el próximo evento realtime o poll con la pestaña visible los
+    // actualiza. Si aún no hay datos se carga igualmente para no dejar spinner eterno.
+    if (typeof document !== 'undefined' && document.hidden && movimientosRef.current.length > 0) return
     try {
       const data = await listarMovimientos()
       if (mountedRef.current) setMovimientos(data)
@@ -116,6 +121,8 @@ export function MovimientosTab() {
   }, [])
 
   const mountedRef = useRef(true)
+  const movimientosRef = useRef(movimientos)
+  useEffect(() => { movimientosRef.current = movimientos }, [movimientos])
   // Gate de rol: solo admin/supervisores eliminan movimientos (igual que la vista
   // de Racks en page.tsx). Antes cualquier operario veía y podía usar el botón.
   const { perfil } = useAuth()

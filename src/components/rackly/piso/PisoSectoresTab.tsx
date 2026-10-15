@@ -497,11 +497,56 @@ export function PisoSectoresTab() {
   // Realtime: auto-refresh positions when piso_movimientos changes (polling solo como respaldo si WebSocket cae)
   // CRÍTICO: NO refrescar cuando el usuario está en modo ingreso/devolución/traslado/salida/inc
   // porque eso causa re-renders que cierran el date picker nativo
+
+  // Refs espejo para el refresco silencioso del detalle: los callbacks asíncronos
+  // deben leer el estado VIGENTE (evita closures viejas que pisan datos nuevos).
+  const detailRef = useRef(detail)
+  useEffect(() => { detailRef.current = detail }, [detail])
+  const modeRef = useRef(mode)
+  useEffect(() => { modeRef.current = mode }, [mode])
+  const nivelesRef = useRef(niveles)
+  useEffect(() => { nivelesRef.current = niveles }, [niveles])
+  const viewNivelTabRef = useRef(viewNivelTab)
+  useEffect(() => { viewNivelTabRef.current = viewNivelTab }, [viewNivelTab])
+  const detailRefreshBusyRef = useRef(false)
+
+  /** Refresca en silencio el detalle de posición ABIERTO. Antes: si otra sesión
+   *  retiraba/ingresaba mercadería de la posición que estabas viendo, los lotes
+   *  del diálogo quedaban congelados ("pegados") hasta cerrar y reabrir — origen
+   *  de "artículos en 0 que no desaparecen" y de salidas sobre stock ya inexistente
+   *  (esa parte ahora también la bloquea validarStockSuficiente en api.ts). */
+  const refreshDetailSilencioso = useCallback(async () => {
+    const d = detailRef.current
+    if (!d || modeRef.current !== 'view' || detailRefreshBusyRef.current) return
+    detailRefreshBusyRef.current = true
+    try {
+      const nivs = nivelesRef.current
+      const [stock, nivelStocks] = await Promise.all([
+        stockDetallePosicion(d.posicionId),
+        nivs.length > 0 ? Promise.all(nivs.map((n) => stockDetalleNivel(n.id))) : Promise.resolve([] as DetailStock[][]),
+      ])
+      const newSBN: Record<string, DetailStock[]> = {}
+      nivs.forEach((n, i) => { newSBN[n.id] = (nivelStocks as DetailStock[][])[i] ?? [] })
+      // Aplicar SOLO si sigue el mismo detalle abierto y el usuario no abrió un formulario
+      if (mountedRef.current && modeRef.current === 'view' && detailRef.current?.posicionId === d.posicionId) {
+        const tab = viewNivelTabRef.current
+        const filteredStock = tab !== 'all'
+          ? stock.filter((s) => (newSBN[tab] ?? []).some((n) => n.bloque_id === s.bloque_id && n.fecha_vencimiento === s.fecha_vencimiento))
+          : stock
+        setStockByNivel(newSBN)
+        setDetail({ ...d, stock: filteredStock })
+      }
+    } catch { /* silencioso: el próximo evento realtime reintenta */ }
+    finally { detailRefreshBusyRef.current = false }
+  }, [])
+
   const silentRefreshPos = useCallback(() => {
     // No actualizar posiciones mientras el usuario interactúa con un formulario
     // Esto evita que el date picker se cierre por re-renders
     if (mode !== 'view') return
     loadPosiciones(true)
+    // Lotes del diálogo de detalle abierto también en vivo (anti-"pegado")
+    refreshDetailSilencioso()
     const sec = sectores.find(s => s.id === sectorFilter)
     if (selectedColumn && sectorFilter !== 'all' && (sec?.n_niveles ?? 0) > 1) {
       const gen = ++colGenRef.current
@@ -509,7 +554,7 @@ export function PisoSectoresTab() {
         if (mountedRef.current && gen === colGenRef.current) setColDetail(d)
       }).catch(() => {})
     }
-  }, [loadPosiciones, selectedColumn, sectorFilter, sectores, mode])
+  }, [loadPosiciones, selectedColumn, sectorFilter, sectores, mode, refreshDetailSilencioso])
   usePisoRealtime(silentRefreshPos)
 
   // Filtrar catalogo para autocomplete

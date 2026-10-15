@@ -2049,6 +2049,13 @@ export type StockPisoItem = {
   cantidad: number
   fecha_vencimiento: string
   codigo_inc?: string
+  /** IDs de navegación (deep-link Stock/FEFO/INC → Sectores). Ausentes si la
+   *  ubicación no se pudo resolver: la fila se muestra como texto plano. */
+  sector_id?: string
+  posicion_id?: string
+  posicion_numero?: number
+  columna_letra?: string
+  subcolumna_codigo?: string
 }
 
 /**
@@ -2181,7 +2188,7 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
 
   // 5. Resolve location for each nivel_id
   const nivelIds = [...new Set(fefoResults.map(r => r.nivel_id))]
-  const locMap = new Map<string, { ubicacion: string; sector_nombre: string }>()
+  const locMap = new Map<string, { ubicacion: string; sector_nombre: string; sector_id: string; posicion_id: string; posicion_numero: number; columna_letra: string; subcolumna_codigo: string }>()
   if (nivelIds.length > 0) {
     const { data: nivData } = await dataClient.from('piso_niveles').select('id, posicion_id').in('id', nivelIds)
     const nivToPos = new Map<string, string>()
@@ -2228,6 +2235,12 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
               locMap.set(nivId, {
                 ubicacion,
                 sector_nombre: secInfo?.nombre ?? '',
+                // IDs para el deep-link clickeable (Stock/FEFO/INC → Sectores)
+                sector_id: col.sector_id,
+                posicion_id: posId,
+                posicion_numero: pos.numero,
+                columna_letra: col.letra,
+                subcolumna_codigo: sub.codigo,
               })
             }
           }
@@ -2251,6 +2264,11 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
         cantidad: Math.round(r.cantidad * 1000) / 1000,
         fecha_vencimiento: r.fecha_vencimiento,
         codigo_inc: r.codigo_inc || undefined,
+        sector_id: loc?.sector_id,
+        posicion_id: loc?.posicion_id,
+        posicion_numero: loc?.posicion_numero,
+        columna_letra: loc?.columna_letra,
+        subcolumna_codigo: loc?.subcolumna_codigo,
       }
     })
     .sort((a, b) => {
@@ -2429,15 +2447,22 @@ async function _stockPisoBuscarImpl(term: string): Promise<StockPisoItem[]> {
       const info = bloqueInfoMap.get(bloqueId)
       if (!info) continue
       for (const lot of remanentes.get(bloqueId) ?? []) {
+        const locRow = entries[0].loc
         results.push({
           bloque_codigo: info.codigo,
           bloque_descripcion: info.descripcion,
           bloque_unidad: info.unidad,
-          ubicacion: buildUbicacion(entries[0].loc),
-          sector_nombre: entries[0].loc?.piso_posiciones?.piso_subcolumnas?.piso_columnas?.piso_sectores?.nombre ?? '',
+          ubicacion: buildUbicacion(locRow),
+          sector_nombre: locRow?.piso_posiciones?.piso_subcolumnas?.piso_columnas?.piso_sectores?.nombre ?? '',
           cantidad: lot.qty,
           fecha_vencimiento: lot.fecha,
           codigo_inc: incPorFecha.get(lot.fecha) || undefined,
+          // IDs de navegación para el deep-link clickeable hacia Sectores
+          sector_id: locRow?.piso_posiciones?.piso_subcolumnas?.piso_columnas?.sector_id,
+          posicion_id: locRow?.posicion_id,
+          posicion_numero: locRow?.piso_posiciones?.numero,
+          columna_letra: locRow?.piso_posiciones?.piso_subcolumnas?.piso_columnas?.letra,
+          subcolumna_codigo: locRow?.piso_posiciones?.piso_subcolumnas?.codigo,
         })
       }
     }

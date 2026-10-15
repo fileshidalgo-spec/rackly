@@ -16,6 +16,8 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { stockPisoGlobal, type StockPisoItem } from '@/lib/piso/api'
+import { targetDesdeStockItem, type PisoTargetPosicion } from '@/lib/piso/navegacion'
+import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -25,7 +27,7 @@ import {
 } from '@/components/ui/table'
 import { toast } from 'sonner'
 import {
-  Search, Download, Loader2, CalendarDays, AlertTriangle, PackageSearch, RefreshCw, MapPin, Layers,
+  Search, Download, Loader2, CalendarDays, AlertTriangle, PackageSearch, RefreshCw, MapPin, Layers, ExternalLink,
 } from 'lucide-react'
 
 type FefoStatus = 'vigente' | 'proximo' | 'urgente' | 'vencido' | 'sin_fecha'
@@ -82,15 +84,19 @@ function statusDe(fv: string): { status: FefoStatus; dias: number } {
   return { status: dias < 0 ? 'vencido' : dias <= 15 ? 'urgente' : dias <= 30 ? 'proximo' : 'vigente', dias }
 }
 
-export function FefoPisoTab() {
+export function FefoPisoTab({ onGotoPosicion }: { onGotoPosicion?: (target: PisoTargetPosicion) => void }) {
+  // Estado persistido (inicializador lazy): al volver desde Sectores (botón de
+  // retorno) la búsqueda y los filtros quedan como estaban — "seguir buscando".
   const [items, setItems] = useState<FefoPisoItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
-  const [search, setSearch] = useState('')
-  const [sector, setSector] = useState('')
+  const [search, setSearch] = useState(() => loadTabState('piso.fefo', { search: '', sector: '', filtros: { vigente: true, proximo: true, urgente: true, vencido: true, sin_fecha: true } }).search)
+  const [sector, setSector] = useState(() => loadTabState('piso.fefo', { search: '', sector: '', filtros: { vigente: true, proximo: true, urgente: true, vencido: true, sin_fecha: true } }).sector)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
-  const [filtros, setFiltros] = useState<Record<FefoStatus, boolean>>({
-    vigente: true, proximo: true, urgente: true, vencido: true, sin_fecha: true,
+  const [filtros, setFiltros] = useState<Record<FefoStatus, boolean>>(() => {
+    const base = { vigente: true, proximo: true, urgente: true, vencido: true, sin_fecha: true }
+    const f = loadTabState('piso.fefo', { search: '', sector: '', filtros: base }).filtros
+    return typeof f === 'object' && f !== null ? { ...base, ...f } : base
   })
   const [exportBusy, setExportBusy] = useState(false)
   const loadedRef = useRef(false)
@@ -126,6 +132,11 @@ export function FefoPisoTab() {
     if (!loadedRef.current) { loadedRef.current = true; load() }
     return () => { mountedRef.current = false }
   }, [])
+
+  // Persistir búsqueda + filtros (se restauran al volver desde Sectores)
+  useEffect(() => {
+    saveTabState('piso.fefo', { search, sector, filtros })
+  }, [search, sector, filtros])
 
   // Realtime: si otro usuario mueve mercadería, los lotes FEFO se refrescan solos
   usePisoRealtime(() => { if (loadedRef.current) load(true) })
@@ -328,9 +339,24 @@ export function FefoPisoTab() {
                 </div>
                 <p className="text-[10px] text-slate-500 leading-tight truncate">{item.bloque_descripcion}</p>
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <Badge variant="outline" className="text-[9px] px-1 py-0 border-slate-600 text-slate-300">
-                    <MapPin className="h-2.5 w-2.5 mr-0.5" />{item.ubicacion}
-                  </Badge>
+                  {(() => {
+                    const target = onGotoPosicion ? targetDesdeStockItem(item) : null
+                    return target ? (
+                      <button
+                        type="button"
+                        onClick={() => onGotoPosicion?.(target)}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-violet-500/40 bg-violet-500/10 hover:bg-violet-500/25 hover:border-violet-400/60 text-[9px] font-mono font-semibold text-violet-300 transition-colors cursor-pointer active:scale-95"
+                        title="Ir a la posición en Sectores para realizar movimientos"
+                      >
+                        <MapPin className="h-2.5 w-2.5 text-violet-400" />{item.ubicacion}
+                        <ExternalLink className="h-2 w-2 text-violet-400" />
+                      </button>
+                    ) : (
+                      <Badge variant="outline" className="text-[9px] px-1 py-0 border-slate-600 text-slate-300">
+                        <MapPin className="h-2.5 w-2.5 mr-0.5" />{item.ubicacion}
+                      </Badge>
+                    )
+                  })()}
                   {item.sector_nombre && (
                     <Badge variant="outline" className="text-[9px] px-1 py-0 border-slate-600 text-slate-500">{item.sector_nombre}</Badge>
                   )}
@@ -387,10 +413,25 @@ export function FefoPisoTab() {
                       {item.bloque_descripcion || '—'}
                     </TableCell>
                     <TableCell className="text-xs text-slate-400 whitespace-nowrap">{item.sector_nombre || '—'}</TableCell>
-                    <TableCell className="text-xs text-slate-200 whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1">
-                        <MapPin className="h-3 w-3 text-slate-500" />{item.ubicacion}
-                      </span>
+                    <TableCell className="text-xs whitespace-nowrap">
+                      {(() => {
+                        const target = onGotoPosicion ? targetDesdeStockItem(item) : null
+                        return target ? (
+                          <button
+                            type="button"
+                            onClick={() => onGotoPosicion?.(target)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-500/40 bg-violet-500/10 hover:bg-violet-500/25 hover:border-violet-400/60 text-xs font-mono font-semibold text-violet-300 transition-colors cursor-pointer active:scale-95 whitespace-nowrap"
+                            title="Ir a la posición en Sectores para realizar movimientos"
+                          >
+                            <MapPin className="h-3 w-3 text-violet-400" />{item.ubicacion}
+                            <ExternalLink className="h-2.5 w-2.5 text-violet-400" />
+                          </button>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-slate-200">
+                            <MapPin className="h-3 w-3 text-slate-500" />{item.ubicacion}
+                          </span>
+                        )
+                      })()}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       {item.fecha_vencimiento ? (

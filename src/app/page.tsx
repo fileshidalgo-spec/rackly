@@ -21,6 +21,7 @@ import { FefoPisoTab } from '@/components/rackly/piso/FefoPisoTab'
 import { StockIncTab } from '@/components/rackly/kardex/StockIncTab'
 import { StockIncPisoTab } from '@/components/rackly/piso/StockIncPisoTab'
 import { ModulosHome, type VistaModulo } from '@/components/rackly/inicio/ModulosHome'
+import { type PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { VersionBanner } from '@/components/rackly/VersionBanner'
 import { SELLO_VERSION } from '@/lib/rackly/version-sello'
 import { UsuariosModule } from '@/components/rackly/usuarios/UsuariosModule'
@@ -106,10 +107,36 @@ function RacklyApp() {
   // Tab controlado para navegación programática (Stock/Stock INC → Ocupación)
   const [racksTab, setRacksTab] = useState('movimientos')
   const [targetUbicacion, setTargetUbicacion] = useState<{ bloque: string; torre: string; piso: string; posicion: string } | null>(null)
+  // Pestaña desde la que se saltó a Ocupación (para el botón de retorno):
+  // así "volver" regresa a la búsqueda que estaba en curso (Stock, Stock INC o FEFO).
+  const [ubicacionOrigen, setUbicacionOrigen] = useState<{ tab: string; label: string } | null>(null)
 
   function gotoUbicacion(bloque: string, torre: string, piso: string, posicion: string) {
+    setUbicacionOrigen({ tab: racksTab, label: racksTab === 'stock-inc' ? 'Stock INC' : racksTab === 'fefo' ? 'FEFO' : 'Stock' })
     setTargetUbicacion({ bloque, torre, piso, posicion })
     setRacksTab('ocupacion')
+  }
+
+  function volverDeUbicacion() {
+    setRacksTab(ubicacionOrigen?.tab ?? 'stock')
+  }
+
+  // ── Módulo Piso: tabs controladas + deep-link Stock/FEFO/INC → Sectores ──
+  // Igual que en Racks: tocar una ubicación en los resultados aterriza en la
+  // posición (Sectores) con su detalle abierto, desde donde se registran los
+  // movimientos; el botón de retorno lleva a la pestaña de búsqueda de origen.
+  const [pisoTab, setPisoTab] = useState('movimientos')
+  const [pisoTarget, setPisoTarget] = useState<PisoTargetPosicion | null>(null)
+  const [pisoOrigen, setPisoOrigen] = useState<{ tab: string; label: string } | null>(null)
+
+  function gotoPisoPosicion(target: PisoTargetPosicion) {
+    setPisoOrigen({ tab: pisoTab, label: pisoTab === 'fefo' ? 'FEFO' : pisoTab === 'stock-inc' ? 'Stock INC' : 'Stock' })
+    setPisoTarget(target)
+    setPisoTab('sectores')
+  }
+
+  function volverAPisoStock() {
+    setPisoTab(pisoOrigen?.tab ?? 'stock')
   }
 
   useMovimientosRealtime(setMovs)
@@ -666,7 +693,7 @@ function RacklyApp() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><OcupacionTab targetUbicacion={targetUbicacion} /></CardContent>
+                <CardContent><OcupacionTab targetUbicacion={targetUbicacion} onVolverAStock={ubicacionOrigen ? volverDeUbicacion : undefined} volverLabel={ubicacionOrigen?.label} /></CardContent>
               </Card>
             </TabsContent>
 
@@ -732,7 +759,7 @@ function RacklyApp() {
 
         {/* ═══ KARDEX PISO VIEW ═══ */}
         {view === 'piso' && (
-          <Tabs defaultValue="movimientos" className="w-full">
+          <Tabs value={pisoTab} onValueChange={setPisoTab} className="w-full">
             {/* Mismo anclaje bajo el header que Kardex (ver comentario allá). */}
             <TabsList className="sticky top-[52px] sm:top-16 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
               {[
@@ -789,7 +816,7 @@ function RacklyApp() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><PisoStockTab /></CardContent>
+                <CardContent><PisoStockTab onGotoPosicion={gotoPisoPosicion} /></CardContent>
               </Card>
             </TabsContent>
 
@@ -807,7 +834,7 @@ function RacklyApp() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><FefoPisoTab /></CardContent>
+                <CardContent><FefoPisoTab onGotoPosicion={gotoPisoPosicion} /></CardContent>
               </Card>
             </TabsContent>
 
@@ -825,12 +852,12 @@ function RacklyApp() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><StockIncPisoTab /></CardContent>
+                <CardContent><StockIncPisoTab onGotoPosicion={gotoPisoPosicion} /></CardContent>
               </Card>
             </TabsContent>
 
             <TabsContent value="sectores" className="mt-5">
-              <PisoSectoresTab />
+              <PisoSectoresTab targetPosicion={pisoTarget} onVolverAStock={pisoOrigen ? volverAPisoStock : undefined} volverLabel={pisoOrigen?.label} />
             </TabsContent>
 
             <TabsContent value="config" className="mt-5">

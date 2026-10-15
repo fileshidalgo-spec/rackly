@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { dataClient } from '@/lib/supabase/client'
 import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
+import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { TriangleAlert, Search, MapPin, Package, Loader2, AlertCircle, ExternalLink } from 'lucide-react'
@@ -24,11 +25,18 @@ type StockIncTabProps = {
 }
 
 export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
-  const [query, setQuery] = useState('')
+  // Búsqueda persistida (inicializador lazy): al volver desde Ocupación continúa donde quedó
+  const [query, setQuery] = useState(() => loadTabState('racks.stock-inc', { q: '' }).q)
   const [results, setResults] = useState<IncResult[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
   const [searched, setSearched] = useState(false)
+
+  // Persistir el término (se restaura al volver desde Ocupación; la búsqueda se
+  // re-ejecuta con Enter, igual que en una visita nueva)
+  useEffect(() => {
+    saveTabState('racks.stock-inc', { q: query })
+  }, [query])
 
   async function handleSearch() {
     const term = query.trim()

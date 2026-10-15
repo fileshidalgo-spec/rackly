@@ -23,6 +23,7 @@ import {
   type VistaPosicion,
   selectIn,
 } from '@/lib/piso/api'
+import { resolverPosicionTarget, firmaTarget, type PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { dataClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
@@ -150,7 +151,11 @@ function SkeletonShimmer() {
   )
 }
 
-export function PisoSectoresTab() {
+export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel }: {
+  targetPosicion?: PisoTargetPosicion | null
+  onVolverAStock?: () => void
+  volverLabel?: string
+}) {
   const { perfil } = useAuth()
   const [sectores, setSectores] = useState<Sector[]>([])
   const [sectorFilter, setSectorFilter] = useState<string>('all')
@@ -471,6 +476,47 @@ export function PisoSectoresTab() {
     // mantenerlas procesaría posiciones que el usuario ya no ve.
     setMassSelected(new Set())
   } }, [sectorFilter, loadPosiciones])
+
+  // ── DEEP-LINK desde Stock/FEFO/Stock INC (ubicación clickeable) ──
+  // Llega targetPosicion vía page.tsx: se selecciona el sector (dispara la carga
+  // de posiciones) y queda pendiente la apertura del detalle de la posición.
+  const appliedTargetRef = useRef<string | null>(null)
+  const pendingPosRef = useRef<{ sector: string; pid: string } | null>(null)
+  useEffect(() => {
+    if (!targetPosicion?.sector_id || !targetPosicion?.posicion_id) return
+    const sig = firmaTarget(targetPosicion)
+    if (appliedTargetRef.current === sig) return
+    if (sectores.length === 0) return // aún cargando sectores: esperar
+    appliedTargetRef.current = sig
+    if (!sectores.some((s) => s.id === targetPosicion.sector_id)) {
+      toast.error(`No se encontró el sector de la ubicación ${targetPosicion.ubicacion ?? ''}`)
+      return
+    }
+    pendingPosRef.current = { sector: targetPosicion.sector_id, pid: targetPosicion.posicion_id }
+    setSectorFilter(targetPosicion.sector_id) // dispara loadPosiciones (efecto de arriba)
+  }, [targetPosicion, sectores])
+
+  // Apertura del detalle pendiente: cuando las posiciones del sector destino
+  // terminan de cargar, resuelve el target (por ID, fallback coordenadas) y
+  // abre el MISMO diálogo de detalle que un clic manual en la celda — ahí es
+  // donde se registran los movimientos (ingreso/salida/traslado/devolución/INC).
+  useEffect(() => {
+    const pending = pendingPosRef.current
+    if (!pending) return
+    // El usuario cambió de sector antes de que cargara: el deep-link quedó obsoleto
+    if (pending.sector !== sectorFilter) { pendingPosRef.current = null; return }
+    if (loading || posiciones.length === 0) return
+    pendingPosRef.current = null
+    const pos = resolverPosicionTarget(posiciones, { sector_id: sectorFilter, posicion_id: pending.pid, columna_letra: targetPosicion?.columna_letra, posicion_numero: targetPosicion?.posicion_numero, subcolumna_codigo: targetPosicion?.subcolumna_codigo })
+    if (!pos) {
+      toast.error(`No se encontró la posición ${targetPosicion?.ubicacion ?? ''} en este sector`)
+      return
+    }
+    // Dejar la vista de columna coherente por detrás del diálogo (al cerrarlo
+    // el usuario ve la columna donde está la posición)
+    handleSelectColumn(pos.columnaLetra)
+    handleClick(pos)
+  }, [posiciones, loading, sectorFilter])
 
   // Cargar vista de columna cuando se selecciona una
   const loadColumnDetail = useCallback(async (letra: string) => {
@@ -1626,6 +1672,31 @@ export function PisoSectoresTab() {
           backgroundImage: `radial-gradient(circle, #94a3b8 1px, transparent 1px)`,
           backgroundSize: '24px 24px',
         }} />
+
+      {/* ═══ BANNER DE RETORNO — llegada desde Stock/FEFO/Stock INC ═══ */}
+      {/* La ubicación tocada en la búsqueda abrió este módulo en la posición
+          destino; el botón regresa a la pestaña de búsqueda (Stock/FEFO/INC)
+          para seguir consultando otros artículos sin rehacer la búsqueda. */}
+      {onVolverAStock && (
+        <div className="rounded-2xl border border-cyan-500/30 bg-gradient-to-r from-cyan-950/50 to-slate-900/60 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center shrink-0">
+              <MapPin className="h-4 w-4 text-cyan-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-cyan-200">Llegaste desde la búsqueda en {volverLabel || 'Stock'}</p>
+              <p className="text-[10px] text-slate-400">Realiza aquí los movimientos de la posición y regresa a seguir buscando.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onVolverAStock}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 hover:bg-cyan-500/30 hover:border-cyan-300/50 transition-all shrink-0 active:scale-95"
+          >
+            ← Volver a {volverLabel || 'Stock'}
+          </button>
+        </div>
+      )}
 
       {/* ═══ DASHBOARD STATS — Gradient border cards with animated counters ═══ */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

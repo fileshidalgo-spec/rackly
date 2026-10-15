@@ -121,7 +121,7 @@ function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
 
 type DetailMode = 'view' | 'ingreso' | 'salida' | 'transferir' | 'inc'
 
-export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: string; torre: string; piso: string; posicion: string } | null }) {
+export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: { targetUbicacion?: { bloque: string; torre: string; piso: string; posicion: string } | null; onVolverAStock?: () => void; volverLabel?: string }) {
   const { perfil } = useAuth()
   const [ocupacion, setOcupacion] = useState<OcupacionCelda[]>([])
   const [bloqueFilter, setBloqueFilter] = useState<string>('all')
@@ -822,6 +822,32 @@ export function OcupacionTab({ targetUbicacion }: { targetUbicacion?: { bloque: 
 
   return (
     <div className="space-y-5">
+      {/* ═══ BANNER DE RETORNO — llegada desde Stock/Stock INC/FEFO ═══ */}
+      {/* El detalle de la posición destino se abre solo (efecto targetUbicacion);
+          este banner da la salida de vuelta a la búsqueda para seguir con otros
+          artículos, en vez de obligar a buscar la pestaña en la barra. */}
+      {targetUbicacion && onVolverAStock && (
+        <div className="rounded-xl border border-violet-500/30 bg-gradient-to-r from-violet-950/60 to-slate-900/60 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center shrink-0">
+              <MapPin className="h-4 w-4 text-violet-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-violet-200 truncate">
+                Posición {targetUbicacion.bloque}-{targetUbicacion.torre}-{targetUbicacion.piso}-{targetUbicacion.posicion}
+              </p>
+              <p className="text-[10px] text-slate-400">Realiza aquí los movimientos y vuelve a la búsqueda cuando termines.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onVolverAStock}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-violet-500/20 border border-violet-400/40 text-violet-200 hover:bg-violet-500/30 hover:border-violet-300/50 transition-all shrink-0 active:scale-95"
+          >
+            ← Volver a {volverLabel || 'Stock'}
+          </button>
+        </div>
+      )}
       {/* ═══ DASHBOARD ═══ */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div className="rounded-xl border border-slate-600/40 bg-gradient-to-br from-slate-800 to-slate-900 p-4 shadow-md">

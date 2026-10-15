@@ -33,14 +33,20 @@ import {
 import { toast } from 'sonner'
 import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle, MapPin, ExternalLink } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
+import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 
 export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string, torre: string, piso: string, posicion: string) => void }) {
   const { perfil } = useAuth()
   const esAdmin = perfil?.rol === 'admin'
+  // Estado persistido en sessionStorage (inicializador lazy): al volver desde
+  // Ocupación (botón de retorno) la búsqueda continúa donde quedó.
   const [movs, setMovs] = useState<Movimiento[]>([])
-  const [query, setQuery] = useState('')
-  const [selectedCodigo, setSelectedCodigo] = useState('')
-  const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>('todos')
+  const [query, setQuery] = useState(() => loadTabState('racks.stock', { q: '', sel: '', filter: 'todos' }).q)
+  const [selectedCodigo, setSelectedCodigo] = useState(() => loadTabState('racks.stock', { q: '', sel: '', filter: 'todos' }).sel)
+  const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>(() => {
+    const f = loadTabState('racks.stock', { q: '', sel: '', filter: 'todos' }).filter
+    return f === 'inc' || f === 'disponibles' ? f : 'todos'
+  })
   const [stock, setStock] = useState<
     {
       bloque: string
@@ -58,6 +64,11 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
   >([])
 
   useMovimientosRealtime(setMovs)
+
+  // Persistir la búsqueda en curso (se restaura al volver desde Ocupación)
+  useEffect(() => {
+    saveTabState('racks.stock', { q: query, sel: selectedCodigo, filter: stockFilter })
+  }, [query, selectedCodigo, stockFilter])
 
   // Catálogo para búsqueda y lookup
   const [catalogoResults, setCatalogoResults] = useState<CatalogoItem[]>([])

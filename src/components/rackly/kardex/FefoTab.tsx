@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { fetchMovimientos, calcularLotesRemanentes, proveedorPorVenc, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -82,21 +83,33 @@ const DIAS_COLOR: Record<FefoStatus, string> = {
 const round3 = (n: number) => Math.round(n * 1000) / 1000
 const fmtQty = (n: number) => (n % 1 === 0 ? String(n) : n.toLocaleString(undefined, { maximumFractionDigits: 3 }))
 
+// Fallback/defaults de búsqueda+filtros para la persistencia en sessionStorage
+const FEFO_FILTROS_BASE = {
+  search: '',
+  desde: '',
+  hasta: '',
+  filtros: { vigente: true, proximo: true, urgente: true, vencido: true, sin_fecha: true },
+}
+
 export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string, torre: string, piso: string, posicion: string) => void }) {
+  // Búsqueda + filtros persistidos (inicializador lazy): al volver desde
+  // Ocupación (botón de retorno) continúa donde quedó.
   const [movs, setMovs] = useState<Movimiento[]>([])
-  const [search, setSearch] = useState('')
-  const [fechaDesde, setFechaDesde] = useState('')
-  const [fechaHasta, setFechaHasta] = useState('')
-  const [filtros, setFiltros] = useState<Record<FefoStatus, boolean>>({
-    vigente: true,
-    proximo: true,
-    urgente: true,
-    vencido: true,
-    sin_fecha: true,
+  const [search, setSearch] = useState(() => loadTabState('racks.fefo', FEFO_FILTROS_BASE).search)
+  const [fechaDesde, setFechaDesde] = useState(() => loadTabState('racks.fefo', FEFO_FILTROS_BASE).desde)
+  const [fechaHasta, setFechaHasta] = useState(() => loadTabState('racks.fefo', FEFO_FILTROS_BASE).hasta)
+  const [filtros, setFiltros] = useState<Record<FefoStatus, boolean>>(() => {
+    const f = loadTabState('racks.fefo', FEFO_FILTROS_BASE).filtros
+    return typeof f === 'object' && f !== null ? { ...FEFO_FILTROS_BASE.filtros, ...f } : FEFO_FILTROS_BASE.filtros
   })
   const [busy, setBusy] = useState(false)
 
   useMovimientosRealtime(setMovs)
+
+  // Persistir búsqueda + filtros (se restauran al volver desde Ocupación)
+  useEffect(() => {
+    saveTabState('racks.fefo', { search, desde: fechaDesde, hasta: fechaHasta, filtros })
+  }, [search, fechaDesde, fechaHasta, filtros])
 
   const hasActiveFilters = useMemo(() => {
     return search.trim() !== '' || fechaDesde !== '' || fechaHasta !== '' ||

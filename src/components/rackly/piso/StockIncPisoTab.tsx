@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { stockPisoGlobal, type StockPisoItem } from '@/lib/piso/api'
+import { targetDesdeStockItem, type PisoTargetPosicion } from '@/lib/piso/navegacion'
+import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { TriangleAlert, Search, MapPin, Package, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { TriangleAlert, Search, MapPin, Package, Loader2, AlertCircle, RefreshCw, ExternalLink } from 'lucide-react'
 
 type IncGrouped = {
   bloque_codigo: string
@@ -12,11 +14,12 @@ type IncGrouped = {
   bloque_unidad: string
   codigoInc: string
   total: number
-  ubicaciones: { sector: string; ubi: string; qty: number; vencimiento: string }[]
+  ubicaciones: { sector: string; ubi: string; qty: number; vencimiento: string; target: PisoTargetPosicion | null }[]
 }
 
-export function StockIncPisoTab() {
-  const [query, setQuery] = useState('')
+export function StockIncPisoTab({ onGotoPosicion }: { onGotoPosicion?: (target: PisoTargetPosicion) => void }) {
+  // Búsqueda persistida (inicializador lazy): al volver desde Sectores continúa donde quedó
+  const [query, setQuery] = useState(() => loadTabState('piso.stock-inc', { q: '' }).q)
   const [items, setItems] = useState<StockPisoItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
@@ -38,6 +41,11 @@ export function StockIncPisoTab() {
   useEffect(() => {
     if (!loadedRef.current) { loadedRef.current = true; load() }
   }, [])
+
+  // Persistir búsqueda (se restaura al volver desde Sectores)
+  useEffect(() => {
+    saveTabState('piso.stock-inc', { q: query })
+  }, [query])
 
   // Filtrar solo INC y buscar
   const filtered = useMemo(() => {
@@ -65,6 +73,7 @@ export function StockIncPisoTab() {
           ubi: item.ubicacion,
           qty: item.cantidad,
           vencimiento: item.fecha_vencimiento,
+          target: onGotoPosicion ? targetDesdeStockItem(item) : null,
         })
       } else {
         map.set(key, {
@@ -78,12 +87,13 @@ export function StockIncPisoTab() {
             ubi: item.ubicacion,
             qty: item.cantidad,
             vencimiento: item.fecha_vencimiento,
+            target: onGotoPosicion ? targetDesdeStockItem(item) : null,
           }],
         })
       }
     }
     return Array.from(map.values()).sort((a, b) => a.codigoInc.localeCompare(b.codigoInc))
-  }, [filtered])
+  }, [filtered, onGotoPosicion])
 
   return (
     <div className="space-y-4">
@@ -167,14 +177,32 @@ export function StockIncPisoTab() {
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex flex-wrap gap-1">
-                      {g.ubicaciones.map((u, idx) => (
-                        <Badge key={idx} variant="outline" className="text-[10px] font-mono text-slate-400 border-slate-700">
-                          {u.sector && <span className="text-sky-400 mr-1">{u.sector}</span>}
-                          <MapPin className="h-2.5 w-2.5 mr-0.5" />
-                          {u.ubi}
-                          <span className="ml-1 text-slate-500">({u.qty % 1 === 0 ? u.qty : u.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })})</span>
-                        </Badge>
-                      ))}
+                      {g.ubicaciones.map((u, idx) => {
+                        const badge = (
+                          <>
+                            {u.sector && <span className="text-sky-400 mr-1">{u.sector}</span>}
+                            <MapPin className="h-2.5 w-2.5 mr-0.5" />
+                            {u.ubi}
+                            <span className="ml-1 text-slate-500">({u.qty % 1 === 0 ? u.qty : u.qty.toLocaleString(undefined, { maximumFractionDigits: 3 })})</span>
+                          </>
+                        )
+                        return u.target ? (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => onGotoPosicion?.(u.target!)}
+                            className="inline-flex items-center px-1.5 py-0.5 rounded border border-violet-500/40 bg-violet-500/10 hover:bg-violet-500/25 hover:border-violet-400/60 text-[10px] font-mono text-violet-300 transition-colors cursor-pointer active:scale-95"
+                            title="Ir a la posición en Sectores para realizar movimientos"
+                          >
+                            {badge}
+                            <ExternalLink className="h-2 w-2 ml-0.5 text-violet-400" />
+                          </button>
+                        ) : (
+                          <Badge key={idx} variant="outline" className="text-[10px] font-mono text-slate-400 border-slate-700">
+                            {badge}
+                          </Badge>
+                        )
+                      })}
                     </div>
                   </td>
                 </tr>

@@ -2,17 +2,24 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { stockPisoBuscar, type StockPisoItem } from '@/lib/piso/api'
+import { targetDesdeStockItem, type PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { findCatalogoByCodigo, fetchCatalogo, isCatalogoLoaded } from '@/lib/rackly/catalogo'
+import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
-import { Search, PackageSearch, Loader2, MapPin, AlertTriangle } from 'lucide-react'
+import { Search, PackageSearch, Loader2, MapPin, AlertTriangle, ExternalLink } from 'lucide-react'
 
-export function PisoStockTab() {
-  const [query, setQuery] = useState('')
-  const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>('todos')
+export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: PisoTargetPosicion) => void }) {
+  // Estado persistido en sessionStorage (inicializador lazy): al volver desde
+  // Sectores (botón de retorno) la búsqueda continúa donde quedó.
+  const [query, setQuery] = useState(() => loadTabState('piso.stock', { q: '', filter: 'todos' }).q)
+  const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>(() => {
+    const f = loadTabState('piso.stock', { q: '', filter: 'todos' }).filter
+    return f === 'inc' || f === 'disponibles' ? f : 'todos'
+  })
   const [items, setItems] = useState<StockPisoItem[]>([])
   const [loading, setLoading] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
@@ -58,6 +65,11 @@ export function PisoStockTab() {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
   }, [query])
+
+  // Persistir la búsqueda en curso (se restaura al volver desde Sectores)
+  useEffect(() => {
+    saveTabState('piso.stock', { q: query, filter: stockFilter })
+  }, [query, stockFilter])
 
   // Get Big Magic stock for the search term
   const bmItem = query.trim() ? findCatalogoByCodigo(query.trim()) : null
@@ -114,7 +126,8 @@ export function PisoStockTab() {
   return (
     <div className="space-y-4">
       {/* Filter buttons: Todos / Disponibles / Solo INC */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5">
         {(['todos', 'disponibles', 'inc'] as const).map((f) => (
           <button
             key={f}
@@ -131,6 +144,11 @@ export function PisoStockTab() {
             {f === 'todos' ? 'Todos' : f === 'disponibles' ? 'Disponibles' : 'Solo INC'}
           </button>
         ))}
+        </div>
+        <p className="text-[10px] text-slate-500 hidden sm:flex items-center gap-1">
+          <MapPin className="h-3 w-3 text-violet-500" />
+          Toca la ubicación para ir a la posición y realizar movimientos
+        </p>
       </div>
 
       {/* Search bar */}
@@ -229,12 +247,26 @@ export function PisoStockTab() {
                 </div>
                 {/* Lots */}
                 <div className="divide-y divide-slate-700/50">
-                  {rows.map((r, i) => (
+                  {rows.map((r, i) => {
+                    const target = onGotoPosicion ? targetDesdeStockItem(r) : null
+                    return (
                     <div key={i} className="px-3 py-2 space-y-1.5">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1 text-[10px] text-slate-400">
                           <MapPin className="h-3 w-3" />
-                          <span className="font-medium text-slate-300">{r.ubicacion}</span>
+                          {target ? (
+                            <button
+                              type="button"
+                              onClick={() => onGotoPosicion?.(target)}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-violet-500/40 bg-violet-500/10 hover:bg-violet-500/25 hover:border-violet-400/60 text-[10px] font-mono font-semibold text-violet-300 transition-colors cursor-pointer active:scale-95"
+                              title="Ir a la posición en Sectores para realizar movimientos"
+                            >
+                              {r.ubicacion}
+                              <ExternalLink className="h-2.5 w-2.5 text-violet-400" />
+                            </button>
+                          ) : (
+                            <span className="font-medium text-slate-300">{r.ubicacion}</span>
+                          )}
                         </div>
                         <span className="text-xs font-bold text-white">{r.cantidad} {r.bloque_unidad}</span>
                       </div>
@@ -253,7 +285,8 @@ export function PisoStockTab() {
                         )}
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             ))}
@@ -274,10 +307,28 @@ export function PisoStockTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((r, i) => (
+                {filtered.map((r, i) => {
+                  const target = onGotoPosicion ? targetDesdeStockItem(r) : null
+                  const celdaUbi = target ? (
+                    <button
+                      type="button"
+                      onClick={() => onGotoPosicion?.(target)}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-500/40 bg-violet-500/10 hover:bg-violet-500/25 hover:border-violet-400/60 text-xs font-mono font-semibold text-violet-300 transition-colors cursor-pointer active:scale-95 whitespace-nowrap"
+                      title="Ir a la posición en Sectores para realizar movimientos"
+                    >
+                      <MapPin className="h-3 w-3 text-violet-400" />
+                      {r.ubicacion}
+                      <ExternalLink className="h-2.5 w-2.5 text-violet-400" />
+                    </button>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-slate-200">
+                      <MapPin className="h-3 w-3 text-slate-500" />{r.ubicacion}
+                    </span>
+                  )
+                  return (
                   <TableRow key={i} className="border-slate-700/50 hover:bg-slate-700/30">
                     <TableCell className="font-mono font-semibold text-indigo-400 text-xs">{r.bloque_codigo}</TableCell>
-                    <TableCell className="text-xs text-slate-200 whitespace-nowrap">{r.ubicacion}</TableCell>
+                    <TableCell className="text-xs whitespace-nowrap">{celdaUbi}</TableCell>
                     <TableCell className="hidden lg:table-cell text-xs text-slate-400">
                       {r.sector_nombre || '—'}
                     </TableCell>
@@ -286,7 +337,8 @@ export function PisoStockTab() {
                     <TableCell>{vencimientoBadge(r.fecha_vencimiento)}</TableCell>
                     <TableCell className="text-right text-xs font-bold text-white">{r.cantidad}</TableCell>
                   </TableRow>
-                ))}
+                  )
+                })}
               </TableBody>
             </Table>
           </div>

@@ -87,7 +87,7 @@ BEGIN
   FOR v_nivel_id IN
     SELECT DISTINCT (d->>'nivel_id')::uuid
     FROM jsonb_array_elements(p_detalles) AS d
-    ORDER BY (d->>'nivel_id')::text
+    ORDER BY 1
   LOOP
     PERFORM pg_advisory_xact_lock(hashtextextended(v_nivel_id::text, 0));
   END LOOP;
@@ -126,7 +126,7 @@ BEGIN
   -- Cabecera: numero_operacion lo asigna la SECUENCIA (columna default);
   -- se elimina el MAX+1 que competía con la secuencia del cliente.
   INSERT INTO piso_movimientos (tipo, fecha, turno, usuario_id, usuario_nombre, usuario_correo, uuid_sync)
-  VALUES ('salida', now(), p_turno, p_usuario_id, p_usuario_nombre, p_usuario_correo, p_uuid_sync)
+  VALUES ('salida', now(), p_turno, NULLIF(btrim(p_usuario_id), '')::uuid, p_usuario_nombre, p_usuario_correo, p_uuid_sync)
   RETURNING id, numero_operacion INTO v_mov_id, v_num_out;
 
   -- Detalles: con lote físico y parseo de fecha tolerante (ISO o timestamp)
@@ -235,7 +235,7 @@ BEGIN
       UNION
       SELECT (d->>'nivel_id')::uuid AS nid FROM jsonb_array_elements(p_detalles_ingreso) AS d
     ) sub
-    ORDER BY nid::text
+    ORDER BY nid
   LOOP
     PERFORM pg_advisory_xact_lock(hashtextextended(v_nivel_id::text, 0));
   END LOOP;
@@ -272,11 +272,11 @@ BEGIN
 
   -- Cabeceras salida + ingreso (numero_operacion por SECUENCIA en ambas)
   INSERT INTO piso_movimientos (tipo, fecha, turno, usuario_id, usuario_nombre, usuario_correo, uuid_sync)
-  VALUES ('salida', now(), p_turno, p_usuario_id, p_usuario_nombre, p_usuario_correo, p_uuid_sync)
+  VALUES ('salida', now(), p_turno, NULLIF(btrim(p_usuario_id), '')::uuid, p_usuario_nombre, p_usuario_correo, p_uuid_sync)
   RETURNING id, numero_operacion INTO v_sal_id, v_num_sal;
 
   INSERT INTO piso_movimientos (tipo, fecha, turno, usuario_id, usuario_nombre, usuario_correo, uuid_sync)
-  VALUES ('ingreso', now(), p_turno, p_usuario_id, p_usuario_nombre, p_usuario_correo, p_uuid_sync)
+  VALUES ('ingreso', now(), p_turno, NULLIF(btrim(p_usuario_id), '')::uuid, p_usuario_nombre, p_usuario_correo, p_uuid_sync)
   RETURNING id, numero_operacion INTO v_ing_id, v_num_ing;
 
   -- Detalles de SALIDA (con lote y fecha tolerante)
@@ -350,7 +350,7 @@ $fn$;
 -- ─────────────────────────────────────────────────────────────────────────
 DROP FUNCTION IF EXISTS public.piso_registrar_movimiento(text, text, jsonb, text, text, text, text, text);
 
-CREATE FUNCTION public.piso_registrar_movimiento(
+CREATE OR REPLACE FUNCTION public.piso_registrar_movimiento(
   _tipo            text,
   _turno           text,
   _detalles        jsonb DEFAULT '[]'::jsonb,
@@ -393,7 +393,7 @@ BEGIN
     FOR v_nivel_id IN
       SELECT DISTINCT (d->>'nivel_id')::uuid
       FROM jsonb_array_elements(_detalles) AS d
-      ORDER BY (d->>'nivel_id')::text
+      ORDER BY 1
     LOOP
       PERFORM pg_advisory_xact_lock(hashtextextended(v_nivel_id::text, 0));
     END LOOP;
@@ -401,7 +401,7 @@ BEGIN
 
   -- Cabecera (numero_operacion por SECUENCIA; codigo_inc y posicion_id opcionales)
   INSERT INTO piso_movimientos (tipo, fecha, turno, usuario_id, usuario_nombre, usuario_correo, uuid_sync, codigo_inc, posicion_id)
-  VALUES (_tipo, now(), _turno, _usuario_id, _usuario_nombre, _usuario_correo, _uuid_sync, NULLIF(_codigo_inc, ''), _posicion_id)
+  VALUES (_tipo, now(), _turno, NULLIF(btrim(_usuario_id), '')::uuid, _usuario_nombre, _usuario_correo, _uuid_sync, NULLIF(_codigo_inc, ''), _posicion_id)
   RETURNING id, numero_operacion INTO v_mov_id, v_num_out;
 
   -- Detalles (lote + fecha tolerante)
@@ -452,7 +452,7 @@ $fn$;
 -- ─────────────────────────────────────────────────────────────────────────
 DROP FUNCTION IF EXISTS public.piso_stock_detalle_posicion(uuid);
 
-CREATE FUNCTION public.piso_stock_detalle_posicion(_posicion_id uuid)
+CREATE OR REPLACE FUNCTION public.piso_stock_detalle_posicion(_posicion_id uuid)
 RETURNS TABLE (
   bloque_id           text,
   bloque_codigo       text,

@@ -45,12 +45,15 @@
  * que se imprime con Zebra Setup Utilities (arrastrar y enviar).
  *
  * QR DE GUÍA (pedido 2026-10): cada rótulo lleva un QR (ZPL nativo ^BQ —
- * la impresora lo dibuja, sin librerías) en la ESQUINA IZQUIERDA de la
- * banda del código, separado por una línea límite. Codifica la identidad
- * de la guía + el artículo (ver qr-rotulo.ts) para que el módulo TRÁNSITO
- * escanee el rótulo y abra la transferencia a Rack/Piso. Con el QR a la
- * izquierda, el código del artículo se imprime MÁS GRANDE (tope 215 dots
- * vs 190 anterior) centrado a la derecha del límite.
+ * la impresora lo dibuja, sin librerías) en la ESQUINA DERECHA de la
+ * banda del código, separado por una línea límite — POSICIÓN según la
+ * foto real de la etiqueta anotada a lapicero por el usuario (2026-10-16):
+ * "AQUÍ VA QR" a la DERECHA del límite, el código del artículo a la
+ * IZQUIERDA. Codifica la identidad de la guía + el artículo (ver
+ * qr-rotulo.ts) para que el módulo TRÁNSITO escanee el rótulo y abra la
+ * transferencia a Rack/Piso. Con el QR a la derecha, el código del
+ * artículo se imprime MÁS GRANDE (tope 215 dots vs 190 anterior)
+ * centrado a la izquierda del límite.
  */
 
 import { construirPayloadQR } from '@/lib/rackly/qr-rotulo'
@@ -294,11 +297,20 @@ function fechaCorta(iso: string): string {
 const ANCHO_FISICO = 800
 
 /**
- * Ancho VISUAL de la zona QR en la banda del código (esquina izquierda):
- * 240 dots (2.98 cm) con el QR centrado y su zona de silencio (quiet zone
- * ≥ 4 módulos) holgada, separada del texto por una línea límite.
+ * Ancho VISUAL de la zona QR en la banda del código (ESQUINA DERECHA):
+ * 300 dots (3.73 cm) — proporción de la foto del usuario (límite al ~75%
+ * del ancho, "AQUÍ VA QR" en el rincón). El QR va centrado dentro con su
+ * zona de silencio (quiet zone ≥ 4 módulos) holgada, separado del texto
+ * por la línea límite.
  */
-const ZONA_QR_ANCHO = 240
+const ZONA_QR_ANCHO = 300
+
+/**
+ * X visual donde EMPIEZA la zona QR (= línea límite / separadora).
+ * 1200 − 300 = 900: la banda del código queda 0..900 para el artículo y
+ * 900..1200 para el QR.
+ */
+const X_ZONA_QR = 1200 - ZONA_QR_ANCHO
 
 /** Contexto de guía para el QR del rótulo (identidad de la guía impresa). */
 export type ContextoQR = { guiaId?: string | null; numeroDocumento?: string }
@@ -342,28 +354,35 @@ function modulosQR(len: number): number {
 }
 
 /**
- * ZPL del QR centrado en la esquina izquierda de la banda del código.
+ * ZPL del QR centrado en la ESQUINA DERECHA de la banda del código
+ * (zona X_ZONA_QR..1200 visual, según la foto del usuario).
  * EC 'Q' (25% de recuperación): rótulos que pasan por manos y polvo.
  * `^FDQA,` = EC Q + modo A (automático): el dato va codificado tal cual.
  *
- * POSICIÓN (lección calibrada con render — bug 2026-10-17): la caja del
- * QR en VISUAL es (m..m+lado) × (m..m+lado) con m = (240−lado)/2. Como el
- * campo NO rota (el QR es simétrico), en FÍSICO:
- *   · y físico  = X_vis izquierdo            = m
- *   · x físico  = 800 − Y_vis superior       = 800 − (m + lado)
+ * POSICIÓN (lección calibrada con render — bug 2026-10-17): el tamaño del
+ * símbolo se dimensiona contra el cuadrado de diseño de 240 (alto de la
+ * banda — la restricción MÁS APRETADA; la zona de 300 solo da más aire
+ * horizontal). Como el campo NO rota (el QR es simétrico), la caja visual
+ * del QR ((x..x+lado) × (m..m+lado), con m = margen vertical) mapea a
+ * FÍSICO así:
+ *   · y físico  = X_vis izquierdo            = X_ZONA_QR + margenX
+ *   · x físico  = 800 − Y_vis superior       = 800 − (margenY + lado)
  * (usar `800 − ZONA + m` dejaba el símbolo pegado a la línea inferior de
  * la banda en el espacio físico — quiet zone destruida, QR ilegible).
  */
 function campoQR(payload: string): string {
   const mods = modulosQR(payload.length)
   // Peor caso: el encoder puede elegir UNA versión más (+4 módulos).
-  // Con ese peor caso garantiza ≥ 24 dots de margen por lado (la quiet
-  // zone de 4 módulos a mag ≤ 6 son ≤ 24 dots).
-  const mag = Math.max(3, Math.min(6, Math.floor((ZONA_QR_ANCHO - 48) / (mods + 4))))
+  // Con ese peor caso garantiza ≥ 24 dots de margen por lado EN LA BANDA
+  // (la quiet zone de 4 módulos a mag ≤ 6 son ≤ 24 dots). La zona de 300
+  // da además ≥ 24 dots extra de aire horizontal.
+  const mag = Math.max(3, Math.min(6, Math.floor((ZONA_QR_ALTO_BANDA - 48) / (mods + 4))))
   const ladoEsp = mods * mag
-  const margen = Math.floor((ZONA_QR_ALTO_BANDA - ladoEsp) / 2)
-  const xFis = ANCHO_FISICO - margen - ladoEsp
-  return `^FO${xFis},${margen}^BQN,2,${mag}^FDQA,${payload}^FS`
+  const margenY = Math.floor((ZONA_QR_ALTO_BANDA - ladoEsp) / 2)
+  const margenX = Math.floor((ZONA_QR_ANCHO - ladoEsp) / 2)
+  const xFis = ANCHO_FISICO - margenY - ladoEsp
+  const yFis = X_ZONA_QR + margenX
+  return `^FO${xFis},${yFis}^BQN,2,${mag}^FDQA,${payload}^FS`
 }
 
 /** Alto visual de la banda del código (el QR se centra en él). */
@@ -434,9 +453,9 @@ function campoApaisado(
  *
  * Al despegar el rótulo y girarlo 90° ANTIHORARIO se lee horizontal:
  *
- *   ┌──────────┬───────────────────────────────────────────────┐ Y 0
- *   │ ▓▓ QR ▓▓ │                    49310                      │  código 0..240
- *   ├──────────┴───────────────────────────────────────────────┤
+ *   ┌───────────────────────────────────────────────┬──────────┐ Y 0
+ *   │                    49310                      │ ▓▓ QR ▓▓ │  código 0..240
+ *   ├───────────────────────────────────────────────┴──────────┤
  *   │   LAMINA TERMOCONTRABLE 380 MM X 50 µ  (1-2 líneas)        │  desc 240..400
  *   ├────────────┬───────────────────────────────────────────────┤
  *   │   LOTE:    │                0869051017                     │  lote 400..545
@@ -448,8 +467,9 @@ function campoApaisado(
  *
  * FIDELIDAD al formato de la empresa:
  *   · SIN código de barras (el original es solo texto) — PERO con QR de
- *     guía a la izquierda (2026-10, para el lector de Tránsito) y el
- *     código de artículo agrandado a la derecha del límite.
+ *     guía a la DERECHA del límite (2026-10, foto del usuario "AQUÍ VA
+ *     QR", para el lector de Tránsito) y el código de artículo agrandado
+ *     a la izquierda del límite.
  *   · SIN guía/placa/proveedor/fecha de recepción (no están en la plantilla;
  *     `encabezado` queda en la firma por compatibilidad, no se imprime).
  *   · Todas las cajas con borde, textos centrados, "negrita" simulada
@@ -494,11 +514,12 @@ export function construirZPLRotulo(
   // Marco exterior (físicamente idéntico al formato vertical anterior)
   lineas.push(cajaApaisada(0, 0, 1200, 800, 3))
 
-  // ── 1) BANDA CÓDIGO (Y 0..240): QR de guía a la IZQUIERDA + código ──
-  // Cuando hay identidad de guía el QR ocupa la esquina izquierda (zona
-  // 0..280 cerrada con línea separadora — el "límite" del formato) y el
-  // código, MÁS GRANDE que antes (tope 215 vs 190 dots), se centra en el
-  // resto. Sin identidad (rótulo sin QR) el código usa el ancho completo.
+  // ── 1) BANDA CÓDIGO (Y 0..240): código a la IZQUIERDA + QR de guía a la DERECHA ──
+  // Cuando hay identidad de guía el QR ocupa la esquina derecha (zona
+  // 900..1200, cerrada por la línea límite en X 900 — el "límite" de la
+  // foto del usuario) y el código, MÁS GRANDE que antes (tope 215 vs 190
+  // dots), se centra en el resto (0..900). Sin identidad (rótulo sin QR)
+  // el código usa el ancho completo.
   // El alto se AUTO-AJUSTA a la longitud: el catálogo hoy usa 3-5 dígitos
   // (cabe a 215 dots); con códigos largos se reduce proporcionalmente
   // (holgura 0.62: margen del avance real 0.6 × alto) y queda centrado.
@@ -508,13 +529,14 @@ export function construirZPLRotulo(
   })
   lineas.push(cajaApaisada(0, 0, 1200, 240, 3))
   if (payloadQR) {
-    // Línea separadora: límite derecho de la zona QR (borde del boceto).
-    lineas.push(cajaApaisada(ZONA_QR_ANCHO - 3, 0, ZONA_QR_ANCHO, 240, 2))
+    // Línea separadora: límite IZQUIERDO de la zona QR (el lápiz azul de
+    // la foto — "AQUÍ VA QR" a su derecha).
+    lineas.push(cajaApaisada(X_ZONA_QR, 0, X_ZONA_QR + 3, 240, 2))
     lineas.push(campoQR(payloadQR))
   }
   if (codigo) {
-    const anchoTexto = payloadQR ? 926 : 1152
-    const xTexto = payloadQR ? 250 : 24
+    const anchoTexto = payloadQR ? 866 : 1152
+    const xTexto = 24
     const alto = altoParaCaja(codigo, anchoTexto, 215, 90, 0.62)
     const y = Math.floor((240 - alto) / 2) - 10
     lineas.push(...campoApaisado(xTexto, y, alto, Math.round(alto * 0.6), codigo, { fbAncho: anchoTexto, negrita: true }))

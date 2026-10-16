@@ -160,8 +160,8 @@ const aCorto = codigoFisico(zCorto)
 const aLargo = codigoFisico(zLargo)
 const aLargo12 = codigoFisico(zLargo12)
 check('código 5 dígitos usa el alto máximo nuevo (215)', aCorto && aCorto.alto === 215)
-check('código 7 dígitos cabe en el ancho con QR (7 × 0.6 × 207 = 869 < 902)', aLargo && aLargo.alto === 207 && 7 * 0.6 * 207 < 902)
-check('código 12 dígitos se reduce (alto 121 < 215) y cabe (871 < 902)', aLargo12 && aLargo12.alto === 121 && 12 * 0.6 * 121 < 902)
+check('código 7 dígitos cabe en el ancho con QR (7 × 0.6 × 194 = 814 < 842)', aLargo && aLargo.alto === 194 && 7 * 0.6 * 194 < 842)
+check('código 12 dígitos se reduce (alto 113 < 215) y cabe (814 < 842)', aLargo12 && aLargo12.alto === 113 && 12 * 0.6 * 113 < 842)
 check(
   'código centrado en su banda: y_visual = 800 − x_fís − alto ∈ (0, 240−alto)',
   aCorto && (() => { const y = 800 - aCorto.xFis - aCorto.alto; return y > 0 && y + aCorto.alto < 240 })()

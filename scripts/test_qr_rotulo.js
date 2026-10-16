@@ -127,18 +127,33 @@ t('ZPL con guía: ^BQ nativo + payload QA + separador + código a 215', () => {
   const payload = `${PREFIJO_QR}|${GUIA}|${ENC.numeroDocumento}|49310`
   assert.ok(zpl.includes(`^FDQA,${payload}^FS`), 'falta ^FDQA,<payload>')
   assert.ok(zpl.includes('^A0R,215,'), `código debía salir a 215 dots: ${zpl.match(/\^A0R,\d+/)?.[0]}`)
-  // El código se centra a la DERECHA del separador: su ^FB es 926 (no 1152)
-  assert.ok(zpl.includes('^FB926,'), `falta ^FB926 del área de texto con QR: ${zpl.match(/\^FB\d+/)?.[0]}`)
+  // El código se centra a la IZQUIERDA del separador: su ^FB es 866 (no 1152)
+  assert.ok(zpl.includes('^FB866,'), `falta ^FB866 del área de texto con QR: ${zpl.match(/\^FB\d+/)?.[0]}`)
+  // El QR va en la ESQUINA DERECHA (foto del usuario "AQUÍ VA QR"):
+  // su ^FO físico tiene Y ≥ 900 (zona 900..1200 visual)
+  const foQr = /\^FO(\d+),(\d+)\^BQN/.exec(zpl)
+  assert.ok(foQr && Number(foQr[2]) >= 900, `QR debía anclarse en la zona derecha (Y fís ≥ 900): ${foQr?.[0]}`)
+  // Línea límite en X visual 900 (borde izquierdo de la zona QR)
+  assert.ok(zpl.includes('^FO560,900^GB240,3,2'), 'falta la línea límite en X visual 900')
   // Se mantiene el resto del formato: cantidad, lote, fechas, PQ
   assert.ok(zpl.includes('LOTE:'), 'falta LOTE')
   assert.ok(zpl.includes('CANT:'), 'falta CANT')
   assert.ok(zpl.includes('^PQ1,0,0,N'), 'falta ^PQ')
 })
 
-t('ZPL con guía corta (T173-1) y código de 3 dígitos: QR mag ≥ 5 sigue decodificable', () => {
+t('QR calibrado: payload con uuid (52+ chars) → mag 4 (E2E Labelary verificado)', () => {
   const zpl = construirZPLRotulo({ ...DATOS, codigo: '126' }, { ...ENC, numeroDocumento: 'T173-1' }, { qr: { guiaId: GUIA, numeroDocumento: 'T173-1' } })
   const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
-  assert.ok(mag >= 5, `magnificación baja: ${mag}`)
+  assert.strictEqual(mag, 4, `magnificación calibrada para payload largo: ${mag}`)
+})
+
+t('ZPL con guía corta SIN uuid (solo Nº doc) y código de 3 dígitos: QR mag ≥ 5', () => {
+  const zpl = construirZPLRotulo({ ...DATOS, codigo: '126' }, { ...ENC, guiaId: null, numeroDocumento: 'T173-1' }, { qr: { guiaId: '', numeroDocumento: 'T173-1' } })
+  const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
+  assert.ok(mag >= 5, `magnificación baja para payload corto: ${mag}`)
+  // y sigue anclado en la zona derecha
+  const foQr = /\^FO(\d+),(\d+)\^BQN/.exec(zpl)
+  assert.ok(foQr && Number(foQr[2]) >= 900, `QR debía anclarse a la derecha: ${foQr?.[0]}`)
 })
 
 t('ZPL sin identidad (sin guiaId y sin Nº): SIN ^BQ y código a ancho completo', () => {

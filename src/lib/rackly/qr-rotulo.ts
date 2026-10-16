@@ -2,9 +2,10 @@
  * RACKLY — Formato del CÓDIGO QR del rótulo de Recepción (contrato compartido).
  *
  * Cada rótulo impreso en Recepción lleva UN QR (ZPL nativo ^BQ, esquina
- * izquierda de la banda del código) que identifica la guía a la que pertenece
- * el artículo. El módulo TRÁNSITO escanea ese QR y abre la transferencia de
- * ese artículo a la posición elegida (Rack o Piso).
+ * DERECHA de la banda del código — según la foto anotada por el usuario:
+ * "AQUÍ VA QR" a la derecha del límite) que identifica la guía a la que
+ * pertenece el artículo. El módulo TRÁNSITO escanea ese QR y abre la
+ * transferencia de ese artículo a la posición elegida (Rack o Piso).
  *
  * PAYLOAD (texto plano, tolerante a pistolas USB y cámaras):
  *

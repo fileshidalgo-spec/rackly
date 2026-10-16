@@ -388,6 +388,34 @@ function campoQR(payload: string): string {
 /** Alto visual de la banda del código (el QR se centra en él). */
 const ZONA_QR_ALTO_BANDA = 240
 
+/** Centro visual de la banda del código (Y 0..240). */
+const CENTRO_BANDA_CODIGO = 120
+
+/**
+ * Centrado de la TINTA del código en su banda — CALIBRADO con render
+ * Labelary + medición OpenCV (2026-10-17, ^A0R dígitos con negrita):
+ * la tinta de los dígitos ocupa de −0.0102×em (los capcales llegan casi
+ * AL TOPE de la celda, ±3 dots de AA) hasta 0.7611×em (la baseline deja
+ * el resto de aire abajo). Centrar la CAJA
+ * (fórmula vieja (240−alto)/2 − 10) dejaba la tinta 33 dots ALTA.
+ * El origen de celda para centrar la tinta es y0 = 120 − 0.3755×em.
+ * La CAJA puede colgar bajo la banda (es invisible): la tinta de códigos
+ * NUMÉRICOS (el catálogo usa dígitos) termina en la baseline. Un código
+ * con descendentes (Q, J, coma) podría rozar la línea inferior: hoy no
+ * existen en el catálogo.
+ */
+const TINTA_CENTRO_EM = 0.3755
+
+/**
+ * Tope del em del código: la tinta ([y0−0.0102×em, y0+0.7611×em] con
+ * y0 = 120 − 0.3755×em) debe quedar ENTRE las líneas de borde de la
+ * banda con ≥ 5 dots libres: y0 − 0.0102×em ≥ 8 → em ≤ 286.0 y
+ * tinta_inf = 120 + 0.3856×em ≤ 230.3 ≤ 234 ✓. Con QR el ancho (852)
+ * limita antes a los códigos de 5+ dígitos: 5 dígitos → em 267 (tinta
+ * con 14/14 dots de margen a las líneas, centrada ±0.3).
+ */
+const TOPE_ALTO_CODIGO = 286
+
 /**
  * Caja de borde en coordenadas VISUALES apaisadas (x0,y0)-(x1,y1) sobre el
  * lienzo 1200 × 800 → comando ^GB en coordenadas físicas. Los ^GB no se
@@ -517,12 +545,12 @@ export function construirZPLRotulo(
   // ── 1) BANDA CÓDIGO (Y 0..240): código a la IZQUIERDA + QR de guía a la DERECHA ──
   // Cuando hay identidad de guía el QR ocupa la esquina derecha (zona
   // 900..1200, cerrada por la línea límite en X 900 — el "límite" de la
-  // foto del usuario) y el código, MÁS GRANDE que antes (tope 215 vs 190
-  // dots), se centra en el resto (0..900). Sin identidad (rótulo sin QR)
-  // el código usa el ancho completo.
-  // El alto se AUTO-AJUSTA a la longitud: el catálogo hoy usa 3-5 dígitos
-  // (cabe a 215 dots); con códigos largos se reduce proporcionalmente
-  // (holgura 0.62: margen del avance real 0.6 × alto) y queda centrado.
+  // foto del usuario) y el código OCUPA EL RESTO (0..900) con la fuente
+  // MÁS GRANDE que quepa (tinta centrada en la banda, sin pisar líneas —
+  // pedido 2026-10-17 con la zona pintada en verde sobre la etiqueta).
+  // Sin identidad (rótulo sin QR) el código usa el ancho completo.
+  // El alto se AUTO-AJUSTA a la longitud: códigos largos se reducen para
+  // no invadir el límite (holgura 0.62 ≥ avance real 0.6 × alto + negrita).
   const payloadQR = payloadQRRotulo(datos, {
     guiaId: opciones?.qr?.guiaId ?? encabezado.guiaId,
     numeroDocumento: opciones?.qr?.numeroDocumento ?? encabezado.numeroDocumento,
@@ -535,10 +563,13 @@ export function construirZPLRotulo(
     lineas.push(campoQR(payloadQR))
   }
   if (codigo) {
-    const anchoTexto = payloadQR ? 866 : 1152
+    // Campo centrado SIMÉTRICO en su zona: márgenes 24 a cada lado
+    // (24..876 dentro de 0..900 con QR; 24..1176 sin QR).
+    const anchoTexto = payloadQR ? 852 : 1152
     const xTexto = 24
-    const alto = altoParaCaja(codigo, anchoTexto, 215, 90, 0.62)
-    const y = Math.floor((240 - alto) / 2) - 10
+    const alto = altoParaCaja(codigo, anchoTexto, TOPE_ALTO_CODIGO, 90, 0.62)
+    // Centrado de la TINTA (no de la caja): ver TINTA_CENTRO_EM.
+    const y = Math.max(0, Math.round(CENTRO_BANDA_CODIGO - TINTA_CENTRO_EM * alto))
     lineas.push(...campoApaisado(xTexto, y, alto, Math.round(alto * 0.6), codigo, { fbAncho: anchoTexto, negrita: true }))
   }
 

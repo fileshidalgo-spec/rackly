@@ -64,7 +64,7 @@ check('largo físico 1200 dots (tira 15 cm)', z1.includes('^LL1200'))
 check('marco exterior 800×1200 desde (0,0)', z1.includes('^FO0,0^GB800,1200,3'))
 check('SIN ^LH (desplazaba el marco fuera del área: bordes derecho/inferior no salían)', !z1.includes('^LH'))
 check('texto ROTADO 90° horario (todo ^A0R, sin ^A0N)', !z1.includes('^A0N') && z1.includes('^A0R'))
-check('código gigante rotado, agrandado (alto 215, glifo 129)', z1.includes('^A0R,215,129'))
+check('código gigante rotado, agrandado (alto 267, glifo 160)', z1.includes('^A0R,267,160'))
 check('código presente como texto', z1.includes('^FD56119^FS'))
 
 console.log('\n── 2. Fidelidad a la plantilla PERECIBLE ──')
@@ -159,12 +159,17 @@ function codigoFisico(z) {
 const aCorto = codigoFisico(zCorto)
 const aLargo = codigoFisico(zLargo)
 const aLargo12 = codigoFisico(zLargo12)
-check('código 5 dígitos usa el alto máximo nuevo (215)', aCorto && aCorto.alto === 215)
-check('código 7 dígitos cabe en el ancho con QR (7 × 0.6 × 194 = 814 < 842)', aLargo && aLargo.alto === 194 && 7 * 0.6 * 194 < 842)
-check('código 12 dígitos se reduce (alto 113 < 215) y cabe (814 < 842)', aLargo12 && aLargo12.alto === 113 && 12 * 0.6 * 113 < 842)
+check('código 5 dígitos usa el alto máximo nuevo (267)', aCorto && aCorto.alto === 267)
+check('código 7 dígitos cabe en el ancho con QR (7 × 0.6 × 190 = 798 < 828)', aLargo && aLargo.alto === 190 && 7 * 0.6 * 190 < 828)
+check('código 12 dígitos se reduce (alto 111 < 267) y cabe (799 < 828)', aLargo12 && aLargo12.alto === 111 && 12 * 0.6 * 111 < 828)
 check(
-  'código centrado en su banda: y_visual = 800 − x_fís − alto ∈ (0, 240−alto)',
-  aCorto && (() => { const y = 800 - aCorto.xFis - aCorto.alto; return y > 0 && y + aCorto.alto < 240 })()
+  'tinta del código CENTRADA en la banda y sin tocar líneas (calibrado)',
+  aCorto && (() => {
+    const y0 = 800 - aCorto.xFis - aCorto.alto
+    const sup = y0 - 0.0102 * aCorto.alto
+    const inf = y0 + 0.7611 * aCorto.alto
+    return sup >= 6 && inf <= 234 && Math.abs((sup + inf) / 2 - 120) <= 3
+  })()
 )
 
 console.log('\n── 8. Límites físicos: nada sale del área 800×1200 ──')

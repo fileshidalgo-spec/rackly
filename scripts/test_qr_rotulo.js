@@ -126,9 +126,9 @@ t('ZPL con guía: ^BQ nativo + payload QA + separador + código a 215', () => {
   assert.ok(zpl.includes('^BQN,2,'), 'falta ^BQ')
   const payload = `${PREFIJO_QR}|${GUIA}|${ENC.numeroDocumento}|49310`
   assert.ok(zpl.includes(`^FDQA,${payload}^FS`), 'falta ^FDQA,<payload>')
-  assert.ok(zpl.includes('^A0R,215,'), `código debía salir a 215 dots: ${zpl.match(/\^A0R,\d+/)?.[0]}`)
-  // El código se centra a la IZQUIERDA del separador: su ^FB es 866 (no 1152)
-  assert.ok(zpl.includes('^FB866,'), `falta ^FB866 del área de texto con QR: ${zpl.match(/\^FB\d+/)?.[0]}`)
+  assert.ok(zpl.includes('^A0R,267,'), `código debía salir a 267 dots: ${zpl.match(/\^A0R,\d+/)?.[0]}`)
+  // El código se centra a la IZQUIERDA del separador: su ^FB es 852 (no 1152)
+  assert.ok(zpl.includes('^FB852,'), `falta ^FB852 del área de texto con QR: ${zpl.match(/\^FB\d+/)?.[0]}`)
   // El QR va en la ESQUINA DERECHA (foto del usuario "AQUÍ VA QR"):
   // su ^FO físico tiene Y ≥ 900 (zona 900..1200 visual)
   const foQr = /\^FO(\d+),(\d+)\^BQN/.exec(zpl)

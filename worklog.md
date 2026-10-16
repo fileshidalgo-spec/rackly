@@ -130,3 +130,25 @@ Stage Summary:
 - No existing functionality broken — all changes are additive with graceful fallback
 - StockTab calculates server-side per-code (efficient: only downloads that code's movements)
 - OcupacionTab calculates server-side for all positions (downloads all movements but with fewer columns)
+---
+Task ID: 719-negativos-validacion
+Agent: Main Agent
+Task: Revisar los 719 negativos — validación, prevención y reparación completa
+
+Work Log:
+- Diagnóstico REST + Postgres (Management API): 88 celdas negativas por lote (antes 740), 34 activas en 7 días
+- Causa raíz confirmada: RPCs v3 (auto-lote FEFO) NUNCA se desplegaron en Supabase; 56% de salidas seguían naciendo sin lote
+- Deploy v4 (rackly_lote_v4_auto_salida.sql) vía Management API: RPCs con auto-lote FEFO activas
+- Backfill FASE 1-2 (rackly_backfill_lote_v2.sql): re-atribución FEFO + división por cuotas → 88→33
+- FASE 3 rebalanceo (rackly_rebalance_lotes.sql): re-atribución ENTRE lotes (32 lotes físicos negativos en celdas positivas) → 33→1
+- Descubierta brecha residual en v4: fallback "mayor saldo" podía fabricar negativo por lote con superávit sin-lote presente
+- Deploy v5 (rackly_lote_v5_auto_salida.sql): regla intermedia (bucket sin-lote absorbe antes de forzar lote físico)
+- Tests funcionales con ROLLBACK: 3 ramas de v5 verificadas (cubriente FEFO / NULL por superávit sl / mayor saldo)
+- Estado final: 1 única celda negativa = déficit REAL 57630 @ 1/1/2/12 (-221,202) — requiere decisión de negocio
+- Piso verificado con semántica de piso_stock_sector_grid: 0 negativos reales
+- 57630 tiene +242,200 en 2/1/4/6 → probable traslado no registrado (recomendado al usuario)
+
+Stage Summary:
+- Negativos por atribución: 100% reparados (740/88 → 0)
+- Prevención v5 activa en producción (misma firma, GRANTs intactos, sin cambios en app)
+- Scripts persistidos: download/rackly_backfill_lote_v2.sql, download/rackly_rebalance_lotes.sql, download/rackly_lote_v5_auto_salida.sql

@@ -57,8 +57,11 @@ export function UpKardexTab() {
       const descCol = headers.find((h) =>
         /descrip|nombre|name|product/i.test(h)
       ) || headers[1]
+      // FIX auditoría 2026-10-16: regex anclada a palabra — `/un|.../i` sin
+      // delimitadores matcheaba cualquier header que contuviera "un" como
+      // substring ("FUNDA", "JUNTA") y tomaba la unidad de una columna errónea.
       const unitColMatch = headers.find((h) =>
-        /un|unidad|unit|medida/i.test(h)
+        /\b(un|unidad|unit|medida)\b/i.test(h)
       )
       const unitCol = unitColMatch || headers[2]
 

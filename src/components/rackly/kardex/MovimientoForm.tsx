@@ -863,6 +863,10 @@ function SalidaForm({
       setProductoDesc('')
       setProductoUn('')
       setQtyMap({})
+      // FIX auditoría 2026-10-16: sin esto, borrar el texto mientras una
+      // búsqueda debounced estaba en vuelo dejaba `loading=true` PARA SIEMPRE
+      // (el cleanup solo cancela el timer; nada apagaba el spinner).
+      setLoading(false)
       return
     }
     setLoading(true)
@@ -1015,7 +1019,7 @@ function SalidaForm({
             onClick={toggleSelectAll}
             className="h-9 text-xs gap-1.5"
           >
-            <Checkbox checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected} className="h-3.5 w-3.5 pointer-events-none" />
+            <Checkbox checked={allSelected ? true : selected.size > 0 ? 'indeterminate' : false} className="h-3.5 w-3.5 pointer-events-none" />
             {allSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
           </Button>
           {selected.size > 0 && (
@@ -1148,7 +1152,7 @@ function SalidaForm({
                 <TableRow>
                   <TableHead className="w-10 text-center">
                     <Checkbox
-                      checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected}
+                      checked={allSelected ? true : selected.size > 0 ? 'indeterminate' : false}
                       onCheckedChange={toggleSelectAll}
                       className="h-4 w-4 mx-auto"
                     />
@@ -1643,6 +1647,9 @@ function SalidaIncForm({
       setProductoDesc('')
       setProductoUn('')
       setQtyMap({})
+      // FIX auditoría 2026-10-16 (SalidaIncForm): mismo spinner eterno que en
+      // SalidaForm al limpiar la búsqueda con un debounce en vuelo.
+      setLoading(false)
       return
     }
     setLoading(true)
@@ -1860,7 +1867,7 @@ function SalidaIncForm({
             onClick={toggleSelectAll}
             className="h-9 text-xs gap-1.5"
           >
-            <Checkbox checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected} className="h-3.5 w-3.5 pointer-events-none" />
+            <Checkbox checked={allSelected ? true : selected.size > 0 ? 'indeterminate' : false} className="h-3.5 w-3.5 pointer-events-none" />
             {allSelected ? 'Deseleccionar todas' : 'Seleccionar todas'}
           </Button>
           {selected.size > 0 && (
@@ -1973,7 +1980,7 @@ function SalidaIncForm({
                 <TableRow>
                   <TableHead className="w-10 text-center">
                     <Checkbox
-                      checked={allSelected || (selected.size > 0 && selected.size < locations.length) ? 'indeterminate' : allSelected}
+                      checked={allSelected ? true : selected.size > 0 ? 'indeterminate' : false}
                       onCheckedChange={toggleSelectAll}
                       className="h-4 w-4 mx-auto"
                     />

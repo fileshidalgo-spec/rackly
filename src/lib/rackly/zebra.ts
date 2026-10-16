@@ -174,7 +174,10 @@ export async function descubrirImpresorasZebra(): Promise<ImpresoraZebra[]> {
   const base = baseActiva ?? (await detectarServicioZebra()).base
   if (!base) return []
   try {
-    const res = await fetch(`${base}/available`)
+    // FIX auditoría 2026-10-16: timeout de 5 s — si Browser Print acepta la
+    // conexión pero no responde, el fetch quedaba colgado para siempre y el
+    // modal se clavaba en "Buscando…" sin recuperación (ni Reintentar).
+    const res = await fetch(`${base}/available`, { signal: AbortSignal.timeout(5000) })
     if (!res.ok) return []
     const data: unknown = await res.json()
     const dispositivos: ImpresoraZebra[] = []
@@ -200,7 +203,8 @@ export async function obtenerImpresoraDefaultZebra(): Promise<ImpresoraZebra | n
   const base = baseActiva ?? (await detectarServicioZebra()).base
   if (!base) return null
   try {
-    const res = await fetch(`${base}/default?type=printer`)
+    // FIX auditoría 2026-10-16: mismo timeout de 5 s que descubrirImpresorasZebra.
+    const res = await fetch(`${base}/default?type=printer`, { signal: AbortSignal.timeout(5000) })
     if (!res.ok) return null
     const texto = await res.text()
     if (!texto.trim()) return null

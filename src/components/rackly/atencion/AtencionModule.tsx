@@ -587,9 +587,12 @@ export function AtencionModule() {
       {/* ── Paginación ── */}
       {hayMas && (
         <div className="flex justify-center">
+          {/* FIX auditoría 2026-10-16: paginar con los filtros COMMITADOS
+              (antes usaba la búsqueda viva y podía mezclar listas de dos
+              filtros distintos, además de commitarla por accidente). */}
           <Button
             variant="outline"
-            onClick={() => cargar(offset + PAGE_SIZE, false)}
+            onClick={() => cargar(offset + PAGE_SIZE, false, filtrosActivosRef.current)}
             disabled={loading}
             className="gap-2"
           >

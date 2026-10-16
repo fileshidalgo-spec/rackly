@@ -281,17 +281,23 @@ function SetNewPasswordScreen({
       // Primero intentar con updateUser (funciona con tokens del hash de la URL)
       const { error } = await supabase.auth.updateUser({ password })
       if (error) throw error
-      // Si hay sesión, también actualizar el flag en profiles
+      // Si hay sesión, también actualizar el flag en profiles.
+      // FIX auditoría 2026-10-16: antes usaba el cliente anon (`supabase`) y
+      // DESCARTABA el resultado (`.error` nunca se leía) — si RLS lo bloqueaba
+      // el flag quedaba en true en silencio y el usuario entraba en bucle de
+      // "debes cambiar tu contraseña". Ahora usa dataClient (service_role,
+      // igual que cambiarPasswordPropia en auth.ts) y registra el error.
       try {
         const { data: u } = await supabase.auth.getUser()
         if (u?.user) {
-          await supabase
+          const { error: errFlag } = await dataClient
             .from('profiles')
             .update({ must_change_password: false })
             .eq('id', u.user.id)
+          if (errFlag) console.warn('[RACKLY] No se pudo apagar must_change_password:', errFlag.message)
         }
-      } catch {
-        // no crítico
+      } catch (errFlag) {
+        console.warn('[RACKLY] No se pudo apagar must_change_password:', errFlag)
       }
       // Limpiar el hash de la URL
       window.location.hash = ''

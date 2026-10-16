@@ -123,8 +123,11 @@ export function UsuariosTab() {
     const targetName = deleteTarget.nombre
     setDeleteTarget(null)
     try {
-      await eliminarPerfil(targetId)
-      toast.success(`Perfil de ${targetName} eliminado`)
+      // eliminarPerfil retorna aviso (string) si el usuario NO pudo borrarse de
+      // Supabase Auth — en ese caso resucitaría como pendiente en el próximo login.
+      const aviso = await eliminarPerfil(targetId)
+      if (aviso) toast.warning(`Perfil de ${targetName} eliminado con observación`, { description: aviso, duration: 9000 })
+      else toast.success(`Perfil de ${targetName} eliminado`)
       const data = await getTodosLosPerfiles()
       setPerfiles(data)
     } catch (err: unknown) {

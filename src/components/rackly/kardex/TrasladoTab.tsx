@@ -262,6 +262,7 @@ export function TrasladoTab() {
       // Si falla la verificación, avisar pero permitir continuar
       toast.warning('No se pudo verificar si el destino está ocupado. Revise manualmente antes de confirmar.', { duration: 6000 })
       setDestinoOcupado([])
+      setSalidaParcialLote({})
       setSalidaParcialCant({})
       setSalidaParcialTotal({})
     }
@@ -833,10 +834,15 @@ export function TrasladoTab() {
               )}
             </div>
 
-            {/* Indicadores debajo del input de cantidad */}
+            {/* Indicadores debajo del input de cantidad.
+                FIX auditoría 2026-10-16: el texto decía "quedará vacía (0)" con
+                solo activar el modo Total, pero en posiciones multi-lote el
+                modo Total mueve el LOTE elegido — la posición conserva el resto. */}
             {trasladoTotal && (
               <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                Se trasladará todo el stock. La ubicación quedará vacía (0).
+                {qtyNum === 0 || qtyNum >= originTotal
+                  ? 'Se trasladará todo el stock. La ubicación quedará vacía (0).'
+                  : `Se trasladará el lote completo (${qtyNum} ${origin?.un ?? ''}). Quedará un saldo de ${saldoRestante} ${origin?.un ?? ''} en la ubicación.`}
               </p>
             )}
 
@@ -971,7 +977,9 @@ export function TrasladoTab() {
                   {destinoOcupado.length > 0
                     ? 'El destino ya tiene stock. Revisa o retira productos antes de trasladar.'
                     : trasladoTotal
-                      ? `Traslado total de ${qty} ${origin?.un}. La ubicación de origen quedará vacía.`
+                      ? (qtyNum === 0 || qtyNum >= originTotal
+                          ? `Traslado total de ${qty} ${origin?.un}. La ubicación de origen quedará vacía.`
+                          : `Traslado del lote completo de ${qty} ${origin?.un}. Quedará saldo de ${saldoRestante} ${origin?.un} en origen.`)
                       : excedeStock
                         ? `Traslado de ${qty} ${origin?.un} (+${Math.abs(diferencia)} ajuste ingreso). Origen quedará en 0.`
                         : corregirDiferencia
@@ -1061,7 +1069,9 @@ export function TrasladoTab() {
             {/* Ajuste automático */}
             {ajusteActivo && (
               <div className="px-4 sm:px-6 pb-3">
-                <div className={`rounded-xl border p-3 {
+                {/* FIX auditoría 2026-10-16: faltaba `${` — el condicional era
+                    texto literal y los estilos de alerta/ajuste nunca aplicaban. */}
+                <div className={`rounded-xl border p-3 ${
                   excedeStock
                     ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 text-amber-700 dark:text-amber-300'
                     : 'border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 text-sky-700 dark:text-sky-300'

@@ -66,6 +66,17 @@ function diasParaVencer(fVencimiento: string | undefined): number | null {
   return Math.ceil((venc.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24))
 }
 
+// FIX auditoría 2026-10-16: fecha de HOY en formato YYYY-MM-DD en zona LOCAL
+// (Lima). toISOString() es UTC: entre 19:00–23:59 de Lima (UTC-5) devolvía
+// "mañana" y los lotes que vencen HOY se pintaban vencidos con un día de
+// adelanto (además, inconsistente con diasParaVencer, que usa hora local).
+function hoyISO(): string {
+  const d = new Date()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${mm}-${dd}`
+}
+
 // Detecta códigos duplicados (mismo artículo con distintas fechas de vencimiento)
 function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
   const counts = new Map<string, number>()
@@ -1516,7 +1527,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                     const loteFisElegido = salItem.lotes?.length
                       ? ((salItem.lotes.find(l => (l.fVencimiento || '') === salLoteFV)?.lotesFisicos ?? []).join(', ') || undefined)
                       : salItem.loteFisico
-                    const hoy = new Date().toISOString().slice(0, 10)
+                    const hoy = hoyISO()
                     return (
                       <>
                         {fvLote
@@ -1538,7 +1549,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                       {salItem.lotes.map((l, li) => {
                         const fv = l.fVencimiento || ''
                         const activo = salLoteFV === fv
-                        const hoy = new Date().toISOString().slice(0, 10)
+                        const hoy = hoyISO()
                         return (
                           <button key={`${fv || 'SF'}-${li}`} onClick={() => { setSalLoteFV(fv); if (salidaTotal) setSalidaCantidad(String(l.cantidad)) }}
                             className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${activo ? 'bg-amber-500/15 border border-amber-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>
@@ -1593,7 +1604,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                   {trItem.proveedor && <div className="flex justify-between text-xs"><span className="text-slate-400">Proveedor:</span><span className="text-purple-400 font-medium">{trItem.proveedor}</span></div>}
                   {(() => {
                     const fvLote = trItem.lotes?.length ? trLoteFV : (trItem.fVencimiento || '')
-                    const hoy = new Date().toISOString().slice(0, 10)
+                    const hoy = hoyISO()
                     const stockLote = trItem.lotes?.length ? stockDeLote(trItem, trLoteFV) : trItem.stock
                     const loteFisElegido = trItem.lotes?.length
                       ? ((trItem.lotes.find(l => (l.fVencimiento || '') === trLoteFV)?.lotesFisicos ?? []).join(', ') || undefined)
@@ -1621,7 +1632,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                       {trItem.lotes.map((l, li) => {
                         const fv = l.fVencimiento || ''
                         const activo = trLoteFV === fv
-                        const hoy = new Date().toISOString().slice(0, 10)
+                        const hoy = hoyISO()
                         return (
                           <button key={`${fv || 'SF'}-${li}`} onClick={() => { setTrLoteFV(fv); setTrCantidad(String(l.cantidad)) }}
                             className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${activo ? 'bg-sky-500/15 border border-sky-500/30' : 'bg-slate-700/40 border border-transparent hover:bg-slate-700/60'}`}>

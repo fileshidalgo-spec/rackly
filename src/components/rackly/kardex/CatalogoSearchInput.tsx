@@ -40,7 +40,10 @@ export function CatalogoSearchInput({
         return
       }
       if (!isCatalogoLoaded()) {
-        await fetchCatalogo()
+        // FIX auditoría 2026-10-16: fetchCatalogo podía rechazar (red/BD) y la
+        // promesa era fire-and-forget → unhandled rejection y sugerencias
+        // muertas en silencio. Ahora el fallo solo cierra la lista.
+        await fetchCatalogo().catch(() => {})
       }
       if (cancelled) return
       const q = query.trim().toUpperCase()

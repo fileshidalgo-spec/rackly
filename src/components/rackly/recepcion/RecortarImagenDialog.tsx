@@ -242,7 +242,14 @@ export function RecortarImagenDialog({
       })
       .catch((err: unknown) => {
         if (!vigente) return
-        setUrl('')
+        // FIX auditoría 2026-10-16: revocar también el objectURL que pudiera
+        // haber quedado de un fit anterior — antes solo se limpiaba el estado
+        // y el blob (varios MB en móvil) quedaba retenido sin referencia.
+        setUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev)
+          return ''
+        })
+        urlRef.current = '' // el unmount ya no debe revocar una URL ya revocada
         const message = err instanceof Error ? err.message : 'Error desconocido'
         setErrorPrep(message)
       })

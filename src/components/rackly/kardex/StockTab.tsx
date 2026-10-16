@@ -318,8 +318,22 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
   // cambiando rápido A→B se mostraba el stock de otro producto)
   const serverReqRef = useRef('')
 
+  // Clave de la última selección (producto|inc): el reset de serverStock solo
+  // aplica cuando CAMBIA el producto o el filtro — NO en los ticks de realtime
+  // (remInfoByPos cambia ~cada 8 s y borrar ahí provocaría un parpadeo vacío).
+  const lastStockKeyRef = useRef('')
+
   useEffect(() => {
-    if (!selectedCodigo) { setServerStock(null); return }
+    // FIX auditoría 2026-10-16: al cambiar de producto (A→B) había que limpiar
+    // serverStock INMEDIATAMENTE. Antes solo se limpiaba cuando selectedCodigo
+    // quedaba vacío, así que mientras llegaba la respuesta de B se seguían
+    // mostrando las filas/ubicaciones de A (displayStock = serverStock ?? stock).
+    const selKey = selectedCodigo ? `${selectedCodigo.trim().toUpperCase()}|${stockFilter === 'inc'}` : ''
+    if (lastStockKeyRef.current !== selKey) {
+      lastStockKeyRef.current = selKey
+      setServerStock(null)
+    }
+    if (!selectedCodigo) { setServerLoading(false); return }
     const code = selectedCodigo.trim().toUpperCase()
     const isInc = stockFilter === 'inc'
 

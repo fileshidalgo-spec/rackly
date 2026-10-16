@@ -329,7 +329,7 @@ export async function cambiarRol(userId: string, rol: Rol) {
   if (error) throw error
 }
 
-export async function eliminarPerfil(userId: string) {
+export async function eliminarPerfil(userId: string): Promise<string | null> {
   // 1. Eliminar rol
   const { error: delErr } = await dataClient.from('user_roles').delete().eq('user_id', userId)
   if (delErr) throw delErr
@@ -339,7 +339,10 @@ export async function eliminarPerfil(userId: string) {
     .delete()
     .eq('id', userId)
   if (error) throw error
-  // 3. Eliminar usuario de Supabase Auth para que no pueda volver a loguearse
+  // 3. Eliminar usuario de Supabase Auth para que no pueda volver a loguearse.
+  // FIX auditoría 2026-10-16: el fallo de este paso solo iba a console.error →
+  // el perfil "eliminado" resucitaba en el próximo login (getPerfilActual lo
+  // recrea como pendiente). Ahora se retorna un aviso para que la UI lo muestre.
   if (SERVICE_ROLE_KEY) {
     try {
       const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
@@ -350,10 +353,14 @@ export async function eliminarPerfil(userId: string) {
         },
       })
       if (!res.ok) {
-        console.error('[RACKLY] Error eliminando usuario Auth:', res.status, await res.text())
+        const detalle = await res.text().catch(() => '')
+        console.error('[RACKLY] Error eliminando usuario Auth:', res.status, detalle)
+        return `El perfil se eliminó, pero NO se pudo eliminar el usuario de Autenticación (HTTP ${res.status}). Podría volver a aparecer como pendiente — elimínalo desde el panel de Supabase Auth.`
       }
     } catch (err) {
       console.error('[RACKLY] Error eliminando usuario Auth:', err)
+      return 'El perfil se eliminó, pero NO se pudo eliminar el usuario de Autenticación (error de red). Podría volver a aparecer como pendiente.'
     }
   }
+  return null
 }

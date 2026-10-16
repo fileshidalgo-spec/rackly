@@ -32,7 +32,7 @@
  * local" para el sitio).
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   detectarServicioZebra,
   descubrirImpresorasZebra,
@@ -151,12 +151,19 @@ export function ImprimirRotulosDialog({
   const [copiasTodos, setCopiasTodos] = useState('')
   const [imprimiendo, setImprimiendo] = useState(false)
 
+  // Guard generacional (FIX auditoría 2026-10-16): cerrar/abrir rápido el
+  // modal (o "Reintentar" tras un sondeo lento) lanzaba DOS sondas solapadas
+  // y la vieja — terminando última — pisaba el resultado fresco con
+  // "no detectado" aunque el servicio estuviera activo.
+  const sondeoGenRef = useRef(0)
   const sondear = useCallback(async () => {
+    const gen = ++sondeoGenRef.current
     setEstado('verificando')
     setImpresoras([])
     setSeleccion('')
     // 1) Detectar el middleware (y SU MOTIVO de falla si no responde).
     const det = await detectarServicioZebra()
+    if (gen !== sondeoGenRef.current) return // llegó un sondeo más reciente
     if (!det.base) {
       setMotivo(det.motivo)
       setEstado('no-encontrado')
@@ -164,6 +171,7 @@ export function ImprimirRotulosDialog({
     }
     // 2) Con el servicio vivo, listar impresoras y preseleccionar la default.
     const lista = await descubrirImpresorasZebra()
+    if (gen !== sondeoGenRef.current) return
     setImpresoras(lista)
     if (lista.length === 0) {
       setMotivo('sin-servicio')
@@ -171,6 +179,7 @@ export function ImprimirRotulosDialog({
       return
     }
     const porDefecto = await obtenerImpresoraDefaultZebra()
+    if (gen !== sondeoGenRef.current) return
     const elegida =
       lista.find((p) => porDefecto && p.uid === porDefecto.uid) ?? lista[0]
     setSeleccion(elegida.uid)

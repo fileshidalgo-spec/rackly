@@ -28,6 +28,11 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
   // Búsqueda persistida (inicializador lazy): al volver desde Ocupación continúa donde quedó
   const [query, setQuery] = useState(() => loadTabState('racks.stock-inc', { q: '' }).q)
   const [results, setResults] = useState<IncResult[]>([])
+  // FIX auditoría 2026-10-16: neto REAL por (codigo||codigoInc) sobre TODAS las
+  // filas (incluidas las negativas) — antes el total de `grouped` sumaba solo
+  // las filas positivas y sobrestimaba: un INC con −5 en A y +10 en B mostraba
+  // total 10 en vez de 5.
+  const [netos, setNetos] = useState<Map<string, number>>(new Map())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
   const [searched, setSearched] = useState(false)
@@ -119,6 +124,7 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
 
       if (!data || data.length === 0) {
         setResults([])
+        setNetos(new Map())
         return
       }
 
@@ -153,6 +159,12 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
         .map(r => ({ ...r, cantidad: Math.round(r.cantidad * 1000) / 1000 }))
         .filter(r => r.cantidad > 0)
       filtered.sort((a, b) => a.codigoInc.localeCompare(b.codigoInc) || a.codigo.localeCompare(b.codigo))
+      const net = new Map<string, number>()
+      for (const r of stockMap.values()) {
+        const k = `${r.codigo}||${r.codigoInc}`
+        net.set(k, Math.round(((net.get(k) ?? 0) + r.cantidad) * 1000) / 1000)
+      }
+      setNetos(net)
       setResults(filtered)
     } catch {
       setError(true)
@@ -169,14 +181,15 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
       const existing = map.get(key)
       const ubi = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
       if (existing) {
-        existing.total += r.cantidad
+        // El TOTAL viene SIEMPRE de `netos` (neto real con negativos);
+        // las ubicaciones listadas son solo las filas con stock > 0.
         existing.ubicaciones.push({ bloque: r.bloque, torre: r.torre, piso: r.piso, posicion: r.posicion, ubi, qty: r.cantidad })
       } else {
-        map.set(key, { codigo: r.codigo, descripcion: r.descripcion, codigoInc: r.codigoInc, total: r.cantidad, ubicaciones: [{ bloque: r.bloque, torre: r.torre, piso: r.piso, posicion: r.posicion, ubi, qty: r.cantidad }] })
+        map.set(key, { codigo: r.codigo, descripcion: r.descripcion, codigoInc: r.codigoInc, total: netos.get(key) ?? r.cantidad, ubicaciones: [{ bloque: r.bloque, torre: r.torre, piso: r.piso, posicion: r.posicion, ubi, qty: r.cantidad }] })
       }
     }
     return Array.from(map.values())
-  }, [results])
+  }, [results, netos])
 
   function handleClickUbicacion(bloque: string, torre: string, piso: string, posicion: string) {
     onGotoUbicacion?.(bloque, torre, piso, posicion)

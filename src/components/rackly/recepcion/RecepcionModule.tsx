@@ -430,7 +430,12 @@ export function RecepcionModule() {
       try {
         const fBusqueda = filtros?.busqueda ?? busqueda
         const fEstado = filtros ? filtros.estado : estadoFiltro === 'todos' ? '' : estadoFiltro
-        if (!filtros) filtrosActivosRef.current = { busqueda: fBusqueda, estado: fEstado }
+        // FIX auditoría 2026-10-16: COMMITAR SIEMPRE los filtros efectivos.
+        // Antes solo se commitaba cuando `filtros` NO venía: al cambiar el
+        // select de estado (ruta CON filtros) el ref conservaba el estado
+        // VIEJO y el polling/realtime (cada 8 s) re-fetcheaba con el filtro
+        // anterior — el filtro se revertía solo ≤8 s después de aplicarlo.
+        filtrosActivosRef.current = { busqueda: fBusqueda, estado: fEstado }
         const { filas: filasNuevas, total: totalNuevo } = await listarRecepciones({
           busqueda: fBusqueda,
           estado: fEstado,
@@ -1285,9 +1290,13 @@ export function RecepcionModule() {
       {/* ── Paginación ── */}
       {hayMas && (
         <div className="flex justify-center">
+          {/* FIX auditoría 2026-10-16: paginar con los filtros COMMITADOS.
+              Antes usaba la búsqueda viva (texto a medio teclear) sin commit —
+              se appendaban filas de otro filtro a la lista actual y el
+              realtime heredaba el filtro fantasma. */}
           <Button
             variant="outline"
-            onClick={() => cargar(offset + PAGE_SIZE, false)}
+            onClick={() => cargar(offset + PAGE_SIZE, false, filtrosActivosRef.current)}
             disabled={loading}
             className="gap-2"
           >

@@ -268,6 +268,16 @@ function UpDataSection() {
       const dd = m[1].padStart(2, '0')
       const mm = m[2].padStart(2, '0')
       const yy = m[3].length === 2 ? `20${m[3]}` : m[3]
+      // FIX auditoría 2026-10-16: validar el rango dd/mm — antes "99/99/2026"
+      // se guardaba tal cual ("2026-99-99") y rompía FEFO/estados aguas abajo
+      // (FefoTab mostraba "NaN días"); fechas imposibles ahora se descartan.
+      const ddN = Number(dd)
+      const mmN = Number(mm)
+      const yyN = Number(yy)
+      if (mmN < 1 || mmN > 12 || ddN < 1 || ddN > 31) return undefined
+      if (yyN < 2000 || yyN > 2100) return undefined
+      const diasMes = [31, (yyN % 4 === 0 && (yyN % 100 !== 0 || yyN % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+      if (ddN > diasMes[mmN - 1]) return undefined
       return `${yy}-${mm}-${dd}`
     }
     return undefined

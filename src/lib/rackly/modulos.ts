@@ -293,14 +293,23 @@ export async function crearRecepciones(
     uuid_sync: datos.uuidSync?.trim() || nuevoUuid(),
     n_paleta: datos.nPaleta ?? extraerIndicePaleta(datos.observaciones),
   }))
-  const { error } = await dataClient.from('recepcion_registros').insert(filas)
-  if (error) {
-    // Reintento tras éxito perdido: el índice único de uuid_sync marca el
-    // duplicado — se informa como aviso, no como error técnico.
-    if (String((error as { code?: string }).code ?? '').includes('23505')) {
-      throw new Error('REGISTRO_DUPLICADO|Estas filas ya fueron registradas (reintento detectado).')
+  // FIX auditoría 2026-10-16: inserción por LOTES de 500 — antes iba TODO en
+  // UNA petición (30 artículos × 44 paletas = hasta 1.320 filas, ~payload
+  // grande con riesgo timeout/413 y todo-o-nada). Mismo patrón que
+  // addMovimientosBatch/mergeCatalogo. El índice único de uuid_sync mantiene
+  // la idempotencia entre chunks (reintento tras éxito parcial detecta
+  // duplicados y avisa).
+  const CHUNK = 500
+  for (let i = 0; i < filas.length; i += CHUNK) {
+    const { error } = await dataClient.from('recepcion_registros').insert(filas.slice(i, i + CHUNK))
+    if (error) {
+      // Reintento tras éxito perdido: el índice único de uuid_sync marca el
+      // duplicado — se informa como aviso, no como error técnico.
+      if (String((error as { code?: string }).code ?? '').includes('23505')) {
+        throw new Error('REGISTRO_DUPLICADO|Estas filas ya fueron registradas (reintento detectado).')
+      }
+      throw error
     }
-    throw error
   }
 }
 

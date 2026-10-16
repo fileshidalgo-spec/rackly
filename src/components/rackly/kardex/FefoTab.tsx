@@ -198,6 +198,10 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
         if (fv) {
           const vencDate = new Date(fv + 'T00:00:00')
           dias = Math.round((vencDate.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24))
+          // FIX auditoría 2026-10-16: fechas malformadas en BD ("2026-99-99",
+          // posible vía importación Excel) producían dias=NaN → NaN<x era false
+          // y la fila se pintaba "vigente" con "NaN días". Se marca vencido.
+          if (!Number.isFinite(dias)) dias = -1
           status = dias < 0 ? 'vencido' : dias <= 15 ? 'urgente' : dias <= 30 ? 'proximo' : 'vigente'
         }
         const fis = porVenc?.get(fv)

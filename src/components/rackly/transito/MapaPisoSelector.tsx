@@ -13,7 +13,7 @@
  * Sugerencia automática: la primera posición libre del primer sector, nivel 1.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -151,11 +151,17 @@ export function MapaPisoSelector({
     await abrirNiveles(p)
   }
 
+  // Token generacional (FIX auditoría 2026-10-16): dos clics rápidos en
+  // posiciones distintas — la respuesta lenta de la primera pisaba
+  // posAbierta/niveles de la segunda (niveles de otra posición en pantalla).
+  const nivelesGenRef = useRef(0)
   const abrirNiveles = async (p: PosicionConStock, nivelPreselecc?: string) => {
+    const gen = ++nivelesGenRef.current
     setCargandoNiveles(true)
     setSelNivelId(nivelPreselecc ?? null)
     try {
       const niveles = await nivelesDePosicion(p.posicionId)
+      if (gen !== nivelesGenRef.current) return // llegó una petición más reciente
       setPosAbierta({ pos: p, niveles })
       // Sugerida y libre: preseleccionar nivel 1 (el más bajo) automáticamente
       if (!nivelPreselecc && p.stock <= EPS && sugerida === p.posicionId && niveles.length > 0) {
@@ -163,9 +169,9 @@ export function MapaPisoSelector({
       }
     } catch (err) {
       console.error('[MapaPiso] Error cargando niveles:', err)
-      toast.error('No se pudo cargar los niveles de la posición')
+      if (gen === nivelesGenRef.current) toast.error('No se pudo cargar los niveles de la posición')
     } finally {
-      setCargandoNiveles(false)
+      if (gen === nivelesGenRef.current) setCargandoNiveles(false)
     }
   }
 

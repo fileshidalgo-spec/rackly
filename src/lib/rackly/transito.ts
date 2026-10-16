@@ -72,11 +72,19 @@ import { validarCantidad } from './transito-core'
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * Lista los artículos de guías desde la fecha de implementación.
- * `maxFilas` acota la consulta (las guías recientes son pocas; 3000 filas
- * cubren semanas de operación y la agrupación es instantánea).
+ * Límite de filas descargadas (las MÁS RECIENTES por created_at).
+ * A ritmo actual de Recepción (~120 filas/día) cubre ~3 meses de operación.
+ * Si la consulta alcanza el tope, la UI muestra un AVISO — jamás recortar
+ * guías en silencio (evita la clase de bug "la guía desapareció de Tránsito",
+ * ya vivida en Recepción).
  */
-export async function listarArticulosTransito(maxFilas = 3000): Promise<ArticuloTransito[]> {
+export const MAX_FILAS_TRANSITO = 10000
+
+/**
+ * Lista los artículos de guías desde la fecha de implementación.
+ * `maxFilas` acota la consulta (por defecto MAX_FILAS_TRANSITO).
+ */
+export async function listarArticulosTransito(maxFilas = MAX_FILAS_TRANSITO): Promise<ArticuloTransito[]> {
   const { data, error } = await dataClient
     .from('recepcion_registros')
     .select('*')

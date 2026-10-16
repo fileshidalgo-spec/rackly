@@ -42,6 +42,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { calcularTurno } from '@/lib/rackly/turno'
 import {
   FECHA_INICIO_TRANSITO,
+  MAX_FILAS_TRANSITO,
   listarArticulosTransito,
   agruparEnGuias,
   contarPendientes,
@@ -222,6 +223,13 @@ export function TransitoModule() {
               Transferir juntos
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* ═══ Aviso de recorte (nunca silencioso) ═══ */}
+      {estado === 'listo' && articulos.length >= MAX_FILAS_TRANSITO && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 font-medium">
+          Hay muchas guías en Tránsito: se muestran las MÁS RECIENTES (límite de {MAX_FILAS_TRANSITO.toLocaleString('es-PE')} filas alcanzado). Las guías más antiguas siguen en Recepción.
         </div>
       )}
 
@@ -489,15 +497,13 @@ function FilaArticulo({
             <ArrowRightLeft className="h-3.5 w-3.5" />
             Transferir
           </Button>
-          {(a.envios.length > 0 || true) && (
-            <button
-              onClick={onToggleHistorial}
-              className="text-[11px] text-slate-500 hover:text-slate-800 inline-flex items-center gap-1 font-medium"
-            >
-              <History className="h-3 w-3" />
-              Historial
-            </button>
-          )}
+          <button
+            onClick={onToggleHistorial}
+            className="text-[11px] text-slate-500 hover:text-slate-800 inline-flex items-center gap-1 font-medium"
+          >
+            <History className="h-3 w-3" />
+            Historial
+          </button>
         </div>
       </div>
 

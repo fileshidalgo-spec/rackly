@@ -436,6 +436,9 @@ export function planSyncEdicionPorId<T extends { filaId?: string | null }>(
 export type FilaRegistrada = {
   id: string
   createdAt: string
+  /** Identidad de la guía (M-2): todas las filas de una recepción la
+   *  comparten. null/ausente solo en residuos pre-migración. */
+  guiaId?: string | null
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
@@ -464,7 +467,15 @@ export type FilaRegistrada = {
 export type GuiaAgrupada = {
   /** Clave de identidad (igual que usa la impresión agrupada). */
   clave: string
-  ref: { tipoDocumento: string; numeroDocumento: string; fecha: string; proveedor: string }
+  /** Referencia para operar la guía COMPLETA en la BD (imprimir, editar,
+   *  estado, borrar, Excel). M-2: incluye guiaId — la identidad exacta. */
+  ref: {
+    guiaId?: string | null
+    tipoDocumento: string
+    numeroDocumento: string
+    fecha: string
+    proveedor: string
+  }
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
@@ -481,15 +492,24 @@ export type GuiaAgrupada = {
 }
 
 /**
- * Identidad de la guía (MISMA regla que listarRecepcionesPorDocumento):
- * con Nº de documento → tipo+número; sin Nº → fecha+tipo+proveedor.
+ * Identidad de la guía (M-2):
+ *   · CON guia_id → `G:<uuid>`: identidad EXACTA de la recepción. Dos
+ *     guías que compartan Nº de documento (re-registro, OCR, número
+ *     reutilizado en otra fecha) quedan SEPARADAS — ni la lista, ni la
+ *     impresión, ni el estado/borrado cruzan contenido entre ellas
+ *     (corrección: "al imprimir solo salga lo de la guía").
+ *   · Respaldo heredado (fila sin guia_id): con Nº → tipo+número;
+ *     sin Nº → fecha+tipo+proveedor.
  */
 export function claveGuiaDe(f: {
+  guiaId?: string | null
   tipoDocumento: string
   numeroDocumento: string
   fecha: string
   proveedor: string
 }): string {
+  const gid = (f.guiaId ?? '').trim()
+  if (gid) return `G:${gid}`
   const num = (f.numeroDocumento ?? '').trim()
   if (num) return `D:${(f.tipoDocumento ?? '').trim().toUpperCase()}|${num.toUpperCase()}`
   return `S:${(f.fecha ?? '').trim()}|${(f.tipoDocumento ?? '').trim().toUpperCase()}|${(f.proveedor ?? '').trim().toUpperCase()}`
@@ -511,6 +531,7 @@ export function agruparGuias(filas: FilaRegistrada[]): GuiaAgrupada[] {
       g = {
         clave,
         ref: {
+          guiaId: f.guiaId ?? null,
           tipoDocumento: f.tipoDocumento,
           numeroDocumento: f.numeroDocumento,
           fecha: f.fecha,

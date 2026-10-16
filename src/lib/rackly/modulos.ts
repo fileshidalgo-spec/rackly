@@ -26,8 +26,16 @@ import { planSyncEdicionPorId } from '@/lib/rackly/recepcion-filas'
 // TIPOS COMPARTIDOS
 // ═══════════════════════════════════════════════════════════════════
 
-export const ESTADOS_RECEPCION = ['Pendiente', 'Recibido', 'Observado'] as const
+export const ESTADOS_RECEPCION = ['Pendiente', 'Recepcionado', 'Recibido', 'Observado'] as const
 export const TIPOS_DOCUMENTO_RECEPCION = ['Guia', 'Orden de compra', 'Factura', 'Otro'] as const
+
+/**
+ * Estado que se asigna AUTOMÁTICAMENTE al imprimir los rótulos de una guía
+ * (pedido del usuario 2026-10: "cuando se dé imprimir dar en estatus
+ * automático que se recepcionó"). Solo SUBE desde 'Pendiente' — nunca
+ * pisa 'Observado' ni retrocede una guía ya recepcionada/recibida.
+ */
+export const ESTADO_AL_IMPRIMIR = 'Recepcionado' as const
 
 export const ESTADOS_ATENCION = ['Pendiente', 'En proceso', 'Atendido'] as const
 export const TIPOS_ATENCION = ['Consulta', 'Soporte', 'Mantenimiento', 'Otro'] as const
@@ -35,6 +43,9 @@ export const TIPOS_ATENCION = ['Consulta', 'Soporte', 'Mantenimiento', 'Otro'] a
 export type RegistroRecepcion = {
   id: string
   createdAt: string
+  /** Identidad de la GUÍA completa: todas las filas de una recepción
+   *  comparten este uuid (M-2). undefined/null solo en residuos pre-migración. */
+  guiaId?: string | null
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
@@ -134,6 +145,7 @@ function mapRecepcion(r: Record<string, unknown>): RegistroRecepcion {
   return {
     id: r.id as string,
     createdAt: str(r.created_at),
+    guiaId: (r.guia_id as string | null) ?? null,
     fecha: str(r.fecha),
     tipoDocumento: str(r.tipo_documento),
     numeroDocumento: str(r.numero_documento),
@@ -214,31 +226,38 @@ export async function listarRecepciones(
  * la impresión de rótulos agrupada: el modal recibe la guía completa (no
  * solo la fila clickeada) y imprime todos sus artículos en UN solo trabajo.
  *
- * Identidad de la guía:
- *   · Con Nº de documento: tipo_documento + numero_documento (único por guía).
- *   · Sin Nº (registro manual sin número): misma fecha + proveedor + tipo,
- *     la huella más fiel sin riesgo de agrupar guías ajenas.
+ * Identidad de la guía (M-2, corrección 2026-10 "que al imprimir SOLO salga
+ * lo de la guía y no jale de otras guías"):
+ *   · PREFERENTE: `guiaId` (uuid compartido por las filas de UNA misma
+ *     recepción) — filtro EXACTO, jamás cruza guías aunque compartan
+ *     Nº de documento, fecha o proveedor.
+ *   · Respaldo (fila sin guia_id, residuo pre-migración): con Nº →
+ *     tipo_documento + numero_documento; sin Nº → fecha + proveedor + tipo.
  *
  * Orden estable por created_at: los artículos aparecen en el orden en que
  * se registraron. Solo devuelve datos YA registrados (regla de negocio:
  * nunca se imprime desde el formulario sin guardar).
  */
 export async function listarRecepcionesPorDocumento(ref: {
+  guiaId?: string | null
   tipoDocumento: string
   numeroDocumento: string
   fecha?: string
   proveedor?: string
 }): Promise<RegistroRecepcion[]> {
-  let q = dataClient
-    .from('recepcion_registros')
-    .select('*')
-    .eq('tipo_documento', ref.tipoDocumento.trim())
-  if (ref.numeroDocumento.trim()) {
-    q = q.eq('numero_documento', ref.numeroDocumento.trim())
+  let q = dataClient.from('recepcion_registros').select('*')
+  const guiaId = (ref.guiaId ?? '').trim()
+  if (guiaId) {
+    q = q.eq('guia_id', guiaId)
   } else {
-    q = q
-      .eq('fecha', (ref.fecha ?? '').trim())
-      .eq('proveedor', (ref.proveedor ?? '').trim())
+    q = q.eq('tipo_documento', ref.tipoDocumento.trim())
+    if (ref.numeroDocumento.trim()) {
+      q = q.eq('numero_documento', ref.numeroDocumento.trim())
+    } else {
+      q = q
+        .eq('fecha', (ref.fecha ?? '').trim())
+        .eq('proveedor', (ref.proveedor ?? '').trim())
+    }
   }
   const { data, error } = await q.order('created_at', { ascending: true })
   if (error) throw error
@@ -253,8 +272,13 @@ export async function listarRecepcionesPorDocumento(ref: {
 export async function crearRecepciones(
   items: NuevoRecepcion[],
   usuario: UsuarioCtx
-): Promise<void> {
-  if (items.length === 0) return
+): Promise<string> {
+  // M-2: UNA identidad de guía para TODO el lote — las filas de esta
+  // recepción quedan unidas por guia_id aunque el Nº/proveedor/fecha
+  // cambien después al editar. Se devuelve al llamador para fijar la
+  // "guía recién registrada" (banner) y la impresión agrupada exacta.
+  const guiaId = nuevoUuid()
+  if (items.length === 0) return guiaId
 
   // ANTI-DUPLICADO (M-1): si una fila idéntica se registró hace menos de
   // 60 segundos, pedir confirmación antes de insertar (doble clic, doble
@@ -285,6 +309,7 @@ export async function crearRecepciones(
     foto_url: datos.fotoUrl?.trim() || null,
     observaciones: datos.observaciones.trim() || null,
     estado: 'Pendiente',
+    guia_id: guiaId,
     usuario_id: usuario.id,
     usuario_nombre: usuario.nombre,
     usuario_correo: usuario.correo,
@@ -311,6 +336,7 @@ export async function crearRecepciones(
       throw error
     }
   }
+  return guiaId
 }
 
 /**
@@ -430,18 +456,20 @@ export async function eliminarRecepcion(id: string): Promise<void> {
 }
 
 /**
- * Referencia a UN documento completo (guía) de recepción. Misma identidad
- * que listarRecepcionesPorDocumento: con Nº → tipo+número; sin Nº →
- * fecha+tipo+proveedor (la huella más fiel sin agrupar guías ajenas).
+ * Referencia a UN documento completo (guía) de recepción. Identidad M-2:
+ * `guiaId` (uuid de la recepción) cuando existe — exacto, jamás cruza
+ * guías; respaldo heredado: con Nº → tipo+número; sin Nº → fecha+tipo+proveedor.
  */
 export type RefDocumentoRecepcion = {
+  guiaId?: string | null
   tipoDocumento: string
   numeroDocumento: string
   fecha?: string
   proveedor?: string
 }
 
-/** Condiciones [columna, valor] que identifican a UNA guía (sin Nº → fecha+proveedor). */
+/** Condiciones [columna, valor] que identifican a UNA guía (sin Nº → fecha+proveedor).
+ *  Respaldo para filas sin guia_id (pre-migración); con guiaId presente NUNCA se usa. */
 function condicionesGuia(ref: RefDocumentoRecepcion): Array<[string, string]> {
   const conds: Array<[string, string]> = [['tipo_documento', ref.tipoDocumento.trim()]]
   if (ref.numeroDocumento.trim()) {
@@ -456,13 +484,20 @@ function condicionesGuia(ref: RefDocumentoRecepcion): Array<[string, string]> {
 /**
  * Cambia el estado de TODAS las filas de UNA guía (el registro agrupado
  * muestra 1 fila por guía; el estado es del documento completo).
+ * M-2: con `guiaId` el update va por identidad EXACTA (jamás toca otra
+ * guía que comparta Nº/fecha/proveedor).
  */
 export async function cambiarEstadoGuia(
   ref: RefDocumentoRecepcion,
   estado: string
 ): Promise<void> {
   let q = dataClient.from('recepcion_registros').update({ estado })
-  for (const [col, val] of condicionesGuia(ref)) q = q.eq(col, val)
+  const guiaId = (ref.guiaId ?? '').trim()
+  if (guiaId) {
+    q = q.eq('guia_id', guiaId)
+  } else {
+    for (const [col, val] of condicionesGuia(ref)) q = q.eq(col, val)
+  }
   const { error } = await q
   if (error) throw error
 }
@@ -470,12 +505,46 @@ export async function cambiarEstadoGuia(
 /**
  * Elimina TODAS las filas de UNA guía (el borrado agrupado espeja el
  * registro agrupado: el documento completo entra y sale junto).
+ * M-2: con `guiaId` el delete va por identidad EXACTA.
  */
 export async function eliminarGuia(ref: RefDocumentoRecepcion): Promise<void> {
   let q = dataClient.from('recepcion_registros').delete()
-  for (const [col, val] of condicionesGuia(ref)) q = q.eq(col, val)
+  const guiaId = (ref.guiaId ?? '').trim()
+  if (guiaId) {
+    q = q.eq('guia_id', guiaId)
+  } else {
+    for (const [col, val] of condicionesGuia(ref)) q = q.eq(col, val)
+  }
   const { error } = await q
   if (error) throw error
+}
+
+/**
+ * AUTO-ESTATUS AL IMPRIMIR (pedido 2026-10): marca la guía como
+ * 'Recepcionado' cuando sus rótulos se enviaron a la impresora.
+ *
+ * Escoped sin conflictos:
+ *   · SOLO SUBE desde 'Pendiente' — una guía 'Observado' conserva su
+ *     observación y una ya 'Recepcionado'/'Recibido' no retrocede.
+ *   · Con `guiaId` va por identidad exacta (jamás marca otra guía).
+ *   · Devuelve el nº de filas marcadas (0 = ya no estaba Pendiente).
+ */
+export async function marcarGuiaRecepcionada(
+  ref: RefDocumentoRecepcion
+): Promise<number> {
+  let q = dataClient
+    .from('recepcion_registros')
+    .update({ estado: ESTADO_AL_IMPRIMIR })
+    .eq('estado', 'Pendiente')
+  const guiaId = (ref.guiaId ?? '').trim()
+  if (guiaId) {
+    q = q.eq('guia_id', guiaId)
+  } else {
+    for (const [col, val] of condicionesGuia(ref)) q = q.eq(col, val)
+  }
+  const { data, error } = await q.select('id')
+  if (error) throw error
+  return (data ?? []).length
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -509,6 +578,9 @@ export type EncabezadoEdicionGuia = {
   estado: string
   /** Foto de la guía: solo las filas NUEVAS la reciben (las viejas la conservan). */
   fotoUrl: string
+  /** M-2: identidad de la guía — las filas NUEVAS la reciben para seguir
+   *  unidas a SU documento (las viejas ya la traen y el UPDATE no la toca). */
+  guiaId?: string | null
 }
 
 /**
@@ -541,6 +613,30 @@ export async function guardarEdicionGuia(
   autor: UsuarioCtx
 ): Promise<{ actualizadas: number; eliminadas: number; insertadas: number }> {
   const plan = planSyncEdicionPorId(idsOriginales, filasNuevas)
+
+  // GUARD Tránsito (edición) — ANTES de escribir NADA: si el usuario quitó
+  // filas que ya fueron transferidas por Tránsito, ABORTAR en seco. Borrar
+  // esas filas dejaría el ingreso en kardex/piso como stock huérfano y el
+  // semáforo sin origen (misma política que el borrado de guía completa).
+  // Muy aparte, cierra el vector "estuvieron trabajando con una guía y
+  // desapareció": ninguna edición puede eliminar filas transferidas.
+  if (plan.eliminar.length > 0) {
+    const { data: protegidas, error: errGuard } = await dataClient
+      .from('recepcion_registros')
+      .select('id, transito')
+      .in('id', plan.eliminar)
+    if (errGuard) throw errGuard
+    const conEnvios = (protegidas ?? []).filter(
+      (f: Record<string, unknown>) => contarEnviosTransito(f.transito) > 0
+    ).length
+    if (conEnvios > 0) {
+      throw new Error(
+        `No se puede guardar: estás quitando ${conEnvios} fila(s) ya transferidas por Tránsito. ` +
+          'Restáuralas en el editor (o revierte los traslados en el módulo Tránsito) y vuelve a guardar — ' +
+          'eliminarlas dejaría stock huérfano sin trazabilidad.'
+      )
+    }
+  }
 
   const contenidoDe = (f: FilaEdicionGuia) => ({
     fecha: encabezado.fecha,
@@ -580,7 +676,9 @@ export async function guardarEdicionGuia(
   }
 
   // 2) INSERT de solo las filas nuevas (heredan encabezado, autor y estado).
-  //    Cada fila nueva lleva SU uuid_sync (idempotencia M-1) y su n_paleta.
+  //    Cada fila nueva lleva SU uuid_sync (idempotencia M-1), SU n_paleta y
+  //    LA IDENTIDAD DE LA GUÍA (guia_id, M-2): seguirá unida a SU documento
+  //    en impresión/edición/estado/borrado aunque cambie el encabezado.
   if (plan.insertar.length > 0) {
     const { error } = await dataClient
       .from('recepcion_registros')
@@ -589,6 +687,7 @@ export async function guardarEdicionGuia(
           ...contenidoDe(f),
           foto_url: encabezado.fotoUrl?.trim() || null,
           estado: encabezado.estado || 'Pendiente',
+          guia_id: encabezado.guiaId?.trim() || null,
           usuario_id: autor.id,
           usuario_nombre: autor.nombre,
           usuario_correo: autor.correo,

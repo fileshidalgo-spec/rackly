@@ -42,7 +42,7 @@ import {
   type DatosGuia,
 } from '@/lib/rackly/guia-ocr'
 import { avisosDePaletas, expandirEnFilas } from '@/lib/rackly/recepcion-filas'
-import { crearRecepciones, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
+import { crearRecepciones, marcarGuiaRecepcionada, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
 import { useLoteUuidSync } from '@/lib/rackly/recepcion-idempotencia'
 import {
   RecepcionItemsEditor,
@@ -143,7 +143,25 @@ function extraccionSuficiente(d: DatosGuia): boolean {
 }
 void extraccionSuficiente
 
-export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
+/**
+ * Informe de la guía REGISTRADA que el módulo necesita para fijarla en
+ * pantalla (banner "recién registrada"): con guiaId, la lista/impresión
+ * pueden operarla aunque el orden por fecha la baje de la primera página.
+ */
+export type GuiaRegistradaInfo = {
+  guiaId: string
+  fecha: string
+  tipoDocumento: string
+  numeroDocumento: string
+  proveedor: string
+  placa: string
+  articulos: number
+  filas: number
+  cantidadTotal: number
+  usuarioNombre: string
+}
+
+export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegistradaInfo) => void }) {
   const { perfil } = useAuth()
   const [paso, setPaso] = useState<Paso>('elegir')
   const [catalogo, setCatalogo] = useState<CatalogoItem[]>([])
@@ -167,6 +185,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
   const [guardados, setGuardados] = useState<{
     rotulos: RotuloAImprimir[]
     encabezado: EncabezadoRotulo
+    /** M-2: identidad de la guía guardada → al imprimir se marca 'Recepcionado'. */
+    ref?: { guiaId: string; tipoDocumento: string; numeroDocumento: string; fecha: string; proveedor: string }
     nota?: string
   } | null>(null)
 
@@ -477,7 +497,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           description: `${avisos[0]}. Con UNA sola paleta con cantidad se registra el total del artículo; con varias paletas, lo digitado en ellas.`,
         })
       }
-      await crearRecepciones(
+      // M-2: crearRecepciones devuelve la identidad única de ESTA recepción
+      // (guia_id compartido por todas sus filas).
+      const guiaId = await crearRecepciones(
         filas.map((f, i) => ({
           fecha,
           tipoDocumento: form.tipoDocumento,
@@ -497,6 +519,19 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         })),
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )
+      // Informe para el banner "recién registrada" ANTES de limpiar el form.
+      const infoRegistrada: GuiaRegistradaInfo = {
+        guiaId,
+        fecha,
+        tipoDocumento: form.tipoDocumento,
+        numeroDocumento: form.numeroGuia,
+        proveedor: form.proveedor,
+        placa: form.placa,
+        articulos: validos.length,
+        filas: filas.length,
+        cantidadTotal: filas.reduce((s, f) => s + f.cantidadNum, 0),
+        usuarioNombre: perfil.nombre,
+      }
       loteUuid.liberar()
       toast.success(
         `Recepción registrada con foto: ${validos.length} artículo(s) · ${filas.length} fila(s)`
@@ -517,6 +552,13 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
             placa: form.placa,
             registradoPor: perfil.nombre,
           },
+          ref: {
+            guiaId,
+            tipoDocumento: form.tipoDocumento,
+            numeroDocumento: form.numeroGuia,
+            fecha,
+            proveedor: form.proveedor,
+          },
           nota: `Recepción guardada: ${filas.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
         })
         setRotulosOpen(true)
@@ -526,7 +568,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
         })
       }
       reiniciar()
-      onRegistrado()
+      onRegistrado(infoRegistrada)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
       // M-1: cancelación anti-duplicado y reintento bloqueado no son errores.
@@ -561,6 +603,18 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: () => void }) {
           : { fecha: '', numeroDocumento: '', proveedor: '', placa: '', registradoPor: '' }
       }
       nota={guardados?.nota}
+      // M-2 + auto-estatus: identidad EXACTA de la guía guardada; al imprimir
+      // pasa a 'Recepcionado' (solo sube desde Pendiente, nunca pisa Observado).
+      refDocumento={guardados?.ref}
+      onImpreso={async () => {
+        if (!guardados?.ref) return
+        const marcadas = await marcarGuiaRecepcionada(guardados.ref)
+        if (marcadas > 0) {
+          toast.success('Guía marcada como Recepcionada automáticamente', {
+            description: `${marcadas} fila(s) actualizadas al imprimir los rótulos.`,
+          })
+        }
+      }}
     />
   )
 

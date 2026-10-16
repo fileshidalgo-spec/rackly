@@ -134,6 +134,12 @@ export function ImprimirRotulosDialog({
   rotulos,
   encabezado,
   nota,
+  /** M-2: identidad EXACTA de la guía impresa (guia_id + datos del doc).
+   *  Con ella, al imprimir se marca automáticamente 'Recepcionado'. */
+  refDocumento,
+  /** Se dispara UNA vez cuando el trabajo de impresión se ENVIÓ con
+   *  éxito (no en el Plan B .zpl). Marca la guía como 'Recepcionado'. */
+  onImpreso,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -141,6 +147,8 @@ export function ImprimirRotulosDialog({
   encabezado: EncabezadoRotulo
   /** Banner contextual (p. ej. "Recepción guardada") cuando se abre tras guardar. */
   nota?: string
+  refDocumento?: { guiaId?: string | null; tipoDocumento: string; numeroDocumento: string; fecha?: string; proveedor?: string }
+  onImpreso?: () => void | Promise<void>
 }) {
   const [estado, setEstado] = useState<EstadoServicio>('verificando')
   /** Por qué falló la detección (guía diferenciada en el panel amber). */
@@ -238,6 +246,18 @@ export function ImprimirRotulosDialog({
     try {
       await enviarZPL(impresora, zplActual())
       toast.success(`${totalEtiquetas} etiqueta(s) enviadas en UN solo trabajo a ${impresora.name}`)
+      // AUTO-ESTATUS (pedido 2026-10): la guía impresa pasa a 'Recepcionado'.
+      // Tras el envío EXITOSO del trabajo — nunca en un fallo ni en el Plan B
+      // .zpl (ese no confirma impresión). Si el marcado falla, NO se repite
+      // el trabajo ni se bloquea el cierre: solo se avisa.
+      if (onImpreso) {
+        try {
+          await onImpreso()
+        } catch (errMarcado: unknown) {
+          const msg = errMarcado instanceof Error ? errMarcado.message : 'Error desconocido'
+          toast.warning('Impresión enviada, pero no se pudo marcar como Recepcionada', { description: msg })
+        }
+      }
       onOpenChange(false)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
@@ -456,6 +476,12 @@ export function ImprimirRotulosDialog({
                 <span className="text-xs text-slate-500">Tamaño de etiqueta</span>
                 <span className="text-xs font-bold text-slate-700">15 × 10 cm horizontal · formato PERECIBLE</span>
               </div>
+
+              {onImpreso && refDocumento && (
+                <p className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-semibold text-violet-800">
+                  Al imprimir, la guía pasa automáticamente a estado <b>Recepcionado</b>.
+                </p>
+              )}
 
               <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
                 <MonitorDown className="h-3 w-3 shrink-0" />

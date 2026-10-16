@@ -22,7 +22,7 @@ import { useRegistrosRealtime, type MotivoRealtime } from '@/hooks/useRegistrosR
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
 import { agruparGuias, avisosDePaletas, expandirEnFilas, filasAItems, obsSinMarcaPaleta, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
-import { GuiaFotoForm } from '@/components/rackly/recepcion/GuiaFotoForm'
+import { GuiaFotoForm, type GuiaRegistradaInfo } from '@/components/rackly/recepcion/GuiaFotoForm'
 import {
   RecepcionItemsEditor,
   itemVacio,
@@ -43,10 +43,12 @@ import {
   guardarEdicionGuia,
   cambiarEstadoGuia,
   eliminarGuia,
+  marcarGuiaRecepcionada,
   abrirFotoGuia,
   urlFirmadaGuia,
   ESTADOS_RECEPCION,
   TIPOS_DOCUMENTO_RECEPCION,
+  type RefDocumentoRecepcion,
   type RegistroRecepcion,
 } from '@/lib/rackly/modulos'
 import { useLoteUuidSync } from '@/lib/rackly/recepcion-idempotencia'
@@ -98,6 +100,7 @@ import {
   ChevronRight,
   X,
   Check,
+  CheckCircle2,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
@@ -107,6 +110,8 @@ type ModoRegistro = 'foto' | 'manual'
 
 const ESTADO_CLASE: Record<string, string> = {
   Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
+  // Auto-estatus al imprimir (2026-10): la impresión de rótulos la asigna sola.
+  Recepcionado: 'bg-violet-50 text-violet-700 border-violet-200',
   Recibido: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   Observado: 'bg-rose-50 text-rose-700 border-rose-200',
 }
@@ -167,8 +172,21 @@ export function RecepcionModule() {
   const [guardados, setGuardados] = useState<{
     rotulos: RotuloAImprimir[]
     encabezado: EncabezadoRotulo
+    /** M-2: identidad de la guía impresa → al imprimir se marca 'Recepcionado'. */
+    ref?: RefDocumentoRecepcion
     nota?: string
   } | null>(null)
+
+  /**
+   * BANNER "GUÍA RECIÉN REGISTRADA" (corrección del reporte 2026-10:
+   * "estuvieron trabajando con una guía y desapareció"). El listado ordena
+   * por FECHA DEL DOCUMENTO y pagina a 50 filas (~2 guías por página): una
+   * guía recién registrada con fecha de documento anterior se hunde en las
+   * páginas siguientes y PARECE desaparecer. La guía recién guardada queda
+   * fijada aquí — con su identidad exacta (guia_id) — hasta que el usuario
+   * la descarte, aunque el realtime/paginación la mueva en la lista.
+   */
+  const [ultimaRegistrada, setUltimaRegistrada] = useState<GuiaRegistradaInfo | null>(null)
 
   /**
    * EDICIÓN de una guía YA registrada (el usuario pidió poder "revisar" el
@@ -179,6 +197,8 @@ export function RecepcionModule() {
   const [editando, setEditando] = useState<{
     ids: string[]
     estado: string
+    /** M-2: identidad exacta de la guía editada — filas nuevas la heredan. */
+    guiaId: string | null
     autor: { id: string; nombre: string; correo: string }
     fotoUrl: string
     doc: string
@@ -201,25 +221,47 @@ export function RecepcionModule() {
   }
 
   /**
-   * Reimpresión de rótulos por GUÍA completa. Desde cualquier fila de la
-   * lista trae de la BD TODOS los artículos del mismo documento (la página
-   * visible puede estar paginada) y abre el modal con ellos: allí se
-   * confirman las copias de cada artículo y se imprime todo de una vez.
-   * Solo opera sobre datos YA registrados en la BD: se conserva la regla
-   * de negocio "imprimir solo lo registrado".
+   * AUTO-ESTATUS (pedido 2026-10): al ENVIARSE con éxito el trabajo de
+   * impresión, la guía pasa a 'Recepcionado'. Solo sube desde 'Pendiente'
+   * (nunca pisa 'Observado' ni retrocede) y por identidad EXACTA (guia_id):
+   * jamás marca otra guía. Refresca la lista para reflejar el estado nuevo.
    */
-  async function reimprimirGuia(r: RegistroRecepcion) {
+  async function alImprimirRotulos() {
+    const ref = guardados?.ref
+    if (!ref) return
+    const marcadas = await marcarGuiaRecepcionada(ref)
+    if (marcadas > 0) {
+      toast.success('Guía marcada como Recepcionada automáticamente', {
+        description: `${marcadas} fila(s) actualizadas al imprimir los rótulos.`,
+      })
+      void cargar(0, true)
+    }
+  }
+
+  /**
+   * Trae la guía COMPLETA por su IDENTIDAD EXACTA (M-2: guia_id — jamás
+   * cruza filas de otras guías aunque compartan Nº/fecha/proveedor) y abre
+   * el modal de rótulos con todos sus artículos (copias por artículo, un
+   * solo trabajo de impresión). Solo opera sobre datos YA registrados en
+   * la BD: se conserva la regla "imprimir solo lo registrado".
+   */
+  async function cargarGuiaYAbrirImpresion(ref: RefDocumentoRecepcion, docLabel: string) {
     if (cargandoGuia) return
     setCargandoGuia(true)
     try {
-      const filasGuia = await listarRecepcionesPorDocumento({
-        tipoDocumento: r.tipoDocumento,
-        numeroDocumento: r.numeroDocumento,
-        fecha: r.fecha,
-        proveedor: r.proveedor,
-      })
-      // Fallback defensivo: la fila clickeada SIEMPRE participa.
-      const vistas = filasGuia.length > 0 ? filasGuia : [r]
+      const filasGuia = await listarRecepcionesPorDocumento(ref)
+      // Fallback defensivo: si la consulta viniera vacía (residuo sin
+      // guia_id), reintenta por la identidad heredada.
+      let vistas = filasGuia
+      if (vistas.length === 0 && (ref.guiaId ?? '').trim()) {
+        vistas = await listarRecepcionesPorDocumento({ ...ref, guiaId: null })
+      }
+      if (vistas.length === 0) {
+        toast.info('La guía ya no tiene artículos con código', {
+          description: 'El código de barras es el identificador del rótulo; completa el código del artículo en el registro para poder imprimirlo.',
+        })
+        return
+      }
       const rotulos: RotuloAImprimir[] = vistas
         .filter((f) => f.codigo.trim())
         .map((f) => ({
@@ -241,17 +283,26 @@ export function RecepcionModule() {
         })
         return
       }
-      const doc = r.numeroDocumento ? `${r.tipoDocumento} ${r.numeroDocumento}` : r.tipoDocumento
+      const primera = vistas[0]
       setGuardados({
         rotulos,
         encabezado: {
-          fecha: r.fecha,
-          numeroDocumento: r.numeroDocumento,
-          proveedor: r.proveedor,
-          placa: r.placa,
-          registradoPor: r.usuarioNombre,
+          fecha: primera.fecha,
+          numeroDocumento: primera.numeroDocumento,
+          proveedor: primera.proveedor,
+          placa: primera.placa,
+          registradoPor: primera.usuarioNombre,
         },
-        nota: `Reimpresión de la guía completa (${doc}): ${rotulos.length} artículo(s) ya registrados en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
+        // Identidad EXACTA de la guía impresa: al confirmar la impresión
+        // se marca 'Recepcionado' SOLO aquí (nunca otra guía).
+        ref: {
+          guiaId: primera.guiaId ?? ref.guiaId ?? null,
+          tipoDocumento: primera.tipoDocumento,
+          numeroDocumento: primera.numeroDocumento,
+          fecha: primera.fecha,
+          proveedor: primera.proveedor,
+        },
+        nota: `Reimpresión de la guía completa (${docLabel}): ${rotulos.length} artículo(s) ya registrados en la base de datos. Digita cuántas etiquetas necesitas de cada uno e imprime todo de una vez.`,
       })
       setRotulosOpen(true)
     } catch (err: unknown) {
@@ -260,6 +311,54 @@ export function RecepcionModule() {
     } finally {
       setCargandoGuia(false)
     }
+  }
+
+  /**
+   * Reimpresión de rótulos por GUÍA completa desde cualquier fila de la
+   * lista (la página visible puede estar paginada). Delegado en el cargador
+   * por identidad exacta M-2.
+   */
+  async function reimprimirGuia(r: RegistroRecepcion) {
+    const doc = r.numeroDocumento ? `${r.tipoDocumento} ${r.numeroDocumento}` : r.tipoDocumento
+    await cargarGuiaYAbrirImpresion(
+      {
+        guiaId: r.guiaId,
+        tipoDocumento: r.tipoDocumento,
+        numeroDocumento: r.numeroDocumento,
+        fecha: r.fecha,
+        proveedor: r.proveedor,
+      },
+      doc
+    )
+  }
+
+  /** Banner "recién registrada": imprime los rótulos de ESA guía. */
+  async function imprimirUltimaRegistrada() {
+    const u = ultimaRegistrada
+    if (!u) return
+    const doc = u.numeroDocumento ? `${u.tipoDocumento} ${u.numeroDocumento}` : u.tipoDocumento
+    await cargarGuiaYAbrirImpresion(
+      {
+        guiaId: u.guiaId,
+        tipoDocumento: u.tipoDocumento,
+        numeroDocumento: u.numeroDocumento,
+        fecha: u.fecha,
+        proveedor: u.proveedor,
+      },
+      doc
+    )
+  }
+
+  /** Banner "recién registrada": encuentra la guía en la lista al instante
+   *  (búsqueda por Nº de documento — o proveedor si no tenía número). */
+  function verUltimaEnLista() {
+    const u = ultimaRegistrada
+    if (!u) return
+    const termino = (u.numeroDocumento || u.proveedor || '').trim()
+    if (!termino) return
+    setBusqueda(termino)
+    setEstadoFiltro('todos')
+    void cargar(0, true, { busqueda: termino, estado: '' })
   }
 
   /**
@@ -273,12 +372,9 @@ export function RecepcionModule() {
     if (exportando) return
     setExportando(g.clave)
     try {
-      const filasGuia = await listarRecepcionesPorDocumento({
-        tipoDocumento: g.ref.tipoDocumento,
-        numeroDocumento: g.ref.numeroDocumento,
-        fecha: g.ref.fecha,
-        proveedor: g.ref.proveedor,
-      })
+      // M-2: por identidad EXACTA (guia_id) — el Excel de ESTA guía, sin
+      // mezclar filas de otra que comparta Nº/fecha/proveedor.
+      const filasGuia = await listarRecepcionesPorDocumento(g.ref)
       // Fallback defensivo (mismo criterio que la reimpresión): la guía
       // clickeada SIEMPRE exporta aunque la consulta venga vacía.
       const filas = filasGuia.length > 0 ? filasGuia : g.filas
@@ -330,12 +426,9 @@ export function RecepcionModule() {
     if (cargandoEdicion) return
     setCargandoEdicion(true)
     try {
-      const filasGuia = await listarRecepcionesPorDocumento({
-        tipoDocumento: g.ref.tipoDocumento,
-        numeroDocumento: g.ref.numeroDocumento,
-        fecha: g.ref.fecha,
-        proveedor: g.ref.proveedor,
-      })
+      // M-2: identidad EXACTA (guia_id dentro de g.ref) — la edición carga
+      // SOLO las filas de esta guía, jamás de otra que comparta Nº/fecha.
+      const filasGuia = await listarRecepcionesPorDocumento(g.ref)
       const filasCompletas = filasGuia.length > 0 ? filasGuia : g.filas
       const primera = filasCompletas[0]
       if (!primera) return
@@ -346,6 +439,7 @@ export function RecepcionModule() {
         : g.tipoDocumento
       setEditando({
         ids: filasCompletas.map((f) => f.id),
+        guiaId: g.ref.guiaId ?? primera.guiaId ?? null,
         estado: g.estado || primera.estado || 'Pendiente',
         autor: {
           id: primera.usuarioId,
@@ -589,6 +683,9 @@ export function RecepcionModule() {
             placa: fPlaca,
             estado: editando.estado,
             fotoUrl: editando.fotoUrl,
+            // M-2: las filas NUEVAS de esta edición heredan la identidad
+            // de la guía (siguen unidas a SU documento).
+            guiaId: editando.guiaId,
           },
           editando.autor
         )
@@ -609,6 +706,13 @@ export function RecepcionModule() {
               placa: fPlaca,
               registradoPor: editando.autor.nombre,
             },
+            ref: {
+              guiaId: editando.guiaId,
+              tipoDocumento: fDoc,
+              numeroDocumento: fNumero,
+              fecha,
+              proveedor: fProveedor,
+            },
             nota: `Guía actualizada: ${filasGuardar.length} fila(s) en la base de datos. Configura las etiquetas por rótulo/paleta e imprime todo de una vez.`,
           })
           setRotulosOpen(true)
@@ -619,7 +723,9 @@ export function RecepcionModule() {
       }
 
       // ── ALTA normal: filas nuevas con el encabezado digitado ──
-      await crearRecepciones(
+      // M-2: crearRecepciones devuelve la identidad única de ESTA recepción
+      // (guia_id compartido por todas sus filas) → banner + impresión exacta.
+      const guiaId = await crearRecepciones(
         filasGuardar.map((f, i) => ({
           fecha,
           tipoDocumento: fDoc,
@@ -642,6 +748,21 @@ export function RecepcionModule() {
       toast.success(
         `Recepción registrada: ${validos.length} artículo(s) · ${filasGuardar.length} fila(s)`
       )
+      // BANNER "GUÍA RECIÉN REGISTRADA": queda fijada en pantalla con su
+      // identidad exacta — no se pierde de vista aunque el orden por fecha
+      // del documento la sitúe más allá de la primera página de la lista.
+      setUltimaRegistrada({
+        guiaId,
+        fecha,
+        tipoDocumento: fDoc,
+        numeroDocumento: fNumero,
+        proveedor: fProveedor,
+        placa: fPlaca,
+        articulos: validos.length,
+        filas: filasGuardar.length,
+        cantidadTotal: filasGuardar.reduce((s, f) => s + f.cantidadNum, 0),
+        usuarioNombre: perfil.nombre,
+      })
       // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
       // se abre solo, listo para digitar las etiquetas por rótulo/paleta. La
       // impresión solo existe DESPUÉS de registrar (carga ya validada).
@@ -657,6 +778,13 @@ export function RecepcionModule() {
             proveedor: fProveedor,
             placa: fPlaca,
             registradoPor: perfil.nombre,
+          },
+          ref: {
+            guiaId,
+            tipoDocumento: fDoc,
+            numeroDocumento: fNumero,
+            fecha,
+            proveedor: fProveedor,
           },
           nota: `Recepción guardada: ${filasGuardar.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
         })
@@ -767,7 +895,17 @@ export function RecepcionModule() {
       </div>
 
       {/* ── Opción 1: registro con foto de la guía (OCR + catálogo) ── */}
-      {modo === 'foto' && <GuiaFotoForm onRegistrado={() => cargar(0, true)} />}
+      {modo === 'foto' && (
+        <GuiaFotoForm
+          onRegistrado={(info) => {
+            // BANNER "GUÍA RECIÉN REGISTRADA": la guía guardada por la vía
+            // foto queda fijada en pantalla (con identidad exacta) aunque
+            // el orden por fecha del documento la baje de la página 1.
+            setUltimaRegistrada(info)
+            cargar(0, true)
+          }}
+        />
+      )}
 
       {/* ── Opción 2: formulario manual (encabezado + N artículos) ── */}
       {modo === 'manual' && (
@@ -886,6 +1024,68 @@ export function RecepcionModule() {
               registrados), cuando la carga ya fue validada. */}
         </div>
       </div>
+      )}
+
+      {/* ── BANNER: guía recién registrada (fijada hasta que la descarten)
+          — corrección del reporte "estuvieron trabajando con una guía y
+          desapareció": la lista ordena por FECHA DEL DOCUMENTO y pagina a
+          50 filas, así que una guía con fecha anterior se hunde en páginas
+          siguientes y parece desaparecer. Aquí SIEMPRE está a la vista,
+          con acceso directo a su impresión y a encontrarla en la lista. ── */}
+      {ultimaRegistrada && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+          <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-600" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-emerald-900">
+              Recepción recién registrada:{' '}
+              {ultimaRegistrada.numeroDocumento
+                ? `${ultimaRegistrada.tipoDocumento} ${ultimaRegistrada.numeroDocumento}`
+                : ultimaRegistrada.tipoDocumento || '(sin número)'}
+            </p>
+            <p className="text-xs text-emerald-800 truncate">
+              {ultimaRegistrada.articulos} artículo(s) · {ultimaRegistrada.filas} fila(s) · Cant. total{' '}
+              {String(Math.round(ultimaRegistrada.cantidadTotal * 1000) / 1000)}
+              {ultimaRegistrada.proveedor ? ` · ${ultimaRegistrada.proveedor}` : ''}
+              {ultimaRegistrada.fecha ? ` · Fecha doc ${ultimaRegistrada.fecha}` : ''}
+              {` · registrada por ${ultimaRegistrada.usuarioNombre}`}
+            </p>
+            <p className="text-[10px] text-emerald-700">
+              Fijada aquí para que NO se pierda de vista: la lista ordena por fecha del documento y esta guía puede quedar en páginas siguientes.
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+            <Button
+              size="sm"
+              onClick={() => void imprimirUltimaRegistrada()}
+              disabled={cargandoGuia}
+              className="gap-1.5 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
+              title="Imprimir los rótulos de ESTA guía (un solo trabajo)"
+            >
+              {cargandoGuia ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+              Imprimir rótulos
+            </Button>
+            {(ultimaRegistrada.numeroDocumento || ultimaRegistrada.proveedor) && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={verUltimaEnLista}
+                className="gap-1.5 border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                title="Mostrar esta guía en la lista (búsqueda por Nº de documento)"
+              >
+                <Search className="h-3.5 w-3.5" /> Ver en la lista
+              </Button>
+            )}
+            <button
+              type="button"
+              onClick={() => setUltimaRegistrada(null)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-emerald-500 hover:bg-emerald-100 hover:text-emerald-700"
+              title="Quitar de la vista"
+              aria-label="Quitar banner de guía recién registrada"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── Filtros ── */}
@@ -1319,6 +1519,10 @@ export function RecepcionModule() {
             : { fecha: '', numeroDocumento: '', proveedor: '', placa: '', registradoPor: '' }
         }
         nota={guardados?.nota}
+        // M-2 + auto-estatus: identidad EXACTA de la guía impresa → al
+        // imprimir se marca 'Recepcionado' (solo sube desde Pendiente).
+        refDocumento={guardados?.ref}
+        onImpreso={alImprimirRotulos}
       />
 
       {/* ── Confirmar eliminación POR GUÍA ── */}

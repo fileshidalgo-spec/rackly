@@ -159,7 +159,9 @@ t('ZPL con guía corta SIN uuid (solo Nº doc) y código de 3 dígitos: QR mag �
 t('ZPL sin identidad (sin guiaId y sin Nº): SIN ^BQ y código a ancho completo', () => {
   const zpl = construirZPLRotulo(DATOS, { ...ENC, guiaId: null, numeroDocumento: '' }, {})
   assert.ok(!zpl.includes('^BQ'), 'no debía llevar QR')
-  assert.ok(zpl.includes('^A0R,215,'), 'código igualmente agrandado')
+  // Calibración Task 8 (tinta centrada, 2026-10-17): SIN QR el ancho es 1152 →
+  // el alto del código llega al TOPE 286 (min(286, ⌊(1152−24)/(0.62×5)⌋)=286).
+  assert.ok(zpl.includes('^A0R,286,'), 'código igualmente agrandado (alto 286 en ancho completo)')
   assert.ok(zpl.includes('^FB1152,'), 'código debía usar el ancho completo')
 })
 

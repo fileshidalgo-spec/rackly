@@ -14,6 +14,13 @@
  *
  * Aislamiento: solo LEE recepcion_registros y escribe vía la RPC
  * transito_registrar_envio. No modifica Recepción, Racks ni Piso.
+ *
+ * SINCRONIZACIÓN CON RECEPCIÓN: esta pestaña es una VISTA VIVA de
+ * recepcion_registros (única fuente de verdad — el historial de envíos
+ * viaja en el jsonb `transito` de cada fila). Si Recepción modifica o
+ * elimina una guía (o su contenido), el cambio se ve aquí en segundos:
+ * realtime (INSERT/UPDATE/DELETE) + polling de respaldo + refresco al
+ * volver a la pestaña — mismo patrón que Recepción y Atención.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -40,6 +47,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/hooks/useAuth'
+import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
 import { calcularTurno } from '@/lib/rackly/turno'
 import {
   FECHA_INICIO_TRANSITO,
@@ -65,6 +73,8 @@ export function TransitoModule() {
   const { perfil } = useAuth()
   const [estado, setEstado] = useState<EstadoCarga>('cargando')
   const [articulos, setArticulos] = useState<ArticuloTransito[]>([])
+  /** Hora del último refresco (prueba VISIBLE del auto-refresco en vivo). */
+  const [enVivoHora, setEnVivoHora] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [guiasAbiertas, setGuiasAbiertas] = useState<Set<string>>(new Set())
   const [historialAbierto, setHistorialAbierto] = useState<Set<string>>(new Set())
@@ -74,17 +84,27 @@ export function TransitoModule() {
   const [lectorOpen, setLectorOpen] = useState(false)
   /** Anti-doble-disparo: una resolución a la vez (ref, no estado — no renderiza). */
   const escaneandoRef = useRef(false)
+  /** Guard de cargas cruzadas: la respuesta más vieja nunca pisa la nueva. */
+  const cargaGenRef = useRef(0)
 
   const cargar = useCallback(async () => {
     // Sin setEstado('cargando') síncrono: el estado inicial YA es 'cargando',
     // y en refrescos (realtime/botón) mantener 'listo' evita el flash de la
     // pantalla de carga (regla react-hooks/set-state-in-effect: setState
     // síncrono dentro del effect dispara renders en cascada).
+    // Guard generacional (igual que Recepción): si dos refrescos se cruzan
+    // (realtime + cierre de diálogo), la respuesta VIEJA no pisa la nueva.
+    const gen = ++cargaGenRef.current
     try {
       const data = await listarArticulosTransito()
+      if (gen !== cargaGenRef.current) return
       setArticulos(data)
       setEstado('listo')
+      setEnVivoHora(
+        new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      )
     } catch (err) {
+      if (gen !== cargaGenRef.current) return
       console.error('[Transito] Error cargando guías:', err)
       toast.error('Error al cargar las guías de Tránsito')
       setEstado('error')
@@ -99,6 +119,25 @@ export function TransitoModule() {
     const t = setTimeout(() => { void cargar() }, 0)
     return () => clearTimeout(t)
   }, [cargar])
+
+  // ── REFRESCO EN VIVO (realtime + polling + visibilidad) ──
+  // Recepción puede MODIFICAR o ELIMINAR una guía (o su contenido) en
+  // cualquier momento y desde otro dispositivo: sin esto, la guía editada
+  // o borrada seguía apareciendo (o con datos viejos) hasta pulsar
+  // "Actualizar" — la sincronización existía en la BD (misma tabla, una
+  // sola fuente de verdad) pero NO en la pantalla.
+  // Misma suscripción que Recepción/Atención: canal singleton sobre
+  // recepcion_registros (INSERT/UPDATE/DELETE, debounce 200 ms) + polling
+  // de respaldo cada 8 s + refresco al volver a la pestaña. Aquí NO hay
+  // paginación (la lista es el dataset completo), así que el refresco
+  // reemplaza TODO y nunca rompe la lectura del usuario. Los envíos del
+  // jsonb `transito` viajan DENTRO de cada fila: un UPDATE de Recepción no
+  // los toca y un DELETE se los lleva junto con la fila (el borrado con
+  // envíos ya está bloqueado por el guard de Recepción).
+  const recargarEnVivo = useCallback(() => {
+    void cargar()
+  }, [cargar])
+  useRegistrosRealtime('recepcion_registros', recargarEnVivo)
 
   const guias = useMemo(() => agruparEnGuias(filtrarArticulos(articulos, busqueda)), [articulos, busqueda])
   const pendientes = useMemo(() => contarPendientes(articulos), [articulos])
@@ -284,6 +323,19 @@ export function TransitoModule() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              {/* EN VIVO: la lista se refresca sola cuando Recepción modifica o
+                  elimina una guía (realtime + respaldo 8 s). Hora del último
+                  refresco, misma prueba visible que en Recepción. */}
+              <span
+                className="hidden md:flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 mr-1 whitespace-nowrap"
+                title="La lista se actualiza sola cuando Recepción modifica o elimina una guía (realtime + refresco de respaldo)"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                </span>
+                {enVivoHora ? `En vivo · ${enVivoHora}` : 'En vivo'}
+              </span>
               <Button
                 size="sm"
                 onClick={() => setLectorOpen(true)}

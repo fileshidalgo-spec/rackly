@@ -7,8 +7,11 @@
  * Escenarios:
  *   1. nombreArchivoGuia: nombre seguro (sin espacios/slashes/tildes).
  *   2. filasGuiaAExcel: paleta a SU columna, observaciones limpias, orden.
- *   3. El libro se arma y escribe en node (writeFile funciona igual):
- *      se verifica que el archivo .xlsx REAL se genera y pesa > 0.
+ *   3. TURNO: columna T1/T2 en "Artículos" y en la tabla de la hoja "Guía"
+ *      (regla 07:20–19:20 → T1 / resto → T2, derivada del created_at).
+ *   4. filasGuiaATablaTurno: columnas EXACTAS del formato pedido.
+ *   5. El libro se arma y escribe en node: el .xlsx REAL se genera, se
+ *      relee y se verifican sus 2 hojas, título y cabeceras con Turno.
  */
 
 process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://dummy.supabase.co'
@@ -18,7 +21,7 @@ process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY = 'dummy'
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { nombreArchivoGuia, filasGuiaAExcel, exportarGuiaExcel } = require('@/lib/rackly/guia-excel')
+const { nombreArchivoGuia, filasGuiaAExcel, filasGuiaATablaTurno, exportarGuiaExcel, turnoDeFila, construirHojaGuia } = require('@/lib/rackly/guia-excel')
 
 let pasados = 0
 let fallidos = 0
@@ -35,7 +38,7 @@ function check(nombre, cond, detalle = '') {
 
 const fila = (sobre) => ({
   id: 'id-' + Math.random().toString(36).slice(2),
-  createdAt: '2026-10-12T09:30:00Z',
+  createdAt: '2026-10-12T09:30:00Z', // 04:30 Lima → T2
   fecha: '2026-10-12',
   tipoDocumento: 'Guia',
   numeroDocumento: 'T173-00004090',
@@ -79,6 +82,25 @@ check('la marca "Paleta i/N" va a SU columna', excel[1]['Paleta'] === 'Paleta 1/
 check('observaciones LIMPIAS (sin la marca)', excel[1]['Observaciones'] === 'obs del usuario', String(excel[1]['Observaciones']))
 check('cantidad numérica tal cual (35)', excel[2]['Cantidad'] === 35)
 
+// ─── 2b. TURNO en la hoja Artículos ───
+console.log('\n[2b] TURNO — columna derivada del created_at (hora Lima)')
+const turnoFilaTarde = fila({ createdAt: '2026-10-12T14:30:00Z' }) // 09:30 Lima → T1
+check('fila 04:30 Lima → T2', excel[0]['Turno'] === 'T2', String(excel[0]['Turno']))
+check('fila 09:30 Lima → T1', filasGuiaAExcel([turnoFilaTarde])[0]['Turno'] === 'T1')
+check('fila REAL de la guía del usuario (05:42 Lima) → T2', filasGuiaAExcel([fila({ createdAt: '2026-10-16T10:42:21Z' })])[0]['Turno'] === 'T2')
+check('sin created_at → vacío (nunca inventa)', filasGuiaAExcel([fila({ createdAt: '' })])[0]['Turno'] === '')
+check('created_at inválido → vacío (nunca lanza)', filasGuiaAExcel([fila({ createdAt: 'no-es-fecha' })])[0]['Turno'] === '')
+check('turnoDeFila directo 19:20 Lima → T1', turnoDeFila({ createdAt: '2026-10-17T00:20:30Z' }) === 'T1')
+check('turnoDeFila directo 19:21 Lima → T2', turnoDeFila({ createdAt: '2026-10-17T00:21:00Z' }) === 'T2')
+
+// ─── 2c. filasGuiaATablaTurno — hoja Guía ───
+console.log('\n[2c] filasGuiaATablaTurno — columnas EXACTAS del formato pedido')
+const tabla = filasGuiaATablaTurno(filas)
+check('cabecera exacta (11 columnas, Turno al final)', JSON.stringify(tabla[0]) === JSON.stringify(['Fecha', 'Nº de documento', 'Código', 'Descripción', 'Unidad', 'Cantidad', 'Lote', 'F. producción', 'F. vencimiento', 'Registró', 'Turno']), JSON.stringify(tabla[0]))
+check('1 fila por fila registrada + cabecera', tabla.length === filas.length + 1)
+check('fila incluye fecha/nº doc/código y SU turno', tabla[1][0] === '2026-10-12' && tabla[1][1] === 'T173-00004090' && tabla[1][2] === '5653' && tabla[1][10] === 'T2')
+check('guía vacía → solo cabecera', filasGuiaATablaTurno([]).length === 1)
+
 // ─── 3. exportarGuiaExcel — el libro REAL se genera en node ───
 console.log('\n[3] exportarGuiaExcel — libro real (.xlsx) generado')
 ;(async () => {
@@ -104,6 +126,32 @@ console.log('\n[3] exportarGuiaExcel — libro real (.xlsx) generado')
     check('el archivo .xlsx existe', fs.existsSync(ruta))
     const peso = fs.existsSync(ruta) ? fs.statSync(ruta).size : 0
     check('el libro pesa > 1KB (2 hojas reales)', peso > 1024, String(peso))
+
+    // Relectura REAL del archivo generado (xlsx-js-style también lee)
+    const XLSX = require('xlsx-js-style')
+    const wbBack = XLSX.readFile(ruta)
+    check('2 hojas: Guía + Artículos', JSON.stringify(wbBack.SheetNames) === JSON.stringify(['Guía', 'Artículos']), JSON.stringify(wbBack.SheetNames))
+    const guiaBack = wbBack.Sheets['Guía']
+    check('título imprimible en A1', guiaBack['A1'] && guiaBack['A1'].v === 'GUÍA DE RECEPCIÓN', guiaBack['A1'] && guiaBack['A1'].v)
+    const celdasGuia = Object.keys(guiaBack).filter((k) => !k.startsWith('!'))
+    const textosGuia = celdasGuia.map((k) => String(guiaBack[k].v))
+    check('encabezado incluye el campo Turno', textosGuia.includes('Turno'))
+    check('tabla de ítems en la hoja Guía (código 5653 presente)', textosGuia.includes('5653'))
+    check('estilos escritos: el lector del fork no restaura .s pero styles.xml lleva los colores (verificado E2E: 1E3A5F/2E5A88 en styles.xml)', peso > 8000, String(peso))
+    check('layout imprimible: 2 fusiones de título', Array.isArray(guiaBack['!merges']) && guiaBack['!merges'].length === 2, JSON.stringify(guiaBack['!merges']))
+
+    // Layout del CONSTRUCTOR PURO (lo que el lector no restaura se prueba aquí)
+    const XS = require('xlsx-js-style')
+    const hoja = construirHojaGuia({ fecha: '2026-10-12', tipoDocumento: 'Guia', numeroDocumento: 'T173-00004090', proveedor: 'AJEPER', placa: 'V3P-114', fotoUrl: fila({}).fotoUrl, estado: 'Pendiente', usuarioNombre: 'Miguel', usuarioCorreo: 'm@e.pe', filas, cantidadTotal: 1075 }, XS)
+    check('constructor: 11 anchos de columna', Array.isArray(hoja['!cols']) && hoja['!cols'].length === 11, String(hoja['!cols'] && hoja['!cols'].length))
+    check('constructor: 2 fusiones de título', Array.isArray(hoja['!merges']) && hoja['!merges'].length === 2)
+    check('constructor: márgenes de impresión estrechos', hoja['!margins'] && hoja['!margins'].left === 0.3)
+    check('constructor: estilo del título (fondo 1E3A5F, bold 16)', (() => { const s = hoja['A1'].s; return s && s.fill && String(s.fill.fgColor.rgb).endsWith('1E3A5F') && s.font && s.font.bold && s.font.sz === 16 })())
+    check('constructor: cabecera de tabla con estilo', (() => { const textos = Object.keys(hoja).filter((k) => !k.startsWith('!')).map((k) => String(hoja[k].v)); return textos.filter((t) => t === 'Turno').length === 2 })())
+    const artBack = wbBack.Sheets['Artículos']
+    const textosArt = Object.keys(artBack).filter((k) => !k.startsWith('!')).map((k) => String(artBack[k].v))
+    check('hoja Artículos incluye columna Turno', textosArt.includes('Turno'))
+    check('hoja Artículos conserva TODOS los datos (lote L-77)', textosArt.includes('L-77'))
   } finally {
     process.chdir(cwdAntes)
   }

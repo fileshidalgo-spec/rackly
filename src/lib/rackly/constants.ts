@@ -9,6 +9,16 @@ export const TURNO_NOCHE_INICIO = 19 * 60 + 45 // 19:45 en minutos
 export const TURNO_DIA = 'Día' as const
 export const TURNO_NOCHE = 'Noche' as const
 
+// ── Turnos de RECEPCIÓN (T1/T2) ─────────────────────────
+// Regla del almacén para la exportación Excel de guías:
+//   T1 = 07:20:00 → 19:20:59   ·   T2 = 19:21:00 → 07:19:59
+// (hora de Lima). Aislados de TURNO_DIA/TURNO_NOCHE: Kardex, Piso y
+// Tránsito siguen usando su regla propia (07:45/19:45) sin cambios.
+export const RECEPCION_T1_INICIO = 7 * 60 + 20  // 07:20 en minutos (inclusive)
+export const RECEPCION_T1_FIN = 19 * 60 + 20    // 19:20 en minutos (inclusive)
+export const TURNO_T1 = 'T1' as const
+export const TURNO_T2 = 'T2' as const
+
 // ── Tipo de movimiento ─────────────────────────────────
 export const TIPOS_MOVIMIENTO = {
   INGRESO: 'ingreso',

@@ -1,4 +1,5 @@
-import { TURNO_DIA, TURNO_NOCHE, TURNO_DIA_INICIO, TURNO_NOCHE_INICIO } from './constants'
+import { TURNO_DIA, TURNO_NOCHE, TURNO_DIA_INICIO, TURNO_NOCHE_INICIO,
+         TURNO_T1, TURNO_T2, RECEPCION_T1_INICIO, RECEPCION_T1_FIN } from './constants'
 import type { Turno } from './kardex'
 
 /** Zona horaria operativa del almacén (Lima, Perú). Los cortes de turno
@@ -23,4 +24,17 @@ function minutosEnAlmacen(date: Date): number {
 export function calcularTurno(date: Date = new Date()): Turno {
   const minutos = minutosEnAlmacen(date)
   return minutos >= TURNO_DIA_INICIO && minutos < TURNO_NOCHE_INICIO ? TURNO_DIA : TURNO_NOCHE
+}
+
+/** Turno de la regla de RECEPCIÓN (Excel de guías): 'T1' o 'T2'.
+ *  La BD no guarda turno en recepcion_registros: derivarlo del created_at
+ *  (hora real de registro) corrige también las guías históricas sin
+ *  migrar datos. */
+export type TurnoRecepcion = typeof TURNO_T1 | typeof TURNO_T2
+
+/** T1 = 07:20:00 → 19:20:59 (inclusive) · T2 = 19:21:00 → 07:19:59.
+ *  Siempre en hora de Lima (TZ_ALMACEN), nunca la del dispositivo. */
+export function calcularTurnoRecepcion(date: Date): TurnoRecepcion {
+  const minutos = minutosEnAlmacen(date)
+  return minutos >= RECEPCION_T1_INICIO && minutos <= RECEPCION_T1_FIN ? TURNO_T1 : TURNO_T2
 }

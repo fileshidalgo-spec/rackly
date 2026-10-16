@@ -139,12 +139,16 @@ t('mapArticuloTransito: mapea fila completa con transito jsonb y deriva semáfor
     fecha_vencimiento: '2027-01-01',
     placa: 'ABC-123',
     n_paleta: 2,
+    guia_id: '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0',
     usuario_nombre: 'Miguel',
     transito: { v: 1, envios: [envio(4)] },
   }
   const a = mapArticuloTransito(fila)
   assert.strictEqual(a.codigo, 'A1')
   assert.strictEqual(a.nPaleta, 2)
+  // guiaId (2026-10): identidad que porta el QR del rótulo — el lector de
+  // Tránsito resuelve la guía por aquí.
+  assert.strictEqual(a.guiaId, '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0')
   assert.strictEqual(a.envios.length, 1)
   assert.strictEqual(a.enviados, 4)
   assert.strictEqual(a.pendiente, 6)

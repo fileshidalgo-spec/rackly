@@ -16,7 +16,7 @@
  * transito_registrar_envio. No modifica Recepción, Racks ni Piso.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -33,6 +33,7 @@ import {
   Loader2,
   PackageCheck,
   RefreshCw,
+  ScanLine,
   Search,
   Truck,
   Users,
@@ -44,6 +45,7 @@ import {
   FECHA_INICIO_TRANSITO,
   MAX_FILAS_TRANSITO,
   listarArticulosTransito,
+  listarArticulosPorGuiaId,
   agruparEnGuias,
   contarPendientes,
   filtrarArticulos,
@@ -51,7 +53,9 @@ import {
   type EnvioTransito,
   type GuiaTransito,
 } from '@/lib/rackly/transito'
+import { parsearPayloadQR, type PayloadQRRotulo } from '@/lib/rackly/qr-rotulo'
 import { DialogoTransferir } from './DialogoTransferir'
+import { LectorQR } from './LectorQR'
 
 const EPS = 0.0005
 
@@ -66,6 +70,10 @@ export function TransitoModule() {
   const [historialAbierto, setHistorialAbierto] = useState<Set<string>>(new Set())
   const [seleccion, setSeleccion] = useState<Set<string>>(new Set())
   const [dialogoItems, setDialogoItems] = useState<ArticuloTransito[] | null>(null)
+  /** Lector de QR (cámara + pistola USB): abierto y en pausa durante transferencia. */
+  const [lectorOpen, setLectorOpen] = useState(false)
+  /** Anti-doble-disparo: una resolución a la vez (ref, no estado — no renderiza). */
+  const escaneandoRef = useRef(false)
 
   const cargar = useCallback(async () => {
     // Sin setEstado('cargando') síncrono: el estado inicial YA es 'cargando',
@@ -144,6 +152,115 @@ export function TransitoModule() {
     cargar()
   }
 
+  // ═══ LECTOR DE QR (rótulos de Recepción → transferencia directa) ═══
+
+  /** Artículos de la guía del payload dentro de `base` (guiaId exacto;
+   *  si el rótulo es de una guía residual sin guia_id, por Nº documento). */
+  function articulosDelPayload(base: ArticuloTransito[], p: PayloadQRRotulo): ArticuloTransito[] {
+    if (p.guiaId) {
+      const g = p.guiaId.toLowerCase()
+      const porGuia = base.filter((a) => a.guiaId.toLowerCase() === g)
+      if (porGuia.length > 0) return porGuia
+    }
+    if (p.numeroDocumento) {
+      const d = p.numeroDocumento.toLowerCase()
+      return base.filter((a) => a.numeroDocumento.toLowerCase() === d)
+    }
+    return []
+  }
+
+  /** Artículo objetivo del escaneo: código (case-insensitive) y, si el
+   *  rótulo era de una paleta, la paleta EXACTA primero. */
+  function objetivoDelPayload(arts: ArticuloTransito[], p: PayloadQRRotulo): ArticuloTransito | null {
+    if (!p.codigo) return null
+    const c = p.codigo.toLowerCase()
+    const porCodigo = arts.filter((a) => a.codigo.toLowerCase() === c)
+    if (porCodigo.length === 0) return null
+    if (p.paleta != null) {
+      const paleta = porCodigo.find((a) => a.nPaleta === p.paleta)
+      if (paleta) return paleta
+    }
+    return porCodigo[0]
+  }
+
+  /**
+   * Resuelve el texto escaneado y abre la transferencia "ahí mismo":
+   *   1. busca la guía en el listado cargado;
+   *   2. si no está (guía vieja fuera del tope), la TRAE de la BD y la
+   *      suma al listado — un escaneo válido jamás se pierde;
+   *   3. abre la tarjeta de la guía y, si el artículo es inequívoco,
+   *      el diálogo de transferencia directo (destino Rack/Piso → mapa).
+   */
+  const resolverQR = async (texto: string, _fuente: 'camara' | 'manual') => {
+    if (escaneandoRef.current) return
+    const p = parsearPayloadQR(texto)
+    if (!p) {
+      toast.error('El QR no es un rótulo de Rackly', { description: texto.slice(0, 60) })
+      return
+    }
+    escaneandoRef.current = true
+    try {
+      let base = articulos
+      let arts = articulosDelPayload(base, p)
+      if (arts.length === 0 && p.guiaId) {
+        const extra = await listarArticulosPorGuiaId(p.guiaId)
+        if (extra.length > 0) {
+          base = [...extra, ...base]
+          setArticulos((prev) => {
+            const ids = new Set(prev.map((a) => a.id))
+            return [...extra.filter((e) => !ids.has(e.id)), ...prev]
+          })
+          arts = articulosDelPayload(base, p)
+        }
+      }
+      if (arts.length === 0) {
+        toast.error('La guía del QR no está en Tránsito', {
+          description: p.numeroDocumento
+            ? `Guía ${p.numeroDocumento}: verifica la fecha (desde ${formatearFecha(FECHA_INICIO_TRANSITO)}) o reimprime los rótulos en Recepción.`
+            : 'No se pudo identificar la guía del rótulo.',
+        })
+        return
+      }
+      const guia = agruparEnGuias(arts)[0]
+      setGuiasAbiertas((prev) => new Set(prev).add(guia.key))
+      const objetivo = objetivoDelPayload(arts, p)
+      const etiquetaGuia = guia.numeroDocumento || `guía del ${formatearFecha(guia.fecha)}`
+
+      if (!objetivo) {
+        toast.info(`Guía ${etiquetaGuia}: ${arts.length} artículo(s)`, {
+          description: 'El QR no trae el código del artículo — elige uno en la tarjeta abierta.',
+        })
+        return
+      }
+      if (!objetivo.transferible) {
+        toast.warning(`${objetivo.codigo}: ${objetivo.razonNoTransferible}`, {
+          description: `Guía ${etiquetaGuia} — completa lote/vencimiento en Recepción para transferirlo.`,
+        })
+        return
+      }
+      if (objetivo.pendiente <= EPS) {
+        toast.info(`${objetivo.codigo}: ya está transferido completo`, {
+          description: `Guía ${etiquetaGuia} — revisa su historial si necesitas moverlo.`,
+        })
+        return
+      }
+      const mismos = arts.filter(
+        (a) => a.codigo.toLowerCase() === objetivo.codigo.toLowerCase() && a.id !== objetivo.id
+      )
+      toast.success(`Guía ${etiquetaGuia} · ${objetivo.codigo}${objetivo.nPaleta != null ? ` (Paleta ${objetivo.nPaleta})` : ''}`, {
+        description: mismos.length > 0
+          ? `Hay ${mismos.length + 1} filas con ese código — se transfiere la fila con pendiente; revisa la tarjeta si no es la correcta.`
+          : 'Elige destino (Rack o Piso) y posición.',
+      })
+      abrirDialogo([objetivo])
+    } catch (err) {
+      console.error('[Transito] Error resolviendo QR:', err)
+      toast.error('Error al resolver el QR del rótulo')
+    } finally {
+      escaneandoRef.current = false
+    }
+  }
+
   const usuarioCtx = { id: perfil?.id ?? '', nombre: perfil?.nombre ?? '', correo: perfil?.correo ?? '' }
   const turno = calcularTurno()
 
@@ -166,10 +283,21 @@ export function TransitoModule() {
                 </p>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={cargar} disabled={estado === 'cargando'} className="gap-1.5 shrink-0">
-              {estado === 'cargando' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Actualizar
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                onClick={() => setLectorOpen(true)}
+                className="gap-1.5 bg-fuchsia-600 hover:bg-fuchsia-700 font-semibold"
+                title="Escanear el QR de un rótulo (cámara o pistola USB) y transferir directamente"
+              >
+                <ScanLine className="h-4 w-4" />
+                Escanear QR
+              </Button>
+              <Button variant="outline" size="sm" onClick={cargar} disabled={estado === 'cargando'} className="gap-1.5 shrink-0">
+                {estado === 'cargando' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                Actualizar
+              </Button>
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-2 sm:gap-3">
@@ -278,6 +406,14 @@ export function TransitoModule() {
           }}
         />
       ))}
+
+      {/* ═══ Lector de QR de rótulos (pausado mientras hay transferencia abierta) ═══ */}
+      <LectorQR
+        open={lectorOpen}
+        pausado={!!dialogoItems}
+        onOpenChange={setLectorOpen}
+        onDetectar={(texto, fuente) => void resolverQR(texto, fuente)}
+      />
 
       {/* ═══ Diálogo de transferencia ═══ */}
       {dialogoItems && (

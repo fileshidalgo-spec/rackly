@@ -34,6 +34,9 @@ export type EstadoSem = 'ROJO' | 'AMAR' | 'VERDE'
 
 export type ArticuloTransito = {
   id: string
+  /** uuid de la guía (recepcion_registros.guia_id) — identidad EXACTA que
+   *  porta el QR del rótulo: el escáner de Tránsito resuelve por aquí. */
+  guiaId: string
   createdAt: string
   fecha: string
   tipoDocumento: string
@@ -142,6 +145,7 @@ export function parseEnvios(raw: unknown): EnvioTransito[] {
 export function mapArticuloTransito(r: Record<string, unknown>): ArticuloTransito {
   const base = {
     id: str(r.id),
+    guiaId: str(r.guia_id),
     createdAt: str(r.created_at),
     fecha: str(r.fecha),
     tipoDocumento: str(r.tipo_documento),

@@ -43,7 +43,17 @@
  *
  * FALLBACK: sin el middleware, el app genera un archivo .zpl descargable
  * que se imprime con Zebra Setup Utilities (arrastrar y enviar).
+ *
+ * QR DE GUÍA (pedido 2026-10): cada rótulo lleva un QR (ZPL nativo ^BQ —
+ * la impresora lo dibuja, sin librerías) en la ESQUINA IZQUIERDA de la
+ * banda del código, separado por una línea límite. Codifica la identidad
+ * de la guía + el artículo (ver qr-rotulo.ts) para que el módulo TRÁNSITO
+ * escanee el rótulo y abra la transferencia a Rack/Piso. Con el QR a la
+ * izquierda, el código del artículo se imprime MÁS GRANDE (tope 215 dots
+ * vs 190 anterior) centrado a la derecha del límite.
  */
+
+import { construirPayloadQR } from '@/lib/rackly/qr-rotulo'
 
 // ═══════════════════════════════════════════════════════════════════
 // 1. TIPOS
@@ -92,13 +102,16 @@ export type DatosRotulo = {
 
 /** Encabezado compartido por los rótulos de una recepción.
  *  El formato PERECIBLE de la empresa no lo imprime; se conserva en la
- *  firma de las funciones por compatibilidad con las 2 vías de registro. */
+ *  firma de las funciones por compatibilidad con las 2 vías de registro.
+ *  `guiaId` (opcional, 2026-10): identidad EXACTA de la guía — alimenta el
+ *  QR del rótulo cuando llega vía `qr` (ver construirZPLRotulos). */
 export type EncabezadoRotulo = {
   fecha: string
   numeroDocumento: string
   proveedor: string
   placa: string
   registradoPor?: string
+  guiaId?: string | null
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -281,6 +294,82 @@ function fechaCorta(iso: string): string {
 const ANCHO_FISICO = 800
 
 /**
+ * Ancho VISUAL de la zona QR en la banda del código (esquina izquierda):
+ * 240 dots (2.98 cm) con el QR centrado y su zona de silencio (quiet zone
+ * ≥ 4 módulos) holgada, separada del texto por una línea límite.
+ */
+const ZONA_QR_ANCHO = 240
+
+/** Contexto de guía para el QR del rótulo (identidad de la guía impresa). */
+export type ContextoQR = { guiaId?: string | null; numeroDocumento?: string }
+
+/**
+ * Payload del QR del rótulo. Null si la guía no tiene NINGUNA identidad
+ * (sin guia_id y sin Nº de documento): el rótulo sale SIN QR (degradación
+ * graceful — un QR que no resuelve a nada no debe imprimirse jamás).
+ */
+export function payloadQRRotulo(datos: DatosRotulo, ctx: ContextoQR): string | null {
+  const guiaId = (ctx.guiaId ?? '').trim()
+  const numeroDocumento = (ctx.numeroDocumento ?? '').trim()
+  if (!guiaId && !numeroDocumento) return null
+  // "Paleta i/N" → nº de paleta para el QR (P<i>): Tránsito preselecciona
+  // la paleta exacta al escanear.
+  const mPaleta = datos.paleta ? /Paleta\s+(\d+)/i.exec(datos.paleta) : null
+  const nPaleta = mPaleta ? Number(mPaleta[1]) : null
+  return construirPayloadQR({
+    guiaId,
+    numeroDocumento,
+    codigo: sanearZPL(datos.codigo),
+    paleta: nPaleta != null && Number.isFinite(nPaleta) ? nPaleta : null,
+  })
+}
+
+/**
+ * Módulos (versión) del QR según el largo del payload — tabla de capacidad
+ * BYTE con EC 'Q' CONSERVADORA (el encoder real puede elegir una versión
+ * MENOR — caben más bytes — nunca una mayor que esta tabla + 4 módulos).
+ * CALIBRADO con render Labelary (2026-10-17): el campo ^BQ renderiza el
+ * símbolo SIN quiet zone interna — el lado real es módulos × mag; el
+ * margen alrededor lo da el espacio en blanco de la etiqueta.
+ */
+function modulosQR(len: number): number {
+  if (len <= 32) return 29 // versión 3
+  if (len <= 46) return 33 // versión 4
+  if (len <= 60) return 37 // versión 5
+  if (len <= 72) return 41 // versión 6
+  if (len <= 84) return 45 // versión 7
+  return 49 // versión 8 (tope práctico del payload)
+}
+
+/**
+ * ZPL del QR centrado en la esquina izquierda de la banda del código.
+ * EC 'Q' (25% de recuperación): rótulos que pasan por manos y polvo.
+ * `^FDQA,` = EC Q + modo A (automático): el dato va codificado tal cual.
+ *
+ * POSICIÓN (lección calibrada con render — bug 2026-10-17): la caja del
+ * QR en VISUAL es (m..m+lado) × (m..m+lado) con m = (240−lado)/2. Como el
+ * campo NO rota (el QR es simétrico), en FÍSICO:
+ *   · y físico  = X_vis izquierdo            = m
+ *   · x físico  = 800 − Y_vis superior       = 800 − (m + lado)
+ * (usar `800 − ZONA + m` dejaba el símbolo pegado a la línea inferior de
+ * la banda en el espacio físico — quiet zone destruida, QR ilegible).
+ */
+function campoQR(payload: string): string {
+  const mods = modulosQR(payload.length)
+  // Peor caso: el encoder puede elegir UNA versión más (+4 módulos).
+  // Con ese peor caso garantiza ≥ 24 dots de margen por lado (la quiet
+  // zone de 4 módulos a mag ≤ 6 son ≤ 24 dots).
+  const mag = Math.max(3, Math.min(6, Math.floor((ZONA_QR_ANCHO - 48) / (mods + 4))))
+  const ladoEsp = mods * mag
+  const margen = Math.floor((ZONA_QR_ALTO_BANDA - ladoEsp) / 2)
+  const xFis = ANCHO_FISICO - margen - ladoEsp
+  return `^FO${xFis},${margen}^BQN,2,${mag}^FDQA,${payload}^FS`
+}
+
+/** Alto visual de la banda del código (el QR se centra en él). */
+const ZONA_QR_ALTO_BANDA = 240
+
+/**
  * Caja de borde en coordenadas VISUALES apaisadas (x0,y0)-(x1,y1) sobre el
  * lienzo 1200 × 800 → comando ^GB en coordenadas físicas. Los ^GB no se
  * giran con el texto: se transforman aquí, en un solo lugar.
@@ -345,9 +434,9 @@ function campoApaisado(
  *
  * Al despegar el rótulo y girarlo 90° ANTIHORARIO se lee horizontal:
  *
- *   ┌────────────────────────────────────────────────────────────┐ Y 0
- *   │                         49310                              │  código 0..240
- *   ├────────────────────────────────────────────────────────────┤
+ *   ┌──────────┬───────────────────────────────────────────────┐ Y 0
+ *   │ ▓▓ QR ▓▓ │                    49310                      │  código 0..240
+ *   ├──────────┴───────────────────────────────────────────────┤
  *   │   LAMINA TERMOCONTRABLE 380 MM X 50 µ  (1-2 líneas)        │  desc 240..400
  *   ├────────────┬───────────────────────────────────────────────┤
  *   │   LOTE:    │                0869051017                     │  lote 400..545
@@ -358,7 +447,9 @@ function campoApaisado(
  *     X: 0  170            420     540                1060    1200
  *
  * FIDELIDAD al formato de la empresa:
- *   · SIN código de barras (el original es solo texto).
+ *   · SIN código de barras (el original es solo texto) — PERO con QR de
+ *     guía a la izquierda (2026-10, para el lector de Tránsito) y el
+ *     código de artículo agrandado a la derecha del límite.
  *   · SIN guía/placa/proveedor/fecha de recepción (no están en la plantilla;
  *     `encabezado` queda en la firma por compatibilidad, no se imprime).
  *   · Todas las cajas con borde, textos centrados, "negrita" simulada
@@ -370,8 +461,8 @@ function campoApaisado(
  */
 export function construirZPLRotulo(
   datos: DatosRotulo,
-  _encabezado: EncabezadoRotulo,
-  opciones?: { copias?: number }
+  encabezado: EncabezadoRotulo,
+  opciones?: { copias?: number; /** Contexto del QR de guía (opcional). */ qr?: ContextoQR }
 ): string {
   const copias = Math.max(1, Math.min(999, Math.round(opciones?.copias ?? 1)))
 
@@ -403,15 +494,30 @@ export function construirZPLRotulo(
   // Marco exterior (físicamente idéntico al formato vertical anterior)
   lineas.push(cajaApaisada(0, 0, 1200, 800, 3))
 
-  // ── 1) CÓDIGO (gigante, centrado, "demi") — banda visual Y 0..240 ──
-  // El alto se AUTO-AJUSTA a la longitud: hoy el catálogo usa 3-5 dígitos
-  // (cabe a 190 dots), pero con códigos largos se reduce proporcionalmente
+  // ── 1) BANDA CÓDIGO (Y 0..240): QR de guía a la IZQUIERDA + código ──
+  // Cuando hay identidad de guía el QR ocupa la esquina izquierda (zona
+  // 0..280 cerrada con línea separadora — el "límite" del formato) y el
+  // código, MÁS GRANDE que antes (tope 215 vs 190 dots), se centra en el
+  // resto. Sin identidad (rótulo sin QR) el código usa el ancho completo.
+  // El alto se AUTO-AJUSTA a la longitud: el catálogo hoy usa 3-5 dígitos
+  // (cabe a 215 dots); con códigos largos se reduce proporcionalmente
   // (holgura 0.62: margen del avance real 0.6 × alto) y queda centrado.
+  const payloadQR = payloadQRRotulo(datos, {
+    guiaId: opciones?.qr?.guiaId ?? encabezado.guiaId,
+    numeroDocumento: opciones?.qr?.numeroDocumento ?? encabezado.numeroDocumento,
+  })
   lineas.push(cajaApaisada(0, 0, 1200, 240, 3))
+  if (payloadQR) {
+    // Línea separadora: límite derecho de la zona QR (borde del boceto).
+    lineas.push(cajaApaisada(ZONA_QR_ANCHO - 3, 0, ZONA_QR_ANCHO, 240, 2))
+    lineas.push(campoQR(payloadQR))
+  }
   if (codigo) {
-    const alto = altoParaCaja(codigo, 1152, 190, 90, 0.62)
+    const anchoTexto = payloadQR ? 926 : 1152
+    const xTexto = payloadQR ? 250 : 24
+    const alto = altoParaCaja(codigo, anchoTexto, 215, 90, 0.62)
     const y = Math.floor((240 - alto) / 2) - 10
-    lineas.push(...campoApaisado(24, y, alto, Math.round(alto * 0.6), codigo, { fbAncho: 1152, negrita: true }))
+    lineas.push(...campoApaisado(xTexto, y, alto, Math.round(alto * 0.6), codigo, { fbAncho: anchoTexto, negrita: true }))
   }
 
   // ── 2) DESCRIPCIÓN — banda visual Y 240..400 (1-2 líneas, centrada) ──
@@ -514,15 +620,19 @@ function altoParaCaja(texto: string, anchoCaja: number, max: number, min = 34, h
  * (se omite el bloque completo — nunca sale un ^PQ0). Los que quedan en 0
  * no afectan a los demás: "quiero solo algunos artículos" se resuelve
  * poniendo 0 en el resto.
+ * `qr` (opcional): identidad de la guía para el QR de cada rótulo —
+ * ImprimirRotulosDialog la toma de `refDocumento`; si falta, el rótulo
+ * sale sin QR (nunca un QR que no resuelve).
  */
 export function construirZPLRotulos(
   rotulos: DatosRotulo[],
   copias: number[],
-  encabezado: EncabezadoRotulo
+  encabezado: EncabezadoRotulo,
+  qr?: ContextoQR
 ): string {
   return rotulos
     .map((r, i) => ({ r, copias: copias[i] ?? 1 }))
     .filter(({ copias }) => Number.isFinite(copias) && copias > 0)
-    .map(({ r, copias }) => construirZPLRotulo(r, encabezado, { copias }))
+    .map(({ r, copias }) => construirZPLRotulo(r, encabezado, { copias, qr }))
     .join('\n')
 }

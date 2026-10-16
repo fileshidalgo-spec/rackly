@@ -229,7 +229,13 @@ export function ImprimirRotulosDialog({
   function zplActual(): string {
     // copias ya viene normalizada (0..999, sin NaN): el 0 queda tal cual y
     // construirZPLRotulos OMITE esos rótulos — solo se imprimen los > 0.
-    return construirZPLRotulos(rotulos, copias, encabezado)
+    // QR DE GUÍA (2026-10): la identidad viene de refDocumento (guiaId —
+    // exacta) y del encabezado (Nº de documento — legible); si no hay
+    // ninguna, los rótulos salen sin QR (degradación graceful).
+    return construirZPLRotulos(rotulos, copias, encabezado, {
+      guiaId: refDocumento?.guiaId ?? null,
+      numeroDocumento: encabezado.numeroDocumento || refDocumento?.numeroDocumento || '',
+    })
   }
 
   async function imprimir() {
@@ -474,8 +480,16 @@ export function ImprimirRotulosDialog({
 
               <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
                 <span className="text-xs text-slate-500">Tamaño de etiqueta</span>
-                <span className="text-xs font-bold text-slate-700">15 × 10 cm horizontal · formato PERECIBLE</span>
+                <span className="text-xs font-bold text-slate-700">
+                  15 × 10 cm · PERECIBLE + QR de guía
+                </span>
               </div>
+
+              <p className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-medium text-sky-800">
+                Cada rótulo lleva un <b>código QR</b> (esquina izquierda) y el código del
+                artículo <b>más grande</b>: escanéalo en <b>Tránsito</b> para transferir la
+                mercadería a Rack o Piso.
+              </p>
 
               {onImpreso && refDocumento && (
                 <p className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[11px] font-semibold text-violet-800">

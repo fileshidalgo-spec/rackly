@@ -95,6 +95,25 @@ export async function listarArticulosTransito(maxFilas = MAX_FILAS_TRANSITO): Pr
   return ((data ?? []) as Record<string, unknown>[]).map(mapArticuloTransito)
 }
 
+/**
+ * Trae SOLO los artículos de UNA guía por su guia_id (identidad exacta que
+ * porta el QR del rótulo). Lo usa el lector de QR cuando el escaneo cae en
+ * una guía que no está (o ya no está) en el listado cargado — p. ej. guías
+ * viejas fuera del tope de filas: la guía se recupera y se suma al listado
+ * en vivo, nunca un escaneo válido se pierde por el recorte.
+ */
+export async function listarArticulosPorGuiaId(guiaId: string): Promise<ArticuloTransito[]> {
+  const id = guiaId.trim()
+  if (!id) return []
+  const { data, error } = await dataClient
+    .from('recepcion_registros')
+    .select('*')
+    .eq('guia_id', id)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return ((data ?? []) as Record<string, unknown>[]).map(mapArticuloTransito)
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // TRANSFERENCIAS (RPC atómica)
 // ═══════════════════════════════════════════════════════════════════

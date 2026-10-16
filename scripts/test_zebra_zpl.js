@@ -64,7 +64,7 @@ check('largo físico 1200 dots (tira 15 cm)', z1.includes('^LL1200'))
 check('marco exterior 800×1200 desde (0,0)', z1.includes('^FO0,0^GB800,1200,3'))
 check('SIN ^LH (desplazaba el marco fuera del área: bordes derecho/inferior no salían)', !z1.includes('^LH'))
 check('texto ROTADO 90° horario (todo ^A0R, sin ^A0N)', !z1.includes('^A0N') && z1.includes('^A0R'))
-check('código gigante rotado (alto 190, glifo 114)', z1.includes('^A0R,190,114'))
+check('código gigante rotado, agrandado (alto 215, glifo 129)', z1.includes('^A0R,215,129'))
 check('código presente como texto', z1.includes('^FD56119^FS'))
 
 console.log('\n── 2. Fidelidad a la plantilla PERECIBLE ──')
@@ -153,15 +153,15 @@ const zCorto = construirZPLRotulo({ ...DATOS, codigo: '56119' }, ENCABEZADO)
 const zLargo = construirZPLRotulo({ ...DATOS, codigo: '1234567' }, ENCABEZADO)
 const zLargo12 = construirZPLRotulo({ ...DATOS, codigo: '123456789012' }, ENCABEZADO)
 function codigoFisico(z) {
-  const m = z.match(/\^FO(\d+),24\^A0R,(\d+),/)
-  return m ? { xFis: Number(m[1]), alto: Number(m[2]) } : null
+  const m = z.match(/\^FO(\d+),(\d+)\^A0R,(\d+),/)
+  return m ? { xFis: Number(m[1]), yFis: Number(m[2]), alto: Number(m[3]) } : null
 }
 const aCorto = codigoFisico(zCorto)
 const aLargo = codigoFisico(zLargo)
 const aLargo12 = codigoFisico(zLargo12)
-check('código 5 dígitos usa el alto máximo (190)', aCorto && aCorto.alto === 190)
-check('código 7 dígitos cabe en el ancho apaisado (7 × 0.6 × 190 = 798 < 1128)', aLargo && aLargo.alto === 190 && 7 * 0.6 * 190 < 1128)
-check('código 12 dígitos se reduce (alto 151 < 190) y cabe (1087 < 1128)', aLargo12 && aLargo12.alto === 151 && 12 * 0.6 * 151 < 1128)
+check('código 5 dígitos usa el alto máximo nuevo (215)', aCorto && aCorto.alto === 215)
+check('código 7 dígitos cabe en el ancho con QR (7 × 0.6 × 207 = 869 < 902)', aLargo && aLargo.alto === 207 && 7 * 0.6 * 207 < 902)
+check('código 12 dígitos se reduce (alto 121 < 215) y cabe (871 < 902)', aLargo12 && aLargo12.alto === 121 && 12 * 0.6 * 121 < 902)
 check(
   'código centrado en su banda: y_visual = 800 − x_fís − alto ∈ (0, 240−alto)',
   aCorto && (() => { const y = 800 - aCorto.xFis - aCorto.alto; return y > 0 && y + aCorto.alto < 240 })()

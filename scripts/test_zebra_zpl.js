@@ -96,6 +96,23 @@ check('caja fecha F.V (fila inferior)', z1.includes('^FO8,170^GB124,250,2'))
 check('caja cantidad (alta, X 540..1060)', z1.includes('^FO8,540^GB247,520,2'))
 check('caja UM (X 1060..1200)', z1.includes('^FO8,1060^GB247,140,2'))
 
+// ── 2c. Cantidad LLENA su caja (Task 10, zona verde del usuario) ──
+// len 6 → w = ⌊996/6⌋ = 166 · baseline = 663.5 + 0.3857×294 = 777 → ^FT23
+check('cantidad con ^FT (anclaje baseline, celda 294 cuelga del lienzo sin tinta)', z1.includes('^FT23,540^A0R,294,166') && z1.includes('^FT23,542^A0R,294,166'))
+check('span de la cantidad BAJO el umbral de salto del ^FB (0.462×166×6 = 460 ≤ 477)', 6 * 0.462 * 166 <= 477)
+check(
+  'tinta de la cantidad CENTRADA en su caja sin tocar líneas (modelo calibrado)',
+  (() => {
+    const B = 777
+    const em = 294
+    const sup = B - 0.7713 * em + 5 // sesgo +5 del motor, medido en render
+    const inf = B + 5
+    return sup >= 547 && inf <= 790 && Math.abs((sup + inf) / 2 - 668.5) <= 3
+  })()
+)
+const zCantLarga = construirZPLRotulo({ ...DATOS, cantidad: 'X'.repeat(21) }, ENCABEZADO)
+check('cantidad absurda (>20 chars) degrada a auto-ajuste clásico sin ^FT', zCantLarga.includes('^FO') && !zCantLarga.includes('^FT'))
+
 console.log('\n── 3. Copias y múltiples rótulos ──')
 check('2 copias (^PQ2)', z1.includes('^PQ2,0,0,N'))
 const z1c = construirZPLRotulo(DATOS, ENCABEZADO) // default 1 copia

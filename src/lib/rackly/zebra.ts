@@ -337,19 +337,26 @@ export function payloadQRRotulo(datos: DatosRotulo, ctx: ContextoQR): string | n
 }
 
 /**
- * Módulos (versión) del QR según el largo del payload — tabla de capacidad
- * BYTE con EC 'Q' CONSERVADORA (el encoder real puede elegir una versión
- * MENOR — caben más bytes — nunca una mayor que esta tabla + 4 módulos).
- * CALIBRADO con render Labelary (2026-10-17): el campo ^BQ renderiza el
- * símbolo SIN quiet zone interna — el lado real es módulos × mag; el
- * margen alrededor lo da el espacio en blanco de la etiqueta.
+ * Módulos (versión) del QR según el largo del payload — capacidades BYTE
+ * para EC 'Q' (modo byte) con frontera CONSERVADORA: caps ISO/IEC 18004
+ * (v3=32 · v4=46 · v5=62 · v6=76 · v7=88 · v8=100) MENOS 1 byte.
+ *
+ * POR QUÉ −1 (lección del Task 10): el encoder REAL (Labelary y firmware)
+ * mandó un payload de 62 bytes a v6 aunque la ISO declara cap 62 para v5-Q
+ * (verificado en render: 61 bytes → v5, 62 bytes → v6). Si la tabla creyera
+ * 62→v5 y el encoder eligiera v6, la magnificación quedaría calculada para
+ * un símbolo de 37 módulos y el real saldría de 41 — se come la quiet zone.
+ * Con la frontera −1, el mods de la tabla SIEMPRE ≥ el del encoder: el
+ * símbolo real nunca excede el planeado (crece hacia adentro, jamás hacia
+ * las líneas) y en el caso dominante (61 bytes: uuid+doc+código) sigue
+ * clasificando v5 → mag 5, lado 185.
  */
 function modulosQR(len: number): number {
-  if (len <= 32) return 29 // versión 3
-  if (len <= 46) return 33 // versión 4
-  if (len <= 60) return 37 // versión 5
-  if (len <= 72) return 41 // versión 6
-  if (len <= 84) return 45 // versión 7
+  if (len <= 31) return 29 // versión 3
+  if (len <= 45) return 33 // versión 4
+  if (len <= 61) return 37 // versión 5
+  if (len <= 75) return 41 // versión 6
+  if (len <= 87) return 45 // versión 7
   return 49 // versión 8 (tope práctico del payload)
 }
 
@@ -372,11 +379,14 @@ function modulosQR(len: number): number {
  */
 function campoQR(payload: string): string {
   const mods = modulosQR(payload.length)
-  // Peor caso: el encoder puede elegir UNA versión más (+4 módulos).
-  // Con ese peor caso garantiza ≥ 24 dots de margen por lado EN LA BANDA
-  // (la quiet zone de 4 módulos a mag ≤ 6 son ≤ 24 dots). La zona de 300
-  // da además ≥ 24 dots extra de aire horizontal.
-  const mag = Math.max(3, Math.min(6, Math.floor((ZONA_QR_ALTO_BANDA - 48) / (mods + 4))))
+  // Quiet zone de ESPEC (≥ 4 módulos por lado) dentro de la banda: las
+  // líneas de borde comen 3 dots por lado → interior útil 234. La cota
+  // mag×(mods+8) = lado + 2×4×mag garantiza el margen EXACTO de la ISO a
+  // la vez en el peor caso; la zona de 300 da además aire horizontal extra.
+  // (Antes reservaba 48 dots fijos + 4 módulos de peor caso: con payload
+  // 61 chars el QR salía a mag 4, lado 148 — solo 62% de la banda. Ahora
+  // mag 5, lado 185 — +25%, verificado decodificable en render E2E.)
+  const mag = Math.max(3, Math.min(6, Math.floor(234 / (mods + 8))))
   const ladoEsp = mods * mag
   const margenY = Math.floor((ZONA_QR_ALTO_BANDA - ladoEsp) / 2)
   const margenX = Math.floor((ZONA_QR_ANCHO - ladoEsp) / 2)
@@ -434,6 +444,17 @@ type OpcionesCampoApaisado = {
   fbEspacio?: number
   /** "Negrita" simulada: 2ª pasada a 2 dots en el flujo del texto. */
   negrita?: boolean
+  /**
+   * Ancla por BASELINE (^FT) en vez de por celda (^FO): el valor es la Y
+   * visual de la baseline del renglón. Necesario cuando la CELDA es más
+   * alta que el espacio disponible bajo el texto: la celda lleva ~24% de
+   * zona descendente (vacía en dígitos) que con ^FO obliga a reducir la
+   * fuente (y0+alto ≤ 800); con ^FT esa zona vacía cuelga del lienzo y el
+   * firmware la recorta sin tinta. Calibrado en render (2026-10-17):
+   * baseline B → tinta de dígitos [B−0.7713em, B], centro B−0.3857em (+5
+   * de sesgo del motor: B = 663.5 + 0.3857×em centra la tinta a ±4).
+   */
+  baselineVisual?: number
 }
 
 /**
@@ -459,9 +480,13 @@ function campoApaisado(
     ? `^FB${ops.fbAncho},${ops.fbLineas ?? 1},${ops.fbEspacio ?? 0},C`
     : ''
   const pasadas = ops.negrita ? [0, 2] : [0]
-  const xFis = ANCHO_FISICO - y0 - alto
+  const porBaseline = ops.baselineVisual != null
+  const xFis = porBaseline
+    ? ANCHO_FISICO - (ops.baselineVisual as number)
+    : ANCHO_FISICO - y0 - alto
+  const cmd = porBaseline ? 'FT' : 'FO'
   return pasadas.map(
-    (dx) => `^FO${xFis},${x0 + dx}^A0R,${alto},${anchoGlifo}${fb}^FD${texto}^FS`
+    (dx) => `^${cmd}${xFis},${x0 + dx}^A0R,${alto},${anchoGlifo}${fb}^FD${texto}^FS`
   )
 }
 
@@ -637,11 +662,36 @@ export function construirZPLRotulo(
   // CANT: (centrado vertical del bloque inferior; 5 glifos a ancho 34 ≈ 94 < 120)
   lineas.push(...campoApaisado(420, 545 + Math.floor((247 - 42) / 2), 42, 34, 'CANT:', { fbAncho: 120 }))
 
-  // Cantidad (grande, "demi", auto-ajustada a su caja)
+  // Cantidad — LLENA su caja (pedido 2026-10-17 con la zona pintada en
+  // verde sobre la etiqueta: "abarcar todo el espacio sin salirse del
+  // rectángulo"). Antes: em limitado a 110 → la tinta usaba 35% del alto
+  // y 35% del ancho de una caja de 516×240 interiores.
+  // Diseño CALIBRADO con render (5 rondas Labelary + medición OpenCV):
+  //  · LEY DE AVANCE de la fuente 0: un dígito avanza 0.462×w dots,
+  //    INDEPENDIENTE del em (verificado w 83..172, em 110..294; el span
+  //    real de "193320" en la referencia del usuario, 374 dots para el
+  //    código a em 267/w 160, confirma la misma ley).
+  //  · ALTO: em 294 → tinta 226/240 (94%) — posible SOLO con ^FT (la celda
+  //    de 294 no cabe bajo la caja por ^FO: y0+alto ≤ 800 la capaba a 210;
+  //    la zona descendente vacía cuelga del lienzo sin tinta).
+  //  · ANCHO: span = 0.462×w×len con meta 460 (89% del interior). NO subir
+  //    de ahí: el ^FB 520 salta el último dígito a una 2ª línea cuando el
+  //    renglón pasa ~477-502 dots (verificado: w 181/186 rompen, 172 no).
+  //  · Baseline B = 663.5 + 0.3857×em centra la TINTA en la caja (±4).
+  // Degrada a auto-ajuste clásico si la cantidad fuera absurda (>20 chars:
+  // los dígitos quedarían más finos que legibles).
   if (cantidad) {
-    const alto = altoParaCaja(cantidad, 520, 110)
-    const y = 545 + Math.floor((247 - alto) / 2)
-    lineas.push(...campoApaisado(540, y, alto, Math.round(alto * 0.6), cantidad, { fbAncho: 520, negrita: true }))
+    const len = cantidad.length
+    if (len > 20) {
+      const alto = altoParaCaja(cantidad, 520, 110)
+      const y = 545 + Math.floor((247 - alto) / 2)
+      lineas.push(...campoApaisado(540, y, alto, Math.round(alto * 0.6), cantidad, { fbAncho: 520, negrita: true }))
+    } else {
+      const em = 294
+      const w = Math.max(48, Math.min(320, Math.floor(996 / Math.max(1, len))))
+      const baseline = Math.round(663.5 + 0.3857 * em)
+      lineas.push(...campoApaisado(540, 0, em, w, cantidad, { fbAncho: 520, negrita: true, baselineVisual: baseline }))
+    }
   }
 
   // Unidad de medida (grande, centrada)

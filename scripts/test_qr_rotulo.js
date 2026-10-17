@@ -141,10 +141,35 @@ t('ZPL con guía: ^BQ nativo + payload QA + separador + código a 215', () => {
   assert.ok(zpl.includes('^PQ1,0,0,N'), 'falta ^PQ')
 })
 
-t('QR calibrado: payload con uuid (52+ chars) → mag 4 (E2E Labelary verificado)', () => {
+t('QR calibrado: payload con uuid (52+ chars) → mag 5 (tabla ISO exacta + quiet 4)', () => {
   const zpl = construirZPLRotulo({ ...DATOS, codigo: '126' }, { ...ENC, numeroDocumento: 'T173-1' }, { qr: { guiaId: GUIA, numeroDocumento: 'T173-1' } })
   const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
-  assert.strictEqual(mag, 4, `magnificación calibrada para payload largo: ${mag}`)
+  // RKLY|uuid|T173-1|126 = 52 bytes → v5 (37 módulos) → mag ⌊234/45⌋ = 5
+  assert.strictEqual(mag, 5, `magnificación para payload 52: ${mag}`)
+})
+
+t('QR rótulo real (61 bytes: uuid + doc 13 + código 5): mag 5, lado 185', () => {
+  const zpl = construirZPLRotulo(DATOS, ENC, { qr: { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento } })
+  const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
+  assert.strictEqual(mag, 5, `mag para payload 61 (v5): ${mag}`)
+  const fo = /\^FO(\d+),(\d+)\^BQN/.exec(zpl)
+  // margenY (240−185)/2 = 27 → xFis = 800−27−185 = 588; margenX 57 → yFis 957
+  assert.ok(fo && fo[1] === '588' && fo[2] === '957', `posición QR v5: ${fo?.[0]}`)
+})
+
+t('QR frontera conservadora: 62 bytes (código 3 + paleta) asume v6 → mag 4', () => {
+  // La ISO declara v5-Q = 62 pero el encoder real manda 62 → v6 (verificado
+  // en render): la tabla debe asumir MÁS módulos que el encoder para que el
+  // símbolo real jamás desborde la quiet zone.
+  const zpl = construirZPLRotulo({ ...DATOS, codigo: '126', paleta: 'Paleta 2/4' }, ENC, { qr: { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento } })
+  const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
+  assert.strictEqual(mag, 4, `mag para payload 62 (asume v6): ${mag}`)
+})
+
+t('QR paleta 5 dígitos (64 bytes → v6): mag 4 (quiet 8 módulos, sin cambio)', () => {
+  const zpl = construirZPLRotulo({ ...DATOS, paleta: 'Paleta 2/3' }, ENC, { qr: { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento } })
+  const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
+  assert.strictEqual(mag, 4, `mag para payload 64 (v6): ${mag}`)
 })
 
 t('ZPL con guía corta SIN uuid (solo Nº doc) y código de 3 dígitos: QR mag ≥ 5', () => {

@@ -2,24 +2,44 @@
 
 /**
  * RACKLY — Reglas compartidas para la EDICIÓN de lote / fecha de vencimiento
- * de artículos sin esos datos (módulos Racks y Piso, pedido 2026-10-20).
+ * de artículos en los módulos Racks y Piso.
  *
- * Quién puede editar:
- *   · `almacenero` — el cargo que pidió el usuario para corregir artículos
- *     registrados sin lote/fechas.
- *   · `admin` — conserva poder completo sobre todo el sistema.
- *   · El resto de roles NO ve la acción (igual que eliminar movimientos,
- *     que queda para admin/supervisores).
+ * v1 (pedido 2026-10-20): completar datos de artículos registrados SIN lote
+ * y sin fechas (cargo almacenero).
+ * v2 (ampliación 2026-10-20): la edición también alcanza artículos que YA
+ * tienen lote/fechas — para CORREGIR equivocaciones de registro — y los
+ * cargos autorizados se amplían a supervisores.
+ *
+ * Quién puede editar (ROLES_EDICION_LOTE):
+ *   · `almacenero`             — el cargo que pidió el usuario originalmente.
+ *   · `admin`                  — conserva poder completo sobre todo el sistema.
+ *   · `supervisor_almacen`     — "supervisores" del pedido de ampliación.
+ *   · `supervisor_operaciones` — ídem.
+ *   · El resto de roles (operario, auxiliar, coordinador) NO ve la acción.
  *
  * Qué se puede guardar:
  *   · Lote y/o fecha de vencimiento (al menos UNO de los dos, con formato
  *     ISO YYYY-MM-DD si viene fecha). La RPC del servidor re-aplica esta
- *     regla (defensa en profundidad) y solo toca filas realmente vacías.
+ *     regla (defensa en profundidad) y solo toca las filas del bucket
+ *     actual exacto (lote_actual + f_vencimiento_actual) — el saldo queda
+ *     exacto: imposible fabricar negativos.
+ *
+ * Desambiguación (construirOpcionesLote):
+ *   Un bucket de la UI puede agregar VARIOS lotes físicos bajo una misma
+ *   fecha (y un artículo puede tener varias fechas). Antes de corregir hay
+ *   que saber a QUÉ bucket exacto apunta el cambio: el helper descompone
+ *   la fila de stock en opciones (lote físico × fecha) y el diálogo deja
+ *   elegir cuando hay más de una.
  */
 
-export const ROLES_EDICION_LOTE = ['almacenero', 'admin'] as const
+export const ROLES_EDICION_LOTE = [
+  'almacenero',
+  'admin',
+  'supervisor_almacen',
+  'supervisor_operaciones',
+] as const
 
-/** ¿Este rol puede editar lote/fecha de artículos sin esos datos? */
+/** ¿Este rol puede editar lote/fecha de artículos (completar o corregir)? */
 export function puedeEditarLote(rol: string | null | undefined): boolean {
   if (!rol) return false
   return (ROLES_EDICION_LOTE as readonly string[]).includes(rol)
@@ -52,4 +72,77 @@ export function validarDatosLote(
     return { ok: false, error: 'Fecha de vencimiento inválida (formato esperado: AAAA-MM-DD)' }
   }
   return { ok: true, lote: loteNorm, fecha: fechaNorm }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DESAMBIGUACIÓN de buckets (v2 — corrección de artículos CON datos)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Una opción = un bucket EXACTO (lote físico + fecha) editable en la ubicación. */
+export type OpcionLote = {
+  /** Código de lote físico; '' cuando el ingreso no registró lote. */
+  loteFisico: string
+  /** Fecha de vencimiento ISO del bucket; '' cuando no tiene. */
+  fecha: string
+  /** Cantidad del bucket (solo contexto para elegir; la RPC no la usa). */
+  cantidad: number
+}
+
+/** Forma mínima que las vistas de stock ya proveen (Racks y Piso). */
+export type BucketDeStock = {
+  stock: number
+  /** Fecha única del bucket cuando la fila no tiene desglose multi-lote. */
+  fecha?: string
+  /** Códigos de lote físico JOINED por ', ' (formato de las vistas de stock). */
+  loteFisico?: string
+  /** Desglose multi-fecha (cuando el artículo tiene más de un lote). */
+  lotes?: { fVencimiento: string; cantidad: number; lotesFisicos?: string[] }[]
+}
+
+/**
+ * Descompone una fila de stock en opciones exactas (lote físico × fecha).
+ *
+ *  · Fila con desglose (`lotes` con más de 1 entrada): cada loteFisico de
+ *    cada fecha es una opción; una fecha sin lote físico genera UNA opción
+ *    con loteFisico ''.
+ *  · Fila simple: usa `fecha` + `loteFisico` (que puede venir "L1, L2"
+ *    — dos ingresos distintos bajo la misma fecha).
+ *
+ * La lista SIEMPRE trae al menos una opción — con una sola, el diálogo
+ * prellena directamente (sin selector).
+ */
+export function construirOpcionesLote(fila: BucketDeStock): OpcionLote[] {
+  const opciones: OpcionLote[] = []
+
+  if (fila.lotes && fila.lotes.length > 1) {
+    for (const l of fila.lotes) {
+      const fecha = (l.fVencimiento ?? '').trim()
+      const fisicos = (l.lotesFisicos ?? []).map((f) => f.trim()).filter(Boolean)
+      if (fisicos.length === 0) {
+        opciones.push({ loteFisico: '', fecha, cantidad: l.cantidad })
+      } else {
+        for (const f of fisicos) opciones.push({ loteFisico: f, fecha, cantidad: l.cantidad })
+      }
+    }
+    return opciones
+  }
+
+  const fecha = (fila.fecha ?? '').trim()
+  const fisicos = (fila.loteFisico ?? '')
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean)
+  if (fisicos.length === 0) {
+    opciones.push({ loteFisico: '', fecha, cantidad: fila.stock })
+  } else {
+    for (const f of fisicos) opciones.push({ loteFisico: f, fecha, cantidad: fila.stock })
+  }
+  return opciones
+}
+
+/** Etiqueta legible de una opción para el selector del diálogo. */
+export function etiquetaOpcionLote(o: OpcionLote): string {
+  const lote = o.loteFisico ? `Lote: ${o.loteFisico}` : 'Sin lote'
+  const fecha = o.fecha ? `Venc: ${o.fecha}` : 'Sin fecha'
+  return `${lote} · ${fecha}`
 }

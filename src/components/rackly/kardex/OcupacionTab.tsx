@@ -16,7 +16,7 @@ import {
   editarLoteVencimientoRacks,
   type TrasladoInput,
 } from '@/lib/rackly/kardex'
-import { puedeEditarLote } from '@/lib/rackly/lote'
+import { puedeEditarLote, construirOpcionesLote } from '@/lib/rackly/lote'
 import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
 import { supabase, dataClient } from '@/lib/supabase/client'
@@ -391,8 +391,9 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
     }
   }, [detail])
 
-  /** Guarda lote/fecha del artículo sin datos (RPC consistente; solo toca filas vacías). */
-  const doEditarLoteRacks = useCallback(async (lote: string, fecha: string) => {
+  /** Guarda lote/fecha del bucket elegido (RPC v2: completa O corrige — apunta
+   *  al bucket exacto con loteActual/fVencimientoActual; saldo queda intacto). */
+  const doEditarLoteRacks = useCallback(async (lote: string, fecha: string, loteActual: string, fechaActual: string) => {
     if (!detail || !editLoteTarget?.codigo) return
     setEditLoteBusy(true)
     try {
@@ -404,8 +405,12 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         codigo: editLoteTarget.codigo,
         lote,
         fVencimiento: fecha,
+        loteActual,
+        fVencimientoActual: fechaActual,
       })
-      toast.success(`Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s). El artículo ya puede transferirse por Tránsito.`)
+      // La pista de Tránsito solo aplica cuando el bucket ANTES estaba sin datos
+      const ganoDatos = !loteActual && !fechaActual
+      toast.success(`Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s).${ganoDatos ? ' El artículo ya puede transferirse por Tránsito.' : ''}`)
       setEditLoteTarget(null)
       await refreshDetail()
       refreshData()
@@ -1185,7 +1190,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                                   <button onClick={() => openSalida(detail.stock.indexOf(s), false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
                                   <button onClick={() => openTransferir(detail.stock.indexOf(s))} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
                                   <button onClick={() => openHistorial()} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-colors text-[10px] font-medium border border-violet-500/15"><Clock className="w-3 h-3" /> Historial</button>
-                                  {puedeEditarDatosLote && !s.fVencimiento && !s.lotes && !s.loteFisico && (
+                                  {puedeEditarDatosLote && (
                                     <button
                                       onClick={() => setEditLoteTarget({
                                         codigo: s.codigo,
@@ -1193,8 +1198,16 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                                         stock: s.stock,
                                         un: s.un || undefined,
                                         ubicacion: `Bloque ${detail.bloque} · Torre ${detail.torre} · Piso ${detail.piso} · Pos ${detail.posicion}`,
+                                        // Buckets exactos (lote físico × fecha): 1 → prefill
+                                        // directo; varios → selector dentro del diálogo.
+                                        opciones: construirOpcionesLote({
+                                          stock: s.stock,
+                                          fecha: s.fVencimiento,
+                                          loteFisico: s.loteFisico,
+                                          lotes: s.lotes,
+                                        }),
                                       })}
-                                      title="Completar lote y/o fecha de vencimiento del producto"
+                                      title={!s.fVencimiento && !s.loteFisico ? 'Completar lote y/o fecha de vencimiento del producto' : 'Corregir lote y/o fecha de vencimiento del producto'}
                                       className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 hover:text-cyan-300 transition-colors text-[10px] font-medium"
                                     ><Pencil className="w-3 h-3" /> Editar</button>
                                   )}

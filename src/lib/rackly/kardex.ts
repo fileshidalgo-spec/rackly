@@ -1358,7 +1358,11 @@ export async function eliminarUbicacion(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// EDITAR LOTE / F. VENCIMIENTO de artículos sin esos datos (2026-10-20)
+// EDITAR LOTE / F. VENCIMIENTO de artículos (2026-10-20, v2)
+// v1: completar datos de artículos SIN lote/fechas.
+// v2: también CORREGIR artículos que ya tienen lote/fechas — se apunta al
+// bucket EXACTO (lote_actual + f_vencimiento_actual); los parámetros son
+// opcionales con default "bucket vacío" para retrocompatibilidad total.
 // ═══════════════════════════════════════════════════════════════════
 
 export type EdicionLoteResultado = {
@@ -1368,16 +1372,21 @@ export type EdicionLoteResultado = {
 }
 
 /**
- * Completa lote y/o fecha de vencimiento del bucket "sin lote / sin fecha"
- * de un artículo en una ubicación de Racks. La RPC (SECURITY DEFINER) solo
- * toca filas con lote vacío Y fecha NULL, con advisory lock idéntico al del
- * registro de movimientos: el saldo del bucket se conserva exacto (mismo
- * conjunto de filas, mismas cantidades — solo cambia la etiqueta del lote).
+ * Guarda lote y/o fecha de vencimiento de UN bucket de un artículo en una
+ * ubicación de Racks. La RPC (SECURITY DEFINER) solo toca las filas cuyo
+ * (lote, f_vencimiento) coincide con el bucket ACTUAL indicado — entradas
+ * y salidas históricas del bucket — con advisory lock idéntico al del
+ * registro de movimientos: el saldo se conserva exacto (mismo conjunto de
+ * filas, mismas cantidades — solo cambia la etiqueta).
+ *
+ *  · `loteActual`/`fVencimientoActual` vacíos/ausentes → bucket "sin lote
+ *    y sin fecha" (flujo original v1 de completar datos faltantes).
+ *  · Con valores → corrección v2 (p.ej. lote mal digitado en el ingreso).
  *
  * Errores controlados que propaga (mensaje "CÓDIGO|detalle"):
  *   · SIN_DATOS — no llegó ni lote ni fecha (o código vacío).
- *   · SIN_FILAS — el artículo no tiene stock sin lote/fecha allí (ya tiene
- *     datos, o la ubicación/código no coincide).
+ *   · SIN_FILAS — no hay filas de ese bucket exacto allí (ya corregido, o
+ *     la ubicación/código/lote actual no coincide).
  */
 export async function editarLoteVencimientoRacks(params: {
   bloque: string
@@ -1387,6 +1396,10 @@ export async function editarLoteVencimientoRacks(params: {
   codigo: string
   lote?: string
   fVencimiento?: string
+  /** Lote físico ACTUAL del bucket a editar ('' = sin lote). */
+  loteActual?: string
+  /** Fecha de vencimiento ACTUAL del bucket a editar ('' = sin fecha). */
+  fVencimientoActual?: string
 }): Promise<EdicionLoteResultado> {
   const { data, error } = await dataClient.rpc('editar_lote_vencimiento_racks', {
     p_bloque: params.bloque,
@@ -1396,6 +1409,8 @@ export async function editarLoteVencimientoRacks(params: {
     p_codigo: params.codigo.trim().toUpperCase(),
     p_lote: params.lote?.trim() || null,
     p_f_vencimiento: params.fVencimiento?.trim() || null,
+    p_lote_actual: params.loteActual?.trim() || null,
+    p_f_vencimiento_actual: params.fVencimientoActual?.trim() || null,
   })
   if (error) throw error
   const d = (data ?? {}) as Record<string, unknown>

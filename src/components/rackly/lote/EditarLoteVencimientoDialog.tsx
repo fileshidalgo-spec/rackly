@@ -1,16 +1,25 @@
 'use client'
 
 /**
- * RACKLY — Diálogo "Editar lote / fecha de vencimiento" para artículos
- * registrados SIN esos datos (módulos Racks y Piso, pedido 2026-10-20).
+ * RACKLY — Diálogo "Editar lote / fecha de vencimiento" (módulos Racks y
+ * Piso, pedido 2026-10-20 y su ampliación del mismo día).
  *
- * Compartido por OcupacionTab (Racks) y PisoSectoresTab (Piso): recibe los
- * datos del artículo para contexto y delega el guardado en `onGuardar`.
- * La validación vive en `validarDatosLote` (src/lib/rackly/lote.ts) — la
- * misma regla que re-aplica la RPC en el servidor (defensa en profundidad).
+ * Dos flujos en una sola ventana, siempre ordenada y sin recortes:
+ *   · COMPLETAR  — artículo registrado sin lote/fechas: los campos parten
+ *     vacíos y el usuario añade los datos físicos reales.
+ *   · CORREGIR   — artículo que YA tiene lote/fechas mal digitados: los
+ *     campos se prellenan con los datos actuales del bucket elegido y el
+ *     usuario los reemplaza.
+ *
+ * Si la fila de stock agrega varios buckets (varias fechas o varios lotes
+ * físicos bajo una misma fecha), se muestra un SELECTOR para elegir el
+ * bucket exacto a corregir — la misma precisión con la que las salidas
+ * eligen lote. El guardado delega en `onGuardar(lote, fecha, loteActual,
+ * fechaActual)`; la validación vive en `validarDatosLote` (src/lib/rackly/
+ * lote.ts) y la RPC re-aplica la regla en el servidor (defensa en profundidad).
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -24,16 +33,22 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
-import { Loader2, Save, CalendarOff, CircleSlash } from 'lucide-react'
-import { validarDatosLote } from '@/lib/rackly/lote'
+import { Loader2, Save, CalendarOff, CircleSlash, Check, ListChecks } from 'lucide-react'
+import { validarDatosLote, etiquetaOpcionLote, type OpcionLote } from '@/lib/rackly/lote'
 
 export type ArticuloAEditar = {
   codigo: string
   descripcion?: string
   stock: number
   un?: string
-  /** Etiqueta legible de la ubicación ("Bloque 2 · Torre 3 · Piso 1 · Pos 04" / "Sector A · Posición 2") */
+  /** Etiqueta legible de la ubicación ("Bloque 2 · Torre 3 · Piso 1 · Pos 04" / "Columna A · Posición 2") */
   ubicacion: string
+  /**
+   * Buckets exactos (lote físico × fecha) disponibles para editar.
+   * Con UNA opción el diálogo prellena directo; con varias muestra el selector.
+   * Ausente/vacío → flujo "completar" puro (bucket sin lote y sin fecha).
+   */
+  opciones?: OpcionLote[]
 }
 
 type Props = {
@@ -42,19 +57,45 @@ type Props = {
   articulo: ArticuloAEditar | null
   busy: boolean
   onOpenChange: (open: boolean) => void
-  /** Guardar validado: (lote, fecha) ya normalizados y no vacíos en conjunto. */
-  onGuardar: (lote: string, fecha: string) => Promise<void>
+  /**
+   * Guardar validado: valores NUEVOS (lote, fecha) y valores ACTUALES del
+   * bucket (loteActual, fechaActual) para que la RPC apunte con precisión.
+   */
+  onGuardar: (lote: string, fecha: string, loteActual: string, fechaActual: string) => Promise<void>
 }
 
 export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange, onGuardar }: Props) {
   const [lote, setLote] = useState('')
   const [fecha, setFecha] = useState('')
+  // Bucket actualmente elegido (índice dentro de articulo.opciones)
+  const [idxOpcion, setIdxOpcion] = useState(0)
 
-  // Re-inicializar los campos cada vez que se abre (o cambia el artículo):
-  // los campos parten VACÍOS porque el flujo es "completar datos faltantes".
+  const opciones = useMemo<OpcionLote[]>(
+    () => (articulo?.opciones && articulo.opciones.length > 0 ? articulo.opciones : []),
+    [articulo]
+  )
+  const haySelector = opciones.length > 1
+  const opcionActual: OpcionLote = opciones[idxOpcion] ?? { loteFisico: '', fecha: '', cantidad: articulo?.stock ?? 0 }
+  // ¿El bucket elegido YA tiene datos? → modo corrección (textos y prefill)
+  const esCorreccion = !!opcionActual.loteFisico || !!opcionActual.fecha
+
+  // Re-inicializar cada vez que se abre o cambia el artículo/elección:
+  // COMPLETAR parte vacío; CORREGIR prellena con los datos actuales del bucket.
   useEffect(() => {
-    if (open) { setLote(''); setFecha('') }
-  }, [open, articulo?.codigo])
+    if (!open) return
+    setIdxOpcion(0)
+    const primera = articulo?.opciones?.[0]
+    setLote(primera?.loteFisico ?? '')
+    setFecha(primera?.fecha ?? '')
+  }, [open, articulo?.codigo, articulo?.opciones])
+
+  /** Elegir otro bucket en el selector: los campos se prellenan con SUS datos. */
+  function elegirOpcion(i: number) {
+    if (busy) return
+    setIdxOpcion(i)
+    setLote(opciones[i]?.loteFisico ?? '')
+    setFecha(opciones[i]?.fecha ?? '')
+  }
 
   async function doGuardar() {
     if (!articulo) return
@@ -63,7 +104,7 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
       toast.error(val.error)
       return
     }
-    await onGuardar(val.lote ?? '', val.fecha ?? '')
+    await onGuardar(val.lote ?? '', val.fecha ?? '', opcionActual.loteFisico, opcionActual.fecha)
   }
 
   return (
@@ -71,17 +112,20 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
       open={open && !!articulo}
       onOpenChange={(o) => { if (!busy) onOpenChange(o) }}
     >
-      <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md">
-        <AlertDialogHeader>
-          <AlertDialogTitle>Editar lote y fecha de vencimiento</AlertDialogTitle>
-          <AlertDialogDescription>
-            Completa los datos físicos del producto registrados sin lote/fechas.
-            El stock y los lotes ya existentes NO se modifican.
+      <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto gap-3 p-4 sm:p-6">
+        <AlertDialogHeader className="gap-1.5">
+          <AlertDialogTitle className="text-base">
+            {esCorreccion ? 'Corregir lote y fecha de vencimiento' : 'Editar lote y fecha de vencimiento'}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-xs">
+            {esCorreccion
+              ? 'Reemplaza los datos actuales por los correctos. El stock y las cantidades NO se modifican.'
+              : 'Completa los datos físicos del producto registrados sin lote/fechas. El stock y los lotes ya existentes NO se modifican.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
         {articulo && (
-          <div className="space-y-3 py-1">
+          <div className="space-y-3 py-0.5">
             {/* Contexto del artículo */}
             <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2.5 space-y-1">
               <div className="flex items-center justify-between gap-2">
@@ -93,6 +137,36 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
               )}
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">{articulo.ubicacion}</p>
             </div>
+
+            {/* ── Selector de bucket (solo cuando la fila agrega varios lotes/fechas) ── */}
+            {haySelector && (
+              <div className="space-y-1.5">
+                <Label className="text-xs flex items-center gap-1.5">
+                  <ListChecks className="w-3.5 h-3.5 text-sky-500" /> ¿Qué lote corregir?
+                </Label>
+                <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800">
+                  {opciones.map((o, i) => (
+                    <button
+                      key={`${o.loteFisico}||${o.fecha}||${i}`}
+                      type="button"
+                      onClick={() => elegirOpcion(i)}
+                      disabled={busy}
+                      className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 text-left transition-colors ${
+                        i === idxOpcion
+                          ? 'bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      <span className="text-[11px] font-medium">{etiquetaOpcionLote(o)}</span>
+                      <span className="flex items-center gap-2 flex-shrink-0">
+                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">{o.cantidad}</span>
+                        {i === idxOpcion && <Check className="w-3.5 h-3.5 text-sky-500" />}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Lote */}
             <div className="space-y-1">
@@ -146,13 +220,15 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
                 </button>
               </div>
               <p className="text-[10px] text-muted-foreground italic">
-                Deja vacío lo que el producto realmente no tenga (al menos un dato es obligatorio).
+                {esCorreccion
+                  ? `Datos actuales: ${opcionActual.loteFisico ? `lote ${opcionActual.loteFisico}` : 'sin lote'} · ${opcionActual.fecha ? `vence ${opcionActual.fecha}` : 'sin fecha'}.`
+                  : 'Deja vacío lo que el producto realmente no tenga (al menos un dato es obligatorio).'}
               </p>
             </div>
           </div>
         )}
 
-        <AlertDialogFooter>
+        <AlertDialogFooter className="gap-2">
           <AlertDialogCancel disabled={busy}>Cancelar</AlertDialogCancel>
           <Button onClick={doGuardar} disabled={busy} className="gap-1.5">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}

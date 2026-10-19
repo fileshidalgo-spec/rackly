@@ -42,7 +42,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { extractError } from '@/lib/utils'
-import { puedeEditarLote } from '@/lib/rackly/lote'
+import { puedeEditarLote, construirOpcionesLote } from '@/lib/rackly/lote'
 import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
 import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
@@ -909,9 +909,10 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     }
   }
 
-  /** Guarda lote/fecha del artículo sin datos en esta posición (RPC consistente;
-   *  solo toca detalles con lote vacío Y fecha NULL — el saldo queda intacto). */
-  async function doEditarLotePiso(lote: string, fecha: string) {
+  /** Guarda lote/fecha del bucket elegido en esta posición (RPC v2: completa O
+   *  corrige — apunta al bucket exacto con loteActual/fVencimientoActual;
+   *  las cantidades quedan intactas en todos los niveles). */
+  async function doEditarLotePiso(lote: string, fecha: string, loteActual: string, fechaActual: string) {
     if (!detail || !editLoteBloqueId || !editLoteTarget) return
     setEditLoteBusy(true)
     try {
@@ -920,8 +921,12 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         bloqueId: editLoteBloqueId,
         lote,
         fVencimiento: fecha,
+        loteActual,
+        fVencimientoActual: fechaActual,
       })
-      toast.success(`Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s). El artículo ya puede transferirse por Tránsito.`)
+      // La pista de Tránsito solo aplica cuando el bucket ANTES estaba sin datos
+      const ganoDatos = !loteActual && !fechaActual
+      toast.success(`Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s).${ganoDatos ? ' El artículo ya puede transferirse por Tránsito.' : ''}`)
       setEditLoteTarget(null)
       setEditLoteBloqueId('')
       // Refresco idéntico al patrón del INC: detalle + stock por nivel + grid
@@ -949,9 +954,12 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     }
   }
 
-  /** Botón "Editar" para filas de stock sin lote/fecha (almacenero/admin, artículo real no virtual). */
+  /** Botón "Editar" de lote/fecha para TODA fila de stock real (no virtual cat_):
+   *  completa artículos sin datos y corrige artículos ya etiquetados
+   *  (almacenero/admin/supervisores). Con varios lotes/fechas, el diálogo
+   *  muestra el selector de bucket exacto. */
   function renderBotonEditarLote(s: DetailStock) {
-    if (!puedeEditarDatosLote || s.fecha_vencimiento || s.lote || s.bloque_id.startsWith('cat_')) return null
+    if (!puedeEditarDatosLote || s.bloque_id.startsWith('cat_')) return null
     return (
       <button
         type="button"
@@ -963,9 +971,16 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
             stock: s.cantidad,
             un: s.bloque_unidad || undefined,
             ubicacion: `Columna ${detail?.columnaLetra ?? '—'} · Posición ${detail?.posicionNumero ?? '—'}${detail?.subcolumnaCodigo ? ` (${detail.subcolumnaCodigo})` : ''}`,
+            // Buckets exactos (lote físico × fecha): 1 → prefill directo;
+            // varios (p.ej. "L1, L2" bajo una misma fecha) → selector.
+            opciones: construirOpcionesLote({
+              stock: s.cantidad,
+              fecha: s.fecha_vencimiento || undefined,
+              loteFisico: s.lote || undefined,
+            }),
           })
         }}
-        title="Completar lote y/o fecha de vencimiento del producto"
+        title={!s.fecha_vencimiento && !s.lote ? 'Completar lote y/o fecha de vencimiento del producto' : 'Corregir lote y/o fecha de vencimiento del producto'}
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 hover:text-cyan-200 transition-colors text-[9px] font-semibold"
       ><Pencil className="w-2.5 h-2.5" /> Editar</button>
     )

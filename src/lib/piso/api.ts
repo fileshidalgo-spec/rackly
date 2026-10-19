@@ -2776,7 +2776,11 @@ export async function cargarVistaColumna(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// EDITAR LOTE / F. VENCIMIENTO de artículos sin esos datos (2026-10-20)
+// EDITAR LOTE / F. VENCIMIENTO de artículos (2026-10-20, v2)
+// v1: completar datos de artículos SIN lote/fechas.
+// v2: también CORREGIR artículos que ya tienen lote/fechas — se apunta al
+// bucket EXACTO (lote_actual + f_vencimiento_actual) en TODOS los niveles
+// de la posición; parámetros opcionales con default "bucket vacío".
 // ═══════════════════════════════════════════════════════════════════
 
 export type EdicionLotePisoResultado = {
@@ -2786,27 +2790,38 @@ export type EdicionLotePisoResultado = {
 }
 
 /**
- * Completa lote y/o fecha de vencimiento del bucket "sin lote / sin fecha"
- * de un artículo (bloque de Piso) en una posición, en TODOS sus niveles.
- * La RPC (SECURITY DEFINER) solo toca detalles con lote vacío Y fecha NULL;
- * las cantidades no cambian, por lo que el saldo por lote se conserva
- * exacto — imposible fabricar negativos.
+ * Guarda lote y/o fecha de vencimiento de UN bucket de un artículo (bloque
+ * de Piso) en una posición, en TODOS sus niveles. La RPC (SECURITY DEFINER)
+ * solo toca detalles cuyo (lote, fecha_vencimiento) coincide con el bucket
+ * ACTUAL indicado; las cantidades no cambian, por lo que el saldo por lote
+ * se conserva exacto — imposible fabricar negativos.
+ *
+ *  · `loteActual`/`fVencimientoActual` vacíos/ausentes → bucket "sin lote
+ *    y sin fecha" (flujo original v1).
+ *  · Con valores → corrección v2 (p.ej. lote mal digitado en el ingreso).
  *
  * Errores controlados que propaga (mensaje "CÓDIGO|detalle"):
  *   · SIN_DATOS — no llegó ni lote ni fecha.
- *   · SIN_FILAS — el artículo no tiene stock sin lote/fecha allí.
+ *   · SIN_FILAS — no hay filas de ese bucket exacto allí (ya corregido, o
+ *     el lote/fecha actual no coincide).
  */
 export async function editarLoteVencimientoPiso(params: {
   posicionId: string
   bloqueId: string
   lote?: string
   fVencimiento?: string
+  /** Lote físico ACTUAL del bucket a editar ('' = sin lote). */
+  loteActual?: string
+  /** Fecha de vencimiento ACTUAL del bucket a editar ('' = sin fecha). */
+  fVencimientoActual?: string
 }): Promise<EdicionLotePisoResultado> {
   const { data, error } = await dataClient.rpc('editar_lote_vencimiento_piso', {
     p_posicion_id: params.posicionId,
     p_bloque_id: params.bloqueId,
     p_lote: params.lote?.trim() || null,
     p_f_vencimiento: params.fVencimiento?.trim() || null,
+    p_lote_actual: params.loteActual?.trim() || null,
+    p_f_vencimiento_actual: params.fVencimientoActual?.trim() || null,
   })
   if (error) throw error
   const d = (data ?? {}) as Record<string, unknown>

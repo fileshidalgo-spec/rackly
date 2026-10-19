@@ -152,3 +152,17 @@ Stage Summary:
 - Negativos por atribución: 100% reparados (740/88 → 0)
 - Prevención v5 activa en producción (misma firma, GRANTs intactos, sin cambios en app)
 - Scripts persistidos: download/rackly_backfill_lote_v2.sql, download/rackly_rebalance_lotes.sql, download/rackly_lote_v5_auto_salida.sql
+
+---
+## 2026-10-19 · Auditoría proactiva: cierre del cauce de negativos por lote (v6)
+- Hallazgo: tras el fix 719 (5c7c165), nacieron 11 artefactos de atribución nuevos (17-19 oct)
+  por salidas CON lote que no cubría (typo/agotado): la RPC v5 solo reasignaba cuando la
+  salida llegaba SIN lote. Caso claro: SO00432338 vs SO000432338 (typo).
+- Fix RPC v6 (supabase/migrations/20261019_salida_lote_validacion_v6.sql): si el lote
+  digitado no cubre, cae al pipeline v4/v5 (FEFO cubierta -> sin-lote -> mayor saldo).
+  Validada en producción con 4 casos en transacción con ROLLBACK (A reasigna, B respeta,
+  C rechaza INSUFFICIENT_STOCK, D absorbe sin-lote). INC y idempotencia intactos.
+- Rebalanceo de los 11 artefactos: UPDATE/split FEFO por celda, respaldo previo en
+  download/backup_negativos_19oct.json. Resultado: 0 artefactos; solo queda el déficit
+  real 57630 @ 1/1/2/12 (-221,202, decisión de negocio ya documentada).
+- Scripts: scripts/{auditoria_bd,clasifica_negativos,rebalanceo_lotes,traza_negativos}.py

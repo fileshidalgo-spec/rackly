@@ -57,8 +57,9 @@ export type ArticuloTransito = {
   enviados: number
   pendiente: number
   estado: EstadoSem
-  transferible: boolean
-  razonNoTransferible: string
+  /** Datos ausentes (lote/vencimiento/producción) — alimenta la ALERTA
+   *  de transferencia consciente (v2 2026-10-20). Vacío = datos completos. */
+  datosFaltantes: string[]
 }
 
 export type GuiaTransito = {
@@ -109,18 +110,27 @@ export function estadoSem(articulo: { cantidad: number; envios: EnvioTransito[] 
   return { estado, enviados, pendiente }
 }
 
-/** Sin lote o sin vencimiento NO es transferible (regla Tránsito; la RPC lo blinda). */
-export function razonNoTransferible(a: { lote: string; fechaVencimiento: string | null }): string {
-  const sinLote = !a.lote.trim()
-  const sinVenc = !a.fechaVencimiento?.trim()
-  if (sinLote && sinVenc) return 'Sin lote y sin fecha de vencimiento'
-  if (sinLote) return 'Sin lote'
-  if (sinVenc) return 'Sin fecha de vencimiento'
-  return ''
-}
-
-export function esTransferible(a: { lote: string; fechaVencimiento: string | null }): boolean {
-  return razonNoTransferible(a) === ''
+/**
+ * Datos que el artículo NO tiene, en orden de mención del usuario
+ * (lote → vencimiento → producción). Alimenta la ALERTA de transferencia
+ * consciente: la transferencia está PERMITIDA (v2 2026-10-20 — el proveedor
+ * a veces no trae esos datos y la mercadería no puede quedarse congelada;
+ * luego se completan/corrigen con la función Editar de Racks/Piso), pero la
+ * UI pide confirmación explícita para que nadie transfiera sin darse cuenta.
+ */
+export function datosFaltantes(a: {
+  lote: string
+  fechaVencimiento: string | null
+  fechaProduccion?: string | null
+}): string[] {
+  const faltan: string[] = []
+  if (!a.lote.trim()) faltan.push('lote')
+  if (!a.fechaVencimiento?.trim()) faltan.push('vencimiento')
+  // producción: se evalúa SOLO si el llamador la trae (ArticuloTransito
+  // siempre la trae, '' cuando la fila no tiene). undefined = el llamador
+  // no la maneja — no se marca como faltante para no alertar de más.
+  if (a.fechaProduccion !== undefined && !a.fechaProduccion?.trim()) faltan.push('producción')
+  return faltan
 }
 
 export function parseEnvios(raw: unknown): EnvioTransito[] {
@@ -165,8 +175,7 @@ export function mapArticuloTransito(r: Record<string, unknown>): ArticuloTransit
     envios: parseEnvios(r.transito ? (r.transito as Record<string, unknown>).envios : []),
   }
   const sem = estadoSem(base)
-  const razon = razonNoTransferible(base)
-  return { ...base, ...sem, transferible: razon === '', razonNoTransferible: razon }
+  return { ...base, ...sem, datosFaltantes: datosFaltantes(base) }
 }
 
 // ═══════════════════════════════════════════════════════════════════

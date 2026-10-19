@@ -57,6 +57,7 @@ import {
   agruparEnGuias,
   contarPendientes,
   filtrarArticulos,
+  datosFaltantes,
   type ArticuloTransito,
   type EnvioTransito,
   type GuiaTransito,
@@ -171,11 +172,13 @@ export function TransitoModule() {
       return next
     })
 
-  const transferiblesDeSeleccion = (): ArticuloTransito[] => {
+  /** Artículos seleccionados con pendiente — TODOS son transferibles (v2:
+   *  sin lote/fechas también; el diálogo pedirá la confirmación con alerta). */
+  const pendientesDeSeleccion = (): ArticuloTransito[] => {
     const items: ArticuloTransito[] = []
     for (const id of seleccion) {
       const a = articulosPorId.get(id)
-      if (a && a.transferible && a.pendiente > EPS) items.push(a)
+      if (a && a.pendiente > EPS) items.push(a)
     }
     return items
   }
@@ -271,17 +274,19 @@ export function TransitoModule() {
         })
         return
       }
-      if (!objetivo.transferible) {
-        toast.warning(`${objetivo.codigo}: ${objetivo.razonNoTransferible}`, {
-          description: `Guía ${etiquetaGuia} — completa lote/vencimiento en Recepción para transferirlo.`,
-        })
-        return
-      }
-      if (objetivo.pendiente <= EPS) {
+      if (!objetivo.pendiente || objetivo.pendiente <= EPS) {
         toast.info(`${objetivo.codigo}: ya está transferido completo`, {
           description: `Guía ${etiquetaGuia} — revisa su historial si necesitas moverlo.`,
         })
         return
+      }
+      // v2: sin lote/fechas SÍ se transfiere — aviso NO bloqueante; el diálogo
+      // pedirá la confirmación explícita antes de mover la mercadería.
+      const faltan = datosFaltantes(objetivo)
+      if (faltan.length > 0) {
+        toast.warning(`${objetivo.codigo}: sin ${faltan.join(', ')}`, {
+          description: `Guía ${etiquetaGuia} — al confirmar se pedirá confirmación; completa los datos después con Editar (Racks/Piso).`,
+        })
       }
       const mismos = arts.filter(
         (a) => a.codigo.toLowerCase() === objetivo.codigo.toLowerCase() && a.id !== objetivo.id
@@ -395,8 +400,8 @@ export function TransitoModule() {
             </Button>
             <Button
               size="sm"
-              onClick={() => abrirDialogo(transferiblesDeSeleccion())}
-              disabled={transferiblesDeSeleccion().length === 0}
+              onClick={() => abrirDialogo(pendientesDeSeleccion())}
+              disabled={pendientesDeSeleccion().length === 0}
               className="gap-1.5 bg-fuchsia-600 hover:bg-fuchsia-700 font-semibold"
             >
               <ArrowRightLeft className="h-4 w-4" />
@@ -449,7 +454,7 @@ export function TransitoModule() {
           onToggleHistorial={toggleHistorial}
           onTransferir={(a) => abrirDialogo([a])}
           onTransferirTodoGuia={() => {
-            const items = guia.articulos.filter((a) => a.transferible && a.pendiente > EPS)
+            const items = guia.articulos.filter((a) => a.pendiente > EPS)
             if (items.length === 0) {
               toast.info('Ningún artículo de esta guía está pendiente de transferir')
               return
@@ -508,7 +513,7 @@ function TarjetaGuia({
 }) {
   const nArticulos = guia.articulos.length
   const nPendientes = guia.articulos.filter((a) => a.pendiente > EPS).length
-  const todosPendientesTransferibles = guia.articulos.filter((a) => a.transferible && a.pendiente > EPS)
+  const pendientesDeGuia = guia.articulos.filter((a) => a.pendiente > EPS)
 
   return (
     <Card className="border-0 shadow-md shadow-slate-200/50 bg-white overflow-hidden">
@@ -557,7 +562,7 @@ function TarjetaGuia({
       {/* Artículos */}
       {abierta && (
         <div className="border-t border-slate-100">
-          {todosPendientesTransferibles.length > 1 && (
+          {pendientesDeGuia.length > 1 && (
             <div className="px-4 sm:px-5 pt-3">
               <Button
                 variant="outline"
@@ -566,7 +571,7 @@ function TarjetaGuia({
                 className="gap-1.5 text-xs font-semibold"
               >
                 <ArrowRightLeft className="h-3.5 w-3.5" />
-                Transferir los {todosPendientesTransferibles.length} pendientes juntos
+                Transferir los {pendientesDeGuia.length} pendientes juntos
               </Button>
             </div>
           )}
@@ -609,12 +614,15 @@ function FilaArticulo({
   onTransferir: () => void
 }) {
   const sem = a.estado
+  // Datos ausentes del artículo (lote/vencimiento/producción) — alerta consciente
+  const faltanFila = datosFaltantes(a)
 
   return (
     <div className="p-2.5 sm:p-3 rounded-xl hover:bg-slate-50 transition-colors">
       <div className="flex items-start gap-2.5">
-        {/* Checkbox batch (solo si es transferible y pendiente) */}
-        {a.transferible && a.pendiente > EPS ? (
+        {/* Checkbox batch (siempre que tenga pendiente — sin datos también,
+            v2: el diálogo pide confirmación explícita) */}
+        {a.pendiente > EPS ? (
           <Checkbox
             checked={seleccionado}
             onCheckedChange={onToggleSeleccion}
@@ -660,9 +668,10 @@ function FilaArticulo({
             </p>
           )}
 
-          {!a.transferible && (
-            <p className="text-[11px] text-rose-600 mt-0.5 font-medium">
-              ⚠ {a.razonNoTransferible} — no se puede transferir desde Tránsito
+          {/* ALERTA v2: sin lote/fechas se transfiere, pero NUNCA en silencio */}
+          {faltanFila.length > 0 && (
+            <p className="text-[11px] text-amber-700 mt-0.5 font-medium">
+              ⚠ Sin {faltanFila.join(' · ')} — al transferir se pedirá confirmación (luego corrige con Editar)
             </p>
           )}
         </div>
@@ -672,13 +681,15 @@ function FilaArticulo({
           <Button
             size="sm"
             onClick={onTransferir}
-            disabled={!a.transferible || a.pendiente <= EPS}
-            className="gap-1 text-xs font-semibold h-8"
+            disabled={a.pendiente <= EPS}
+            className={`gap-1 text-xs font-semibold h-8 ${
+              faltanFila.length > 0 ? 'bg-amber-600 hover:bg-amber-700 text-white' : ''
+            }`}
             title={
-              !a.transferible
-                ? a.razonNoTransferible
-                : a.pendiente <= EPS
-                  ? 'Ya está completo'
+              a.pendiente <= EPS
+                ? 'Ya está completo'
+                : faltanFila.length > 0
+                  ? `Sin ${faltanFila.join(' · ')} — se pedirá confirmación antes de mover`
                   : 'Transferir a Rack o Piso'
             }
           >

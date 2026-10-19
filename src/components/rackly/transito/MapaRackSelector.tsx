@@ -5,10 +5,13 @@
  *
  * Reutiliza el motor de ocupación del módulo Racks (RPC ocupacion_celdas_v2)
  * y lo convierte en selector: TODAS las celdas son clicables.
- *   · Libre    → verde, clic = elegir.
- *   · Ocupada  → ámbar con stock, clic = avisar contenido y pedir
- *                confirmación para co-ubicar (regla v3.3: nunca silenciosa).
+ *   · Sin artículo   → VERDE, clic = elegir.
+ *   · 1 artículo     → AZUL, clic = avisar contenido y pedir confirmación
+ *                      para co-ubicar (regla v3.3: nunca silenciosa).
+ *   · Más de 1       → NARANJA (mismo convenio que Ocupación de racks;
+ *                      multi-lote marca un punto ámbar).
  *   · Mismo código del artículo → marcador violeta para agrupar cerca.
+ *   · Torre 1 / Torre 2 con encabezado propio sobre sus columnas.
  * Sugerencia automática: la primera celda libre del piso más bajo queda
  * preseleccionada ("Sugerido").
  */
@@ -172,7 +175,10 @@ export function MapaRackSelector({
         ))}
       </div>
 
-      {/* Grid del bloque: filas = pisos (4 arriba → 1 abajo), columnas = torre×posición */}
+      {/* Grid del bloque: filas = pisos (4 arriba → 1 abajo), columnas = torre×posición.
+          Encabezado TORRE N alineado con cada grupo de columnas (v2 2026-10-20:
+          la ventana de destino muestra Torre 1 y Torre 2 con claridad) + colores
+          de Ocupación de racks: VERDE sin artículo · AZUL con 1 · NARANJA con más de 1. */}
       <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 overflow-x-auto">
         {cargando ? (
           <div className="flex items-center justify-center py-10 text-sm text-slate-500 gap-2">
@@ -180,6 +186,31 @@ export function MapaRackSelector({
           </div>
         ) : (
           <div className="space-y-2 min-w-max">
+            {/* Encabezados de torre (misma estructura de columnas que las filas) */}
+            <div className="flex items-end gap-2">
+              <div className="w-12 shrink-0" />
+              <div className="flex gap-1">
+                {torres.map((torre) => (
+                  <div
+                    key={torre}
+                    className="flex flex-col items-center"
+                    style={{
+                      paddingRight: torres.length > 1 ? 10 : 0,
+                      borderRight: torres.length > 1 ? '1px solid #94a3b8' : 'none',
+                    }}
+                  >
+                    <div className="flex gap-1">
+                      {posiciones.map((posicion) => (
+                        <div key={posicion} className="w-9 sm:w-10 h-0" />
+                      ))}
+                    </div>
+                    <span className="text-[10px] font-extrabold text-slate-600 uppercase tracking-wider whitespace-nowrap">
+                      Torre {torre}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
             {[...PISOS].reverse().map((piso) => (
               <div key={piso} className="flex items-center gap-2">
                 <div className="w-12 shrink-0 text-[10px] font-bold text-slate-400 uppercase">Piso {piso}</div>
@@ -195,6 +226,10 @@ export function MapaRackSelector({
                         const key = claveCeldaRack(rack)
                         const c = mapa.get(key)
                         const ocupada = !!c && c.stock > EPS
+                        // Colores de Ocupación de racks (mismo convenio que el módulo):
+                        // sin artículo = verde · 1 artículo = azul · más de 1 = naranja.
+                        const nCodigos = c?.codigos.length ?? 0
+                        const multiLote = !!c && nCodigos === 1 && c.lotes > 1
                         const mismoCodigo = !!c && !!codigoMarca && c.codigos.includes(codigoMarca)
                         const esSel =
                           sel?.rack.bloque === rack.bloque &&
@@ -206,20 +241,29 @@ export function MapaRackSelector({
                           <button
                             key={key}
                             onClick={() => clickCelda(rack)}
-                            title={ocupada ? `Ocupada · ${c!.codigos.join(', ')} · stock ${c!.stock}` : 'Libre'}
+                            title={
+                              ocupada
+                                ? `${nCodigos > 1 ? `${nCodigos} artículos` : '1 artículo'} · ${c!.codigos.join(', ')} · stock ${formatearStock(c!.stock)}`
+                                : 'Libre — sin artículo'
+                            }
                             className={`relative w-9 h-9 sm:w-10 sm:h-10 rounded-md text-[9px] font-bold transition-all flex flex-col items-center justify-center leading-none ${
                               esSel
-                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40 scale-110 z-10'
+                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40 scale-110 z-10 ring-2 ring-blue-300'
                                 : mismoCodigo
                                   ? 'bg-violet-200 text-violet-800 border-2 border-violet-500 hover:bg-violet-300'
-                                  : ocupada
-                                    ? 'bg-amber-200 text-amber-900 hover:bg-amber-300'
-                                    : 'bg-emerald-200 text-emerald-800 hover:bg-emerald-300'
+                                  : !ocupada
+                                    ? 'bg-emerald-200 text-emerald-800 hover:bg-emerald-300'
+                                    : nCodigos > 1
+                                      ? 'bg-orange-200 text-orange-900 hover:bg-orange-300'
+                                      : 'bg-blue-200 text-blue-900 hover:bg-blue-300'
                             }`}
                           >
                             {esSel && <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-blue-600 border-2 border-white" />}
                             {mismoCodigo && !esSel && (
                               <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-violet-600 border border-white" />
+                            )}
+                            {multiLote && !esSel && (
+                              <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400 ring-1 ring-white" />
                             )}
                             {esSugerida && !esSel && (
                               <span className="absolute -top-1.5 -left-1.5">
@@ -240,10 +284,12 @@ export function MapaRackSelector({
         )}
       </div>
 
-      {/* Leyenda */}
+      {/* Leyenda (convenio de Ocupación de racks) */}
       <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
-        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-300" /> Libre</span>
-        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-300" /> Ocupada (clic = co-ubicar)</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-300" /> Sin artículo</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-300" /> Con 1 artículo</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-orange-300" /> Con más de 1</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-400" /> Multi-lote (punto)</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-violet-400" /> Mismo código</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-600" /> Seleccionada</span>
         <span className="inline-flex items-center gap-1"><Sparkles className="h-3 w-3 text-blue-600" /> Sugerida</span>

@@ -10,7 +10,8 @@
  *       - rama 'rack' → llama a registrar_movimiento_kardex (ingreso nativo),
  *       - rama 'piso' → inserta piso_movimientos + detalles (ingreso nativo),
  *       - y en la MISMA transacción agrega el envío a recepcion_registros.transito.
- *   · Anti-sobreenvío, idempotencia por uuid y bloqueo sin lote/vencimiento
+ *   · Anti-sobreenvío, idempotencia por uuid y admisión de envíos SIN
+ *     lote/vencimiento (v2: transferencia consciente con alerta en la UI)
  *     se aplican EN LA RPC (fuente de verdad); el cliente replica solo lo
  *     básico para fallar rápido (transito-core.ts, testeado sin red).
  *   · Aislamiento: no modifica Recepción, Racks ni Piso — solo añade.
@@ -43,8 +44,7 @@ export {
   FECHA_INICIO_TRANSITO,
   EPS_TRANSITO,
   estadoSem,
-  razonNoTransferible,
-  esTransferible,
+  datosFaltantes,
   parseEnvios,
   mapArticuloTransito,
   claveGuia,
@@ -147,11 +147,12 @@ type ArgsTransferir = {
   uuidSync?: string
 }
 
-/** Ejecuta UN envío (1 artículo → 1 ubicación) con uuid propio e idempotencia. */
+/** Ejecuta UN envío (1 artículo → 1 ubicación) con uuid propio e idempotencia.
+ *  Sin lote/fechas TAMBIÉN se envía (v2 2026-10-20): la RPC lo permite y la
+ *  UI ya pidió la confirmación explícita de transferencia sin datos. */
 export async function transferirArticulo(args: ArgsTransferir): Promise<ResultadoEnvio> {
   const { articulo, destino, cantidad, turno, usuario, rack, nivel, etiqueta, uuidSync } = args
   // Falla rápido en cliente (la RPC revalida todo)
-  if (!articulo.transferible) throw new Error(articulo.razonNoTransferible)
   const v = validarCantidad(cantidad, articulo.pendiente)
   if (v) throw new Error(v)
 

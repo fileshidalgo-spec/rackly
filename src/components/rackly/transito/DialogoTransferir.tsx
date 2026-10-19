@@ -23,13 +23,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { ArrowRightLeft, CheckCircle2, Layers, Loader2, Warehouse, XCircle } from 'lucide-react'
+import { AlertTriangle, ArrowRightLeft, CheckCircle2, Layers, Loader2, Warehouse, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   transferirArticulo,
   validarCantidad,
   mensajeRpcError,
+  datosFaltantes,
   type ArticuloTransito,
   type UsuarioTransito,
 } from '@/lib/rackly/transito'
@@ -66,6 +77,9 @@ export function DialogoTransferir({
   const [seleccionRack, setSeleccionRack] = useState<SeleccionRack | null>(null)
   const [seleccionPiso, setSeleccionPiso] = useState<SeleccionPiso | null>(null)
   const [resultados, setResultados] = useState<ResultadoPorArticulo[]>([])
+  /** ALERTA v2: confirmación explícita cuando algún artículo va sin lote/fechas
+   *  (transferencia consciente — nadie envía sin darse cuenta). */
+  const [pedirConfirmSinDatos, setPedirConfirmSinDatos] = useState(false)
   // Uuid FIJO por artículo (uno al confirmar, estable entre reintentos):
   // la idempotencia de la RPC depende de que el reintento del MISMO envío
   // lleve el MISMO uuid (nuevoUuid() por intento la mataba).
@@ -75,6 +89,12 @@ export function DialogoTransferir({
   const titulo = useMemo(
     () => (esBatch ? `Transferir ${items.length} artículos juntos` : 'Transferir artículo'),
     [esBatch, items.length]
+  )
+
+  /** Artículos que van SIN lote y/o fechas (v2: transferibles con alerta). */
+  const itemsSinDatos = useMemo(
+    () => items.filter((a) => datosFaltantes(a).length > 0),
+    [items]
   )
 
   const cantidadDe = (a: ArticuloTransito): number => {
@@ -101,6 +121,18 @@ export function DialogoTransferir({
     setSeleccionPiso(sel)
     setSeleccionRack(null)
     setPaso('confirmar')
+  }
+
+  /** Click en “Confirmar”: valida cantidades y, si algo va sin datos, abre la
+   *  ALERTA de confirmación explícita (el envío solo sigue con “Sí, transferir”). */
+  const onConfirmarClick = () => {
+    const err = validarTodo()
+    if (err) {
+      toast.error(err)
+      return
+    }
+    if (itemsSinDatos.length > 0) setPedirConfirmSinDatos(true)
+    else void confirmarEnvios()
   }
 
   const confirmarEnvios = async () => {
@@ -225,6 +257,22 @@ export function DialogoTransferir({
           {/* ── PASO 3: confirmación con cantidades ── */}
           {paso === 'confirmar' && (
             <div className="space-y-4">
+              {/* ALERTA v2 — transferencia consciente: visible ANTES de confirmar */}
+              {itemsSinDatos.length > 0 && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 flex items-start gap-2.5">
+                  <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-amber-900">
+                      {itemsSinDatos.length} de {items.length} artículo{itemsSinDatos.length > 1 ? 's van' : ' va'} sin datos completos
+                    </p>
+                    <p className="text-xs text-amber-800 mt-0.5">
+                      Van sin lote y/o fechas (el proveedor no los trajo). Se moverán con confirmación explícita y
+                      luego puedes completar o corregir esos datos con la función <b>Editar</b> en Racks/Piso.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm">
                 <p className="font-bold text-slate-900">
                   Destino: {seleccionPiso ? seleccionPiso.etiqueta : seleccionRack?.etiqueta}
@@ -256,6 +304,19 @@ export function DialogoTransferir({
                           Pendiente: {a.pendiente} {a.unidadMedida} · Lote {a.lote || '—'} · Vence{' '}
                           {a.fechaVencimiento || '—'}
                         </p>
+                        {/* Chips de datos faltantes (v2 — alerta consciente) */}
+                        {datosFaltantes(a).length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {datosFaltantes(a).map((f) => (
+                              <span
+                                key={f}
+                                className="text-[9px] font-bold text-amber-800 bg-amber-100 border border-amber-300 rounded px-1.5 py-px uppercase tracking-wide"
+                              >
+                                Sin {f}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div className="w-28 shrink-0">
                         <label className="text-[10px] font-semibold text-slate-500 uppercase">
@@ -341,8 +402,10 @@ export function DialogoTransferir({
                   Cancelar
                 </Button>
                 <Button
-                  onClick={confirmarEnvios}
-                  className="gap-1.5 font-semibold bg-fuchsia-600 hover:bg-fuchsia-700"
+                  onClick={onConfirmarClick}
+                  className={`gap-1.5 font-semibold ${
+                    itemsSinDatos.length > 0 ? 'bg-amber-600 hover:bg-amber-700' : 'bg-fuchsia-600 hover:bg-fuchsia-700'
+                  }`}
                 >
                   <CheckCircle2 className="h-4 w-4" />
                   Confirmar {esBatch ? `(${items.length})` : ''}
@@ -362,6 +425,51 @@ export function DialogoTransferir({
           </div>
         </div>
       </DialogContent>
+
+      {/* ── ALERTA v2: confirmación EXPLÍCITA de transferencia sin lote/fechas.
+          Nada se mueve hasta pulsar “Sí, transferir así” — nadie envía sin
+          darse cuenta de que el artículo va sin esos datos. ── */}
+      <AlertDialog open={pedirConfirmSinDatos} onOpenChange={setPedirConfirmSinDatos}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-600" />
+              ¿Transferir sin lote / fechas?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>Estos artículos se moverán SIN estos datos:</p>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  {itemsSinDatos.map((a) => (
+                    <li key={a.id}>
+                      <span className="font-semibold text-slate-900">{a.codigo}</span>
+                      {a.nPaleta != null ? ` (Paleta ${a.nPaleta})` : ''}
+                      {' — sin '}
+                      <span className="font-semibold text-amber-800">{datosFaltantes(a).join(' · ')}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p>
+                  Si el proveedor no los trajo, puedes transferir así y completarlos o corregirlos
+                  después con la función <b>Editar</b> en Racks/Piso. ¿Deseas continuar?
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No, revisar datos</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={() => {
+                setPedirConfirmSinDatos(false)
+                void confirmarEnvios()
+              }}
+            >
+              Sí, transferir así
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }

@@ -7,8 +7,9 @@
  * vía cargarPosicionesSector) y lo convierte en selector:
  *   · Sector → Columna (A, B, C…) → Subcolumna → Posición → NIVEL (la unidad
  *     física de almacenamiento; el stock del piso se registra por nivel).
- *   · Posición libre → verde. Ocupada → ámbar con contenido; al tocarla se
- *     pide SIEMPRE confirmación para co-ubicar (regla v3.3).
+ *   · Colores (mismo convenio que Ocupación de racks, v2 2026-10-20):
+ *     sin artículo = VERDE · 1 artículo = AZUL · más de 1 = NARANJA.
+ *     Ocupada → clic pide SIEMPRE confirmación para co-ubicar (regla v3.3).
  *   · Mismo código del artículo → marcador violeta.
  * Sugerencia automática: la primera posición libre del primer sector, nivel 1.
  */
@@ -266,6 +267,9 @@ export function MapaPisoSelector({
                         .sort((a, b) => a.posicionNumero - b.posicionNumero)
                         .map((p) => {
                           const ocupada = p.stock > EPS
+                          // Colores de Ocupación (mismo convenio que racks):
+                          // sin artículo = verde · 1 = azul · más de 1 = naranja.
+                          const nArt = p.bloques.length
                           const mismoCodigo = !!codigoMarca && p.bloques.some((b) => b.bloque_codigo === codigoMarca)
                           const abierta = posAbierta?.pos.posicionId === p.posicionId
                           const esSugerida = sugerida === p.posicionId
@@ -275,17 +279,19 @@ export function MapaPisoSelector({
                               onClick={() => clickPosicion(p)}
                               title={
                                 ocupada
-                                  ? `Ocupada · ${p.bloques.map((b) => `${b.bloque_codigo} (${b.cantidad})`).join(', ')}`
-                                  : 'Libre'
+                                  ? `${nArt > 1 ? `${nArt} artículos` : '1 artículo'} · ${p.bloques.map((b) => `${b.bloque_codigo} (${b.cantidad})`).join(', ')}`
+                                  : 'Libre — sin artículo'
                               }
                               className={`relative w-9 h-9 sm:w-10 sm:h-10 rounded-md text-[9px] font-bold transition-all flex flex-col items-center justify-center leading-none ${
                                 abierta
-                                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40 scale-110 z-10'
+                                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40 scale-110 z-10 ring-2 ring-blue-300'
                                   : mismoCodigo
                                     ? 'bg-violet-200 text-violet-800 border-2 border-violet-500 hover:bg-violet-300'
-                                    : ocupada
-                                      ? 'bg-amber-200 text-amber-900 hover:bg-amber-300'
-                                      : 'bg-emerald-200 text-emerald-800 hover:bg-emerald-300'
+                                    : !ocupada
+                                      ? 'bg-emerald-200 text-emerald-800 hover:bg-emerald-300'
+                                      : nArt > 1
+                                        ? 'bg-orange-200 text-orange-900 hover:bg-orange-300'
+                                        : 'bg-blue-200 text-blue-900 hover:bg-blue-300'
                               }`}
                             >
                               {abierta && <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-blue-600 border-2 border-white" />}
@@ -371,10 +377,11 @@ export function MapaPisoSelector({
         </div>
       )}
 
-      {/* Leyenda */}
+      {/* Leyenda (convenio de Ocupación de racks) */}
       <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
-        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-300" /> Libre</span>
-        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-300" /> Ocupada (clic = co-ubicar)</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-300" /> Sin artículo</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-300" /> Con 1 artículo</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-orange-300" /> Con más de 1</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-violet-400" /> Mismo código</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-600" /> Abierta</span>
       </div>

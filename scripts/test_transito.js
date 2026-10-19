@@ -10,8 +10,7 @@ const {
   FECHA_INICIO_TRANSITO,
   EPS_TRANSITO,
   estadoSem,
-  razonNoTransferible,
-  esTransferible,
+  datosFaltantes,
   parseEnvios,
   mapArticuloTransito,
   claveGuia,
@@ -98,20 +97,36 @@ t('semáforo: defensivo — enviar más de la cantidad → VERDE con pendiente �
   assert.ok(r.pendiente <= 0)
 })
 
-// ── Regla sin lote / sin vencimiento ──
-t('razonNoTransferible: sin ambos', () => {
-  assert.strictEqual(razonNoTransferible({ lote: '', fechaVencimiento: null }), 'Sin lote y sin fecha de vencimiento')
+// ── Regla v2 (2026-10-20): sin lote/fechas TAMBIÉN es transferible ──
+// El proveedor a veces no trae esos datos; la transferencia se permite CON
+// alerta consciente (confirmación explícita en DialogoTransferir) y los
+// datos se completan/corrigen después con Editar (Racks/Piso).
+t('datosFaltantes: sin nada → lote, vencimiento, producción (en ese orden)', () => {
+  assert.deepStrictEqual(
+    datosFaltantes({ lote: '', fechaVencimiento: null, fechaProduccion: null }),
+    ['lote', 'vencimiento', 'producción']
+  )
 })
-t('razonNoTransferible: solo sin lote', () => {
-  assert.strictEqual(razonNoTransferible({ lote: '  ', fechaVencimiento: '2027-01-01' }), 'Sin lote')
+t('datosFaltantes: solo sin lote', () => {
+  assert.deepStrictEqual(
+    datosFaltantes({ lote: '  ', fechaVencimiento: '2027-01-01', fechaProduccion: '2026-10-01' }),
+    ['lote']
+  )
 })
-t('razonNoTransferible: solo sin vencimiento', () => {
-  assert.strictEqual(razonNoTransferible({ lote: 'L1', fechaVencimiento: null }), 'Sin fecha de vencimiento')
+t('datosFaltantes: solo sin producción (lote+venc presentes NO bloquean ni alertan de más)', () => {
+  assert.deepStrictEqual(
+    datosFaltantes({ lote: 'L1', fechaVencimiento: '2027-01-01', fechaProduccion: '' }),
+    ['producción']
+  )
 })
-t('razonNoTransferible: con todo → transferible', () => {
-  assert.strictEqual(razonNoTransferible({ lote: 'L1', fechaVencimiento: '2027-01-01' }), '')
-  assert.strictEqual(esTransferible({ lote: 'L1', fechaVencimiento: '2027-01-01' }), true)
-  assert.strictEqual(esTransferible({ lote: '', fechaVencimiento: null }), false)
+t('datosFaltantes: con todo → vacío (transferencia silenciosa, sin alerta)', () => {
+  assert.deepStrictEqual(
+    datosFaltantes({ lote: 'L1', fechaVencimiento: '2027-01-01', fechaProduccion: '2026-10-01' }),
+    []
+  )
+})
+t('datosFaltantes: fechaProduccion opcional (no rompe llamadas viejas)', () => {
+  assert.deepStrictEqual(datosFaltantes({ lote: 'L1', fechaVencimiento: '2027-01-01' }), [])
 })
 
 // ── parseEnvios / mapArticuloTransito ──
@@ -153,7 +168,16 @@ t('mapArticuloTransito: mapea fila completa con transito jsonb y deriva semáfor
   assert.strictEqual(a.enviados, 4)
   assert.strictEqual(a.pendiente, 6)
   assert.strictEqual(a.estado, 'AMAR')
-  assert.strictEqual(a.transferible, true)
+  assert.deepStrictEqual(a.datosFaltantes, [])
+})
+
+t('mapArticuloTransito: SIN lote/fechas → sigue siendo transferible con datosFaltantes', () => {
+  const a = mapArticuloTransito({
+    id: 'f3', cantidad: 5, lote: null, fecha_vencimiento: null, fecha_produccion: null,
+    codigo: 'SIN', unidad_medida: 'UN', fecha: '2026-10-14', tipo_documento: 'Guia',
+  })
+  assert.strictEqual(a.pendiente, 5)
+  assert.deepStrictEqual(a.datosFaltantes, ['lote', 'vencimiento', 'producción'])
 })
 
 t('mapArticuloTransito: sin transito → ROJO', () => {
@@ -189,8 +213,7 @@ const art = (over = {}) => ({
   enviados: 0,
   pendiente: 1,
   estado: 'ROJO',
-  transferible: true,
-  razonNoTransferible: '',
+  datosFaltantes: [],
   ...over,
 })
 

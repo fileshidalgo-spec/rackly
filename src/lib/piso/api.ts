@@ -2774,3 +2774,45 @@ export async function cargarVistaColumna(
 
   return [...posMap.values()].sort((a, b) => a.posicionNumero - b.posicionNumero)
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// EDITAR LOTE / F. VENCIMIENTO de artículos sin esos datos (2026-10-20)
+// ═══════════════════════════════════════════════════════════════════
+
+export type EdicionLotePisoResultado = {
+  filasActualizadas: number
+  lote: string | null
+  fVencimiento: string | null
+}
+
+/**
+ * Completa lote y/o fecha de vencimiento del bucket "sin lote / sin fecha"
+ * de un artículo (bloque de Piso) en una posición, en TODOS sus niveles.
+ * La RPC (SECURITY DEFINER) solo toca detalles con lote vacío Y fecha NULL;
+ * las cantidades no cambian, por lo que el saldo por lote se conserva
+ * exacto — imposible fabricar negativos.
+ *
+ * Errores controlados que propaga (mensaje "CÓDIGO|detalle"):
+ *   · SIN_DATOS — no llegó ni lote ni fecha.
+ *   · SIN_FILAS — el artículo no tiene stock sin lote/fecha allí.
+ */
+export async function editarLoteVencimientoPiso(params: {
+  posicionId: string
+  bloqueId: string
+  lote?: string
+  fVencimiento?: string
+}): Promise<EdicionLotePisoResultado> {
+  const { data, error } = await dataClient.rpc('editar_lote_vencimiento_piso', {
+    p_posicion_id: params.posicionId,
+    p_bloque_id: params.bloqueId,
+    p_lote: params.lote?.trim() || null,
+    p_f_vencimiento: params.fVencimiento?.trim() || null,
+  })
+  if (error) throw error
+  const d = (data ?? {}) as Record<string, unknown>
+  return {
+    filasActualizadas: Number(d.filas_actualizadas ?? 0),
+    lote: (d.lote as string | null) ?? null,
+    fVencimiento: (d.f_vencimiento as string | null) ?? null,
+  }
+}

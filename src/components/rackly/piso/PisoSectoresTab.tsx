@@ -17,6 +17,7 @@ import {
   registrarSalidaPosicion,
   registrarTrasladoPosicion,
   registrarDevolucionPosicion,
+  editarLoteVencimientoPiso,
   type Sector,
   type PosicionConStock,
   cargarVistaColumna,
@@ -41,12 +42,15 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { extractError } from '@/lib/utils'
+import { puedeEditarLote } from '@/lib/rackly/lote'
+import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
 import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
   Layers3, BoxSelect, X, Plus, Trash2, RefreshCw, Package,
   RotateCcw, CalendarOff, Calendar, Warehouse, Sparkles, ChevronRight,
   Check, AlertTriangle, ToggleLeft, ToggleRight, Layers, ChevronDown, Lock,
   Clock, RotateCwIcon, TriangleAlert, MapPin,
+  Pencil,
 } from 'lucide-react'
 
 type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string; lote?: string }
@@ -180,6 +184,13 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     stock: DetailStock[]
   } | null>(null)
   const [mode, setMode] = useState<ActionMode>('view')
+
+  // ── Editar lote/fecha de artículos sin esos datos (almacenero/admin) ──
+  const puedeEditarDatosLote = puedeEditarLote(perfil?.rol)
+  const [editLoteTarget, setEditLoteTarget] = useState<ArticuloAEditar | null>(null)
+  // bloque_id REAL del artículo a editar (los IDs virtuales 'cat_*' no son editables)
+  const [editLoteBloqueId, setEditLoteBloqueId] = useState('')
+  const [editLoteBusy, setEditLoteBusy] = useState(false)
 
   // Ingreso state
   const [ingRows, setIngRows] = useState<RowEntry[]>([{ ...EMPTY_ROW }])
@@ -896,6 +907,68 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     } finally {
       setBusy(false)
     }
+  }
+
+  /** Guarda lote/fecha del artículo sin datos en esta posición (RPC consistente;
+   *  solo toca detalles con lote vacío Y fecha NULL — el saldo queda intacto). */
+  async function doEditarLotePiso(lote: string, fecha: string) {
+    if (!detail || !editLoteBloqueId || !editLoteTarget) return
+    setEditLoteBusy(true)
+    try {
+      const res = await editarLoteVencimientoPiso({
+        posicionId: detail.posicionId,
+        bloqueId: editLoteBloqueId,
+        lote,
+        fVencimiento: fecha,
+      })
+      toast.success(`Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s). El artículo ya puede transferirse por Tránsito.`)
+      setEditLoteTarget(null)
+      setEditLoteBloqueId('')
+      // Refresco idéntico al patrón del INC: detalle + stock por nivel + grid
+      const [stock, nivelStocks] = await Promise.all([
+        stockDetallePosicion(detail.posicionId),
+        niveles.length > 0 ? Promise.all(niveles.map((n) => stockDetalleNivel(n.id))) : Promise.resolve([]),
+      ])
+      const newSBN: Record<string, DetailStock[]> = {}
+      niveles.forEach((n, i) => { newSBN[n.id] = (nivelStocks as DetailStock[][])[i] ?? [] })
+      if (mountedRef.current && detail) {
+        const currentTab = viewNivelTab
+        const filteredStock = currentTab !== 'all' ? stock.filter(s => {
+          const ns = newSBN[currentTab] ?? []
+          return ns.some(n => n.bloque_id === s.bloque_id && n.fecha_vencimiento === s.fecha_vencimiento)
+        }) : stock
+        setStockByNivel(newSBN)
+        setDetail({ ...detail, stock: filteredStock })
+      }
+      await loadPosiciones()
+      if (selectedColumn) loadColumnDetail(selectedColumn)
+    } catch (err: unknown) {
+      toast.error('No se pudo guardar', { description: extractError(err) })
+    } finally {
+      if (mountedRef.current) setEditLoteBusy(false)
+    }
+  }
+
+  /** Botón "Editar" para filas de stock sin lote/fecha (almacenero/admin, artículo real no virtual). */
+  function renderBotonEditarLote(s: DetailStock) {
+    if (!puedeEditarDatosLote || s.fecha_vencimiento || s.lote || s.bloque_id.startsWith('cat_')) return null
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setEditLoteBloqueId(s.bloque_id)
+          setEditLoteTarget({
+            codigo: s.bloque_codigo,
+            descripcion: s.bloque_descripcion || undefined,
+            stock: s.cantidad,
+            un: s.bloque_unidad || undefined,
+            ubicacion: `Columna ${detail?.columnaLetra ?? '—'} · Posición ${detail?.posicionNumero ?? '—'}${detail?.subcolumnaCodigo ? ` (${detail.subcolumnaCodigo})` : ''}`,
+          })
+        }}
+        title="Completar lote y/o fecha de vencimiento del producto"
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 hover:text-cyan-200 transition-colors text-[9px] font-semibold"
+      ><Pencil className="w-2.5 h-2.5" /> Editar</button>
+    )
   }
 
   // Actualizar campo de busqueda — solo actualiza texto, no auto-selecciona
@@ -2484,9 +2557,12 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
                                         <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
                                       </div>
                                     </div>
-                                    <div className="text-right flex-shrink-0 ml-3">
-                                      <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
-                                      <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
+                                    <div className="text-right flex-shrink-0 ml-3 flex flex-col items-end gap-1.5">
+                                      <div>
+                                        <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
+                                        <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
+                                      </div>
+                                      {renderBotonEditarLote(s)}
                                     </div>
                                   </div>
                                 </div>
@@ -2527,9 +2603,12 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
                               <p className="text-slate-300 text-xs mt-0.5 truncate">{s.bloque_descripcion || 'Sin descripcion'}</p>
                             </div>
                           </div>
-                          <div className="text-right flex-shrink-0 ml-3">
-                            <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
-                            <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
+                          <div className="text-right flex-shrink-0 ml-3 flex flex-col items-end gap-1.5">
+                            <div>
+                              <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
+                              <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
+                            </div>
+                            {renderBotonEditarLote(s)}
                           </div>
                         </div>
                       </div>
@@ -3828,6 +3907,15 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Editar lote / fecha de vencimiento (almacenero/admin) ── */}
+      <EditarLoteVencimientoDialog
+        open={!!editLoteTarget}
+        articulo={editLoteTarget}
+        busy={editLoteBusy}
+        onOpenChange={(o) => { if (!o) { setEditLoteTarget(null); setEditLoteBloqueId('') } }}
+        onGuardar={doEditarLotePiso}
+      />
     </div>
   )
 }

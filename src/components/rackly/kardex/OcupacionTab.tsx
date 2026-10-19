@@ -13,8 +13,11 @@ import {
   type IncEnCelda,
   addMovimiento,
   trasladarMovimiento,
+  editarLoteVencimientoRacks,
   type TrasladoInput,
 } from '@/lib/rackly/kardex'
+import { puedeEditarLote } from '@/lib/rackly/lote'
+import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
 import { supabase, dataClient } from '@/lib/supabase/client'
 import { calcularTurno } from '@/lib/rackly/turno'
@@ -56,6 +59,7 @@ import {
   MapPin,
   Warehouse,
   CircleSlash,
+  Pencil,
 } from 'lucide-react'
 
 // Calcula días restantes hasta vencimiento (negativo si ya venció)
@@ -145,6 +149,11 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   const [dataSource, setDataSource] = useState<string>('')
   const mountedRef = useRef(true)
   const targetPendingRef = useRef<{ bloque: string; torre: string; piso: string; posicion: string } | null>(null)
+
+  // ── Editar lote/fecha de artículos sin esos datos (almacenero/admin) ──
+  const puedeEditarDatosLote = puedeEditarLote(perfil?.rol)
+  const [editLoteTarget, setEditLoteTarget] = useState<ArticuloAEditar | null>(null)
+  const [editLoteBusy, setEditLoteBusy] = useState(false)
 
   // ── Auto-navegar a ubicación objetivo (desde Stock/Stock INC) ──
   // Se usa un ref + timeout para evitar problemas de stale closure con handleCellClick
@@ -381,6 +390,31 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       if (mountedRef.current) toast.error('No se pudo actualizar el stock de la ubicación')
     }
   }, [detail])
+
+  /** Guarda lote/fecha del artículo sin datos (RPC consistente; solo toca filas vacías). */
+  const doEditarLoteRacks = useCallback(async (lote: string, fecha: string) => {
+    if (!detail || !editLoteTarget?.codigo) return
+    setEditLoteBusy(true)
+    try {
+      const res = await editarLoteVencimientoRacks({
+        bloque: detail.bloque,
+        torre: detail.torre,
+        piso: detail.piso,
+        posicion: detail.posicion,
+        codigo: editLoteTarget.codigo,
+        lote,
+        fVencimiento: fecha,
+      })
+      toast.success(`Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s). El artículo ya puede transferirse por Tránsito.`)
+      setEditLoteTarget(null)
+      await refreshDetail()
+      refreshData()
+    } catch (err: unknown) {
+      toast.error('No se pudo guardar', { description: extractError(err) })
+    } finally {
+      if (mountedRef.current) setEditLoteBusy(false)
+    }
+  }, [detail, editLoteTarget, refreshDetail, refreshData])
 
   useEffect(() => { mountedRef.current = true; setLoading(true); refreshData().finally(() => { if (mountedRef.current) setLoading(false) }); return () => { mountedRef.current = false } }, [refreshData])
   useEffect(() => { const i = setInterval(() => refreshData(), 10000); return () => clearInterval(i) }, [refreshData])
@@ -1151,6 +1185,19 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                                   <button onClick={() => openSalida(detail.stock.indexOf(s), false)} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 hover:text-orange-300 transition-colors text-[10px] font-medium"><ArrowUpFromLine className="w-3 h-3" /> Parcial</button>
                                   <button onClick={() => openTransferir(detail.stock.indexOf(s))} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:text-blue-300 transition-colors text-[10px] font-medium"><ArrowRightLeft className="w-3 h-3" /> Transferir</button>
                                   <button onClick={() => openHistorial()} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-colors text-[10px] font-medium border border-violet-500/15"><Clock className="w-3 h-3" /> Historial</button>
+                                  {puedeEditarDatosLote && !s.fVencimiento && !s.lotes && !s.loteFisico && (
+                                    <button
+                                      onClick={() => setEditLoteTarget({
+                                        codigo: s.codigo,
+                                        descripcion: s.descripcion || undefined,
+                                        stock: s.stock,
+                                        un: s.un || undefined,
+                                        ubicacion: `Bloque ${detail.bloque} · Torre ${detail.torre} · Piso ${detail.piso} · Pos ${detail.posicion}`,
+                                      })}
+                                      title="Completar lote y/o fecha de vencimiento del producto"
+                                      className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 hover:text-cyan-300 transition-colors text-[10px] font-medium"
+                                    ><Pencil className="w-3 h-3" /> Editar</button>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -2093,6 +2140,15 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Editar lote / fecha de vencimiento (almacenero/admin) ── */}
+      <EditarLoteVencimientoDialog
+        open={!!editLoteTarget}
+        articulo={editLoteTarget}
+        busy={editLoteBusy}
+        onOpenChange={(o) => { if (!o) setEditLoteTarget(null) }}
+        onGuardar={doEditarLoteRacks}
+      />
     </div>
   )
 }

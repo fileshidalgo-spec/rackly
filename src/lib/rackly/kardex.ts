@@ -1356,3 +1356,52 @@ export async function eliminarUbicacion(
   if (error) throw error
   return fetchMovimientos()
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// EDITAR LOTE / F. VENCIMIENTO de artículos sin esos datos (2026-10-20)
+// ═══════════════════════════════════════════════════════════════════
+
+export type EdicionLoteResultado = {
+  filasActualizadas: number
+  lote: string | null
+  fVencimiento: string | null
+}
+
+/**
+ * Completa lote y/o fecha de vencimiento del bucket "sin lote / sin fecha"
+ * de un artículo en una ubicación de Racks. La RPC (SECURITY DEFINER) solo
+ * toca filas con lote vacío Y fecha NULL, con advisory lock idéntico al del
+ * registro de movimientos: el saldo del bucket se conserva exacto (mismo
+ * conjunto de filas, mismas cantidades — solo cambia la etiqueta del lote).
+ *
+ * Errores controlados que propaga (mensaje "CÓDIGO|detalle"):
+ *   · SIN_DATOS — no llegó ni lote ni fecha (o código vacío).
+ *   · SIN_FILAS — el artículo no tiene stock sin lote/fecha allí (ya tiene
+ *     datos, o la ubicación/código no coincide).
+ */
+export async function editarLoteVencimientoRacks(params: {
+  bloque: string
+  torre: string
+  piso: string
+  posicion: string
+  codigo: string
+  lote?: string
+  fVencimiento?: string
+}): Promise<EdicionLoteResultado> {
+  const { data, error } = await dataClient.rpc('editar_lote_vencimiento_racks', {
+    p_bloque: params.bloque,
+    p_torre: params.torre,
+    p_piso: params.piso,
+    p_posicion: params.posicion,
+    p_codigo: params.codigo.trim().toUpperCase(),
+    p_lote: params.lote?.trim() || null,
+    p_f_vencimiento: params.fVencimiento?.trim() || null,
+  })
+  if (error) throw error
+  const d = (data ?? {}) as Record<string, unknown>
+  return {
+    filasActualizadas: Number(d.filas_actualizadas ?? 0),
+    lote: (d.lote as string | null) ?? null,
+    fVencimiento: (d.f_vencimiento as string | null) ?? null,
+  }
+}

@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { fetchMovimientos, addMovimientosBatch, listarMovimientoIds, eliminarMovimientosPorIds, calcularLotesRemanentes, proveedorPorVenc, compararFEFO, compararUbicacionNum, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
+import { aNumero } from '@/lib/rackly/formato'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
@@ -261,8 +262,17 @@ function UpDataSection() {
     const s = String(v).trim()
     // Serial en texto ("45123")
     if (/^\d{5}$/.test(s)) return fechaExcelAISO(Number(s))
-    // Ya es texto ISO o dd/mm/yyyy → devolver tal cual si parseable; si no, nada
-    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
+    // Ya es texto ISO: validar RANGO real (mes 1-12, día válido para el mes).
+    // FIX auditoría 2026-10-21 (P3): antes "2026-99-99" pasaba tal cual y
+    // rompía el orden FEFO y los filtros por rango de fechas.
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+      const yy = Number(s.slice(0, 4))
+      const mm = Number(s.slice(5, 7))
+      const dd = Number(s.slice(8, 10))
+      const diasMes = [31, (yy % 4 === 0 && (yy % 100 !== 0 || yy % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= diasMes[mm - 1]) return s.slice(0, 10)
+      return undefined
+    }
     const m = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})$/)
     if (m) {
       const dd = m[1].padStart(2, '0')
@@ -348,10 +358,14 @@ function UpDataSection() {
       }
 
       const rows: UploadStockRow[] = []
+      let descartadas = 0
       for (const row of data) {
         const codigo = String(row[codeCol] ?? '').trim()
-        const cantidad = Number(row[cantCol])
-        if (!codigo || codigo === codeCol || !Number.isFinite(cantidad) || cantidad <= 0) continue
+        // FIX auditoría 2026-10-21 (P2): aNumero soporta cantidades con
+        // separadores ("1,500.50" / "1.500,50") — Number() las descartaba como
+        // NaN y UP Data reemplazaba TODO el stock con un sub-conteo silencioso.
+        const cantidad = typeof row[cantCol] === 'number' ? (row[cantCol] as number) : aNumero(String(row[cantCol] ?? ''))
+        if (!codigo || codigo === codeCol || !Number.isFinite(cantidad) || cantidad <= 0) { descartadas++; continue }
         rows.push({
           codigo: codigo.toUpperCase(),
           descripcion: String(row[descCol] ?? '').trim(),
@@ -374,7 +388,13 @@ function UpDataSection() {
 
       setPreview(rows.slice(0, 20))
       setAllRows(rows)
-      toast.success(`${rows.length} fila(s) detectada(s) correctamente`)
+      // FIX auditoría 2026-10-21 (P2): avisar filas descartadas — antes el
+      // descarte era silencioso y el toast parecía "todo bien" con sub-conteo
+      if (descartadas > 0) {
+        toast.warning(`${rows.length} fila(s) detectada(s) — ${descartadas} descartada(s) por código vacío o cantidad inválida`, { duration: 7000 })
+      } else {
+        toast.success(`${rows.length} fila(s) detectada(s) correctamente`)
+      }
     } catch {
       toast.error('Error al leer el archivo. Verifica que sea un .xlsx válido.')
     }

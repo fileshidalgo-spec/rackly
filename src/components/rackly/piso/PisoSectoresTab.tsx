@@ -272,6 +272,9 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   // lista del origen y el ID inicial del destino no matcheaba ninguna opción)
   const [trDestNivelId, setTrDestNivelId] = useState<string>('')
   const [trDestNiveles, setTrDestNiveles] = useState<NivelInfo[]>([])
+  // FIX auditoría 2026-10-21 (P2): guard generacional para la carga de niveles
+  // del destino del traslado (ver onClick de la lista DESTINO)
+  const trDestGenRef = useRef(0)
   // Guard generacional para la carga de vista de columna: evita que una respuesta
   // lenta de la columna A pise colDetail cuando ya se pidió la columna B
   const colGenRef = useRef(0)
@@ -318,9 +321,14 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   // Cache de todos los items del historial para paginacion rapida del lado del cliente
   const [historialAllItems, setHistorialAllItems] = useState<HistorialItem[]>([])
   const HISTORIAL_PAGE_SIZE = 5
+  // FIX auditoría 2026-10-21 (P3): guard generacional — abrir el historial de
+  // A, cerrarlo y abrir el de B: si la respuesta lenta de A aterrizaba después,
+  // el diálogo "Historial — B" mostraba los movimientos de A.
+  const historialGenRef = useRef(0)
 
   const loadHistorial = useCallback(async () => {
     if (!detail) return
+    const gen = ++historialGenRef.current
     setHistorialLoading(true)
     try {
       const nivelIds = niveles.map(n => n.id)
@@ -345,6 +353,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
       }
       const allMovIds = [...new Set(idRows.map((d) => d.movimiento_id))]
       if (allMovIds.length === 0) {
+        if (gen !== historialGenRef.current) return
         setHistorialAllItems([])
         setHistorialData([])
         setHistorialHasMore(false)
@@ -405,16 +414,17 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
           })
         }
       }
-      // 6) Guardar cache y mostrar primera pagina
+      // 6) Guardar cache y mostrar primera pagina (solo si sigue vigente)
+      if (gen !== historialGenRef.current || !mountedRef.current) return
       setHistorialAllItems(allItems)
       setHistorialData(allItems.slice(0, HISTORIAL_PAGE_SIZE))
       setHistorialOffset(HISTORIAL_PAGE_SIZE)
       setHistorialHasMore(allItems.length > HISTORIAL_PAGE_SIZE)
     } catch (err) {
       console.error('[Piso] Error cargando historial:', err)
-      toast.error('Error al cargar historial')
+      if (gen === historialGenRef.current) toast.error('Error al cargar historial')
     } finally {
-      setHistorialLoading(false)
+      if (gen === historialGenRef.current) setHistorialLoading(false)
     }
   }, [detail, niveles])
 
@@ -485,12 +495,21 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     }
   }, [])
 
-  useEffect(() => { mountedRef.current = true; loadSectores(); loadPosiciones(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadPosiciones, loadBloques])
-  useEffect(() => { if (sectorFilter !== 'all') { loadPosiciones(); setSelectedColumn(null); setColDetail([])
+  // FIX auditoría 2026-10-21 (P2): separar el efecto de MONTAJE del efecto de
+  // SECTOR. Antes loadPosiciones (dependiente de sectorFilter) estaba en las
+  // deps del efecto de montaje: cambiar de sector re-ejecutaba TODO (sectores
+  // + catálogo completo + posiciones 2-3 veces por toque).
+  useEffect(() => { mountedRef.current = true; loadSectores(); loadBloques(); return () => { mountedRef.current = false } }, [loadSectores, loadBloques])
+  // Posiciones: al montar y cada vez que cambia el sector (la identidad de
+  // loadPosiciones cambia con sectorFilter → este efecto cubre ambos casos)
+  useEffect(() => { loadPosiciones() }, [loadPosiciones])
+  useEffect(() => { if (sectorFilter !== 'all') {
     // Las selecciones de salida masiva apuntan a posiciones del sector ANTERIOR:
     // mantenerlas procesaría posiciones que el usuario ya no ve.
     setMassSelected(new Set())
-  } }, [sectorFilter, loadPosiciones])
+    setSelectedColumn(null)
+    setColDetail([])
+  } }, [sectorFilter])
 
   // ── DEEP-LINK desde Stock/FEFO/Stock INC (ubicación clickeable) ──
   // Llega targetPosicion vía page.tsx: se selecciona el sector (dispara la carga
@@ -520,7 +539,16 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     if (!pending) return
     // El usuario cambió de sector antes de que cargara: el deep-link quedó obsoleto
     if (pending.sector !== sectorFilter) { pendingPosRef.current = null; onTargetConsumido?.(); return }
-    if (loading || posiciones.length === 0) return
+    if (loading) return
+    // FIX auditoría 2026-10-21 (P3): sector existe pero SIN posiciones — antes
+    // la condición se cumplía para siempre (deep-link "pegado", sin mensaje y
+    // sin consumir el target). Ahora se consume con un error claro.
+    if (posiciones.length === 0) {
+      pendingPosRef.current = null
+      toast.error(`El sector de la ubicación ${targetPosicion?.ubicacion ?? ''} no tiene posiciones`)
+      onTargetConsumido?.()
+      return
+    }
     pendingPosRef.current = null
     const pos = resolverPosicionTarget(posiciones, { sector_id: sectorFilter, posicion_id: pending.pid, columna_letra: targetPosicion?.columna_letra, posicion_numero: targetPosicion?.posicion_numero, subcolumna_codigo: targetPosicion?.subcolumna_codigo })
     if (!pos) {
@@ -651,13 +679,20 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
 
 
   // Click posicion (nivelId opcional para seleccionar nivel especifico desde la tabla)
+  const clickSeqRef = useRef(0)
   async function handleClick(pos: PosicionConStock | null, nivelId?: string) {
     if (!pos) return
+    // FIX auditoría 2026-10-21 (P3): guard de secuencia — con doble toque
+    // rápido en dos celdas, la respuesta lenta de la primera mostraba el
+    // detalle de la posición equivocada (peligroso: el operario puede registrar
+    // movimientos en la celda incorrecta si no revisa el breadcrumb).
+    const seq = ++clickSeqRef.current
     try {
       const [stock, nivs] = await Promise.all([
         stockDetallePosicion(pos.posicionId),
         obtenerNivelesPosicion(pos.posicionId, pos.columnaLetra),
       ])
+      if (seq !== clickSeqRef.current || !mountedRef.current) return // llegó un clic más reciente
       // Cargar stock por nivel (en paralelo)
       const stockPerNivel: Record<string, DetailStock[]> = {}
       if (nivs.length > 0) {
@@ -666,8 +701,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         )
         nivs.forEach((n, i) => { stockPerNivel[n.id] = nivelStocks[i] })
       }
-      if (mountedRef.current) {
-        // Si se clickeó un nivel específico, filtrar stock solo a ese nivel
+      if (mountedRef.current && seq === clickSeqRef.current) {
         const filteredStock = nivelId ? stock.filter(s => {
           // Buscar en qué nivel está este bloque
           for (const niv of nivs) {
@@ -845,6 +879,13 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
       if (existing) {
         bloqueId = existing.id
       } else {
+        // FIX auditoría 2026-10-21 (P3): exigir descripción para artículo nuevo —
+        // antes se creaba el bloque con descripción vacía y unidad KG hardcodeada
+        if (!incDescripcion.trim()) {
+          toast.error('Artículo nuevo: ingresa la descripción antes de registrar el INC')
+          setBusy(false)
+          return
+        }
         const created = await crearBloque(upper, incDescripcion || '', incUn || 'KG')
         if (created.length > 0) {
           const found = created.find((b) => b.codigo === upper)
@@ -1077,7 +1118,10 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         if (existing) {
           resolved.push({ ...r, bloque_id: existing.id })
         } else {
-          resolved.push(r)
+          // FIX auditoría 2026-10-21 (P3): NO empujar la fila con el id virtual
+          // `manual_` — moría con violación de FK en el INSERT de detalles y el
+          // ingreso COMPLETO se perdía con error críptico. Se descarta con aviso.
+          toast.error(`No se pudo crear la ubicación para ${code}; la fila no se registrará`)
         }
       } else if (r.bloque_id.startsWith('cat_')) {
         // Artículo solo-catalogo elegido del dropdown: resolver el bloque
@@ -1680,7 +1724,13 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
           </div>
         )}
         {!catalogoLoading && suggestions.map((b) => (
-          <button key={b.id} onClick={() => onSelectFromCatalog(prefix, idx, b)}
+          <button key={b.id}
+            // FIX auditoría 2026-10-21 (P3): onMouseDown (con preventDefault) —
+            // el onBlur del input (timeout de 150ms) corría ANTES del onClick:
+            // en móvil mantener el tap >150ms fabricaba un artículo
+            // `manual_<texto parcial>` y el clic nunca llegaba.
+            onMouseDown={(e) => { e.preventDefault(); onSelectFromCatalog(prefix, idx, b) }}
+            onClick={() => onSelectFromCatalog(prefix, idx, b)}
             className="w-full text-left px-3 py-2 text-xs hover:bg-slate-700/80 text-slate-300 border-b border-slate-800/50 last:border-0 transition-all duration-200">
             <span className={isIng ? 'font-mono text-emerald-400' : 'font-mono text-amber-400'}>{b.codigo}</span>
             <span className="text-slate-500 ml-1.5">— {b.descripcion || b.unidad}</span>
@@ -2925,7 +2975,11 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
                           label="Nivel destino"
                           nivelId={trDestNivelId}
                           onNivelChange={setTrDestNivelId}
-                          nivelesList={trDestNiveles.length > 0 ? trDestNiveles : niveles}
+                          // FIX auditoría 2026-10-21 (P2): NO caer a los niveles del
+                          // ORIGEN si el fetch del destino falla/viene vacío —
+                          // permitía "trasladar" a un nivel de la propia posición
+                          // de origen.
+                          nivelesList={trDestNiveles}
                           accentColor="sky"
                         />
                       </div>
@@ -3076,14 +3130,24 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
                     <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
                       {posiciones.filter((p) => p.posicionId !== detail.posicionId).map((p) => (
                         <button key={p.posicionId} onClick={async () => {
+                          // FIX auditoría 2026-10-21 (P2): guard generacional —
+                          // tocar destino A y luego B: si la respuesta de A llegaba
+                          // después, quedaba trDestPos=B con los NIVELES de A y el
+                          // ingreso aterrizaba en la posición equivocada (corrupción
+                          // silenciosa de ubicación).
+                          const gen = ++trDestGenRef.current
                           setTrDestPos(p)
                           // Cargar los niveles PROPIOS del destino para el selector
                           try {
                             const destNivs = await obtenerNivelesPosicion(p.posicionId, p.columnaLetra)
+                            if (gen !== trDestGenRef.current || !mountedRef.current) return
                             setTrDestNiveles(destNivs)
                             setTrDestNivelId(destNivs.length > 0 ? destNivs[0].id : '')
                           } catch {
+                            if (gen !== trDestGenRef.current) return
                             setTrDestNiveles([])
+                            setTrDestNivelId('')
+                            toast.error('No se pudieron cargar los niveles del destino — inténtalo de nuevo')
                           }
                         }}
                           className={`px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-all duration-300 border ${trDestPos?.posicionId === p.posicionId
@@ -3274,13 +3338,17 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
                       </div>
                       <div className="col-span-6 sm:col-span-4">
                         <Label className="text-[10px] text-slate-500">Descripcion</Label>
-                        <input type="text" value={incDescripcion} readOnly placeholder="Auto o manual"
-                          className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-3 cursor-default backdrop-blur-sm transition-all duration-300" />
+                        {/* FIX auditoría 2026-10-21 (P3): editable — con readOnly, un
+                            artículo nuevo se creaba con descripción vacía (bloque
+                            basura permanente en Piso). El placeholder decía "Auto o
+                            manual" pero el campo no permitía escribir. */}
+                        <input type="text" value={incDescripcion} onChange={(e) => setIncDescripcion(e.target.value)} placeholder="Auto o manual"
+                          className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-200 px-3 backdrop-blur-sm transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-rose-500/40" />
                       </div>
                       <div className="col-span-6 sm:col-span-4">
                         <Label className="text-[10px] text-slate-500">UN</Label>
-                        <input type="text" value={incUn} readOnly placeholder="Auto o manual"
-                          className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-400 px-3 cursor-default backdrop-blur-sm transition-all duration-300" />
+                        <input type="text" value={incUn} onChange={(e) => setIncUn(e.target.value)} placeholder="Auto o manual"
+                          className="w-full h-10 rounded-xl border border-slate-700/40 text-xs bg-slate-800/60 text-slate-200 px-3 backdrop-blur-sm transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-rose-500/40" />
                       </div>
                     </div>
 

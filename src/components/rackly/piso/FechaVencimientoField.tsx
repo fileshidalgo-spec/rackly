@@ -61,6 +61,11 @@ function parseInternal(v: string): { y: number; m: number; d: number } | null {
   const m = parseInt(parts[1], 10)
   const d = parseInt(parts[2], 10)
   if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1 || d > 31) return null
+  // FIX auditoría 2026-10-21 (P2): validación por round-trip — "31-02-2026"
+  // pasaba el rango por campo pero es una fecha IMPOSIBLE: la RPC la rechazaba
+  // con un error críptico DESPUÉS de llenar todo el formulario.
+  const dt = new Date(y, m - 1, d)
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null
   return { y, m, d }
 }
 
@@ -73,6 +78,9 @@ function parseDisplay(v: string): { y: number; m: number; d: number } | null {
   const m = parseInt(parts[1], 10)
   const y = parseInt(parts[2], 10)
   if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1 || d > 31) return null
+  // FIX auditoría 2026-10-21 (P2): round-trip — rechaza 31-02, 31-04, 29-02 no bisiesto
+  const dt = new Date(y, m - 1, d)
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null
   return { y, m, d }
 }
 

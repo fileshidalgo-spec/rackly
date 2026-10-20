@@ -13,7 +13,7 @@
  *     el resto de la app.
  */
 
-import { dataClient } from '@/lib/supabase/client'
+import { dataClient, supabase } from '@/lib/supabase/client'
 import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
 import {
   extraerIndicePaleta,
@@ -350,14 +350,23 @@ export async function crearRecepciones(
  * storage.upload() de supabase-js devolvía 400 en este entorno.
  */
 export async function subirFotoGuia(archivo: Blob, usuarioId: string): Promise<string> {
+  // FIX auditoría 2026-10-21 (P1): la service_role key ya no viaja al
+  // navegador. La subida usa el JWT de la sesión (rol authenticated) — el
+  // bucket recepcion-guias tiene políticas para autenticados (SELECT/INSERT/
+  // UPDATE/DELETE, hardening 2026-10-16), así que el comentario antiguo sobre
+  // "sin políticas de Storage" ya no aplica.
   const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/+$/, '')
-  const key = (process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? '').trim()
+  const anon = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim()
+  const { data: sess } = await supabase.auth.getSession()
+  const token = sess.session?.access_token
+  if (!base || !anon) throw new Error('Configuración de Supabase incompleta')
+  if (!token) throw new Error('Sesión expirada: vuelve a iniciar sesión para adjuntar la foto')
   const ruta = `${usuarioId}/${Date.now()}.jpg`
   const res = await fetch(`${base}/storage/v1/object/recepcion-guias/${ruta}`, {
     method: 'POST',
     headers: {
-      apikey: key,
-      authorization: `Bearer ${key}`,
+      apikey: anon,
+      authorization: `Bearer ${token}`,
       'content-type': 'image/jpeg',
       'x-upsert': 'false',
     },
@@ -395,21 +404,24 @@ export function rutaObjetoGuia(fotoUrl: string): string | null {
 export async function urlFirmadaGuia(fotoUrl: string, segundos = 3600): Promise<string | null> {
   const ruta = rutaObjetoGuia(fotoUrl)
   if (!ruta) return null
-  // trim()/replace(): la env var de producción llegó con un espacio final —
-  // supabase-js lo limpia por dentro, pero fetch directo necesita la URL sana.
+  // FIX auditoría 2026-10-21 (P1): firma con el JWT de la sesión del usuario
+  // (el bucket privado tiene política SELECT para autenticados). La versión
+  // anterior firmaba con la service_role key expuesta en el bundle.
   const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/+$/, '')
-  const key = (process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? '').trim()
-  if (!base || !key) return null
+  const anon = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim()
+  const { data: sess } = await supabase.auth.getSession()
+  const token = sess.session?.access_token
+  if (!base || !anon) return null
+  if (!token) {
+    console.warn('[modulos] Sin sesión activa: no se puede firmar la foto de la guía')
+    return null
+  }
   try {
-    // Fetch DIRECTO con la clave de servicio (mismo patrón probado de
-    // subirFotoGuia): el cliente @supabase/ssr sustituye la autorización
-    // por el token del usuario en sesión y sin políticas de Storage el
-    // endpoint responde 400/404; con la clave de servicio firma siempre.
     const res = await fetch(`${base}/storage/v1/object/sign/recepcion-guias/${ruta}`, {
       method: 'POST',
       headers: {
-        apikey: key,
-        authorization: `Bearer ${key}`,
+        apikey: anon,
+        authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
       body: JSON.stringify({ expiresIn: segundos }),

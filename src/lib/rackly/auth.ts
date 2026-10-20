@@ -13,45 +13,56 @@ export type Perfil = {
   mustChangePassword: boolean
 }
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SERVICE_ROLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
+// FIX auditoría 2026-10-21 (P1): la service_role key ya NO se usa en el
+// navegador. Las operaciones Admin de GoTrue (confirmar/eliminar usuario)
+// van por la Edge Function `gestionar-usuario-auth` (la service key vive solo
+// en el servidor de Supabase) y las verificaciones de existencia/orfandad por
+// RPCs SECURITY DEFINER (correo_existe_en_auth / limpiar_perfil_huerfano).
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/+$/, '')
+const ANON_KEY = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim()
 
 /**
- * Confirma el email de un usuario recién registrado usando la GoTrue Admin API.
- * Esto permite que los usuarios accedan inmediatamente sin necesitar confirmar
- * su correo por email (Supabase tiene mailer_autoconfirm=false).
+ * Llama a la Edge Function gestionar-usuario-auth con la sesión del usuario
+ * (la función valida que el llamador sea admin antes de tocar GoTrue).
  */
-async function confirmarEmailUsuario(userId: string): Promise<boolean> {
-  if (!SERVICE_ROLE_KEY) {
-    console.warn('[RACKLY] SERVICE_ROLE_KEY no configurada, no se puede auto-confirmar')
-    return false
-  }
+async function llamarEdgeUsuario(
+  accion: 'confirmar' | 'eliminar',
+  payload: Record<string, string>
+): Promise<{ ok: boolean; error?: string }> {
+  const { data: sess } = await supabase.auth.getSession()
+  const token = sess.session?.access_token
+  if (!SUPABASE_URL || !ANON_KEY || !token) return { ok: false, error: 'SIN_SESION' }
   try {
-    const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
-      method: 'PUT',
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/gestionar-usuario-auth`, {
+      method: 'POST',
       headers: {
-        'apikey': SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
+        'apikey': ANON_KEY,
+        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email_confirm: true }),
+      body: JSON.stringify({ accion, ...payload }),
     })
-    if (!res.ok) {
-      console.error('[RACKLY] Error auto-confirmando email:', res.status, await res.text())
-      return false
-    }
-    const data = await res.json()
-    const confirmed = !!data.email_confirmed_at
-    if (confirmed) {
-      console.warn('[RACKLY] Email auto-confirmado para usuario', userId)
-    } else {
-      console.error('[RACKLY] Auto-confirmación no surtió efecto para', userId)
-    }
-    return confirmed
+    const d = (await res.json().catch(() => null)) as { error?: string } | null
+    if (!res.ok) return { ok: false, error: String(d?.error ?? `HTTP ${res.status}`) }
+    return { ok: true }
   } catch (err) {
-    console.error('[RACKLY] Error en auto-confirmación:', err)
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Confirma el email de un usuario vía la Edge Function gestionar-usuario-auth
+ * (requiere sesión admin activa; la service_role key ya no viaja al navegador).
+ * Con mailer_autoconfirm=true los registros nuevos ya nacen confirmados: esta
+ * función queda como red de seguridad para el fallback de login.
+ */
+async function confirmarEmailUsuario(userId: string): Promise<boolean> {
+  const r = await llamarEdgeUsuario('confirmar', { userId })
+  if (!r.ok) {
+    console.error('[RACKLY] No se pudo confirmar el email vía Edge Function:', r.error)
     return false
   }
+  return true
 }
 
 export async function signUp(correo: string, password: string, nombre: string) {
@@ -90,18 +101,12 @@ export async function signUp(correo: string, password: string, nombre: string) {
 }
 
 /**
- * Localiza un usuario de Supabase Auth por su email EXACTO usando la Admin API.
+ * Localiza si un correo existe en Supabase Auth vía la RPC SECURITY DEFINER
+ * `correo_existe_en_auth` (la fuente de verdad es auth.users, dentro de la BD).
  *
- * IMPORTANTE: la Admin API IGNORA el parámetro `?email=` de GET /admin/users
- * (devuelve la primera página completa, sin filtrar). Por eso hay que paginar
- * y comparar el email lado cliente. Tomar `users[0]` de esa lista confirmaba
- * (o evaluaba) el email de un usuario ARBITRARIO, no del solicitado.
- *
- * Devuelve un tri-estado para que los llamadores NUNCA actúen sobre una
- * consulta fallida como si fuera un resultado definitivo:
- *   - 'encontrado'  → existe un usuario con ese email exacto (devuelve su id)
- *   - 'ausente'     → la consulta terminó bien y NO existe
- *   - 'error'       → la consulta falló (red, rate-limit, key ausente): no se sabe
+ * FIX auditoría 2026-10-21: ya no usa la Admin API del navegador (service key
+ * fuera del bundle). Devuelve tri-estado: 'encontrado' | 'ausente' | 'error'.
+ * El id ya no es necesario: los perfiles comparten id con auth.users.
  */
 export type ResultadoBusquedaAuth =
   | { estado: 'encontrado'; id: string }
@@ -110,31 +115,14 @@ export type ResultadoBusquedaAuth =
 
 export async function buscarUsuarioEnAuth(correo: string): Promise<ResultadoBusquedaAuth> {
   const email = correo.trim().toLowerCase()
-  if (!email || !SERVICE_ROLE_KEY) return { estado: 'error' }
+  if (!email) return { estado: 'error' }
   try {
-    const PER_PAGE = 200
-    const MAX_PAGES = 10 // hasta 2000 usuarios; el proyecto hoy tiene ~30
-    for (let page = 1; page <= MAX_PAGES; page++) {
-      const res = await fetch(
-        `${SUPABASE_URL}/auth/v1/admin/users?per_page=${PER_PAGE}&page=${page}`,
-        {
-          headers: {
-            'apikey': SERVICE_ROLE_KEY,
-            'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
-          },
-        }
-      )
-      if (!res.ok) return { estado: 'error' }
-      const adminData = await res.json()
-      const users: { id?: string; email?: string }[] = adminData.users ?? []
-      const match = users.find((u) => u.email?.trim().toLowerCase() === email)
-      if (match?.id) return { estado: 'encontrado', id: match.id }
-      // Página incompleta = última página: el usuario no está en el listado
-      if (users.length < PER_PAGE) return { estado: 'ausente' }
+    const { data, error } = await supabase.rpc('correo_existe_en_auth', { p_correo: email })
+    if (error) {
+      console.error('[RACKLY] correo_existe_en_auth error:', error.message)
+      return { estado: 'error' }
     }
-    // Más de MAX_PAGES × PER_PAGE usuarios: tratar como no concluyente
-    console.warn('[RACKLY] buscarUsuarioEnAuth: se agotaron las páginas de la Admin API')
-    return { estado: 'error' }
+    return data ? { estado: 'encontrado', id: '' } : { estado: 'ausente' }
   } catch (err) {
     console.error('[RACKLY] buscarUsuarioEnAuth error:', err)
     return { estado: 'error' }
@@ -309,10 +297,13 @@ export async function cambiarPasswordPropia(nuevaPassword: string) {
 }
 
 export async function cambiarAprobado(userId: string, aprobado: boolean) {
-  const { error } = await dataClient
-    .from('profiles')
-    .update({ aprobado })
-    .eq('id', userId)
+  // FIX auditoría 2026-10-21: RPC SECURITY DEFINER con guard admin — antes
+  // dependía de service_role en el navegador (RLS de profiles NO permite
+  // actualizar el perfil de otro usuario con el cliente anon).
+  const { error } = await dataClient.rpc('aprobar_usuario', {
+    p_user_id: userId,
+    p_aprobado: aprobado,
+  })
   if (error) throw error
 }
 
@@ -330,37 +321,20 @@ export async function cambiarRol(userId: string, rol: Rol) {
 }
 
 export async function eliminarPerfil(userId: string): Promise<string | null> {
-  // 1. Eliminar rol
-  const { error: delErr } = await dataClient.from('user_roles').delete().eq('user_id', userId)
-  if (delErr) throw delErr
-  // 2. Eliminar perfil
-  const { error } = await dataClient
-    .from('profiles')
-    .delete()
-    .eq('id', userId)
+  // 1. Filas en BD (user_roles + profiles) vía RPC atómica con guard admin.
+  //    FIX auditoría 2026-10-21: antes era delete directo con service_role;
+  //    con el cliente anon las políticas de profiles/user_roles lo impedían.
+  const { error } = await dataClient.rpc('eliminar_usuario', { p_user_id: userId })
   if (error) throw error
-  // 3. Eliminar usuario de Supabase Auth para que no pueda volver a loguearse.
-  // FIX auditoría 2026-10-16: el fallo de este paso solo iba a console.error →
-  // el perfil "eliminado" resucitaba en el próximo login (getPerfilActual lo
-  // recrea como pendiente). Ahora se retorna un aviso para que la UI lo muestre.
-  if (SERVICE_ROLE_KEY) {
-    try {
-      const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, {
-        method: 'DELETE',
-        headers: {
-          'apikey': SERVICE_ROLE_KEY,
-          'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
-        },
-      })
-      if (!res.ok) {
-        const detalle = await res.text().catch(() => '')
-        console.error('[RACKLY] Error eliminando usuario Auth:', res.status, detalle)
-        return `El perfil se eliminó, pero NO se pudo eliminar el usuario de Autenticación (HTTP ${res.status}). Podría volver a aparecer como pendiente — elimínalo desde el panel de Supabase Auth.`
-      }
-    } catch (err) {
-      console.error('[RACKLY] Error eliminando usuario Auth:', err)
-      return 'El perfil se eliminó, pero NO se pudo eliminar el usuario de Autenticación (error de red). Podría volver a aparecer como pendiente.'
-    }
+
+  // 2. Eliminar usuario de Supabase Auth para que no pueda volver a loguearse.
+  //    Va por la Edge Function (admin-only): si falla, se avisa a la UI para
+  //    que el admin lo elimine desde el panel de Supabase Auth (mismo aviso
+  //    del flujo anterior).
+  const r = await llamarEdgeUsuario('eliminar', { userId })
+  if (!r.ok) {
+    console.error('[RACKLY] Error eliminando usuario Auth (Edge):', r.error)
+    return `El perfil se eliminó, pero NO se pudo eliminar el usuario de Autenticación (${r.error ?? 'error de red'}). Podría volver a aparecer como pendiente — elimínalo desde el panel de Supabase Auth.`
   }
   return null
 }

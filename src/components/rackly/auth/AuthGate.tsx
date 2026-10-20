@@ -95,26 +95,19 @@ async function correoExisteEnAuth(email: string): Promise<'encontrado' | 'ausent
  */
 async function limpiarPerfilHuerfano(email: string): Promise<boolean> {
   const lower = email.trim().toLowerCase()
+  // FIX auditoría 2026-10-21: la RPC SECURITY DEFINER `limpiar_perfil_huerfano`
+  // verifica la orfandad DENTRO de la BD (auth.users es la fuente de verdad) y
+  // solo borra cuando el correo NO existe en Auth. Antes el borrado directo
+  // requería service_role en el navegador y las políticas RLS lo impedirían
+  // con el cliente anon.
   try {
-    const { data: perfil } = await dataClient
-      .from('profiles')
-      .select('id')
-      .eq('correo', lower)
-      .maybeSingle()
-    if (!perfil) return false
-
-    // Verificar si existe en Auth — SOLO borrar si la consulta fue concluyente
-    const existeEnAuth = await correoExisteEnAuth(lower)
-    if (existeEnAuth === 'ausente') {
-      // Perfil huérfano confirmado (consulta exitosa + sin usuario en Auth):
-      // eliminarlo para permitir registro limpio
-      console.log('[RACKLY] Limpiando perfil huérfano para:', lower)
-      await dataClient.from('user_roles').delete().eq('user_id', perfil.id)
-      await dataClient.from('profiles').delete().eq('id', perfil.id)
-      return true
+    const { data, error } = await supabase.rpc('limpiar_perfil_huerfano', { p_correo: lower })
+    if (error) {
+      console.error('[RACKLY] limpiar_perfil_huerfano error:', error.message)
+      return false
     }
-    // 'encontrado' → NO es huérfano; 'error' → no se sabe. En ambos casos NO borrar.
-    return false
+    if (data) console.log('[RACKLY] Perfil huérfano limpiado para:', lower)
+    return !!data
   } catch {
     return false
   }
@@ -127,28 +120,18 @@ async function limpiarPerfilHuerfano(email: string): Promise<boolean> {
 async function correoYaExiste(email: string): Promise<boolean> {
   const lower = email.trim().toLowerCase()
   try {
-    // Primero verificar si existe en Supabase Auth
+    // Primero verificar si existe en Supabase Auth (RPC, funciona sin sesión)
     const existeAuth = await correoExisteEnAuth(lower)
     if (existeAuth === 'encontrado') return true
 
     // Si no existe en Auth pero sí en profiles, es un perfil huérfano.
-    // SOLO limpiar cuando la consulta a Auth fue concluyente ('ausente').
-    // Si fue 'error' (rate-limit/red), NO borrar nada: dejar que signUp decida —
-    // si el usuario realmente existe, Supabase rechazará con 'already registered'.
+    // FIX auditoría 2026-10-21: la limpieza va por RPC (verifica orfandad en
+    // la BD). Si la RPC falla, NO se bloquea el registro: dejar que signUp
+    // decida — si el usuario existe, Supabase rechaza con 'already registered'.
     if (existeAuth === 'ausente') {
-      const { data } = await dataClient
-        .from('profiles')
-        .select('id')
-        .eq('correo', lower)
-        .maybeSingle()
-      if (data) {
-        // Limpiar el perfil huérfano silenciosamente
-        console.log('[RACKLY] Correo con perfil huérfano detectado, limpiando:', lower)
-        await dataClient.from('user_roles').delete().eq('user_id', data.id)
-        await dataClient.from('profiles').delete().eq('id', data.id)
-        // No bloquear el registro — se acaba de limpiar
-        return false
-      }
+      // Limpieza best-effort; el registro NUNCA se bloquea aquí
+      await limpiarPerfilHuerfano(lower)
+      return false
     }
 
     return false

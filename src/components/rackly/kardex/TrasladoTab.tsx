@@ -224,6 +224,9 @@ export function TrasladoTab() {
   // Ajuste automático: se activa cuando qty > stock (siempre), o cuando qty < stock Y el usuario elige corregir
   const ajusteActivo = excedeStock || (faltaStock && corregirDiferencia)
 
+  // FIX auditoría 2026-10-21 (P3): redondeo anti-polvo flotante (30.78 - 0.1 → 30.679999...)
+  const round3 = (n: number) => Math.round(n * 1000) / 1000
+
   async function handleConfirm() {
     if (!origin) return
     // Comparar POSICIÓN base (sin sufijo de lote) contra el destino: origen y
@@ -272,7 +275,9 @@ export function TrasladoTab() {
   // Dar salida a un producto desde el alerta de destino ocupado (soporta parcial/total)
   async function handleSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
     if (!perfil) return
-    const itemKey = `${stockItem.codigo}-${stockItem.fVencimiento || ''}`
+    // FIX auditoría 2026-10-21 (P3): incluir codigoInc en la clave — sin él, la
+    // fila normal y la fila INC del mismo código compartían selector/input.
+    const itemKey = `${stockItem.codigo}-${stockItem.codigoInc ?? ''}-${stockItem.fVencimiento || ''}`
     const isTotal = salidaParcialTotal[itemKey] === true
     const cantStr = salidaParcialCant[itemKey] || ''
     const cantNum = isTotal ? stockItem.stock : parseFloat(cantStr)
@@ -280,6 +285,16 @@ export function TrasladoTab() {
     if (cantNum > stockItem.stock) { toast.error(`Máximo: ${stockItem.stock} ${stockItem.un}`); return }
     // Lote ELEGIDO (FEFO pre-marcado): la salida descuenta EXACTAMENTE ese lote
     const fvElegido = salidaParcialLote[itemKey] ?? (stockItem.fVencimiento || '')
+    // FIX auditoría 2026-10-21 (P3): si el usuario eligió un lote concreto,
+    // validar contra el SALDO DE ESE LOTE (no contra el total de la posición):
+    // la UI promete "la salida descuenta exactamente ese lote".
+    if (!isTotal && salidaParcialLote[itemKey] !== undefined && stockItem.lotes && stockItem.lotes.length > 1) {
+      const loteSel = stockItem.lotes.find((l) => (l.fVencimiento || '') === fvElegido)
+      if (loteSel && cantNum > loteSel.cantidad + 0.001) {
+        toast.error(`El lote elegido tiene ${loteSel.cantidad} ${stockItem.un}. Máximo desde ese lote: ${loteSel.cantidad}`)
+        return
+      }
+    }
     setSalidaBusy(itemKey)
     try {
       await addMovimiento({
@@ -301,6 +316,9 @@ export function TrasladoTab() {
         codigoInc: stockItem.codigoInc || undefined,
       })
       toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
+      // FIX auditoría 2026-10-21 (P3): limpiar la cantidad digitada — sin esto,
+      // un segundo clic repetía la salida sin re-tipear.
+      setSalidaParcialCant((prev) => ({ ...prev, [itemKey]: '' }))
       setMovs(await fetchMovimientos())
       const updated = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
       // Validar fila-marker _error (como IngresoForm): sin esto se mostraba una
@@ -327,48 +345,122 @@ export function TrasladoTab() {
 
   async function doTraslado() {
     if (!origin || !perfil) return
-    const cantidadFinal = qtyNum || originTotal
     setBusy(true)
     try {
-      await trasladarMovimiento({
-        codigo: origin.codigo,
-        descripcion: origin.descripcion,
-        un: origin.un,
-        cantidad: cantidadFinal,
-        origen: {
-          bloque: origin.bloque,
-          torre: origin.torre,
-          piso: origin.piso,
-          posicion: origin.posicion,
-        },
-        destino: {
-          bloque: destBloque,
-          torre: destTorre,
-          piso: destPiso || '1',
-          posicion: destPos,
-        },
-        turno: calcularTurno(),
-        usuarioId: perfil.id,
-        usuarioNombre: perfil.nombre,
-        usuarioCorreo: perfil.correo,
-        fVencimiento: origin.fVencimiento,
-        proveedor: origin.proveedor,
-        codigoInc: origin.codigoInc,
-        // Código de lote físico: solo si es inequívoco (un solo código en el lote elegido)
-        lote: origin.loteFisico && !origin.loteFisico.includes(',') ? origin.loteFisico : undefined,
-        // Se genera ajuste automático solo si aplica: qty > stock o (qty < stock y el usuario elige corregir)
-        cantidadAjuste: ajusteActivo ? diferencia : undefined,
-      })
+      // ══ FIX auditoría 2026-10-21 (P1): TRASLADO LOTE-POR-LOTE ══
+      // Antes TODO iba con la fecha del lote ELEGIDO: si la posición tenía
+      // varios lotes, el destino recibía todas las unidades con la fecha del
+      // lote seleccionado — el FEFO/vencimientos del destino quedaban
+      // distorsionados de forma irreversible. Ahora la operación se parte en
+      // una llamada por lote (cada una atómica y validada por la RPC).
+      const baseKey = `${origin.bloque}-${origin.torre}-${origin.piso}-${origin.posicion}`
+      const lotesPos = locations
+        .filter((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === baseKey && l.stock > 1e-9)
+      const esMultiLote = lotesPos.length > 1 && Math.abs(qtyNum - origin.stock) >= 1e-9
+
+      type Llamada = { row: LocStock; cantidad: number; ajuste?: number }
+      let llamadas: Llamada[] = []
+      let fantasmaSalida = 0 // salida en origen para corregir diferencia (qty < total)
+
+      if (!esMultiLote) {
+        // Comportamiento original (posición con 1 lote, o qty exacta del lote elegido)
+        const cantidadFinal = qtyNum || originTotal
+        llamadas = [{ row: origin, cantidad: cantidadFinal, ajuste: ajusteActivo ? round3(diferencia) : undefined }]
+        if (faltaStock && !corregirDiferencia) fantasmaSalida = 0
+      } else {
+        // Reparto FEFO: lotes con fecha primero (ya ordenados en locations)
+        let restante = qtyNum || originTotal
+        for (const lote of lotesPos) {
+          if (restante <= 1e-9) break
+          const toma = Math.min(restante, lote.stock)
+          if (toma > 1e-9) {
+            llamadas.push({ row: lote, cantidad: round3(toma) })
+            restante = round3(restante - toma)
+          }
+        }
+        // Excedente físico sin registro: traslado con ajuste positivo en origen
+        if (restante > 1e-9) {
+          llamadas.push({ row: origin, cantidad: restante, ajuste: restante })
+          restante = 0
+        }
+        // Diferencia a corregir: si el usuario quiere dejar la posición en 0,
+        // lo que NO se trasladó sale en origen (stock fantasma)
+        if (faltaStock && corregirDiferencia) {
+          fantasmaSalida = round3(originTotal - (qtyNum || originTotal))
+        }
+      }
+
+      // Ejecutar secuencialmente; si una llamada falla a mitad de camino se
+      // informa EXACTAMENTE qué se trasladó y qué quedó pendiente.
+      let hechas = 0
+      for (const llamada of llamadas) {
+        try {
+          await trasladarMovimiento({
+            codigo: origin.codigo,
+            descripcion: origin.descripcion,
+            un: origin.un,
+            cantidad: llamada.cantidad,
+            origen: {
+              bloque: origin.bloque,
+              torre: origin.torre,
+              piso: origin.piso,
+              posicion: origin.posicion,
+            },
+            destino: {
+              bloque: destBloque,
+              torre: destTorre,
+              piso: destPiso || '1',
+              posicion: destPos,
+            },
+            turno: calcularTurno(),
+            usuarioId: perfil.id,
+            usuarioNombre: perfil.nombre,
+            usuarioCorreo: perfil.correo,
+            // La fecha del LOTE de esta llamada viaja al destino (FEFO intacto)
+            fVencimiento: llamada.row.fVencimiento || origin.fVencimiento,
+            proveedor: origin.proveedor,
+            codigoInc: origin.codigoInc,
+            lote: llamada.row.loteFisico && !llamada.row.loteFisico.includes(',') ? llamada.row.loteFisico : undefined,
+            cantidadAjuste: llamada.ajuste && Math.abs(llamada.ajuste) > 1e-9 ? llamada.ajuste : undefined,
+          })
+          hechas++
+        } catch (callErr) {
+          if (hechas === 0) throw callErr // nada se movió: error normal
+          // Traslado PARCIAL: informar con precisión
+          const pendientes = llamadas.slice(hechas).reduce((s, l) => s + l.cantidad, 0)
+          toast.error(`Traslado PARCIAL: ${llamadas.slice(0, hechas).reduce((s, l) => s + l.cantidad, 0)} ${origin.un} llegaron al destino. NO se trasladaron ${round3(pendientes)} ${origin.un} — reintenta el traslado para completarlo.`, { duration: 10000 })
+          setMovs(await fetchMovimientos())
+          return
+        }
+      }
+
+      // Salida fantasma en origen (corrección de diferencia, multi-lote)
+      if (fantasmaSalida > 1e-9) {
+        await addMovimiento({
+          tipo: 'salida',
+          bloque: origin.bloque, torre: origin.torre, piso: origin.piso, posicion: origin.posicion,
+          codigo: origin.codigo, descripcion: origin.descripcion, un: origin.un,
+          cantidad: fantasmaSalida,
+          fVencimiento: origin.fVencimiento || '',
+          turno: calcularTurno(),
+          usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+          proveedor: origin.proveedor,
+          codigoInc: origin.codigoInc,
+        })
+      }
+
       toast.success('Traslado registrado')
-      if (ajusteActivo) {
+      if (esMultiLote) {
+        toast.info(`Multi-lote: ${hechas} llamada(s), cada lote conservó su fecha de vencimiento en destino.`, { duration: 6000 })
+      } else if (ajusteActivo) {
         if (excedeStock) {
-          toast.info(`Ajuste automático: +${Math.abs(diferencia)} ${origin.un} ingreso en origen (faltaba stock registrado)`, { duration: 6000 })
+          toast.info(`Ajuste automático: +${round3(Math.abs(diferencia))} ${origin.un} ingreso en origen (faltaba stock registrado)`, { duration: 6000 })
         } else if (corregirDiferencia) {
-          toast.info(`Ajuste automático: -${Math.abs(diferencia)} ${origin.un} salida en origen (se deja posición en 0)`, { duration: 6000 })
+          toast.info(`Ajuste automático: -${round3(Math.abs(diferencia))} ${origin.un} salida en origen (se deja posición en 0)`, { duration: 6000 })
         }
       }
       if (faltaStock && !corregirDiferencia) {
-        toast.info(`Queda un saldo de ${saldoRestante} ${origin.un} en la ubicación de origen`, { duration: 6000 })
+        toast.info(`Queda un saldo de ${round3(saldoRestante)} ${origin.un} en la ubicación de origen`, { duration: 6000 })
       }
       setMovs(await fetchMovimientos())
       resetForm()
@@ -1135,7 +1227,8 @@ export function TrasladoTab() {
                           </div>
                           {/* Selector de LOTE a descontar en destino (FEFO pre-marcado, editable) */}
                           {s.lotes && s.lotes.length > 1 && (() => {
-                            const itemKey = `${s.codigo}-${s.fVencimiento || ''}`
+                            // FIX auditoría 2026-10-21 (P3): incluir codigoInc en la clave
+                            const itemKey = `${s.codigo}-${s.codigoInc ?? ''}-${s.fVencimiento || ''}`
                             const selFv = salidaParcialLote[itemKey] ?? (s.fVencimiento || '')
                             const loteSel = s.lotes.find(l => (l.fVencimiento || '') === selFv)
                             return (
@@ -1161,7 +1254,8 @@ export function TrasladoTab() {
                           {/* Salida parcial/total */}
                           <div className="mt-2 flex items-center gap-2">
                             {(() => {
-                              const itemKey = `${s.codigo}-${s.fVencimiento || ''}`
+                              // FIX auditoría 2026-10-21 (P3): incluir codigoInc en la clave
+                              const itemKey = `${s.codigo}-${s.codigoInc ?? ''}-${s.fVencimiento || ''}`
                               const isTotal = salidaParcialTotal[itemKey] === true
                               return <>
                                 <button

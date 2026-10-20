@@ -324,6 +324,8 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       if (!mountedRef.current) return
       if (incMap._error) {
         toast.error('No se pudo cargar información INC. Los datos INC pueden estar incompletos.')
+      } else if (incMap._truncated) {
+        toast.warning('Muchos movimientos INC: el mapa puede mostrar datos parciales.', { duration: 6000 })
       }
 
       if (rpcCeldas !== null) {
@@ -466,10 +468,16 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   const showProveedor = ingDescripcion ? requiereProveedor(ingDescripcion) : false
 
   // ── Handlers ──
+  const detailSeqRef = useRef(0)
   async function handleCellClick(b: string, t: string, p: string, pos: string) {
+    // FIX auditoría 2026-10-21 (P3): guard de secuencia — con clics rápidos en
+    // dos celdas, la respuesta lenta de la primera pisaba el detalle de la
+    // segunda (el usuario veía el stock de la celda equivocada).
+    const seq = ++detailSeqRef.current
     setDetailLoading(true)
     try {
       const stock = await stockEnUbicacion(b, t, p, pos)
+      if (seq !== detailSeqRef.current) return // llegó un clic más reciente
       // Verificar si la consulta falló (bandera _error)
       if (stock.length > 0 && '_error' in stock[0] && stock[0]._error) {
         toast.error('Error al consultar stock de esta ubicación. Intente nuevamente.')
@@ -478,8 +486,10 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       }
       setDetail({ bloque: b, torre: t, piso: p, posicion: pos, stock })
       setDetailMode('view')
-    } catch { toast.error('Error al cargar detalle') }
-    finally { setDetailLoading(false) }
+    } catch {
+      if (seq === detailSeqRef.current) toast.error('Error al cargar detalle')
+    }
+    finally { if (seq === detailSeqRef.current) setDetailLoading(false) }
   }
 
   function openIngreso(tipo?: 'ingreso' | 'devolucion') {
@@ -683,7 +693,10 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   // Dar salida a un producto desde el alerta de destino ocupado (OcupacionTab)
   async function handleTrSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
     if (!perfil) return
-    const itemKey = `${stockItem.codigo}-${stockItem.fVencimiento || ''}`
+    // FIX auditoría 2026-10-21 (P3): incluir codigoInc en la clave — el mismo
+    // artículo puede convivir como normal y como INC en la destino y ambas
+    // filas compartían input/cantidad/botón.
+    const itemKey = `${stockItem.codigo}-${stockItem.codigoInc ?? ''}-${stockItem.fVencimiento || ''}`
     const isTotal = trSalidaTotalFlags[itemKey] === true
     const cantStr = trSalidaCant[itemKey] || ''
     const cantNum = isTotal ? stockItem.stock : parseFloat(cantStr)
@@ -843,7 +856,9 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         }
       }
       const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, ws, 'Ocupación'); XLSX.writeFile(wb, `RACKLY_Ocupacion_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
+      // FIX auditoría 2026-10-21 (P3): toISOString() es UTC — entre 19:00-23:59
+      // de Lima el archivo se nombraba con la fecha de "mañana". hoyISO() usa hora local.
+      XLSX.utils.book_append_sheet(wb, ws, 'Ocupación'); XLSX.writeFile(wb, `RACKLY_Ocupacion_${hoyISO()}.xlsx`); toast.success('Exportado')
     } catch (err: unknown) { toast.error('Error exportando', { description: extractError(err) }) } finally { setBusyExport(false) }
   }
 
@@ -1901,7 +1916,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                   const tipoLabel = esIngreso ? (item.tipo === 'stock_inicial' ? 'Stock Inicial' : 'Ingreso') : esSalida ? 'Salida' : esTraslado ? 'Traslado' : esDevolucion ? 'Devolucion' : esInc ? 'INC' : item.tipo
                   const fechaStr = item.fecha ? new Date(item.fecha).toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
                   const iniciales = item.usuario_nombre ? item.usuario_nombre.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) : '??'
-                  const esPositivo = esIngreso || esDevolucion || esInc
+                  const esPositivo = esIngreso || esDevolucion || esTraslado || (esInc && !esSalida)
                   const esRotacion = !historialCurrentCodigos.has(item.codigo)
 
                   return (
@@ -2030,7 +2045,10 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                 </div>
                 <div className="space-y-2">
                   {trDestStock.map((s, i) => {
-                    const itemKey = `${s.codigo}-${s.fVencimiento || ''}`
+                    // FIX auditoría 2026-10-21 (P3): incluir codigoInc — sin él,
+                    // la fila normal y la fila INC del mismo código compartían
+                    // itemKey (inputs y flag "Total" cruzados).
+                    const itemKey = `${s.codigo}-${s.codigoInc ?? ''}-${s.fVencimiento || ''}`
                     const isTotal = trSalidaTotalFlags[itemKey] === true
                     return (
                       <div key={`${s.codigo}-${i}`} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3">

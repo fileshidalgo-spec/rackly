@@ -4,7 +4,11 @@ import { createBrowserClient } from '@supabase/ssr'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
 const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
-const SERVICE_KEY = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY ?? ''
+// FIX auditoría 2026-10-21 (P1): la service_role key NUNCA debe entrar al
+// bundle del navegador — cualquiera con DevTools obtenía control total de la
+// BD (RLS bypaseada). Toda la app opera ahora con el cliente anon + JWT de
+// sesión (rol authenticated, cubierto por las políticas RLS) y las pocas
+// operaciones admin (GoTrue/Storage) van por Edge Function o sesión de usuario.
 
 const ES_DEV = process.env.NODE_ENV === 'development'
 
@@ -18,7 +22,6 @@ export function getMissingConfigMessage(): string | null {
   const missing: string[] = []
   if (!SUPABASE_URL) missing.push('NEXT_PUBLIC_SUPABASE_URL')
   if (!ANON_KEY) missing.push('NEXT_PUBLIC_SUPABASE_ANON_KEY')
-  if (!SERVICE_KEY) missing.push('NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY')
   if (missing.length === 0) return null
   // B-3 (auditoría): en producción solo un aviso genérico — los nombres
   // internos de variables y la guía de configuración quedan en desarrollo.
@@ -43,11 +46,15 @@ function safeCreateClient() {
 
 function safeCreateDataClient() {
   try {
-    if (!SUPABASE_URL || !SERVICE_KEY) {
+    if (!SUPABASE_URL || !ANON_KEY) {
       if (ES_DEV) console.error(getMissingConfigMessage())
       return null
     }
-    return createBrowserClient(SUPABASE_URL, SERVICE_KEY)
+    // FIX auditoría 2026-10-21 (P1): antes usaba SERVICE_KEY (RLS bypaseada
+    // desde el navegador). Ahora usa ANON_KEY: con la sesión iniciada, las
+    // consultas viajan con el JWT del usuario (rol authenticated) y las
+    // políticas RLS de las tablas operativas aplican de verdad.
+    return createBrowserClient(SUPABASE_URL, ANON_KEY)
   } catch (err) {
     console.error('[RACKLY] Error creando data client Supabase:', err)
     return null
@@ -87,7 +94,7 @@ export const supabase = new Proxy({} as ReturnType<typeof createBrowserClient>, 
   },
 })
 
-/** Cliente de datos (service role) — seguro ante config faltante */
+/** Cliente de datos (anon + JWT de sesión, respeta RLS) — seguro ante config faltante */
 export const dataClient = new Proxy({} as ReturnType<typeof createBrowserClient>, {
   get(_, prop, receiver) {
     if (!_dataClient) _dataClient = safeCreateDataClient()

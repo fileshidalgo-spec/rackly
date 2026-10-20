@@ -102,35 +102,53 @@ export function FefoPisoTab({ onGotoPosicion }: { onGotoPosicion?: (target: Piso
   const loadedRef = useRef(false)
   const lastLoadRef = useRef(0)
   const mountedRef = useRef(true)
+  // FIX auditoría 2026-10-21 (P2): debounce con TRAILING EDGE — el anti-
+  // martilleo anterior saltaba eventos sin reprogramar refresco, así que la
+  // ÚLTIMA actualización de una ráfaga realtime podía perderse para siempre
+  // (con WebSocket activo el polling no corre). También: guard de secuencia
+  // para que una carga lenta no pise datos frescos de otra más rápida.
+  const loadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const loadSeqRef = useRef(0)
 
   async function load(silent = false) {
-    // Anti-martilleo: los eventos realtime pueden llegar en ráfaga (traslado =
-    // 2 cabeceras + N detalles); si la última carga fue hace < 3s, saltar.
-    if (silent && Date.now() - lastLoadRef.current < 3000) return
+    if (silent && Date.now() - lastLoadRef.current < 3000) {
+      // Ventana anti-martilleo: programar recarga al FINAL de la ventana
+      // (trailing edge) en vez de saltar el evento — nunca se pierde la última.
+      if (!loadTimerRef.current) {
+        loadTimerRef.current = setTimeout(() => {
+          loadTimerRef.current = null
+          if (mountedRef.current) load(true)
+        }, 3300)
+      }
+      return
+    }
+    const seq = ++loadSeqRef.current
     if (!silent) setLoading(true)
     setError(false)
     try {
       const data = await stockPisoGlobal()
+      if (seq !== loadSeqRef.current || !mountedRef.current) return // llegó una carga más reciente
       lastLoadRef.current = Date.now()
-      if (mountedRef.current) {
-        setItems(data.map((i) => {
-          const { status, dias } = statusDe(i.fecha_vencimiento)
-          return { ...i, diasRestantes: dias, status }
-        }))
-        setLastRefresh(new Date())
-      }
+      setItems(data.map((i) => {
+        const { status, dias } = statusDe(i.fecha_vencimiento)
+        return { ...i, diasRestantes: dias, status }
+      }))
+      setLastRefresh(new Date())
     } catch (err) {
       console.error('[FefoPisoTab] Error cargando stock:', err)
-      if (mountedRef.current) setError(true)
+      if (seq === loadSeqRef.current && mountedRef.current) setError(true)
     } finally {
-      if (mountedRef.current) setLoading(false)
+      if (seq === loadSeqRef.current && mountedRef.current) setLoading(false)
     }
   }
 
   useEffect(() => {
     mountedRef.current = true
     if (!loadedRef.current) { loadedRef.current = true; load() }
-    return () => { mountedRef.current = false }
+    return () => {
+      mountedRef.current = false
+      if (loadTimerRef.current) { clearTimeout(loadTimerRef.current); loadTimerRef.current = null }
+    }
   }, [])
 
   // Persistir búsqueda + filtros (se restauran al volver desde Sectores)

@@ -1,6 +1,7 @@
 'use client'
 
 import { dataClient } from '@/lib/supabase/client'
+import { aNumero } from '@/lib/rackly/formato'
 
 export type CatalogoItem = {
   codigo: string
@@ -149,6 +150,9 @@ export function isCatalogoLoaded(): boolean {
 }
 
 export function parseCatalogoText(text: string): CatalogoItem[] {
+  // FIX auditoría 2026-10-21: aNumero soporta "1.250,50" (coma decimal es-PE);
+  // parseFloat("1250,5") → 1250 corrompía el Stock Big Magic. El código se
+  // normaliza a UPPER/TRIM (los RPCs comparan con UPPER(TRIM(codigo))).
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -166,9 +170,9 @@ export function parseCatalogoText(text: string): CatalogoItem[] {
     const [codigo, un, ...rest] = parts
     if (!codigo || !un) continue
     if (codigo.toLowerCase() === 'codigo' || codigo.toLowerCase() === 'código') continue
-    const sbm = parts.length >= 4 ? parseFloat(parts[parts.length - 1]) || 0 : 0
+    const sbm = parts.length >= 4 ? aNumero(parts[parts.length - 1]) || 0 : 0
     items.push({
-      codigo: codigo.trim(),
+      codigo: codigo.trim().toUpperCase(),
       un: un.trim(),
       descripcion: parts.length >= 4 ? rest.slice(0, -1).join(' ').trim() : rest.join(' ').trim(),
       stock_big_magic: sbm,
@@ -195,7 +199,7 @@ export function parseCatalogoExcelRows(rows: Record<string, unknown>[]): Catalog
       codigo: codeUpper,
       un: (un || '').trim(),
       descripcion: (descripcion || '').trim(),
-      stock_big_magic: parseFloat(String(sbmRaw || '0')) || 0,
+      stock_big_magic: aNumero(String(sbmRaw || '0')) || 0,
     })
   }
   return items

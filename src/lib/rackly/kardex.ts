@@ -818,13 +818,16 @@ export async function stockEnUbicacion(
 }
 
 /** Consulta dedicada: ubicaciones que tienen INC con stock > 0.
- *  Retorna un Map que puede estar marcado con `_error: true` si la consulta falló. */
-export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> & { _error?: boolean }> {
+ *  Retorna un Map que puede estar marcado con `_error: true` si la consulta falló
+ *  o `_truncated: true` si se alcanzó el tope de páginas (datos parciales). */
+export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> & { _error?: boolean; _truncated?: boolean }> {
   try {
     const allRows: Record<string, unknown>[] = []
     let from = 0
     const BATCH = 1000
-    for (let page = 0; page < 10; page++) {
+    const MAX_PAGES = 50 // FIX auditoría 2026-10-21: 10 páginas (10K filas INC) truncaba el mapa sin aviso
+    let truncated = false
+    for (let page = 0; page < MAX_PAGES; page++) {
       const { data, error } = await dataClient
         .from('movimientos')
         .select('bloque, torre, piso, posicion, codigo, descripcion, un, codigo_inc, tipo, cantidad')
@@ -833,7 +836,7 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
         .range(from, from + BATCH - 1)
       if (error) {
         console.error('[fetchIncPorUbicacion] Error en paginación INC:', error.message)
-        const errMap = new Map<string, IncEnCelda[]>() as Map<string, IncEnCelda[]> & { _error?: boolean }
+        const errMap = new Map<string, IncEnCelda[]>() as Map<string, IncEnCelda[]> & { _error?: boolean; _truncated?: boolean }
         errMap._error = true
         return errMap
       }
@@ -841,6 +844,7 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
       allRows.push(...rows)
       if (rows.length < BATCH) break
       from += BATCH
+      if (page === MAX_PAGES - 1) truncated = true
     }
     // Calcular stock neto por ubicación + código INC
     const map = new Map<string, Map<string, { codigo: string; descripcion: string; codigoInc: string; stock: number }>>()
@@ -862,13 +866,17 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
         locMap.set(incKey, { codigo: code, descripcion: String(r.descripcion ?? ''), codigoInc: codeInc, stock: deltaR })
       }
     }
-    const result = new Map<string, IncEnCelda[]>()
+    const result = new Map<string, IncEnCelda[]>() as Map<string, IncEnCelda[]> & { _truncated?: boolean }
     for (const [key, locMap] of map) {
       const items: IncEnCelda[] = []
       for (const [, item] of locMap) {
         if (item.stock > 0) items.push({ codigo: item.codigo, descripcion: item.descripcion, codigoInc: item.codigoInc, cantidad: item.stock })
       }
       if (items.length > 0) result.set(key, items)
+    }
+    if (truncated) {
+      console.warn('[fetchIncPorUbicacion] Tope de páginas alcanzado: el mapa INC puede estar incompleto')
+      result._truncated = true
     }
     return result
   } catch (err) {
@@ -1012,7 +1020,12 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
         codigo, t.origen.bloque, t.origen.torre, t.origen.piso, t.origen.posicion, true // excluir INC
       )
       const stockRedondeado = Math.round(originStock * 1000) / 1000
-      if (t.cantidad > stockRedondeado + 0.001) {
+      // FIX auditoría 2026-10-21 (P2): el ajuste POSITIVO ingresa mercadería en
+      // origen ANTES de la salida (misma operación), así que el disponible real
+      // es stock + ajuste — igual que la RPC. Antes el panel "Ajuste positivo"
+      // de la UI era inalcanzable (siempre INSUFFICIENT_STOCK).
+      const disponible = stockRedondeado + Math.max(t.cantidadAjuste ?? 0, 0)
+      if (t.cantidad > disponible + 0.001) {
         const err = new Error('INSUFFICIENT_STOCK')
         ;(err as unknown as Record<string, string>).detail =
           `Stock en origen = ${stockRedondeado} ${t.un}, cantidad a trasladar = ${t.cantidad} ${t.un}`
@@ -1334,26 +1347,61 @@ export async function eliminarUbicacion(
   codigoInc?: string
 ): Promise<Movimiento[]> {
   const target = codigo.trim().toUpperCase()
-  let query = dataClient
-    .from('movimientos')
-    .delete()
-    .eq('codigo', target)
-    .eq('bloque', bloque)
-    .eq('torre', torre)
-    .eq('piso', piso)
-    .eq('posicion', posicion)
-  // Si se especifica fVencimiento, filtrar solo ese lote
-  if (fVencimiento) {
-    query = query.eq('f_vencimiento', fVencimiento)
+
+  // FIX auditoría 2026-10-21 (P3): la BD puede tener formatos mixtos ('01' vs
+  // '1', igual que documenta calcularStockUbicacion) — con eq() crudo esas
+  // filas NO matcheaban y el admin veía "Ubicación eliminada" con el stock
+  // intacto (éxito falso). Se recolectan los IDs de TODAS las variantes de
+  // torre/piso/posicion (con y sin cero a la izquierda) y se borra por IDs;
+  // si no se borra ninguna, se lanza error en vez de fingir éxito.
+  const variantes = (v: string): string[] => {
+    const t = String(v ?? '')
+    const sinCero = t.replace(/^0+(?=\d)/, '')
+    return t === sinCero ? [t] : [t, sinCero]
   }
-  // Filtrar por codigo_inc para no borrar INC junto con stock normal
-  if (codigoInc) {
-    query = query.eq('codigo_inc', codigoInc)
-  } else {
-    query = query.is('codigo_inc', null)
+  const ids: string[] = []
+  for (const t of variantes(torre)) {
+    for (const p of variantes(piso)) {
+      for (const pos of variantes(posicion)) {
+        let query = dataClient
+          .from('movimientos')
+          .select('id')
+          .eq('codigo', target)
+          .eq('bloque', bloque)
+          .eq('torre', t)
+          .eq('piso', p)
+          .eq('posicion', pos)
+        // Si se especifica fVencimiento, filtrar solo ese lote
+        if (fVencimiento) {
+          query = query.eq('f_vencimiento', fVencimiento)
+        }
+        // Filtrar por codigo_inc para no borrar INC junto con stock normal
+        if (codigoInc) {
+          query = query.eq('codigo_inc', codigoInc)
+        } else {
+          query = query.is('codigo_inc', null)
+        }
+        const { data, error } = await query
+        if (error) throw error
+        for (const r of (data ?? []) as { id: string }[]) {
+          if (!ids.includes(r.id)) ids.push(r.id)
+        }
+      }
+    }
   }
-  const { error } = await query
-  if (error) throw error
+  if (ids.length === 0) {
+    throw new Error(
+      'No se encontraron movimientos para eliminar en esta ubicación (verifique que el stock exista y no haya sido movido por otro usuario).'
+    )
+  }
+  // Borrar por IDs en chunks de 500
+  for (let i = 0; i < ids.length; i += 500) {
+    const { error } = await dataClient
+      .from('movimientos')
+      .delete()
+      .in('id', ids.slice(i, i + 500))
+    if (error) throw error
+  }
   return fetchMovimientos()
 }
 

@@ -43,6 +43,10 @@ export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: Pis
     if (debounceRef.current) clearTimeout(debounceRef.current)
     const term = query.trim()
     if (!term) {
+      // FIX auditoría 2026-10-21 (P2): invalidar la búsqueda en vuelo — sin
+      // incrementar seqRef, la respuesta de la búsqueda anterior pintaba
+      // resultados "fantasma" con el input ya vacío (y el spinner colgado).
+      seqRef.current++
       setItems([])
       setHasSearched(false)
       return

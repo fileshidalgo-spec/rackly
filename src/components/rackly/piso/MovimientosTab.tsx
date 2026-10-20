@@ -29,7 +29,7 @@ import {
 import {
   Loader2, Filter, X, ArrowDownToLine, ArrowUpFromLine, RotateCcw,
   ArrowLeftRight, BarChart3, Search, ChevronDown, Package,
-  TrendingUp, Archive, Activity, Trash2, TriangleAlert,
+  TrendingUp, Archive, Activity, Trash2, TriangleAlert, AlertTriangle,
 } from 'lucide-react'
 import {
   AlertDialog,
@@ -92,6 +92,11 @@ export function MovimientosTab() {
     }[]
   >([])
   const [loading, setLoading] = useState(true)
+  // FIX auditoría 2026-10-21 (P2): distinguir "sin movimientos" de "fallo al
+  // cargar" — antes un error en la PRIMERA carga mostraba el empty state
+  // "No hay movimientos registrados" (el supervisor creía que no hubo
+  // operativa). Misma pauta que FefoPisoTab/StockIncPisoTab.
+  const [loadError, setLoadError] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
   const [filtroTipo, setFiltroTipo] = useState<string>('')
   const [filtroUsuario, setFiltroUsuario] = useState<string>('')
@@ -110,11 +115,16 @@ export function MovimientosTab() {
     if (typeof document !== 'undefined' && document.hidden && movimientosRef.current.length > 0) return
     try {
       const data = await listarMovimientos()
-      if (mountedRef.current) setMovimientos(data)
+      if (mountedRef.current) {
+        setMovimientos(data)
+        setLoadError(false)
+      }
     } catch (err) {
       // Antes un error transitorio (red/token) BORRABA la lista visible y mostraba
-      // "No hay movimientos" — ahora se conservan los datos previos.
+      // "No hay movimientos" — ahora se conservan los datos previos y se marca
+      // el error para mostrar un panel con reintento.
       console.error('[MovimientosTab] Error al refrescar movimientos:', err)
+      if (mountedRef.current) setLoadError(true)
     } finally {
       if (mountedRef.current) setLoading(false)
     }
@@ -498,8 +508,29 @@ export function MovimientosTab() {
         </div>
       )}
 
+      {/* ── Panel de error de carga (con reintento) ── */}
+      {!loading && loadError && movimientos.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 gap-4">
+          <div className="rounded-2xl bg-red-950/40 p-5 border border-red-800/40">
+            <AlertTriangle className="h-10 w-10 text-red-400" />
+          </div>
+          <div className="text-center">
+            <p className="text-sm text-red-400 font-semibold">Error al cargar los movimientos</p>
+            <p className="text-xs text-slate-500 mt-1">Revisa tu conexión e intenta nuevamente.</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => { setLoadError(false); setLoading(true); refreshMovimientos() }}
+            >
+              Reintentar
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* ── Empty state — animated icon ── */}
-      {!loading && movimientos.length === 0 && (
+      {!loading && !loadError && movimientos.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 gap-4">
           <div className="relative">
             <div className="rounded-2xl bg-slate-800/60 p-5 border border-slate-700/30 animate-bounce">

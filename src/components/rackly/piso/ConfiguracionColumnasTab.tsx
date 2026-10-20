@@ -132,6 +132,10 @@ export function ConfiguracionColumnasTab() {
   }
 
   async function handleAssign(bloqueId: string, columnaId: string) {
+    // FIX auditoría 2026-10-21 (P3): la estructura del almacén (asignaciones)
+    // es admin-only, igual que crear/eliminar bloques en esta misma pantalla —
+    // antes cualquier rol podía asignar/desasignar.
+    if (perfil?.rol !== 'admin') { toast.error('Solo un administrador puede modificar las asignaciones'); return }
     try {
       await asignarBloqueAColumna(bloqueId, columnaId)
       toast.success('Bloque asignado')
@@ -145,6 +149,8 @@ export function ConfiguracionColumnasTab() {
   }
 
   async function handleUnassign(bloqueId: string, columnaId: string) {
+    // FIX auditoría 2026-10-21 (P3): gate admin (ver handleAssign)
+    if (perfil?.rol !== 'admin') { toast.error('Solo un administrador puede modificar las asignaciones'); return }
     try {
       await quitarBloqueDeColumna(bloqueId, columnaId)
       toast.success('Bloque desasignado')
@@ -224,6 +230,7 @@ export function ConfiguracionColumnasTab() {
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-medium">Columna {col.letra}</span>
                       <div className="flex items-center gap-2">
+                        {perfil?.rol === 'admin' ? (
                         <Select>
                           <SelectTrigger className="w-48 h-8 text-xs">
                             <SelectValue placeholder="Asignar bloque..." />
@@ -236,15 +243,20 @@ export function ConfiguracionColumnasTab() {
                             ))}
                           </SelectContent>
                         </Select>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">Solo admin</span>
+                        )}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1">
                       {assigned.map((b) => (
                         <Badge key={b.id} variant="secondary" className="gap-1">
                           {b.codigo}
-                          <button onClick={() => handleUnassign(b.id, col.id)} className="text-muted-foreground hover:text-foreground">
-                            <Unlink className="h-3 w-3" />
-                          </button>
+                          {perfil?.rol === 'admin' && (
+                            <button onClick={() => handleUnassign(b.id, col.id)} className="text-muted-foreground hover:text-foreground">
+                              <Unlink className="h-3 w-3" />
+                            </button>
+                          )}
                         </Badge>
                       ))}
                       {assigned.length === 0 && (

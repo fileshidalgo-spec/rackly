@@ -363,7 +363,15 @@ export async function eliminarBloque(id: string): Promise<Bloque[]> {
   const { error: errAsig } = await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', id)
   if (errAsig) throw errAsig
   const { error } = await dataClient.from('piso_bloques').delete().eq('id', id)
-  if (error) throw error
+  if (error) {
+    // FIX auditoría 2026-10-21 (P2): la FK de piso_movimiento_detalles.bloque_id
+    // es NO ACTION — un bloque CON historial moría con error críptico 23503
+    // (y solo DESPUÉS de borrar sus asignaciones). Mensaje claro para el usuario.
+    if ((error as { code?: string }).code === '23503') {
+      throw new Error('Este bloque tiene movimientos históricos y no puede eliminarse (protege la trazabilidad del inventario). Puede dejarlo sin usar o desasignarlo de las columnas.')
+    }
+    throw error
+  }
   return listarBloques()
 }
 
@@ -606,9 +614,11 @@ export async function listarMovimientos(
   if (desde) query = query.gte('fecha', desde)
   if (hasta) query = query.lte('fecha', hasta + 'T23:59:59')
 
-  // Paginación con límite razonable (máx 5,000 cabeceras)
+  // Paginación con límite razonable (máx 25,000 cabeceras — FIX auditoría
+  // 2026-10-21: 5,000 truncaba silenciosamente la lista y los contadores
+  // animados cuando la tabla creciera; hoy hay ~1,600)
   const PAGE_SIZE = 500
-  const MAX_PAGES = 10
+  const MAX_PAGES = 50
   let all: PisoMovimiento[] = []
   let from = 0
   let pages = 0
@@ -2071,7 +2081,24 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
             unidad: c.un ?? '',
           }
         }
-      } catch (insertErr) { console.warn('[Piso] Auto-create piso_bloques falló, usando ID virtual:', insertErr) }
+      } catch (insertErr) {
+        // FIX auditoría 2026-10-21 (P3): si el auto-create falla por carrera
+        // (dos usuarios dieron de alta el mismo código a la vez) el bloque YA
+        // existe — re-consultar ANTES de devolver el id virtual `cat_`, que
+        // moría con violación de FK en el INSERT de detalles.
+        try {
+          const { data: recheck } = await dataClient
+            .from('piso_bloques')
+            .select('id, codigo, descripcion, unidad')
+            .eq('codigo', c.codigo)
+            .limit(1)
+          const b = (recheck ?? [])[0] as { id: string; codigo: string; descripcion: string; unidad: string } | undefined
+          if (b) {
+            return { id: b.id, codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' }
+          }
+        } catch { /* cae al id virtual */ }
+        console.warn('[Piso] Auto-create piso_bloques falló, usando ID virtual:', insertErr)
+      }
       return { id: `cat_${c.codigo}`, codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' }
     }
   } catch (err) { console.error('[Piso] Error en búsqueda catalogo:', err) }

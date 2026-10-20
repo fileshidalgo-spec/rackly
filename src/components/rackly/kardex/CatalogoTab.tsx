@@ -12,6 +12,7 @@ import {
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
 import { useAuth } from '@/hooks/useAuth'
+import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { dataClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -43,6 +44,12 @@ import {
 
 export function CatalogoTab() {
   const { perfil } = useAuth()
+  // FIX auditoría 2026-10-21 (P2): agregar/editar/eliminar del catálogo sin
+  // control de rol — un operario podía borrar un código (y su bloque en Piso
+  // vía removeFromPisoBloques). Regla: admin + supervisores/coordinador,
+  // igual que la eliminación de movimientos en page.tsx.
+  const SupervisoresSet = new Set<string>(ROLES_SUPERVISORES)
+  const puedeEditarCatalogo = perfil?.rol === 'admin' || (perfil?.rol ? SupervisoresSet.has(perfil.rol) : false)
   const [text, setText] = useState('')
   const [catalogo, setCatalogo] = useState<CatalogoItem[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -167,6 +174,7 @@ export function CatalogoTab() {
   }
 
   async function doSave() {
+    if (!puedeEditarCatalogo) { toast.error('No tienes permisos para modificar el catálogo'); return }
     if (!formCodigo.trim() || !formUn.trim() || !formDesc.trim()) {
       toast.error('Completa todos los campos')
       return
@@ -234,6 +242,7 @@ export function CatalogoTab() {
   }
 
   async function doDelete() {
+    if (!puedeEditarCatalogo) { toast.error('No tienes permisos para eliminar del catálogo'); return }
     if (!deleteTarget) return
     setFormBusy(true)
     try {
@@ -289,9 +298,11 @@ export function CatalogoTab() {
           />
         </div>
         <div className="flex gap-2">
-          <Button onClick={openAdd} size="sm" className="gap-1.5 bg-green-600 hover:bg-green-700 text-white">
-            <Plus className="h-4 w-4" /> Agregar
-          </Button>
+          {puedeEditarCatalogo && (
+            <Button onClick={openAdd} size="sm" className="gap-1.5 bg-green-600 hover:bg-green-700 text-white">
+              <Plus className="h-4 w-4" /> Agregar
+            </Button>
+          )}
           {perfil?.rol === 'admin' && (
             <Button variant="destructive" size="sm" onClick={handleClear} className="gap-1.5">
               <Trash2 className="h-4 w-4" /> Limpiar
@@ -320,7 +331,7 @@ export function CatalogoTab() {
             onClick={() => fileInputRef.current?.click()}
             size="sm"
             variant="outline"
-            disabled={excelBusy}
+            disabled={excelBusy || !puedeEditarCatalogo}
             className="gap-1.5 border-dashed"
           >
             {excelBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
@@ -342,7 +353,7 @@ export function CatalogoTab() {
             rows={3}
             className="text-xs"
           />
-          <Button onClick={handleImport} size="sm" variant="outline" className="gap-1.5">
+          <Button onClick={handleImport} size="sm" variant="outline" className="gap-1.5" disabled={!puedeEditarCatalogo}>
             <Upload className="h-4 w-4" /> Importar texto
           </Button>
         </div>
@@ -371,12 +382,16 @@ export function CatalogoTab() {
                 <TableCell className="text-right font-mono text-xs hidden sm:table-cell">{item.stock_big_magic > 0 ? item.stock_big_magic : '—'}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <Button size="icon" variant="ghost" onClick={() => openEdit(item)} title="Editar">
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(item.codigo)} title="Eliminar">
-                      <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                    </Button>
+                    {puedeEditarCatalogo && (
+                      <>
+                        <Button size="icon" variant="ghost" onClick={() => openEdit(item)} title="Editar">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(item.codigo)} title="Eliminar">
+                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>

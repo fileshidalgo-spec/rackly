@@ -323,6 +323,14 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
   // (remInfoByPos cambia ~cada 8 s y borrar ahí provocaría un parpadeo vacío).
   const lastStockKeyRef = useRef('')
 
+  // ── Server-side fetch (FIX auditoría 2026-10-21, P3): solo cuando CAMBIA el
+  // código o el filtro. Antes, remInfoByPos (Map nuevo en cada tick realtime
+  // de ~8 s) estaba en las deps → la RPC se re-lanzaba cada 8 segundos
+  // permanentemente mientras hubiera un código seleccionado. Ahora la
+  // enriquección FEFO lee por un ref (siempre fresco) sin disparar el efecto.
+  const remInfoRef = useRef(remInfoByPos)
+  remInfoRef.current = remInfoByPos
+
   useEffect(() => {
     // FIX auditoría 2026-10-16: al cambiar de producto (A→B) había que limpiar
     // serverStock INMEDIATAMENTE. Antes solo se limpiaba cuando selectedCodigo
@@ -369,7 +377,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         // lote posiblemente ya consumido) — el real es el del lote FEFO.
         for (const row of mapped) {
           const key = `${row.bloque}-${row.torre}-${row.piso}-${row.posicion}`
-          const remInfo = remInfoByPos.get(key)
+          const remInfo = remInfoRef.current.get(key)
           if (remInfo) {
             row.fVencimiento = remInfo.fVencimiento || row.fVencimiento || ''
             row.lotesInfo = remInfo.lotesInfo || ''
@@ -385,7 +393,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       .catch(() => {
         if (mountedRef.current && serverReqRef.current === `${code}|${isInc}`) { setServerLoading(false); setServerStock(null) }
       })
-  }, [selectedCodigo, stockFilter, remInfoByPos])
+  }, [selectedCodigo, stockFilter])
 
   // useRef para evitar setStock en componentes desmontados
   const mountedRef = useRef(true)

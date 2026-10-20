@@ -25,6 +25,7 @@ import {
   extractError,
   isInsufficientStockError,
 } from '@/lib/utils'
+import { aNumero } from '@/lib/rackly/formato'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -199,6 +200,10 @@ function IngresoForm({
       setUn('')
       setCantidad('')
       setFVencimiento('')
+      // FIX auditoría 2026-10-21 (P2): faltaba resetear sinVencimiento — el
+      // siguiente ingreso heredaba el campo de fecha deshabilitado y el lote
+      // nacía "sin fecha" en silencio (fuera del FEFO y de reportes de vencidos).
+      setSinVencimiento(false)
       setLote('')
       setSinLote(false)
       setProveedor('')
@@ -668,7 +673,10 @@ function SalidaForm({
           continue
         }
         const qtyVal = qtySnap[key] || ''
-        const qtyNum = qtyVal ? parseFloat(qtyVal.trim()) : loc.stock
+        // FIX auditoría 2026-10-21 (P2): aNumero soporta "1,5" / "1.500,50";
+        // con el input type=number el teclado es-PE dejaba el valor vacío
+        // (badInput) y la fila salía con el STOCK COMPLETO en vez del parcial.
+        const qtyNum = qtyVal ? aNumero(qtyVal) : loc.stock
         if (isNaN(qtyNum) || qtyNum <= 0) {
           errorDetails.push(`Cantidad inválida en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}`)
           totalErrors++
@@ -890,7 +898,8 @@ function SalidaForm({
     const loc = locations.find((l) => makeLocKey(l) === locKey)
     if (!loc) return
     const qtyVal = qtyMap[locKey] || ''
-    const qtyNum = parseFloat(qtyVal)
+    // FIX auditoría 2026-10-21: aNumero soporta coma decimal (es-PE)
+    const qtyNum = aNumero(qtyVal)
     if (isNaN(qtyNum) || qtyNum <= 0) {
       toast.error('Ingresa una cantidad válida para la salida parcial')
       return
@@ -1113,13 +1122,11 @@ function SalidaForm({
                   {/* Cantidad + Acciones */}
                   <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
                     <Input
-                      type="number"
-                      step="any"
-                      min="0.001"
-                      max={loc.stock}
+                      type="text"
+                      inputMode="decimal"
                       value={qtyMap[key] || ''}
                       onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
-                      placeholder="Parcial"
+                      placeholder="Vacío = todo"
                       className="h-9 text-sm flex-1"
                     />
                     <Button
@@ -1207,13 +1214,11 @@ function SalidaForm({
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <Input
-                          type="number"
-                          step="any"
-                          min="0.001"
-                          max={loc.stock}
+                          type="text"
+                          inputMode="decimal"
                           value={qtyMap[key] || ''}
                           onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
-                          placeholder="Parcial"
+                          placeholder="Vacío = todo"
                           className="h-9 text-sm"
                         />
                       </TableCell>
@@ -1294,8 +1299,10 @@ function SalidaForm({
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Stock después:</span>
-                      <span className={`font-medium ${confirmState.loc.stock - confirmState.qtyNum === 0 ? 'text-red-600' : ''}`}>
-                        {confirmState.loc.stock - confirmState.qtyNum} {confirmState.loc.un}
+                      <span className={`font-medium ${Math.round((confirmState.loc.stock - confirmState.qtyNum) * 1000) / 1000 === 0 ? 'text-red-600' : ''}`}>
+                        {/* FIX auditoría 2026-10-21 (P3): redondeo a 3 decimales —
+                            0.3 − 0.1 mostraba 0.19999999999999998 UN */}
+                        {Math.round((confirmState.loc.stock - confirmState.qtyNum) * 1000) / 1000} {confirmState.loc.un}
                       </span>
                     </div>
                     {confirmState.loc.fVencimiento && (
@@ -1396,7 +1403,7 @@ function SalidaForm({
               {locations.filter((l) => selected.has(makeLocKey(l))).map((loc) => {
                 const key = makeLocKey(loc)
                 const qtyVal = qtyMap[key] || ''
-                const qtyNum = qtyVal ? parseFloat(qtyVal) : loc.stock
+                const qtyNum = qtyVal ? aNumero(qtyVal) : loc.stock
                 return (
                   <div key={key} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 p-3">
                     <div className="flex items-start gap-3">
@@ -1752,7 +1759,8 @@ function SalidaIncForm({
         const loc = locsSnap.find((l) => makeKey(l) === key)
         if (!loc) { errorDetails.push(`Ubicación ${key} no encontrada`); totalErrors++; continue }
         const qtyVal = qtySnap[key] || ''
-        const qtyNum = qtyVal ? parseFloat(qtyVal.trim()) : loc.stock
+        // FIX auditoría 2026-10-21 (P2): aNumero soporta coma decimal (es-PE)
+        const qtyNum = qtyVal ? aNumero(qtyVal) : loc.stock
         if (isNaN(qtyNum) || qtyNum <= 0) { errorDetails.push(`Cantidad inválida en B${loc.bloque}/T${loc.torre}/P${loc.piso}/Pos${loc.posicion}`); totalErrors++; continue }
         // INC: usar la cantidad tal cual (sin limitar al stock)
         try {

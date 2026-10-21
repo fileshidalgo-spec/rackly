@@ -478,6 +478,17 @@ export function RecepcionItemsEditor({
  *     guía: esos datos viven en la tarjeta del artículo, no en este panel.
  *     Vacío en un campo = esa paleta USA el dato del artículo (así editar el
  *     lote/fechas del artículo sigue moviendo a las paletas sin dato propio).
+ *
+ * Presentación móvil (reporte 2026-10: "se ve todo junto y desordenado" y
+ * problemas de navegabilidad al registrar desde celulares):
+ *   · Cabecera compacta de 1 línea (título + badge de suma/guía) en vez del
+ *     párrafo de ~7 líneas; el aviso de descuadre tiene línea propia.
+ *   · SIN scroll anidado en móvil: el max-h-72 atrapaba el gesto del dedo y
+ *     la página dejaba de desplazarse. En móvil la lista fluye con la página;
+ *     en escritorio se conserva compacta (sm:max-h-80 + scroll propio).
+ *   · Lote/fechas apilados a ancho completo bajo 430px (en 2 columnas se
+ *     recortaba "dd/mm/aaaa") y controles a 36px (h-9) para el pulgar.
+ *   · La lógica de reparto y herencia NO cambió: es solo presentación.
  */
 function PanelPaletas({
   it,
@@ -538,38 +549,72 @@ function PanelPaletas({
   const difieren = suma > 0 && !isNaN(total) && total > 0 && Math.abs(suma - total) > 0.001
 
   return (
-    <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2.5 space-y-2">
-      <div className="flex items-start justify-between gap-2">
-        <p className="flex-1 min-w-[160px] text-[11px] font-semibold text-sky-900 flex items-start gap-1.5 leading-snug">
-          <Package className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-          <span>
-            Paletas ({paletas.length}) — al agregar o quitar se reparte el total en partes
-            iguales. Lote/fechas por paleta: opcional — vacío usa el del artículo (si
-            todas comparten los mismos datos, basta ponerlos en el artículo).
+    <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-2 space-y-2 sm:p-2.5">
+      {/* CABECERA COMPACTA (orden en móvil): el párrafo explicativo de antes
+          ocupaba ~7 líneas en un celular y empujaba las paletas fuera de
+          pantalla ("se ve todo junto y desordenado"). Ahora: título + badge
+          con la suma/total + "Quitar división" a tamaño táctil (h-9 ≈ 36px;
+          el botón de h-6 antes era casi imposible de pulsar con el dedo).
+          flex-wrap: en pantallas muy angostas (360px) el botón salta a una
+          segunda línea en lugar de desbordar y quedar invisible. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <p className="mr-auto flex min-w-0 items-center gap-1.5 text-[11px] font-bold text-sky-900">
+          <Package className="h-3.5 w-3.5 shrink-0" />
+          <span className="shrink-0">Paletas ({paletas.length})</span>
+          <span
+            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
+              difieren ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-700'
+            }`}
+          >
+            Suma {formatearCantidad(suma)}
+            {!isNaN(total) && total > 0 ? ` · guía ${formatearCantidad(total)}` : ''}
           </span>
         </p>
         <Button
           type="button"
           size="sm"
           variant="ghost"
-          className="h-6 shrink-0 px-1.5 text-[10px] text-slate-500 hover:text-rose-600"
+          className="ml-auto h-9 shrink-0 gap-1 px-2 text-[11px] text-slate-500 hover:text-rose-600 sm:h-7 sm:px-1.5 sm:text-[10px]"
           onClick={onQuitarDivision}
+          title="Quita la división: el artículo vuelve a una sola cantidad con su lote/fechas"
         >
           <X className="h-3 w-3" /> Quitar división
         </Button>
       </div>
-      <div className="max-h-72 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5">
+      {/* Ayuda reducida a UNA línea (el detalle completo vive en los
+          title/hover de cada botón, no estorba a la vista). */}
+      <p className="text-[10px] leading-snug text-sky-800/90">
+        Agregar o quitar reparte el total en partes iguales · lote/fechas vacíos usan los del artículo.
+      </p>
+      {/* Aviso de descuadre con LÍNEA PROPIA y visible: antes iba perdido en
+          la esquina inferior derecha, en texto de 10px mezclado con botones. */}
+      {difieren && (
+        <p className="flex items-center gap-1.5 rounded-md bg-amber-100/90 px-2 py-1.5 text-[10px] font-semibold text-amber-800">
+          <TriangleAlert className="h-3 w-3 shrink-0" />
+          La suma de paletas no coincide con el total de la guía — revisa las cantidades.
+        </p>
+      )}
+
+      {/* LISTA DE PALETAS — flujo natural en móvil: el scroll anidado
+          (max-h-72 overflow-y-auto) atrapaba el gesto del dedo y la página
+          dejaba de desplazarse = "problemas de navegabilidad". En móvil la
+          lista crece con la página (un solo scroll, el de la pantalla); en
+          escritorio se mantiene compacta con scroll propio (con el mouse no
+          hay atrape). */}
+      <div className="-mx-0.5 space-y-1.5 px-0.5 sm:max-h-80 sm:overflow-y-auto sm:overscroll-contain">
         {paletas.map((p, pi) => (
-          <div key={pi} className="rounded-md border border-sky-100 bg-white p-1.5 space-y-1.5">
+          <div key={pi} className="space-y-1.5 rounded-md border border-sky-100 bg-white p-2">
+            {/* Fila 1: Nº + cantidad + quitar — controles a 36px en móvil
+                (h-8 = 32px quedaba bajo el mínimo táctil cómodo). */}
             <div className="flex items-center gap-2">
               <span
-                className="text-[10px] font-bold text-slate-400 w-8 shrink-0"
+                className="w-7 shrink-0 text-[10px] font-bold text-slate-400"
                 title={`Paleta ${pi + 1}`}
               >
                 P{pi + 1}
               </span>
               <Input
-                className="h-8 flex-1 min-w-0 text-xs"
+                className="h-9 min-w-0 flex-1 text-xs sm:h-8"
                 inputMode="decimal"
                 value={p.cantidad}
                 onChange={(e) => editarPaleta(pi, { cantidad: e.target.value })}
@@ -580,23 +625,26 @@ function PanelPaletas({
                 type="button"
                 size="icon"
                 variant="ghost"
-                className="h-7 w-7 shrink-0 text-slate-400 hover:text-rose-600"
+                className="h-9 w-9 shrink-0 text-slate-400 hover:text-rose-600 sm:h-8 sm:w-8"
                 onClick={() => quitarPaleta(pi)}
                 title={`Quitar paleta ${pi + 1}`}
               >
-                <Trash2 className="h-3 w-3" />
+                <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </div>
             {/* Datos PROPIOS de esta paleta (solo si difieren): al registrar,
                 esta fila sale con SU lote/fechas y su rótulo se imprime con
-                ellos — sin cambiar código/descripción/cantidad total. */}
-            <div className="grid grid-cols-2 min-[430px]:grid-cols-3 gap-1.5">
-              <div className="col-span-2 min-[430px]:col-span-1 space-y-0.5">
-                <Label className="text-[9px] text-slate-500">
+                ellos — sin cambiar código/descripción/cantidad total.
+                APILADOS a ancho completo en móvil (igual que la tarjeta del
+                artículo): las fechas nativas necesitan ~110px y en 2 columnas
+                se recortaba "dd/mm/aaaa"; pasan a 3 columnas desde 430px. */}
+            <div className="grid grid-cols-1 min-[430px]:grid-cols-3 gap-1.5">
+              <div className="space-y-0.5">
+                <Label className="text-[10px] text-slate-500">
                   Lote propio{it.lote ? ` (= ${it.lote})` : ' (opcional)'}
                 </Label>
                 <Input
-                  className="h-8 text-xs"
+                  className="h-9 text-xs sm:h-8"
                   value={p.lote}
                   onChange={(e) => editarPaleta(pi, { lote: e.target.value })}
                   placeholder={it.lote ? `Usa ${it.lote}` : 'Del artículo'}
@@ -604,9 +652,9 @@ function PanelPaletas({
                 />
               </div>
               <div className="space-y-0.5">
-                <Label className="text-[9px] text-slate-500">F. producción</Label>
+                <Label className="text-[10px] text-slate-500">F. producción</Label>
                 <Input
-                  className="h-8 text-xs"
+                  className="h-9 text-xs sm:h-8"
                   type="date"
                   value={p.fechaProduccion}
                   onChange={(e) => editarPaleta(pi, { fechaProduccion: e.target.value })}
@@ -614,9 +662,9 @@ function PanelPaletas({
                 />
               </div>
               <div className="space-y-0.5">
-                <Label className="text-[9px] text-slate-500">F. vencimiento</Label>
+                <Label className="text-[10px] text-slate-500">F. vencimiento</Label>
                 <Input
-                  className="h-8 text-xs"
+                  className="h-9 text-xs sm:h-8"
                   type="date"
                   value={p.fechaVencimiento}
                   onChange={(e) => editarPaleta(pi, { fechaVencimiento: e.target.value })}
@@ -627,27 +675,31 @@ function PanelPaletas({
           </div>
         ))}
       </div>
-      <div className="flex items-center gap-2 flex-wrap">
+
+      {/* PIE: solo las 3 acciones (la suma vive en el badge de la cabecera y
+          el aviso de descuadre tiene su línea propia). Botones h-8 con texto
+          de 11px para pulsación cómoda en celulares. */}
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           size="sm"
           variant="outline"
-          className="h-7 gap-1 px-2 text-[10px] border-dashed"
+          className="h-8 gap-1 border-dashed px-2.5 text-[11px]"
           disabled={paletas.length >= MAX_PALETAS}
           onClick={agregarPaleta}
           title={paletas.length >= MAX_PALETAS ? `Máximo ${MAX_PALETAS} paletas por artículo` : `Agrega una paleta más (máximo ${MAX_PALETAS})`}
         >
-          <Plus className="h-2.5 w-2.5" /> Agregar paleta
+          <Plus className="h-3 w-3" /> Agregar paleta
         </Button>
         <Button
           type="button"
           size="sm"
           variant="ghost"
-          className="h-7 gap-1 px-2 text-[10px] text-sky-700 hover:bg-sky-100 hover:text-sky-800"
+          className="h-8 gap-1 px-2.5 text-[11px] text-sky-700 hover:bg-sky-100 hover:text-sky-800"
           onClick={repartir}
           title="Divide de nuevo el total del artículo en partes iguales entre todas las paletas (no toca los lote/fechas propios)"
         >
-          <Scale className="h-2.5 w-2.5" /> Repartir en partes iguales
+          <Scale className="h-3 w-3" /> Repartir en partes iguales
         </Button>
         {/* Reset cómodo: si te equivocaste digitando datos propios en las
             paletas, un clic las devuelve a heredar el dato del artículo.
@@ -657,18 +709,13 @@ function PanelPaletas({
             type="button"
             size="sm"
             variant="ghost"
-            className="h-7 gap-1 px-2 text-[10px] text-slate-500 hover:text-rose-600"
+            className="h-8 gap-1 px-2.5 text-[11px] text-slate-500 hover:text-rose-600"
             onClick={usarElDelArticulo}
             title="Borra los datos propios de las paletas: todas vuelven a usar el lote/fechas del artículo"
           >
-            <X className="h-2.5 w-2.5" /> Quitar diferencias
+            <X className="h-3 w-3" /> Quitar diferencias
           </Button>
         )}
-        <p className={`flex-1 min-w-[140px] text-right text-[10px] font-semibold ${difieren ? 'text-amber-700' : 'text-slate-500'}`}>
-          Suma de paletas: {formatearCantidad(suma)}
-          {!isNaN(total) && total > 0 ? ` · Total en la guía: ${formatearCantidad(total)}` : ''}
-          {difieren ? ' — revisa las cantidades' : ''}
-        </p>
       </div>
     </div>
   )

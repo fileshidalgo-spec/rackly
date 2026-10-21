@@ -1,0 +1,596 @@
+'use client'
+
+/**
+ * RACKLY — Atención a Línea · Detalle de una RQ (atender materiales).
+ *
+ * Tabla de materiales con las 3 columnas pedidas por el usuario (2026-10-22),
+ * al lado de CANTIDAD:
+ *   · ATENDIDO   → cantidad ya atendida (acumulada).
+ *   · PENDIENTE  → cantidad − atendido.
+ *   · ATENDER    → digita la cantidad y pulsa "Atender": pide CONFIRMACIÓN
+ *                  (AlertDialog) antes de registrar; la escritura es atómica
+ *                  (RPC rq_atender_item — 2 celulares nunca sobrepasan).
+ *
+ * Además: botón "Ver ubicación del producto" por material (salta a Racks/Piso
+ * con los callbacks del page.tsx) y revierte atenciones equivocadas.
+ * Móvil: tarjetas por material (sin scroll horizontal anidado).
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useAuth } from '@/hooks/useAuth'
+import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
+import {
+  atenderItemRq,
+  revertirItemRq,
+  obtenerRqCompleta,
+  estadoDeItem,
+  pendienteDeItem,
+  type RqAtencion,
+  type RqItem,
+} from '@/lib/rackly/rq-atencion'
+import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
+import { RqUbicacionesDialog } from '@/components/rackly/atencion/RqUbicacionesDialog'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { toast } from 'sonner'
+import {
+  ArrowLeft,
+  Loader2,
+  MapPin,
+  RotateCcw,
+  ClipboardList,
+  CheckCircle2,
+  PackageOpen,
+  Undo2,
+} from 'lucide-react'
+
+const ESTADO_ITEM_CLASE: Record<string, string> = {
+  Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
+  'En proceso': 'bg-sky-50 text-sky-700 border-sky-200',
+  Atendido: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+}
+
+const ESTADO_RQ_CLASE: Record<string, string> = {
+  Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
+  'En proceso': 'bg-sky-50 text-sky-700 border-sky-200',
+  Atendido: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+}
+
+function fmt(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('es-PE', { maximumFractionDigits: 3 })
+}
+
+/** Objetivo abierto en el diálogo de ubicaciones. */
+type UbicacionAbierta = { codigo: string; descripcion: string; unidad: string }
+
+/** Atención pendiente de confirmar (item + cantidad digitada). */
+type ConfirmacionAtender = { item: RqItem; cantidad: number }
+
+/** Reversión pendiente de confirmar. */
+type ConfirmacionRevertir = { item: RqItem; cantidad: number }
+
+export function RqDetalle({
+  rqId,
+  onVolver,
+  onIrARacks,
+  onIrAPiso,
+}: {
+  rqId: string
+  onVolver: () => void
+  onIrARacks: (bloque: string, torre: string, piso: string, posicion: string) => void
+  onIrAPiso: (target: PisoTargetPosicion) => void
+}) {
+  const { perfil } = useAuth()
+  const [rq, setRq] = useState<RqAtencion | null>(null)
+  const [items, setItems] = useState<RqItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [cantidades, setCantidades] = useState<Record<string, string>>({})
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [confirmarAtender, setConfirmarAtender] = useState<ConfirmacionAtender | null>(null)
+  const [confirmarRevertir, setConfirmarRevertir] = useState<ConfirmacionRevertir | null>(null)
+  const [ubicaciones, setUbicaciones] = useState<UbicacionAbierta | null>(null)
+
+  const genRef = useRef(0)
+  const savingRef = useRef(false)
+
+  const cargar = useCallback(async () => {
+    const gen = ++genRef.current
+    try {
+      const { rq: rqNueva, items: itemsNuevos } = await obtenerRqCompleta(rqId)
+      if (gen !== genRef.current) return
+      setRq(rqNueva)
+      setItems(itemsNuevos)
+      setError('')
+      // Precarga la cantidad PENDIENTE como propuesta de atención
+      setCantidades((prev) => {
+        const next = { ...prev }
+        for (const it of itemsNuevos) {
+          if (next[it.id] === undefined) next[it.id] = String(pendienteDeItem(it) || '')
+        }
+        return next
+      })
+    } catch (err: unknown) {
+      if (gen !== genRef.current) return
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      setError(message)
+    } finally {
+      if (gen === genRef.current) setLoading(false)
+    }
+  }, [rqId])
+
+  useEffect(() => {
+    void cargar()
+  }, [cargar])
+
+  /** Realtime + polling: otro usuario atendiendo aparece al instante. */
+  const recargar = useCallback(
+    (motivo: 'evento' | 'poll' | 'visible') => {
+      if (savingRef.current) return
+      // 'poll': refresco silencioso solo si hay cambios visibles no críticos
+      void cargar()
+      void motivo
+    },
+    [cargar]
+  )
+  useRegistrosRealtime('rq_atenciones', recargar)
+
+  function abrirConfirmacion(item: RqItem) {
+    const leida = parseFloat(cantidades[item.id] ?? '')
+    if (!leida || leida <= 0) {
+      toast.error('Digita la cantidad a atender')
+      return
+    }
+    const pendiente = pendienteDeItem(item)
+    if (leida > pendiente) {
+      toast.error(`Excede lo pendiente: quedan ${fmt(pendiente)} ${item.unidad}`.trim())
+      return
+    }
+    setConfirmarAtender({ item, cantidad: leida })
+  }
+
+  async function ejecutarAtender() {
+    const conf = confirmarAtender
+    if (!conf) return
+    setConfirmarAtender(null)
+    setSavingId(conf.item.id)
+    savingRef.current = true
+    try {
+      const actualizado = await atenderItemRq(
+        conf.item.id,
+        conf.cantidad,
+        perfil?.nombre || perfil?.correo || ''
+      )
+      setItems((prev) => prev.map((it) => (it.id === actualizado.id ? actualizado : it)))
+      setCantidades((prev) => ({ ...prev, [actualizado.id]: String(pendienteDeItem(actualizado) || '') }))
+      toast.success(
+        `Atendido: ${fmt(conf.cantidad)} ${conf.item.unidad}`.trim(),
+        {
+          description:
+            pendienteDeItem(actualizado) === 0
+              ? 'Material completo ✓'
+              : `Pendiente: ${fmt(pendienteDeItem(actualizado))} ${conf.item.unidad}`.trim(),
+        }
+      )
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('No se pudo atender', { description: message })
+      void cargar() // re-sincroniza si otro usuario movió la fila
+    } finally {
+      setSavingId(null)
+      savingRef.current = false
+    }
+  }
+
+  async function ejecutarRevertir() {
+    const conf = confirmarRevertir
+    if (!conf) return
+    setConfirmarRevertir(null)
+    setSavingId(conf.item.id)
+    savingRef.current = true
+    try {
+      const actualizado = await revertirItemRq(conf.item.id, conf.cantidad)
+      setItems((prev) => prev.map((it) => (it.id === actualizado.id ? actualizado : it)))
+      setCantidades((prev) => ({ ...prev, [actualizado.id]: String(pendienteDeItem(actualizado) || '') }))
+      toast.success(`Revertido: ${fmt(conf.cantidad)} ${conf.item.unidad}`.trim())
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('No se pudo revertir', { description: message })
+    } finally {
+      setSavingId(null)
+      savingRef.current = false
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16 text-sm text-slate-500 gap-2">
+        <Loader2 className="h-5 w-5 animate-spin" /> Cargando RQ…
+      </div>
+    )
+  }
+
+  if (error || !rq) {
+    return (
+      <div className="space-y-4">
+        <Button variant="outline" size="sm" onClick={onVolver} className="gap-2">
+          <ArrowLeft className="h-4 w-4" /> Volver al listado
+        </Button>
+        <p className="text-sm text-rose-600 bg-rose-50 border border-rose-100 rounded-lg p-3">
+          {error || 'No se encontró la RQ.'}
+        </p>
+      </div>
+    )
+  }
+
+  const atendidos = items.filter((it) => estadoDeItem(it) === 'Atendido').length
+  const cantSolicitada = items.reduce((s, it) => s + it.cantidad, 0)
+  const cantAtendida = items.reduce((s, it) => s + it.cantidadAtendida, 0)
+  const progresoPct = cantSolicitada > 0 ? Math.round((cantAtendida / cantSolicitada) * 100) : 0
+
+  return (
+    <div className="space-y-4">
+      {/* ── Volver ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" onClick={onVolver} className="gap-2">
+          <ArrowLeft className="h-4 w-4" /> Retornar
+        </Button>
+        <span className="text-xs text-slate-400">Vuelve al listado para seguir atendiendo</span>
+      </div>
+
+      {/* ── Encabezado de la RQ ── */}
+      <div className="rounded-xl border border-teal-100 bg-teal-50/40 p-4 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+              <ClipboardList className="h-4 w-4 text-teal-600" />
+              RQ {rq.numeroRq || 'sin número'}
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {rq.productoCodigo ? (
+                <>
+                  <span className="font-mono font-semibold text-indigo-700">{rq.productoCodigo}</span>
+                  {rq.productoDescripcion ? ` · ${rq.productoDescripcion}` : ''}
+                </>
+              ) : (
+                'Sin producto terminado'
+              )}
+            </p>
+          </div>
+          <Badge variant="outline" className={`${ESTADO_RQ_CLASE[rq.estado] ?? ''} shrink-0`}>
+            {rq.estado}
+          </Badge>
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600 min-[430px]:grid-cols-3">
+          {rq.ordenProduccion && <span>OP: <b>{rq.ordenProduccion}</b></span>}
+          <span>Fecha: <b>{rq.fecha}</b></span>
+          <span>Turno: <b>{rq.turno}</b></span>
+          {rq.solicitante && <span className="col-span-2 min-[430px]:col-span-1 truncate" title={rq.solicitante}>Solicitante: <b>{rq.solicitante}</b></span>}
+          <span>Registró: <b>{rq.usuarioNombre || '—'}</b></span>
+        </div>
+        {rq.notas && <p className="text-xs text-slate-500 whitespace-pre-wrap">{rq.notas}</p>}
+
+        {/* Progreso */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500">
+            <span>
+              {atendidos}/{items.length} materiales completos · {fmt(cantAtendida)} de {fmt(cantSolicitada)}
+            </span>
+            <span>{progresoPct}%</span>
+          </div>
+          <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-500 transition-all"
+              style={{ width: `${progresoPct}%` }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Materiales (desktop: tabla con las 3 columnas nuevas) ── */}
+      <div className="hidden md:block rounded-lg border bg-white overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="px-3 py-2 w-[100px]">Código</th>
+              <th className="px-3 py-2">Descripción</th>
+              <th className="px-3 py-2 w-[100px] text-right">Cantidad</th>
+              <th className="px-3 py-2 w-[100px] text-right">Atendido</th>
+              <th className="px-3 py-2 w-[100px] text-right">Pendiente</th>
+              <th className="px-3 py-2 w-[190px]">Atender</th>
+              <th className="px-3 py-2 w-[120px]">Ubicación</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.length === 0 && (
+              <tr>
+                <td colSpan={7} className="text-center text-sm text-slate-400 py-8">
+                  Esta RQ no tiene materiales registrados.
+                </td>
+              </tr>
+            )}
+            {items.map((it) => {
+              const pendiente = pendienteDeItem(it)
+              const estado = estadoDeItem(it)
+              const atendiendo = savingId === it.id
+              return (
+                <tr key={it.id} className={`border-t ${estado === 'Atendido' ? 'bg-emerald-50/40' : ''}`}>
+                  <td className="px-3 py-2">
+                    <span className="font-mono font-semibold text-indigo-700">{it.codigo}</span>
+                  </td>
+                  <td className="px-3 py-2">
+                    <p className="text-slate-700 max-w-[260px] truncate" title={it.descripcion}>
+                      {it.descripcion || '—'}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <Badge variant="outline" className={`${ESTADO_ITEM_CLASE[estado]} text-[10px] px-1.5 py-0`}>
+                        {estado}
+                      </Badge>
+                      {it.usuarioAtencion && (
+                        <span className="text-[10px] text-slate-400 truncate max-w-[140px]" title={it.usuarioAtencion}>
+                          por {it.usuarioAtencion}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-right font-bold text-slate-800">
+                    {fmt(it.cantidad)} <span className="text-[10px] font-normal text-slate-400">{it.unidad}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right font-bold text-emerald-700">
+                    {fmt(it.cantidadAtendida)}
+                  </td>
+                  <td className={`px-3 py-2 text-right font-bold ${pendiente > 0 ? 'text-amber-700' : 'text-slate-300'}`}>
+                    {fmt(pendiente)}
+                  </td>
+                  {/* ATENDER: digita la cantidad y confirma */}
+                  <td className="px-3 py-2">
+                    {pendiente > 0 ? (
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          className="h-8 w-[74px] text-right"
+                          inputMode="decimal"
+                          value={cantidades[it.id] ?? ''}
+                          onChange={(e) =>
+                            setCantidades((prev) => ({ ...prev, [it.id]: e.target.value }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') abrirConfirmacion(it)
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          className="h-8 gap-1 bg-gradient-to-r from-teal-500 to-cyan-600 text-white hover:from-teal-600 hover:to-cyan-700"
+                          disabled={atendiendo}
+                          onClick={() => abrirConfirmacion(it)}
+                        >
+                          {atendiendo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                          Atender
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-emerald-600 flex items-center gap-1">
+                          <PackageOpen className="h-3.5 w-3.5" /> Completo
+                        </span>
+                        {it.cantidadAtendida > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-slate-400 hover:text-amber-600"
+                            title="Revertir atención"
+                            onClick={() => setConfirmarRevertir({ item: it, cantidad: it.cantidadAtendida })}
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 w-full border-violet-200 text-violet-700 hover:bg-violet-50"
+                      onClick={() =>
+                        setUbicaciones({ codigo: it.codigo, descripcion: it.descripcion, unidad: it.unidad })
+                      }
+                    >
+                      <MapPin className="h-3.5 w-3.5" /> Ver ubicación
+                    </Button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Materiales (móvil: tarjetas) ── */}
+      <div className="md:hidden space-y-2.5">
+        {items.length === 0 && (
+          <p className="text-center text-sm text-slate-400 py-8">Sin materiales registrados.</p>
+        )}
+        {items.map((it) => {
+          const pendiente = pendienteDeItem(it)
+          const estado = estadoDeItem(it)
+          const atendiendo = savingId === it.id
+          return (
+            <div
+              key={it.id}
+              className={`rounded-xl border bg-white p-3 space-y-2.5 ${
+                estado === 'Atendido' ? 'border-emerald-200 bg-emerald-50/40' : ''
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-mono font-bold text-indigo-700 text-sm">{it.codigo}</p>
+                  <p className="text-xs text-slate-600 truncate" title={it.descripcion}>
+                    {it.descripcion || '—'}
+                  </p>
+                </div>
+                <Badge variant="outline" className={`${ESTADO_ITEM_CLASE[estado]} text-[10px] shrink-0`}>
+                  {estado}
+                </Badge>
+              </div>
+
+              {/* CANTIDAD · ATENDIDO · PENDIENTE */}
+              <div className="grid grid-cols-3 gap-1.5 text-center">
+                <div className="rounded-lg bg-slate-50 border border-slate-100 py-1.5">
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Cantidad</p>
+                  <p className="text-sm font-extrabold text-slate-800">{fmt(it.cantidad)}</p>
+                </div>
+                <div className="rounded-lg bg-emerald-50/60 border border-emerald-100 py-1.5">
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-emerald-500">Atendido</p>
+                  <p className="text-sm font-extrabold text-emerald-700">{fmt(it.cantidadAtendida)}</p>
+                </div>
+                <div className="rounded-lg bg-amber-50/60 border border-amber-100 py-1.5">
+                  <p className="text-[9px] font-bold uppercase tracking-wide text-amber-500">Pendiente</p>
+                  <p className={`text-sm font-extrabold ${pendiente > 0 ? 'text-amber-700' : 'text-slate-300'}`}>
+                    {fmt(pendiente)}
+                  </p>
+                </div>
+              </div>
+
+              {it.usuarioAtencion && (
+                <p className="text-[10px] text-slate-400">Atendió: {it.usuarioAtencion}</p>
+              )}
+
+              {/* ATENDER: digita + confirma */}
+              {pendiente > 0 ? (
+                <div className="flex items-center gap-2">
+                  <Input
+                    className="h-9 flex-1 text-right"
+                    inputMode="decimal"
+                    placeholder={`Cantidad a atender (máx ${fmt(pendiente)})`}
+                    value={cantidades[it.id] ?? ''}
+                    onChange={(e) => setCantidades((prev) => ({ ...prev, [it.id]: e.target.value }))}
+                  />
+                  <Button
+                    className="h-9 gap-1.5 shrink-0 bg-gradient-to-r from-teal-500 to-cyan-600 text-white hover:from-teal-600 hover:to-cyan-700"
+                    disabled={atendiendo}
+                    onClick={() => abrirConfirmacion(it)}
+                  >
+                    {atendiendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    Atender
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                    <PackageOpen className="h-3.5 w-3.5" /> Material completo
+                  </span>
+                  {it.cantidadAtendida > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1 text-slate-500"
+                      onClick={() => setConfirmarRevertir({ item: it, cantidad: it.cantidadAtendida })}
+                    >
+                      <Undo2 className="h-3.5 w-3.5" /> Revertir
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              {/* VER UBICACIÓN */}
+              <Button
+                variant="outline"
+                className="h-9 gap-1.5 w-full border-violet-200 text-violet-700 hover:bg-violet-50"
+                onClick={() =>
+                  setUbicaciones({ codigo: it.codigo, descripcion: it.descripcion, unidad: it.unidad })
+                }
+              >
+                <MapPin className="h-4 w-4" /> Ver ubicación del producto
+              </Button>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* ── Confirmación de ATENDER (aviso del usuario) ── */}
+      <AlertDialog open={!!confirmarAtender} onOpenChange={(o) => !o && setConfirmarAtender(null)}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Confirmas la atención?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vas a atender <b>{confirmarAtender ? fmt(confirmarAtender.cantidad) : ''}{' '}
+              {confirmarAtender?.item.unidad}</b> del material{' '}
+              <b className="font-mono">{confirmarAtender?.item.codigo}</b>{' '}
+              {confirmarAtender?.item.descripcion ? `(${confirmarAtender.item.descripcion})` : ''}.
+              <br />
+              <br />
+              Pendiente después:{' '}
+              <b>
+                {confirmarAtender
+                  ? fmt(pendienteDeItem(confirmarAtender.item) - confirmarAtender.cantidad)
+                  : ''}{' '}
+                {confirmarAtender?.item.unidad}
+              </b>
+              . Esta acción suma a lo ya atendido y se registra con tu usuario.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={ejecutarAtender}
+              className="bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 text-white"
+            >
+              Sí, atender
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── Confirmación de REVERTIR ── */}
+      <AlertDialog open={!!confirmarRevertir} onOpenChange={(o) => !o && setConfirmarRevertir(null)}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Revertir la atención?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se devolverá <b>{confirmarRevertir ? fmt(confirmarRevertir.cantidad) : ''}</b> a pendiente
+              del material <b className="font-mono">{confirmarRevertir?.item.codigo}</b>. Úsalo solo si
+              la atención se registró por error.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={ejecutarRevertir}
+              className="bg-amber-500 hover:bg-amber-600 text-white"
+            >
+              Revertir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── Ubicaciones del producto ── */}
+      <RqUbicacionesDialog
+        open={!!ubicaciones}
+        onOpenChange={(o) => !o && setUbicaciones(null)}
+        codigo={ubicaciones?.codigo ?? ''}
+        descripcion={ubicaciones?.descripcion ?? ''}
+        unidad={ubicaciones?.unidad ?? ''}
+        onIrARacks={(bloque, torre, piso, posicion) => {
+          setUbicaciones(null)
+          onIrARacks(bloque, torre, piso, posicion)
+        }}
+        onIrAPiso={(target) => {
+          setUbicaciones(null)
+          onIrAPiso(target)
+        }}
+      />
+    </div>
+  )
+}

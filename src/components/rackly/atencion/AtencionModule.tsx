@@ -18,6 +18,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime, type MotivoRealtime } from '@/hooks/useRegistrosRealtime'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
+import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
+import { RqAtencionPanel } from '@/components/rackly/atencion/RqAtencionPanel'
 import {
   listarAtenciones,
   crearAtencion,
@@ -49,6 +52,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -68,9 +72,15 @@ import {
   Inbox,
   Clock,
   CheckCircle2,
+  ClipboardList,
+  Ticket,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
+
+/** Pestaña activa del módulo (sessionStorage): vuelve donde estaba tras los
+ *  saltos a Racks/Piso. */
+const KEY_SECCION = 'atencion.seccion'
 
 const ESTADO_CLASE: Record<string, string> = {
   Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -85,7 +95,15 @@ function hoyISO(): string {
   return `${d.getFullYear()}-${mes}-${dia}`
 }
 
-export function AtencionModule() {
+export function AtencionModule({
+  onIrARacks,
+  onIrAPiso,
+}: {
+  /** Salto directo a una posición de Racks (Ocupación, detalle abierto). */
+  onIrARacks?: (bloque: string, torre: string, piso: string, posicion: string) => void
+  /** Salto directo a una posición de Piso (Sectores, detalle abierto). */
+  onIrAPiso?: (target: PisoTargetPosicion) => void
+} = {}) {
   const { perfil } = useAuth()
   const SUPERVISORES_SET = new Set<string>(ROLES_SUPERVISORES)
   const puedeEliminar =
@@ -94,6 +112,12 @@ export function AtencionModule() {
     (reg: RegistroAtencion) => puedeEliminar || reg.usuarioId === perfil?.id,
     [puedeEliminar, perfil?.id]
   )
+
+  // ── Pestañas del módulo: RQ de Atención a Línea (nuevo, por defecto) / Tickets ──
+  const [seccion, setSeccion] = useState<string>(() => loadTabState<string>(KEY_SECCION, 'rq'))
+  useEffect(() => {
+    saveTabState(KEY_SECCION, seccion)
+  }, [seccion])
 
   const [filas, setFilas] = useState<RegistroAtencion[]>([])
   const [total, setTotal] = useState(0)
@@ -283,7 +307,39 @@ export function AtencionModule() {
   const hayMas = filas.length < total
 
   return (
-    <div className="space-y-5">
+    <Tabs value={seccion} onValueChange={setSeccion} className="w-full">
+      <TabsList className="flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
+        <TabsTrigger
+          value="rq"
+          className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-teal-200"
+        >
+          <span className="w-5 h-5 rounded-md bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center shadow-sm">
+            <ClipboardList className="h-3 w-3 text-white" />
+          </span>
+          Atención a Línea (RQ)
+        </TabsTrigger>
+        <TabsTrigger
+          value="tickets"
+          className="gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all data-[state=active]:shadow-md data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:border data-[state=active]:border-teal-200"
+        >
+          <span className="w-5 h-5 rounded-md bg-gradient-to-br from-slate-400 to-slate-600 flex items-center justify-center shadow-sm">
+            <Ticket className="h-3 w-3 text-white" />
+          </span>
+          Tickets de soporte
+        </TabsTrigger>
+      </TabsList>
+
+      {/* ═══ ATENCIÓN A LÍNEA (RQ) ═══ */}
+      <TabsContent value="rq" className="mt-4">
+        <RqAtencionPanel
+          onIrARacks={onIrARacks ?? (() => {})}
+          onIrAPiso={onIrAPiso ?? (() => {})}
+        />
+      </TabsContent>
+
+      {/* ═══ TICKETS DE SOPORTE (flujo original, intacto) ═══ */}
+      <TabsContent value="tickets" className="mt-4">
+        <div className="space-y-5">
       {/* ── Resumen rápido ── */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <div className="rounded-xl border border-amber-100 bg-amber-50/60 p-3">
@@ -619,6 +675,8 @@ export function AtencionModule() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+        </div>
+      </TabsContent>
+    </Tabs>
   )
 }

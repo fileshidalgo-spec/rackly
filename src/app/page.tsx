@@ -118,7 +118,21 @@ function RacklyApp() {
   }
 
   function volverDeUbicacion() {
+    // Salto desde Atención (RQ): el retorno es al MÓDULO Atención, no a una
+    // pestaña de Racks (sentinel '__atencion__' en lugar de una tab real).
+    if (ubicacionOrigen?.tab === '__atencion__') {
+      setView('atencion')
+      return
+    }
     setRacksTab(ubicacionOrigen?.tab ?? 'stock')
+  }
+
+  /** "Ver ubicación del producto" desde Atención a Línea (RQ). */
+  function gotoUbicacionDesdeAtencion(bloque: string, torre: string, piso: string, posicion: string) {
+    setUbicacionOrigen({ tab: '__atencion__', label: 'Atención (RQ)' })
+    setTargetUbicacion({ bloque, torre, piso, posicion })
+    setRacksTab('ocupacion')
+    setView('racks')
   }
 
   // ── Módulo Piso: tabs controladas + deep-link Stock/FEFO/INC → Sectores ──
@@ -136,7 +150,20 @@ function RacklyApp() {
   }
 
   function volverAPisoStock() {
+    // Salto desde Atención (RQ): regresa al MÓDULO Atención
+    if (pisoOrigen?.tab === '__atencion__') {
+      setView('atencion')
+      return
+    }
     setPisoTab(pisoOrigen?.tab ?? 'stock')
+  }
+
+  /** "Ver ubicación del producto" desde Atención a Línea (RQ) → Piso. */
+  function gotoPisoPosicionDesdeAtencion(target: PisoTargetPosicion) {
+    setPisoOrigen({ tab: '__atencion__', label: 'Atención (RQ)' })
+    setPisoTarget(target)
+    setPisoTab('sectores')
+    setView('piso')
   }
 
   useMovimientosRealtime(setMovs)
@@ -317,13 +344,18 @@ function RacklyApp() {
                 <div>
                   <CardTitle className="text-lg">Módulo Atención</CardTitle>
                   <CardDescription>
-                    Tickets de atención y soporte interno con seguimiento de estados. Funciona de
-                    forma independiente al kardex.
+                    Atención a Línea: registra la RQ con una foto, atiende sus materiales y salta a
+                    Racks/Piso para dar salida. También tickets de soporte interno.
                   </CardDescription>
                 </div>
               </div>
             </CardHeader>
-            <CardContent><AtencionModule /></CardContent>
+            <CardContent>
+              <AtencionModule
+                onIrARacks={gotoUbicacionDesdeAtencion}
+                onIrAPiso={gotoPisoPosicionDesdeAtencion}
+              />
+            </CardContent>
           </Card>
         )}
 

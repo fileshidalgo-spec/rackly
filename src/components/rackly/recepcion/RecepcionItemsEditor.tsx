@@ -44,6 +44,15 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { requiereProveedor } from '@/lib/utils'
+import { PROVEEDORES_FILM } from '@/lib/rackly/constants'
+import {
   Plus,
   Trash2,
   Check,
@@ -66,6 +75,11 @@ export type ItemRecepcion = {
   lote: string
   fechaProduccion: string
   fechaVencimiento: string
+  /** Proveedor del ARTÍCULO (film: MISMA lista que Racks — INCOMIN, DAMAR,
+   *  …). Exigido cuando la descripción es lámina/stretch (requiereProveedor);
+   *  '' cuando el producto no lo requiere. Las paletas pueden traer uno
+   *  distinto (PaletaDividir.proveedor). */
+  proveedor: string
   enCatalogo: boolean
   /** El código se recuperó por coincidencia de descripción del OCR. */
   matchPorDescripcion?: boolean
@@ -93,6 +107,7 @@ export function itemVacio(): ItemRecepcion {
     lote: '',
     fechaProduccion: '',
     fechaVencimiento: '',
+    proveedor: '',
     enCatalogo: false,
     descripcionManual: false,
     unidadManual: false,
@@ -118,6 +133,20 @@ export function itemsValidos(items: ItemRecepcion[]): ItemRecepcion[] {
 }
 
 const MAX_SUGERENCIAS = 8
+
+/**
+ * Opciones del Select de proveedor: la MISMA lista que Racks (PROVEEDORES_FILM)
+ * + el valor actual si es legacy (guías viejas guardaban la empresa en esta
+ * columna) — así re-guardar una guía antigua NO obliga a re-elegir lo que ya
+ * estaba registrado.
+ */
+function opcionesProveedor(actual: string): string[] {
+  const valor = actual.trim()
+  if (!valor) return [...PROVEEDORES_FILM]
+  return (PROVEEDORES_FILM as readonly string[]).includes(valor)
+    ? [...PROVEEDORES_FILM]
+    : [valor, ...PROVEEDORES_FILM]
+}
 
 export function RecepcionItemsEditor({
   items,
@@ -194,6 +223,10 @@ export function RecepcionItemsEditor({
       enCatalogo: Boolean(cat),
       matchPorDescripcion: false,
       revision: false,
+      // El proveedor pertenece al ARTÍCULO: si el nuevo código/descripción
+      // ya no es lámina/stretch, el elegido antes sobra (evita arrastrar un
+      // proveedor de film a un producto que no lo es).
+      proveedor: requiereProveedor(descripcion) ? it.proveedor : '',
     })
     // Reabrir menú con las sugerencias del nuevo texto
     if (valor.trim()) {
@@ -217,6 +250,7 @@ export function RecepcionItemsEditor({
       enCatalogo: true,
       matchPorDescripcion: false,
       revision: false,
+      proveedor: requiereProveedor(cat.descripcion) ? items[idx].proveedor : '',
     })
     setMenuIdx(null)
   }
@@ -405,6 +439,36 @@ export function RecepcionItemsEditor({
                   />
                 </div>
               </div>
+              {/* PROVEEDOR DEL ARTÍCULO — zona de códigos (2026-10-22): el
+                  MISMO criterio que Racks — los films (lámina/stretch) exigen
+                  elegir de la lista. La empresa que envía la guía vive en el
+                  encabezado ("Empresa de Origen"); aquí se registra el
+                  proveedor REAL del producto (una guía de una empresa trae
+                  multi-productos de distintos proveedores). */}
+              {requiereProveedor(it.descripcion) && (
+                <div className="flex items-end gap-2 pl-8">
+                  <div className="flex-1 min-w-[180px] space-y-1">
+                    <Label className="text-[10px] text-slate-500">
+                      Proveedor <span className="text-red-500">*</span>
+                    </Label>
+                    <Select
+                      value={it.proveedor}
+                      onValueChange={(v) => actualizar(idx, { proveedor: v })}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Selecciona proveedor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {opcionesProveedor(it.proveedor).map((p) => (
+                          <SelectItem key={p} value={p}>
+                            {p}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
               {/* En móvil las fechas nativas necesitan ~110px: en 3 columnas
                   quedaban a 69px y el valor elegido se veía recortado. */}
               <div className="grid grid-cols-1 min-[430px]:grid-cols-3 gap-2 pl-8">
@@ -539,11 +603,22 @@ function PanelPaletas({
    *  artículo (el "reset" cómodo después de corregir a mano). */
   function usarElDelArticulo() {
     onPaletas(
-      paletas.map((p) => ({ ...p, lote: '', fechaProduccion: '', fechaVencimiento: '' }))
+      paletas.map((p) => ({
+        ...p,
+        lote: '',
+        fechaProduccion: '',
+        fechaVencimiento: '',
+        proveedor: '',
+      }))
     )
   }
 
-  const conDatosPropios = paletas.some((p) => p.lote || p.fechaProduccion || p.fechaVencimiento)
+  const conDatosPropios = paletas.some(
+    (p) => p.lote || p.fechaProduccion || p.fechaVencimiento || p.proveedor
+  )
+  /** El artículo es film → cada paleta puede traer SU proveedor distinto
+   *  (pedido 2026-10-22: dividir y seleccionar otro proveedor por paleta). */
+  const conProveedor = requiereProveedor(it.descripcion)
   const suma = sumaPaletas(paletas)
   const total = aNumero(it.cantidad)
   const difieren = suma > 0 && !isNaN(total) && total > 0 && Math.abs(suma - total) > 0.001
@@ -584,7 +659,7 @@ function PanelPaletas({
       {/* Ayuda reducida a UNA línea (el detalle completo vive en los
           title/hover de cada botón, no estorba a la vista). */}
       <p className="text-[10px] leading-snug text-sky-800/90">
-        Agregar o quitar reparte el total en partes iguales · lote/fechas vacíos usan los del artículo.
+        Agregar o quitar reparte el total en partes iguales · lote/fechas/proveedor vacíos usan los del artículo.
       </p>
       {/* Aviso de descuadre con LÍNEA PROPIA y visible: antes iba perdido en
           la esquina inferior derecha, en texto de 10px mezclado con botones. */}
@@ -671,6 +746,33 @@ function PanelPaletas({
                   aria-label={`Fecha de vencimiento de la paleta ${pi + 1}`}
                 />
               </div>
+              {/* Proveedor PROPIO de la paleta (solo artículos film): una
+                  paleta puede venir de OTRO proveedor — vacío = usa el del
+                  artículo (misma herencia que lote/fechas). */}
+              {conProveedor && (
+                <div className="space-y-0.5">
+                  <Label className="text-[10px] text-slate-500">
+                    Proveedor propio{it.proveedor ? ` (= ${it.proveedor})` : ' (opcional)'}
+                  </Label>
+                  <Select
+                    value={p.proveedor}
+                    onValueChange={(v) => editarPaleta(pi, { proveedor: v })}
+                  >
+                    <SelectTrigger className="h-9 text-xs sm:h-8">
+                      <SelectValue
+                        placeholder={it.proveedor ? `Usa ${it.proveedor}` : 'Del artículo'}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {opcionesProveedor(p.proveedor || it.proveedor).map((pr) => (
+                        <SelectItem key={pr} value={pr}>
+                          {pr}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           </div>
         ))}

@@ -380,7 +380,7 @@ export function TransitoModule() {
             <Input
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar por proveedor, código, descripción o Nº de documento…"
+              placeholder="Buscar por empresa, proveedor, código, descripción o Nº de documento…"
               className="pl-9"
             />
           </div>
@@ -534,7 +534,9 @@ function TarjetaGuia({
             <span className="inline-flex items-center gap-1">
               <CalendarDays className="h-3 w-3" /> {formatearFecha(guia.fecha)}
             </span>
-            <span className="truncate max-w-[220px]">{guia.proveedor || 'Sin proveedor'}</span>
+            <span className="truncate max-w-[220px]" title="Empresa que nos envía">
+              {guia.empresaOrigen || guia.proveedor || 'Sin empresa'}
+            </span>
             {guia.placa && (
               <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
                 {guia.placa}

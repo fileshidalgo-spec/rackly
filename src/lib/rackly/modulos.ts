@@ -49,6 +49,11 @@ export type RegistroRecepcion = {
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
+  /** Empresa que envía (nivel documento, ej. AJEPER S. A. — 2026-10-22).
+   *  Respaldo: filas escritas sin la columna caen al proveedor legacy. */
+  empresaOrigen: string
+  /** Proveedor del ARTÍCULO (film por fila). En filas legacy trae la empresa
+   *  que envía — así se registraban antes de la separación. */
   proveedor: string
   codigo: string
   descripcion: string
@@ -91,6 +96,9 @@ export type NuevoRecepcion = {
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
+  /** Empresa que envía la guía (encabezado del documento). */
+  empresaOrigen?: string
+  /** Proveedor del ARTÍCULO (film por fila; '' si no aplica). */
   proveedor: string
   codigo: string
   descripcion: string
@@ -142,6 +150,10 @@ function contarEnviosTransito(raw: unknown): number {
 }
 
 function mapRecepcion(r: Record<string, unknown>): RegistroRecepcion {
+  // empresa_origen NULL = fila escrita por un bundle viejo (deploy gap):
+  // el proveedor legacy ES la empresa que envía → respaldo exacto. '' = la
+  // dejaron en blanco a propósito (no cae al proveedor del artículo).
+  const empresaRaw = (r.empresa_origen as string | null) ?? null
   return {
     id: r.id as string,
     createdAt: str(r.created_at),
@@ -149,6 +161,7 @@ function mapRecepcion(r: Record<string, unknown>): RegistroRecepcion {
     fecha: str(r.fecha),
     tipoDocumento: str(r.tipo_documento),
     numeroDocumento: str(r.numero_documento),
+    empresaOrigen: empresaRaw !== null ? empresaRaw : str(r.proveedor),
     proveedor: str(r.proveedor),
     codigo: str(r.codigo),
     descripcion: str(r.descripcion),
@@ -213,7 +226,9 @@ export async function listarRecepciones(
   const b = terminoBusquedaSeguro(busqueda)
   if (b) {
     const like = `%${b}%`
-    q = q.or(`proveedor.ilike.${like},codigo.ilike.${like},numero_documento.ilike.${like},descripcion.ilike.${like}`)
+    // empresa_origen (empresa que envía) + proveedor (proveedor del artículo,
+    // 2026-10-22): buscar por cualquiera de los dos.
+    q = q.or(`empresa_origen.ilike.${like},proveedor.ilike.${like},codigo.ilike.${like},numero_documento.ilike.${like},descripcion.ilike.${like}`)
   }
   q = q.range(offset, offset + limit - 1)
   const { data, error, count } = await q
@@ -297,6 +312,7 @@ export async function crearRecepciones(
     fecha: datos.fecha,
     tipo_documento: datos.tipoDocumento,
     numero_documento: datos.numeroDocumento.trim(),
+    empresa_origen: (datos.empresaOrigen ?? '').trim(),
     proveedor: datos.proveedor.trim(),
     codigo: datos.codigo.trim().toUpperCase(),
     descripcion: datos.descripcion.trim(),
@@ -574,6 +590,8 @@ export type FilaEdicionGuia = {
   lote: string
   fechaProduccion: string
   fechaVencimiento: string
+  /** Proveedor del ARTÍCULO de esta fila ('' si no aplica). */
+  proveedor: string
   /** Observaciones del usuario + marca "Paleta i/N" si la fila es una paleta. */
   observaciones: string
   filaId?: string | null
@@ -584,6 +602,10 @@ export type EncabezadoEdicionGuia = {
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
+  /** Empresa que envía (nivel documento). */
+  empresaOrigen: string
+  /** LEGADO: se mantiene escribiendo el encabezado en `proveedor` de filas
+   *  cuyo artículo no trae proveedor propio (compat filas legacy). */
   proveedor: string
   placa: string
   /** Estado del documento: las filas nuevas lo heredan. */
@@ -654,7 +676,10 @@ export async function guardarEdicionGuia(
     fecha: encabezado.fecha,
     tipo_documento: encabezado.tipoDocumento,
     numero_documento: encabezado.numeroDocumento.trim(),
-    proveedor: encabezado.proveedor.trim(),
+    empresa_origen: encabezado.empresaOrigen.trim(),
+    // Proveedor del ARTÍCULO por fila; una fila sin proveedor propio hereda
+    // el del encabezado (LEGADO: guía vieja donde el campo era la empresa).
+    proveedor: (f.proveedor || encabezado.proveedor).trim(),
     placa: encabezado.placa.trim().toUpperCase(),
     codigo: f.codigo.trim().toUpperCase(),
     descripcion: f.descripcion.trim(),

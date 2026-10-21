@@ -15,19 +15,24 @@
  */
 
 import { aNumero } from '@/lib/rackly/formato'
+import { requiereProveedor } from '@/lib/utils'
 
 /**
  * Una PALETA del editor de división: SU cantidad y OPCIONALMENTE sus datos
- * propios de lote/fechas (pedido del usuario: poder corregir el
+ * propios de lote/fechas/proveedor (pedido del usuario: poder corregir el
  * vencimiento/producción/lote de UNA paleta específica — o aplicar el mismo
  * a todas — sin cambiar código, descripción ni la cantidad total que ya
- * jaló la guía). Un campo vacío = esa paleta USA el dato del artículo.
+ * jaló la guía; y 2026-10-22: elegir OTRO proveedor en UNA paleta — una
+ * guía de una empresa puede traer paletas de proveedores distintos).
+ * Un campo vacío = esa paleta USA el dato del artículo.
  */
 export type PaletaDividir = {
   cantidad: string
   lote: string
   fechaProduccion: string
   fechaVencimiento: string
+  /** Proveedor PROPIO de la paleta ('' = usa el del artículo). */
+  proveedor: string
   /**
    * Id de la fila YA registrada de la que nació esta paleta (solo edición
    * de guía: `filasAItems` lo adjunta). undefined/null = paleta NUEVA →
@@ -36,9 +41,16 @@ export type PaletaDividir = {
   filaId?: string | null
 }
 
-/** Paleta vacía (hereda lote/fechas del artículo; sin cantidad; NUEVA). */
+/** Paleta vacía (hereda lote/fechas/proveedor del artículo; sin cantidad; NUEVA). */
 export function paletaVacia(): PaletaDividir {
-  return { cantidad: '', lote: '', fechaProduccion: '', fechaVencimiento: '', filaId: null }
+  return {
+    cantidad: '',
+    lote: '',
+    fechaProduccion: '',
+    fechaVencimiento: '',
+    proveedor: '',
+    filaId: null,
+  }
 }
 
 /**
@@ -52,6 +64,7 @@ export function aPaleta(valor: string | PaletaDividir): PaletaDividir {
     lote: valor.lote ?? '',
     fechaProduccion: valor.fechaProduccion ?? '',
     fechaVencimiento: valor.fechaVencimiento ?? '',
+    proveedor: valor.proveedor ?? '',
     // Identidad de edición: PRESERVAR (agregar/quitar/repartir paletas no
     // debe perder de qué fila de la BD nació cada paleta).
     filaId: valor.filaId ?? null,
@@ -72,6 +85,9 @@ export type ItemConPaletas = {
   lote: string
   fechaProduccion: string
   fechaVencimiento: string
+  /** Proveedor del ARTÍCULO (film: INCOMIN/DAMAR/… — igual que Racks).
+   *  '' cuando el producto no lo requiere (no-lámina/no-stretch). */
+  proveedor?: string
   paletas?: PaletaDividir[]
   /**
    * Id de la fila de la BD de la que nació este artículo (solo edición de
@@ -91,6 +107,9 @@ export type FilaRecepcion = {
   lote: string
   fechaProduccion: string
   fechaVencimiento: string
+  /** Proveedor del ARTÍCULO de esta fila (o el de SU paleta si trajo uno
+   *  propio). '' cuando el producto no lo requiere. */
+  proveedor: string
   /** "Paleta i/N" cuando la fila viene de un artículo dividido. */
   paleta: string
   /** Id de la fila ya registrada que esta fila ACTUALIZA (edición; null = nueva). */
@@ -114,9 +133,10 @@ export function sumaPaletas(paletas: (string | PaletaDividir)[] | undefined): nu
 
 /**
  * Junta las cantidades del REPARTO con las paletas previas: conserva el
- * lote/fechas PROPIO de cada posición existente (agregar/quitar NO borra lo
- * digitado por paleta) y las paletas nuevas nacen heredando del artículo
- * (override ''). Si no llega reparto (null) conserva las cantidades tal cual.
+ * lote/fechas/proveedor PROPIO de cada posición existente (agregar/quitar NO
+ * borra lo digitado por paleta) y las paletas nuevas nacen heredando del
+ * artículo (override ''). Si no llega reparto (null) conserva las cantidades
+ * tal cual.
  */
 export function combinarPaletas(
   prev: (string | PaletaDividir)[],
@@ -129,6 +149,7 @@ export function combinarPaletas(
     lote: prevN[i]?.lote ?? '',
     fechaProduccion: prevN[i]?.fechaProduccion ?? '',
     fechaVencimiento: prevN[i]?.fechaVencimiento ?? '',
+    proveedor: prevN[i]?.proveedor ?? '',
     // Identidad de edición: cada posición conserva la fila de la BD de la
     // que nació (agregar/quitar/repartir NO re-asigna identidades: la
     // paleta nueva nace sin id → INSERT; la quitada desaparece → DELETE).
@@ -159,6 +180,7 @@ export function expandirEnFilas(items: ItemConPaletas[]): FilaRecepcion[] {
       lote: (it.lote ?? '').trim(),
       fechaProduccion: (it.fechaProduccion ?? '').trim(),
       fechaVencimiento: (it.fechaVencimiento ?? '').trim(),
+      proveedor: (it.proveedor ?? '').trim(),
     }
     // Datos propios POR PALETA: un campo lleno gana; vacío = hereda el del
     // artículo (así editar el lote/fechas del artículo sigue moviendo a las
@@ -180,6 +202,7 @@ export function expandirEnFilas(items: ItemConPaletas[]): FilaRecepcion[] {
           lote: (p.lote || base.lote).trim(),
           fechaProduccion: (p.fechaProduccion || base.fechaProduccion).trim(),
           fechaVencimiento: (p.fechaVencimiento || base.fechaVencimiento).trim(),
+          proveedor: (p.proveedor || base.proveedor).trim(),
           paleta: `Paleta ${i + 1}/${n}`,
           filaId: p.filaId ?? null,
         })
@@ -203,6 +226,9 @@ export function expandirEnFilas(items: ItemConPaletas[]): FilaRecepcion[] {
         fechaVencimiento: unica
           ? ((unica.fechaVencimiento || base.fechaVencimiento) as string).trim()
           : base.fechaVencimiento,
+        proveedor: unica
+          ? ((unica.proveedor || base.proveedor) as string).trim()
+          : base.proveedor,
         paleta: '',
         filaId: unica ? (unica.filaId ?? null) : ((it.filaId ?? null) as string | null | undefined),
       })
@@ -280,6 +306,20 @@ export function avisosDePaletas(items: ItemConPaletas[]): string[] {
   return avisos
 }
 
+/**
+ * Artículos que EXIGEN proveedor (lámina/stretch — MISMA regla que Racks:
+ * requiereProveedor(descripcion)) y no lo traen: devuelve identificadores
+ * legibles para BLOQUEAR el registro (en Racks el ingreso de film sin
+ * proveedor tampoco pasa). Las paletas NO rescantan: el proveedor vive en
+ * el artículo; una paleta puede traer uno distinto (override), pero nunca
+ * suplir al del artículo.
+ */
+export function faltanProveedor(items: ItemConPaletas[]): string[] {
+  return items
+    .filter((it) => requiereProveedor(it.descripcion ?? '') && !(it.proveedor ?? '').trim())
+    .map((it) => it.codigo?.trim() || it.descripcion?.trim() || 'artículo sin código')
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // EDICIÓN DE UNA GUÍA REGISTRADA: re-ensamblar filas → items
 // ═══════════════════════════════════════════════════════════════════
@@ -328,6 +368,7 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
         lote: f.lote !== prev.lote ? f.lote : '',
         fechaProduccion: f.fechaProduccion !== prev.fechaProduccion ? f.fechaProduccion : '',
         fechaVencimiento: f.fechaVencimiento !== prev.fechaVencimiento ? f.fechaVencimiento : '',
+        proveedor: f.proveedor !== prev.proveedor ? f.proveedor : '',
         filaId: f.id,
       })
       continue
@@ -344,6 +385,7 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
         lote: f.lote,
         fechaProduccion: f.fechaProduccion,
         fechaVencimiento: f.fechaVencimiento,
+        proveedor: f.proveedor,
         paletas: [{ ...paletaVacia(), cantidad: formatearCantidad(f.cantidad), filaId: f.id }],
         filaId: f.id,
       })
@@ -356,6 +398,7 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
         lote: f.lote,
         fechaProduccion: f.fechaProduccion,
         fechaVencimiento: f.fechaVencimiento,
+        proveedor: f.proveedor,
         filaId: f.id,
       })
     }
@@ -442,6 +485,11 @@ export type FilaRegistrada = {
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
+  /** Empresa que envía (nivel documento). SIEMPRE presente en datos que
+   *  vienen de la BD (backfill + respaldo del proveedor legacy en mapRecepcion). */
+  empresaOrigen: string
+  /** Proveedor del ARTÍCULO (film por fila; en filas legacy trae la empresa
+   *  que envía — así se registraban antes de la separación 2026-10-22). */
   proveedor: string
   placa: string
   fotoUrl: string
@@ -479,6 +527,10 @@ export type GuiaAgrupada = {
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
+  /** Empresa que envía (nueva semántica 2026-10-22; '' = fila legacy sin dato). */
+  empresaOrigen: string
+  /** Proveedor (LEGADO: empresa que envía; nuevo: film del 1er artículo —
+   *  se mantiene por compatibilidad de tipos; la UI muestra empresaOrigen). */
   proveedor: string
   placa: string
   fotoUrl: string
@@ -540,6 +592,7 @@ export function agruparGuias(filas: FilaRegistrada[]): GuiaAgrupada[] {
         fecha: f.fecha,
         tipoDocumento: f.tipoDocumento,
         numeroDocumento: f.numeroDocumento,
+        empresaOrigen: f.empresaOrigen,
         proveedor: f.proveedor,
         placa: f.placa,
         fotoUrl: f.fotoUrl,
@@ -560,6 +613,7 @@ export function agruparGuias(filas: FilaRegistrada[]): GuiaAgrupada[] {
     if (!g.placa && f.placa) g.placa = f.placa
     if (!g.fotoUrl && f.fotoUrl) g.fotoUrl = f.fotoUrl
     if (!g.usuarioNombre && f.usuarioNombre) g.usuarioNombre = f.usuarioNombre
+    if (!g.empresaOrigen && f.empresaOrigen) g.empresaOrigen = f.empresaOrigen
   }
   return orden.map((c) => porClave.get(c) as GuiaAgrupada)
 }

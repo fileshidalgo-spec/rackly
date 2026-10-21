@@ -13,7 +13,7 @@
  *      confirmación (originalRef conserva la fuente original).
  *   2. Se reduce la imagen (2800px, tablas largas con letra pequeña),
  *      corre OCR (tesseract.js, idioma spa) y el parser `extraerDatosGuia`
- *      recopila: nº guía, placa, proveedor y TODOS los códigos de artículo
+ *      recopila: nº guía, placa, empresa de origen y TODOS los códigos de artículo
  *      detectados (cruzados contra el catálogo → descripción y unidad
  *      automáticas). Si no encontró ninguno, activa rescate fuzzy.
  *   3. Formulario de CONFIRMACIÓN con la LISTA COMPLETA de artículos
@@ -21,7 +21,7 @@
  *      artículo, lote y fechas manuales (con atajo "aplicar a todos").
  *   4. Al registrar: foto liviana → Storage (bucket recepcion-guias) y
  *      UNA FILA POR ARTÍCULO en recepcion_registros compartiendo el
- *      encabezado (guía, placa, proveedor, foto).
+ *      encabezado (guía, placa, empresa de origen, foto).
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -41,7 +41,7 @@ import {
   reducirImagen,
   type DatosGuia,
 } from '@/lib/rackly/guia-ocr'
-import { avisosDePaletas, expandirEnFilas } from '@/lib/rackly/recepcion-filas'
+import { avisosDePaletas, expandirEnFilas, faltanProveedor } from '@/lib/rackly/recepcion-filas'
 import { crearRecepciones, marcarGuiaRecepcionada, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
 import { useLoteUuidSync } from '@/lib/rackly/recepcion-idempotencia'
 import {
@@ -98,7 +98,9 @@ type Paso = 'elegir' | 'recortar' | 'procesando' | 'confirmar'
 type FormFoto = {
   numeroGuia: string
   placa: string
-  proveedor: string
+  /** Empresa que ENVÍA la guía (el OCR la lee del encabezado de la foto).
+   *  El PROVEEDOR del producto se elige por artículo (ItemRecepcion). */
+  empresaOrigen: string
   fecha: string
   tipoDocumento: string
   observaciones: string
@@ -111,7 +113,7 @@ function formVacio(): FormFoto {
   return {
     numeroGuia: '',
     placa: '',
-    proveedor: '',
+    empresaOrigen: '',
     fecha: hoyISO(),
     tipoDocumento: 'Guia',
     observaciones: '',
@@ -129,6 +131,7 @@ function itemDesdeOcr(item: DatosGuia['items'][number]): ItemRecepcion {
     lote: '',
     fechaProduccion: '',
     fechaVencimiento: '',
+    proveedor: '',
     enCatalogo: item.enCatalogo,
     matchPorDescripcion: Boolean(item.matchPorDescripcion),
     revision: Boolean(item.revision),
@@ -153,7 +156,8 @@ export type GuiaRegistradaInfo = {
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
-  proveedor: string
+  /** Empresa que envía la guía (encabezado del documento). */
+  empresaOrigen: string
   placa: string
   articulos: number
   filas: number
@@ -230,7 +234,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
       ...formVacio(),
       numeroGuia: datos.numeroGuia,
       placa: datos.placa,
-      proveedor: datos.proveedor,
+      // El OCR lee del encabezado de la guía física a la EMPRESA que envía
+      // (antes se etiquetaba "proveedor" — separación 2026-10-22).
+      empresaOrigen: datos.proveedor,
       items: itemsOcr.length > 0 ? itemsOcr : [itemVacio()],
     })
 
@@ -469,6 +475,15 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
       toast.error('Sesión no disponible')
       return
     }
+    // PROVEEDOR OBLIGATORIO (igual que Racks y que la vía manual): los films
+    // (lámina/stretch) exigen su proveedor por artículo.
+    const sinProveedor = faltanProveedor(validos)
+    if (sinProveedor.length > 0) {
+      toast.error('Selecciona el proveedor del artículo', {
+        description: `Falta el proveedor (lámina/stretch) de: ${sinProveedor.join(', ')}`,
+      })
+      return
+    }
     setSaving(true)
     try {
       let fotoUrl = ''
@@ -504,7 +519,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
           fecha,
           tipoDocumento: form.tipoDocumento,
           numeroDocumento: form.numeroGuia,
-          proveedor: form.proveedor,
+          empresaOrigen: form.empresaOrigen,
+          proveedor: f.proveedor,
           codigo: f.codigo,
           descripcion: f.descripcion,
           cantidad: f.cantidadNum,
@@ -525,7 +541,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
         fecha,
         tipoDocumento: form.tipoDocumento,
         numeroDocumento: form.numeroGuia,
-        proveedor: form.proveedor,
+        empresaOrigen: form.empresaOrigen,
         placa: form.placa,
         articulos: validos.length,
         filas: filas.length,
@@ -548,7 +564,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
           encabezado: {
             fecha,
             numeroDocumento: form.numeroGuia,
-            proveedor: form.proveedor,
+            empresaOrigen: form.empresaOrigen,
             placa: form.placa,
             registradoPor: perfil.nombre,
           },
@@ -557,7 +573,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
             tipoDocumento: form.tipoDocumento,
             numeroDocumento: form.numeroGuia,
             fecha,
-            proveedor: form.proveedor,
+            proveedor: form.empresaOrigen,
           },
           nota: `Recepción guardada: ${filas.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
         })
@@ -600,7 +616,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
       encabezado={
         guardados
           ? guardados.encabezado
-          : { fecha: '', numeroDocumento: '', proveedor: '', placa: '', registradoPor: '' }
+          : { fecha: '', numeroDocumento: '', empresaOrigen: '', placa: '', registradoPor: '' }
       }
       nota={guardados?.nota}
       // M-2 + auto-estatus: identidad EXACTA de la guía guardada; al imprimir
@@ -643,7 +659,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
           <h3 className="text-sm font-bold text-amber-900">Registrar con foto de guía</h3>
         </div>
         <p className="text-xs text-slate-500 mb-2">
-          Toma una foto a la guía y el app recopila el número de guía, placa, proveedor y TODOS los
+          Toma una foto a la guía y el app recopila el número de guía, placa, empresa de origen y TODOS los
           artículos detectados (código, descripción del catálogo, cantidad y unidad). La fecha de
           producción, vencimiento y el lote se completan manualmente. Todo es editable antes de
           registrar.
@@ -825,8 +841,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
           <Input value={form.placa} onChange={(e) => set('placa', e.target.value.toUpperCase())} placeholder="ABC-123" />
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs">Proveedor</Label>
-          <Input value={form.proveedor} onChange={(e) => set('proveedor', e.target.value)} placeholder="Nombre del proveedor" />
+          <Label className="text-xs">Empresa de Origen</Label>
+          <Input value={form.empresaOrigen} onChange={(e) => set('empresaOrigen', e.target.value)} placeholder="Empresa que nos envía (ej: AJEPER S.A.)" />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Fecha de recepción</Label>

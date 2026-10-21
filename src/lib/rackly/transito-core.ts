@@ -41,6 +41,9 @@ export type ArticuloTransito = {
   fecha: string
   tipoDocumento: string
   numeroDocumento: string
+  /** Empresa que envía (2026-10-22). Filas legacy: respaldo del proveedor. */
+  empresaOrigen: string
+  /** Proveedor del ARTÍCULO (film por fila; legacy: la empresa que envía). */
   proveedor: string
   codigo: string
   descripcion: string
@@ -63,11 +66,13 @@ export type ArticuloTransito = {
 }
 
 export type GuiaTransito = {
-  /** Identidad de guía: tipo+nº documento, o fecha+proveedor si no hay nº. */
+  /** Identidad de guía: tipo+nº documento, o fecha+empresa si no hay nº. */
   key: string
   tipoDocumento: string
   numeroDocumento: string
   fecha: string
+  /** Empresa que envía (mostrada en el encabezado de la guía). */
+  empresaOrigen: string
   proveedor: string
   placa: string
   articulos: ArticuloTransito[]
@@ -153,6 +158,9 @@ export function parseEnvios(raw: unknown): EnvioTransito[] {
 }
 
 export function mapArticuloTransito(r: Record<string, unknown>): ArticuloTransito {
+  // empresa_origen NULL = fila escrita por un bundle viejo: el proveedor
+  // legacy ES la empresa que envía (misma política que mapRecepcion).
+  const empresaRaw = (r.empresa_origen as string | null) ?? null
   const base = {
     id: str(r.id),
     guiaId: str(r.guia_id),
@@ -160,6 +168,7 @@ export function mapArticuloTransito(r: Record<string, unknown>): ArticuloTransit
     fecha: str(r.fecha),
     tipoDocumento: str(r.tipo_documento),
     numeroDocumento: str(r.numero_documento),
+    empresaOrigen: empresaRaw !== null ? empresaRaw : str(r.proveedor),
     proveedor: str(r.proveedor),
     codigo: str(r.codigo),
     descripcion: str(r.descripcion),
@@ -187,11 +196,16 @@ export function claveGuia(a: {
   tipoDocumento: string
   numeroDocumento: string
   fecha: string
+  empresaOrigen?: string
   proveedor: string
 }): string {
   const num = a.numeroDocumento.trim()
   if (num) return `${a.tipoDocumento.trim()}|${num}`
-  return `${a.fecha}|${a.proveedor.trim()}|${a.tipoDocumento.trim()}`
+  // Sin nº: la guía se identifica por SU empresa de origen — NO por el
+  // proveedor del artículo (2 artículos del mismo proveedor de film en
+  // guías distintas NO deben agruparse juntos).
+  const empresa = (a.empresaOrigen || a.proveedor || '').trim()
+  return `${a.fecha}|${empresa}|${a.tipoDocumento.trim()}`
 }
 
 export function agruparEnGuias(articulos: ArticuloTransito[]): GuiaTransito[] {
@@ -205,6 +219,7 @@ export function agruparEnGuias(articulos: ArticuloTransito[]): GuiaTransito[] {
         tipoDocumento: a.tipoDocumento,
         numeroDocumento: a.numeroDocumento,
         fecha: a.fecha,
+        empresaOrigen: a.empresaOrigen,
         proveedor: a.proveedor,
         placa: a.placa,
         articulos: [],
@@ -212,6 +227,9 @@ export function agruparEnGuias(articulos: ArticuloTransito[]): GuiaTransito[] {
       map.set(key, g)
     }
     g.articulos.push(a)
+    // Encabezado: rellenar huecos con el primer artículo que traiga el dato.
+    if (!g.empresaOrigen && a.empresaOrigen) g.empresaOrigen = a.empresaOrigen
+    if (!g.placa && a.placa) g.placa = a.placa
   }
   // Artículos en el orden de registro dentro de cada guía
   for (const g of map.values()) {
@@ -228,7 +246,7 @@ export function contarPendientes(articulos: ArticuloTransito[]): number {
   return articulos.filter((a) => a.pendiente > EPS_TRANSITO).length
 }
 
-/** Filtro de búsqueda: proveedor, código, descripción o nº de documento. */
+/** Filtro de búsqueda: empresa, proveedor, código, descripción o nº doc. */
 export function filtrarArticulos(
   articulos: ArticuloTransito[],
   busqueda: string
@@ -237,6 +255,7 @@ export function filtrarArticulos(
   if (!q) return articulos
   return articulos.filter(
     (a) =>
+      a.empresaOrigen.toLowerCase().includes(q) ||
       a.proveedor.toLowerCase().includes(q) ||
       a.codigo.toLowerCase().includes(q) ||
       a.descripcion.toLowerCase().includes(q) ||

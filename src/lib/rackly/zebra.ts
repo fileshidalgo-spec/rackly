@@ -111,7 +111,8 @@ export type DatosRotulo = {
 export type EncabezadoRotulo = {
   fecha: string
   numeroDocumento: string
-  proveedor: string
+  /** Empresa que envía la guía (contexto del documento en la ficha). */
+  empresaOrigen: string
   placa: string
   registradoPor?: string
   guiaId?: string | null

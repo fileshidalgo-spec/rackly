@@ -20,6 +20,7 @@ const {
   distribuirEquitativo,
   sumaPaletas,
   avisosDePaletas,
+  faltanProveedor,
   agruparGuias,
   claveGuiaDe,
   filasAItems,
@@ -136,6 +137,7 @@ const filaBd = (sobre) => ({
   fecha: '2026-10-11',
   tipoDocumento: 'Guia',
   numeroDocumento: 'T173-00004090',
+  empresaOrigen: 'AJEPER',
   proveedor: 'AJEPER',
   placa: 'V3P-114',
   fotoUrl: '',
@@ -353,6 +355,75 @@ console.log('\n[10c] expandirEnFilas — total VACÍO con UNA paleta válida (an
   // la fila única con 0 se mantiene como último recurso (sin cambio).
   const vacio = expandirEnFilas([{ ...caso[0], paletas: [] }])
   check('sin total y sin paletas: fila 0 (sin cambio de contrato)', vacio[0].cantidadNum === 0)
+}
+
+console.log('\n[11] proveedor del artículo y de la paleta (empresa de origen separada, 2026-10-22)')
+{
+  // Artículo film CON proveedor → la fila lo lleva.
+  const film = expandirEnFilas([
+    {
+      ...base,
+      descripcion: 'LAMINA TERMOCOCONTRAIBLE 500',
+      proveedor: 'NEOPACK',
+    },
+  ])
+  check('artículo film: la fila lleva SU proveedor', film[0].proveedor === 'NEOPACK')
+
+  // Artículo no-film sin proveedor → '' (no arrastra nada).
+  const noFilm = expandirEnFilas([{ ...base }])
+  check("artículo no film: fila sin proveedor ('')", noFilm[0].proveedor === '')
+
+  // DIVIDIDO: una paleta de OTRO proveedor; las demás heredan.
+  const div = expandirEnFilas([
+    {
+      ...base,
+      descripcion: 'STRETCH FILM 500',
+      proveedor: 'INCOMIN',
+      paletas: [
+        { cantidad: '40', lote: '', fechaProduccion: '', fechaVencimiento: '', proveedor: '' },
+        { cantidad: '60', lote: '', fechaProduccion: '', fechaVencimiento: '', proveedor: 'DAMAR' },
+      ],
+    },
+  ])
+  check('paleta sin proveedor propio hereda el del artículo', div[0].proveedor === 'INCOMIN')
+  check('paleta con proveedor PROPIO lo conserva', div[1].proveedor === 'DAMAR')
+
+  // Round-trip de EDICIÓN: filas → items → filas reproduce los overrides.
+  const f1 = filaBd({ codigo: '301', cantidad: 40, observaciones: 'Paleta 1/2', proveedor: 'INCOMIN', empresaOrigen: 'AJEPER S.A.' })
+  const f2 = filaBd({ codigo: '301', cantidad: 60, observaciones: 'Paleta 2/2', proveedor: 'DAMAR', empresaOrigen: 'AJEPER S.A.' })
+  const itemsEd = filasAItems([f1, f2])
+  check('edición: paleta 1 hereda (mismo proveedor que el artículo)', itemsEd[0].paletas[0].proveedor === '')
+  check('edición: paleta 2 conserva SU proveedor distinto', itemsEd[0].paletas[1].proveedor === 'DAMAR')
+  const reExp = expandirEnFilas(itemsEd)
+  check('re-expandir: fila 1 INCOMIN · fila 2 DAMAR (round-trip exacto)', reExp[0].proveedor === 'INCOMIN' && reExp[1].proveedor === 'DAMAR')
+
+  // combinarPaletas conserva el proveedor propio al agregar/quitar/repartir.
+  const comb = combinarPaletas(itemsEd[0].paletas, ['30', '70'])
+  check('combinar: proveedor propio intacto por posición', comb[0].proveedor === '' && comb[1].proveedor === 'DAMAR')
+  const conNueva = combinarPaletas(itemsEd[0].paletas, ['20', '40', '40'])
+  check("paleta NUEVA nace heredando (proveedor '')", conNueva[2].proveedor === '')
+
+  // faltanProveedor: MISMA regla que Racks (requiereProveedor).
+  check(
+    'faltanProveedor: film sin proveedor se detecta',
+    JSON.stringify(faltanProveedor([{ ...base, descripcion: 'LAMINA TERMOCOCONTRAIBLE 500' }])) === JSON.stringify(['5653'])
+  )
+  check(
+    'faltanProveedor: film CON proveedor pasa',
+    faltanProveedor([{ ...base, descripcion: 'STRETCH FILM 500', proveedor: 'ITS' }]).length === 0
+  )
+  check(
+    'faltanProveedor: no-film no se exige',
+    faltanProveedor([{ ...base, descripcion: 'PURE DE DURAZNO' }]).length === 0
+  )
+  check(
+    'faltanProveedor: ETIQUETA…LAMINA NO exige (regla de Racks)',
+    faltanProveedor([{ ...base, descripcion: 'ETIQUETA LAMINA 500' }]).length === 0
+  )
+
+  // agruparGuias lleva la empresa de origen al encabezado de la guía.
+  const gEmp = agruparGuias([f1, f2])
+  check('agrupado: empresaOrigen del encabezado = AJEPER S.A.', gEmp[0].empresaOrigen === 'AJEPER S.A.')
 }
 
 // ─── Resumen ───

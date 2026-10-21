@@ -21,7 +21,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime, type MotivoRealtime } from '@/hooks/useRegistrosRealtime'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
-import { agruparGuias, avisosDePaletas, expandirEnFilas, filasAItems, obsSinMarcaPaleta, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
+import { agruparGuias, avisosDePaletas, expandirEnFilas, faltanProveedor, filasAItems, obsSinMarcaPaleta, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
 import { GuiaFotoForm, type GuiaRegistradaInfo } from '@/components/rackly/recepcion/GuiaFotoForm'
 import {
   RecepcionItemsEditor,
@@ -289,7 +289,7 @@ export function RecepcionModule() {
         encabezado: {
           fecha: primera.fecha,
           numeroDocumento: primera.numeroDocumento,
-          proveedor: primera.proveedor,
+          empresaOrigen: primera.empresaOrigen || primera.proveedor,
           placa: primera.placa,
           registradoPor: primera.usuarioNombre,
         },
@@ -343,7 +343,7 @@ export function RecepcionModule() {
         tipoDocumento: u.tipoDocumento,
         numeroDocumento: u.numeroDocumento,
         fecha: u.fecha,
-        proveedor: u.proveedor,
+        proveedor: u.empresaOrigen,
       },
       doc
     )
@@ -354,7 +354,7 @@ export function RecepcionModule() {
   function verUltimaEnLista() {
     const u = ultimaRegistrada
     if (!u) return
-    const termino = (u.numeroDocumento || u.proveedor || '').trim()
+    const termino = (u.numeroDocumento || u.empresaOrigen || '').trim()
     if (!termino) return
     setBusqueda(termino)
     setEstadoFiltro('todos')
@@ -385,6 +385,7 @@ export function RecepcionModule() {
         fecha: g.fecha,
         tipoDocumento: g.tipoDocumento,
         numeroDocumento: g.numeroDocumento,
+        empresaOrigen: g.empresaOrigen || g.proveedor,
         proveedor: g.proveedor,
         placa: g.placa,
         fotoUrl: fotoParaExcel ?? '',
@@ -409,7 +410,9 @@ export function RecepcionModule() {
   const [fFecha, setFFecha] = useState(hoyISO())
   const [fDoc, setFDoc] = useState('Guia')
   const [fNumero, setFNumero] = useState('')
-  const [fProveedor, setFProveedor] = useState('')
+  /** Empresa que ENVÍA la guía (ej. AJEPER S. A.) — nivel documento. El
+   *  PROVEEDOR del producto se elige por ARTÍCULO en la zona de códigos. */
+  const [fEmpresaOrigen, setFEmpresaOrigen] = useState('')
   const [fPlaca, setFPlaca] = useState('')
   const [fObs, setFObs] = useState('')
   const [items, setItems] = useState<ItemRecepcion[]>([itemVacio()])
@@ -455,7 +458,9 @@ export function RecepcionModule() {
       setFFecha(primera.fecha || hoyISO())
       setFDoc(primera.tipoDocumento || 'Guia')
       setFNumero(primera.numeroDocumento)
-      setFProveedor(primera.proveedor)
+      // Empresa de Origen (legacy: la columna empresa_origen ya trae el
+      // backfill; si faltara, el proveedor legacy ES la empresa que envía).
+      setFEmpresaOrigen(primera.empresaOrigen || primera.proveedor)
       setFPlaca(g.placa || primera.placa || '')
       setFObs(obsSinMarcaPaleta(primera.observaciones || ''))
       setItems(itemsGuia.map((it) => ({ ...itemVacio(), ...it })))
@@ -483,7 +488,7 @@ export function RecepcionModule() {
   function cancelarEdicion() {
     setEditando(null)
     setFNumero('')
-    setFProveedor('')
+    setFEmpresaOrigen('')
     setFPlaca('')
     setFObs('')
     setItems([itemVacio()])
@@ -624,6 +629,17 @@ export function RecepcionModule() {
       toast.error('Sesión no disponible')
       return
     }
+    // PROVEEDOR OBLIGATORIO (igual que Racks): los films (lámina/stretch)
+    // exigen su proveedor real — una guía de UNA empresa (ej. AJEPER) puede
+    // traer multi-productos de DISTINTOS proveedores y cada uno se registra
+    // en SU artículo (zona de códigos).
+    const sinProveedor = faltanProveedor(validos)
+    if (sinProveedor.length > 0) {
+      toast.error('Selecciona el proveedor del artículo', {
+        description: `Falta el proveedor (lámina/stretch) de: ${sinProveedor.join(', ')}`,
+      })
+      return
+    }
     setSaving(true)
     try {
       const fecha = fFecha || hoyISO()
@@ -672,6 +688,7 @@ export function RecepcionModule() {
             lote: f.lote,
             fechaProduccion: f.fechaProduccion,
             fechaVencimiento: f.fechaVencimiento,
+            proveedor: f.proveedor,
             observaciones: [fObs, f.paleta].filter(Boolean).join(' · '),
             filaId: f.filaId ?? null,
           })),
@@ -679,7 +696,11 @@ export function RecepcionModule() {
             fecha,
             tipoDocumento: fDoc,
             numeroDocumento: fNumero,
-            proveedor: fProveedor,
+            empresaOrigen: fEmpresaOrigen,
+            // El encabezado ya NO define proveedor: cada fila lleva el de SU
+            // artículo. '' = sin herencia (las filas legacy conservan el
+            // valor cargado en el editor, que nació de su propia fila).
+            proveedor: '',
             placa: fPlaca,
             estado: editando.estado,
             fotoUrl: editando.fotoUrl,
@@ -702,7 +723,7 @@ export function RecepcionModule() {
             encabezado: {
               fecha,
               numeroDocumento: fNumero,
-              proveedor: fProveedor,
+              empresaOrigen: fEmpresaOrigen,
               placa: fPlaca,
               registradoPor: editando.autor.nombre,
             },
@@ -711,7 +732,10 @@ export function RecepcionModule() {
               tipoDocumento: fDoc,
               numeroDocumento: fNumero,
               fecha,
-              proveedor: fProveedor,
+              // Legado (filas sin guia_id): el respaldo busca por el valor que
+              // el campo guardaba ANTES (la empresa que envía) — fEmpresaOrigen
+              // lo carga tal cual al abrir la edición.
+              proveedor: fEmpresaOrigen,
             },
             nota: `Guía actualizada: ${filasGuardar.length} fila(s) en la base de datos. Configura las etiquetas por rótulo/paleta e imprime todo de una vez.`,
           })
@@ -730,7 +754,8 @@ export function RecepcionModule() {
           fecha,
           tipoDocumento: fDoc,
           numeroDocumento: fNumero,
-          proveedor: fProveedor,
+          empresaOrigen: fEmpresaOrigen,
+          proveedor: f.proveedor,
           codigo: f.codigo,
           descripcion: f.descripcion,
           cantidad: f.cantidadNum,
@@ -756,7 +781,7 @@ export function RecepcionModule() {
         fecha,
         tipoDocumento: fDoc,
         numeroDocumento: fNumero,
-        proveedor: fProveedor,
+        empresaOrigen: fEmpresaOrigen,
         placa: fPlaca,
         articulos: validos.length,
         filas: filasGuardar.length,
@@ -775,7 +800,7 @@ export function RecepcionModule() {
           encabezado: {
             fecha,
             numeroDocumento: fNumero,
-            proveedor: fProveedor,
+            empresaOrigen: fEmpresaOrigen,
             placa: fPlaca,
             registradoPor: perfil.nombre,
           },
@@ -784,7 +809,7 @@ export function RecepcionModule() {
             tipoDocumento: fDoc,
             numeroDocumento: fNumero,
             fecha,
-            proveedor: fProveedor,
+            proveedor: fEmpresaOrigen,
           },
           nota: `Recepción guardada: ${filasGuardar.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
         })
@@ -795,7 +820,7 @@ export function RecepcionModule() {
         })
       }
       setFNumero('')
-      setFProveedor('')
+      setFEmpresaOrigen('')
       setFPlaca('')
       setFObs('')
       setItems([itemVacio()])
@@ -975,11 +1000,11 @@ export function RecepcionModule() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Proveedor</Label>
+            <Label className="text-xs">Empresa de Origen</Label>
             <Input
-              placeholder="Nombre del proveedor"
-              value={fProveedor}
-              onChange={(e) => setFProveedor(e.target.value)}
+              placeholder="Empresa que nos envía (ej: AJEPER S.A.)"
+              value={fEmpresaOrigen}
+              onChange={(e) => setFEmpresaOrigen(e.target.value)}
             />
           </div>
           <div className="space-y-1.5">
@@ -1045,7 +1070,7 @@ export function RecepcionModule() {
             <p className="text-xs text-emerald-800 truncate">
               {ultimaRegistrada.articulos} artículo(s) · {ultimaRegistrada.filas} fila(s) · Cant. total{' '}
               {String(Math.round(ultimaRegistrada.cantidadTotal * 1000) / 1000)}
-              {ultimaRegistrada.proveedor ? ` · ${ultimaRegistrada.proveedor}` : ''}
+              {ultimaRegistrada.empresaOrigen ? ` · ${ultimaRegistrada.empresaOrigen}` : ''}
               {ultimaRegistrada.fecha ? ` · Fecha doc ${ultimaRegistrada.fecha}` : ''}
               {` · registrada por ${ultimaRegistrada.usuarioNombre}`}
             </p>
@@ -1064,7 +1089,7 @@ export function RecepcionModule() {
               {cargandoGuia ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
               Imprimir rótulos
             </Button>
-            {(ultimaRegistrada.numeroDocumento || ultimaRegistrada.proveedor) && (
+            {(ultimaRegistrada.numeroDocumento || ultimaRegistrada.empresaOrigen) && (
               <Button
                 size="sm"
                 variant="outline"
@@ -1094,7 +1119,7 @@ export function RecepcionModule() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             className="pl-9"
-            placeholder="Buscar por proveedor, código, documento o descripción…"
+            placeholder="Buscar por empresa, proveedor, código, documento o descripción…"
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && buscar()}
@@ -1156,7 +1181,7 @@ export function RecepcionModule() {
               <TableHead className="w-[36px]" />
               <TableHead className="w-[100px]">Fecha</TableHead>
               <TableHead className="w-[150px]">Documento</TableHead>
-              <TableHead className="min-w-[140px]">Proveedor</TableHead>
+              <TableHead className="min-w-[140px]">Empresa de Origen</TableHead>
               <TableHead className="min-w-[200px]">Artículos</TableHead>
               <TableHead className="w-[100px] text-right">Cant. total</TableHead>
               <TableHead className="w-[60px] text-center">Foto</TableHead>
@@ -1204,8 +1229,8 @@ export function RecepcionModule() {
                       <p className="text-xs font-semibold">{g.tipoDocumento}</p>
                       <p className="text-xs text-slate-400">{g.numeroDocumento || '—'}</p>
                     </TableCell>
-                    <TableCell className="text-sm truncate max-w-[180px]" title={g.proveedor}>
-                      {g.proveedor || '—'}
+                    <TableCell className="text-sm truncate max-w-[180px]" title={g.empresaOrigen || g.proveedor}>
+                      {g.empresaOrigen || g.proveedor || '—'}
                     </TableCell>
                     <TableCell>
                       <p className="text-sm font-semibold">
@@ -1370,7 +1395,7 @@ export function RecepcionModule() {
                     {g.tipoDocumento} {g.numeroDocumento || '(sin número)'}
                   </p>
                   <p className="text-xs text-slate-500 truncate">
-                    {g.proveedor || '—'} · {g.fecha}
+                    {g.empresaOrigen || g.proveedor || '—'} · {g.fecha}
                   </p>
                 </div>
                 <Badge variant="outline" className={`${ESTADO_CLASE[g.estado] ?? ''} shrink-0`}>
@@ -1516,7 +1541,7 @@ export function RecepcionModule() {
         encabezado={
           guardados
             ? guardados.encabezado
-            : { fecha: '', numeroDocumento: '', proveedor: '', placa: '', registradoPor: '' }
+            : { fecha: '', numeroDocumento: '', empresaOrigen: '', placa: '', registradoPor: '' }
         }
         nota={guardados?.nota}
         // M-2 + auto-estatus: identidad EXACTA de la guía impresa → al
@@ -1533,7 +1558,7 @@ export function RecepcionModule() {
             <AlertDialogDescription>
               ¿Eliminar {deleteTarget?.tipoDocumento}{' '}
               <strong>{deleteTarget?.numeroDocumento || '(sin número)'}</strong> de{' '}
-              <strong>{deleteTarget?.proveedor || 'proveedor sin nombre'}</strong> con{' '}
+              <strong>{deleteTarget?.empresaOrigen || deleteTarget?.proveedor || 'empresa sin nombre'}</strong> con{' '}
               <strong>TODAS sus {deleteTarget?.filas.length ?? 0} fila(s)</strong> (artículos y
               paletas registrados)? Esta acción no se puede deshacer.
             </AlertDialogDescription>

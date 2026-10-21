@@ -34,6 +34,7 @@ export type GuiaParaExcel = Pick<
   | 'fecha'
   | 'tipoDocumento'
   | 'numeroDocumento'
+  | 'empresaOrigen'
   | 'proveedor'
   | 'placa'
   | 'fotoUrl'
@@ -46,17 +47,20 @@ export type GuiaParaExcel = Pick<
 /**
  * Nombre de archivo SEGURO: sin espacios, tildes ni caracteres que algunos
  * gestores de archivos rechazan. Ej: Guia_Guia_T173-00004090_2026-10-11.xlsx
- * Sin nº de documento cae al proveedor (y por último a SIN-NUMERO).
+ * Sin nº de documento cae a la empresa de origen (y por último a SIN-NUMERO).
  */
 export function nombreArchivoGuia(
-  g: Pick<GuiaParaExcel, 'tipoDocumento' | 'numeroDocumento' | 'fecha' | 'proveedor'>
+  g: Pick<GuiaParaExcel, 'tipoDocumento' | 'numeroDocumento' | 'fecha' | 'empresaOrigen' | 'proveedor'>
 ): string {
   const limpio = (s: string) =>
     (s || '')
       .trim()
       .replace(/[^A-Za-z0-9._-]+/g, '-')
       .replace(/^-+|-+$/g, '')
-  const doc = limpio(g.numeroDocumento) || limpio(g.proveedor) || 'SIN-NUMERO'
+  const doc =
+    limpio(g.numeroDocumento) ||
+    limpio(g.empresaOrigen || g.proveedor) ||
+    'SIN-NUMERO'
   const fecha = limpio(g.fecha)
   const partes = ['Guia', limpio(g.tipoDocumento) || 'DOC', doc]
   if (fecha) partes.push(fecha)
@@ -87,6 +91,7 @@ export function filasGuiaAExcel(filas: FilaRegistrada[]): Record<string, string 
       'Nº': i + 1,
       'Código': f.codigo,
       'Descripción': f.descripcion,
+      'Proveedor': f.proveedor,
       'Cantidad': cant3(f.cantidad),
       'Unidad': f.unidadMedida,
       'Lote': f.lote,
@@ -108,7 +113,7 @@ export function filasGuiaAExcel(filas: FilaRegistrada[]): Record<string, string 
  */
 export function filasGuiaATablaTurno(filas: FilaRegistrada[]): (string | number)[][] {
   const cabecera = [
-    'Fecha', 'Nº de documento', 'Código', 'Descripción', 'Unidad', 'Cantidad',
+    'Fecha', 'Nº de documento', 'Código', 'Descripción', 'Proveedor', 'Unidad', 'Cantidad',
     'Lote', 'F. producción', 'F. vencimiento', 'Registró', 'Turno',
   ]
   const cuerpo = filas.map((f) => [
@@ -116,6 +121,7 @@ export function filasGuiaATablaTurno(filas: FilaRegistrada[]): (string | number)
     f.numeroDocumento,
     f.codigo,
     f.descripcion,
+    f.proveedor,
     f.unidadMedida,
     cant3(f.cantidad),
     f.lote,
@@ -212,14 +218,14 @@ const clonar = <T,>(o: T): T => JSON.parse(JSON.stringify(o)) as T
  *  con estilos. No escribe archivos — solo arma la WorkSheet. */
 export function construirHojaGuia(g: GuiaParaExcel, XLSX: typeof import('xlsx')): import('xlsx').WorkSheet {
   const estado = g.estado || (g.filas.length > 0 ? g.filas[0].estado : '')
-  const nCols = 11 // A..K: ancho de la tabla de ítems
+  const nCols = 12 // A..L: ancho de la tabla de ítems (Proveedor desde 2026-10-22)
 
   // — Encabezado del documento (Campo | Valor), el mismo orden del ejemplo
   const encabezado: [string, string | number][] = [
     ['Fecha', g.fecha],
     ['Tipo de documento', g.tipoDocumento],
     ['Nº de documento', g.numeroDocumento],
-    ['Proveedor', g.proveedor],
+    ['Empresa de Origen', g.empresaOrigen || g.proveedor],
     ['Placa', g.placa],
     ['Estado', estado || 'Mixto'],
     ['Turno', turnoDeFila(g.filas[0] ?? { createdAt: '' }) || '—'],
@@ -271,8 +277,8 @@ export function construirHojaGuia(g: GuiaParaExcel, XLSX: typeof import('xlsx'))
       }
       if (R === rTabla0) { cel.s = clonar(EST.cabTabla); continue }
       if (R > rTabla0 && R < rTabla0 + tabla.length) {
-        // Cantidad (col F=5) y Turno (col K=10) centrados; resto a la izquierda
-        cel.s = clonar(C === 5 || C === 10 ? EST.celdaCentro : EST.celda)
+        // Cantidad (col G=6) y Turno (col L=11) centrados; resto a la izquierda
+        cel.s = clonar(C === 6 || C === 11 ? EST.celdaCentro : EST.celda)
         continue
       }
       if (R >= rTotal0 && R < rTotal0 + 4 && C <= 1) cel.s = clonar(EST.total)
@@ -298,14 +304,15 @@ export function construirHojaGuia(g: GuiaParaExcel, XLSX: typeof import('xlsx'))
     { wch: 12 },  // A  Fecha
     { wch: 17 },  // B  Nº de documento
     { wch: 9 },   // C  Código
-    { wch: 42 },  // D  Descripción
-    { wch: 8 },   // E  Unidad
-    { wch: 11 },  // F  Cantidad
-    { wch: 12 },  // G  Lote
-    { wch: 13 },  // H  F. producción
-    { wch: 13 },  // I  F. vencimiento
-    { wch: 24 },  // J  Registró
-    { wch: 7 },   // K  Turno
+    { wch: 38 },  // D  Descripción
+    { wch: 14 },  // E  Proveedor (del artículo — film)
+    { wch: 8 },   // F  Unidad
+    { wch: 11 },  // G  Cantidad
+    { wch: 12 },  // H  Lote
+    { wch: 13 },  // I  F. producción
+    { wch: 13 },  // J  F. vencimiento
+    { wch: 24 },  // K  Registró
+    { wch: 7 },   // L  Turno
   ]
   // Márgenes estrechos: más tabla por página al imprimir
   ws['!margins'] = {
@@ -338,7 +345,8 @@ export async function exportarGuiaExcel(g: GuiaParaExcel): Promise<string> {
   wsArt['!cols'] = [
     { wch: 5 },  // Nº
     { wch: 14 }, // Código
-    { wch: 38 }, // Descripción
+    { wch: 36 }, // Descripción
+    { wch: 14 }, // Proveedor
     { wch: 11 }, // Cantidad
     { wch: 8 },  // Unidad
     { wch: 14 }, // Lote

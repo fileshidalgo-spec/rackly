@@ -97,23 +97,23 @@ export function filasARotulos(items: ItemRecepcion[]): RotuloAImprimir[] {
 
 /**
  * Ficha compacta de la guía en la cabecera fija del modal: documento,
- * proveedor, fecha, placa y quién registró — el contexto del documento
- * siempre visible mientras se revisan los artículos.
+ * empresa de origen, fecha, placa y quién registró — el contexto del
+ * documento siempre visible mientras se revisan los artículos.
  */
 function FichaGuia({ encabezado }: { encabezado: EncabezadoRotulo }) {
-  const { numeroDocumento, proveedor, fecha, placa, registradoPor } = encabezado
-  if (!numeroDocumento && !proveedor && !fecha && !placa) return null
+  const { numeroDocumento, empresaOrigen, fecha, placa, registradoPor } = encabezado
+  if (!numeroDocumento && !empresaOrigen && !fecha && !placa) return null
   return (
     <div className="mt-2.5 rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2">
       <p className="text-xs font-bold text-amber-900 truncate">
         {numeroDocumento
           ? `Guía ${numeroDocumento}`
-          : proveedor || 'Documento sin número'}
+          : empresaOrigen || 'Documento sin número'}
       </p>
       <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] sm:text-[11px] text-slate-500">
-        {numeroDocumento && proveedor && (
-          <span className="max-w-[14rem] truncate font-semibold text-slate-600" title={proveedor}>
-            {proveedor}
+        {numeroDocumento && empresaOrigen && (
+          <span className="max-w-[14rem] truncate font-semibold text-slate-600" title={empresaOrigen}>
+            {empresaOrigen}
           </span>
         )}
         {fecha && <span>Fecha: {fecha}</span>}

@@ -314,7 +314,7 @@ export function TrasladoTab() {
         usuarioCorreo: perfil.correo,
         proveedor: stockItem.proveedor,
         codigoInc: stockItem.codigoInc || undefined,
-      })
+      }, undefined, { refetch: false })
       toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
       // FIX auditoría 2026-10-21 (P3): limpiar la cantidad digitada — sin esto,
       // un segundo clic repetía la salida sin re-tipear.
@@ -446,7 +446,7 @@ export function TrasladoTab() {
           usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
           proveedor: origin.proveedor,
           codigoInc: origin.codigoInc,
-        })
+        }, undefined, { refetch: false })
       }
 
       toast.success('Traslado registrado')

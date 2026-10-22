@@ -626,7 +626,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         // Lote físico digitado; si se marcó "Sin lote" (o va vacío) NO viaja lote.
         // Si la BD aún no tiene la columna, addMovimiento reintenta sin él.
         lote: ingSinLote ? undefined : (ingLote.trim() || undefined),
-      })
+      }, undefined, { refetch: false })
       toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) { toast.error('Error', { description: extractError(err) }) } finally { setActionBusy(false) }
@@ -654,7 +654,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         codigoInc: incCodigoInc.trim(),
         lote: incSinLote ? undefined : (incLote.trim() || undefined),
-      })
+      }, undefined, { refetch: false })
       toast.success('INC registrado')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) { toast.error('Error', { description: extractError(err) }) } finally { setActionBusy(false) }
@@ -699,7 +699,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         fVencimiento: loteElegido.fVencimiento, turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
         // PRESERVAR codigoInc para que la salida descuente del stock INC correctamente
         codigoInc: item.codigoInc || undefined,
-      })
+      }, undefined, { refetch: false })
       toast.success('Salida registrada')
       // Atención a Línea (RQ): si llegaste DESDE una RQ para este código, ofrece
       // registrar la salida como atención. Responder "No" = regularización pura.
@@ -736,9 +736,12 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         perfil.nombre || perfil.correo || ''
       )
       const completo = actualizado.cantidadAtendida >= actualizado.cantidad
+      // Excedente automático: lo atendido puede superar lo pedido (p. ej. paleta
+      // completa de 123 mil para un pedido de 120 mil) — se muestra en el aviso.
+      const excedente = actualizado.cantidadAtendida - actualizado.cantidad
       toast.success(`Registrado en la RQ ${rqConfirmer.numeroRq}`, {
         description: completo
-          ? `Ya completaste este artículo: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad}. Toca «← Volver a Atención (RQ)» para seguir.`
+          ? `Ya completaste este artículo: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad}${excedente > 0 ? ` · Excedente: +${fmtRq(excedente)} ${actualizado.unidad}` : ''}. Toca «← Volver a Atención (RQ)» para seguir.`
           : `Atendido: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad} · Pendiente: ${fmtRq(Math.max(actualizado.cantidad - actualizado.cantidadAtendida, 0))}`,
         duration: 9000,
       })
@@ -783,7 +786,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         usuarioCorreo: perfil.correo,
         proveedor: stockItem.proveedor,
         codigoInc: stockItem.codigoInc || undefined,
-      })
+      }, undefined, { refetch: false })
       toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
       // Refrescar stock del destino — validar _error (patrón IngresoForm): sin
       // esto se mostraba una fila fantasma con código vacío y stock 0

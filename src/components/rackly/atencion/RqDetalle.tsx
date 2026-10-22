@@ -13,6 +13,15 @@
  *
  * Además: botón "Ver ubicación del producto" por material (salta a Racks/Piso
  * con los callbacks del page.tsx) y revierte atenciones equivocadas.
+ *
+ * EXCEDENTE AUTOMÁTICO (2026-10-22): cuando lo ATENDIDO supera lo pedido
+ * (p. ej. tapas: 123 mil salieron vs 120 mil pedidas), la fila muestra sola
+ * un badge "Excedente +X" (desktop) / línea "Excedente: +X" (móvil) — sin
+ * digitar nada. ATENDIDO siempre refleja el TOTAL REAL que salió
+ * (pedido + excedente) y PENDIENTE se satura en 0 (nunca negativo).
+ * El botón "Excedente" solo sirve para AÑADIR una salida extra manual
+ * sobre un artículo ya completo (error/ajuste).
+ *
  * Móvil: tarjetas por material (sin scroll horizontal anidado).
  */
 
@@ -321,9 +330,9 @@ export function RqDetalle({
             <tr>
               <th className="px-3 py-2 w-[100px]">Código</th>
               <th className="px-3 py-2">Descripción</th>
-              <th className="px-3 py-2 w-[100px] text-right">Cantidad</th>
-              <th className="px-3 py-2 w-[100px] text-right">Atendido</th>
-              <th className="px-3 py-2 w-[100px] text-right">Pendiente</th>
+              <th className="px-3 py-2 w-[100px] text-right" title="Lo que pide la RQ">Cantidad</th>
+              <th className="px-3 py-2 w-[100px] text-right" title="TOTAL real que salió = pedido + excedente">Atendido</th>
+              <th className="px-3 py-2 w-[100px] text-right" title="Cantidad − atendido (nunca negativo)">Pendiente</th>
               <th className="px-3 py-2 w-[190px]">Atender</th>
               <th className="px-3 py-2 w-[120px]">Ubicación</th>
             </tr>
@@ -353,6 +362,15 @@ export function RqDetalle({
                       <Badge variant="outline" className={`${ESTADO_ITEM_CLASE[estado]} text-[10px] px-1.5 py-0`}>
                         {estado}
                       </Badge>
+                      {it.cantidadAtendida > it.cantidad && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] px-1.5 py-0 border-amber-200 bg-amber-50 text-amber-700"
+                          title={`Lo que salió de más sobre lo pedido: se registró ${fmt(it.cantidadAtendida)} en total`}
+                        >
+                          Excedente +{fmt(it.cantidadAtendida - it.cantidad)} {it.unidad}
+                        </Badge>
+                      )}
                       {it.usuarioAtencion && (
                         <span className="text-[10px] text-slate-400 truncate max-w-[140px]" title={it.usuarioAtencion}>
                           por {it.usuarioAtencion}
@@ -526,9 +544,19 @@ export function RqDetalle({
                 </div>
               ) : (
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
-                    <PackageOpen className="h-3.5 w-3.5" /> Ya completaste este artículo
-                  </span>
+                  <div className="min-w-0">
+                    <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                      <PackageOpen className="h-3.5 w-3.5" /> Ya completaste este artículo
+                    </span>
+                    {it.cantidadAtendida > it.cantidad && (
+                      <p
+                        className="text-[10px] font-bold text-amber-600 mt-0.5"
+                        title={`Lo que salió de más sobre lo pedido: se registró ${fmt(it.cantidadAtendida)} en total`}
+                      >
+                        Excedente: +{fmt(it.cantidadAtendida - it.cantidad)} {it.unidad} · Total: {fmt(it.cantidadAtendida)}
+                      </p>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button
                       variant="ghost"

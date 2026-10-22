@@ -694,7 +694,7 @@ function SalidaForm({
             proveedor: loc.proveedor,
             // PRESERVAR codigoInc para consistencia (aunque SalidaForm excluye INC)
             codigoInc: loc.codigoInc || undefined,
-          })
+          }, undefined, { refetch: false })
           totalProcessed++
         } catch (err) {
           if (isInsufficientStockError(err)) {
@@ -1773,7 +1773,7 @@ function SalidaIncForm({
             usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
             proveedor: loc.proveedor,
             codigoInc: loc.codigoInc || undefined,
-          })
+          }, undefined, { refetch: false })
           totalProcessed++
         } catch (err) {
           const msg = extractError(err)

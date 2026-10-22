@@ -228,7 +228,8 @@ export function calcularStockRacksDesdeMovs(movs: Movimiento[]): StockRacksPorCo
 async function addMovimientoFallback(
   m: Omit<Movimiento, 'id' | 'fModificacion'>,
   uuidSync?: string,
-  skipValidation: boolean = false
+  skipValidation: boolean = false,
+  refetch: boolean = true
 ): Promise<Movimiento[]> {
   console.warn('[addMovimiento] RPC no encontrada, usando insert directo como fallback')
 
@@ -299,6 +300,7 @@ async function addMovimientoFallback(
     }
   }
   if (insErr) throw insErr
+  if (!refetch) return []
   try {
     return await fetchMovimientos()
   } catch (fetchErr) {
@@ -324,17 +326,35 @@ async function checkExistingByUuidSync(uuidSync: string): Promise<boolean> {
   }
 }
 
+/**
+ * Registra un movimiento (RPC atómica registrar_movimiento_kardex).
+ *
+ * opts.refetch (default true): al terminar, re-descarga TODA la tabla
+ * movimientos (contrato original: retorna la lista completa actualizada).
+ * Con `refetch: false` retorna [] inmediatamente tras la RPC: el registro
+ * queda guardado y el CALLER se encarga de refrescar lo suyo (rápido).
+ *
+ * FIX tiempo real 2026-10-22 (módulo Atención → Racks): el refetch completo
+ * (~25K filas, ~30-40 s) bloqueaba el ciclo salida → confirmación
+ * "¿Registrar esta salida en la RQ?". Las rutas de salida (OcupacionTab,
+ * TrasladoTab y salidas masivas de MovimientoForm) ya se refrescan por su
+ * cuenta con consultas puntuales → pasan refetch:false y el aviso aparece
+ * al instante. Las rutas que CONSUMEN el array retornado (formularios de
+ * ingreso) siguen igual (default true) → cero regresiones.
+ */
 export async function addMovimiento(
   m: Omit<Movimiento, 'id' | 'fModificacion'>,
-  uuidSync?: string
+  uuidSync?: string,
+  opts?: { refetch?: boolean }
 ): Promise<Movimiento[]> {
+  const refetch = opts?.refetch !== false
   // Idempotencia: si viene uuidSync, verificar si ya existe en el servidor
   if (uuidSync) {
     const exists = await checkExistingByUuidSync(uuidSync)
     if (exists) {
       console.warn('[addMovimiento] Movimiento ya existe (uuid_sync), saltando insert:', uuidSync)
       // Ya existe: refrescar y retornar como si hubiera sido exitoso
-      return await fetchMovimientos()
+      return refetch ? await fetchMovimientos() : []
     }
   }
 
@@ -388,11 +408,14 @@ export async function addMovimiento(
       }
       // Si la RPC no existe (404 / 42883 / 'Could not find'), usar fallback
       if (code === '42883' || code === 'PGRST202' || msg.includes('Could not find') || msg.includes('does not exist') || msg.includes('404')) {
-        return await addMovimientoFallback(m, uuidSync)
+        return await addMovimientoFallback(m, uuidSync, false, refetch)
       }
       throw error
     }
     // RPC exitosa: el movimiento ya fue registrado en la DB.
+    // Con refetch:false el caller refresca por su cuenta → retornar YA
+    // (tiempo real: el toast y la confirmación de RQ no esperan el refetch).
+    if (!refetch) return []
     // Intentar refrescar la lista de movimientos, pero si falla (timeout, red)
     // NO propagar el error — el movimiento ya está guardado. Retornar array vacío
     // para que el caller no reciba null (evita crashes en .map()).
@@ -407,7 +430,7 @@ export async function addMovimiento(
     const errMsg = err instanceof Error ? err.message : ''
     const errCode = err instanceof Error ? (err as unknown as Record<string, string>).code || '' : ''
     if (errCode === '42883' || errCode === 'PGRST202' || errMsg.includes('Could not find') || errMsg.includes('does not exist')) {
-      return await addMovimientoFallback(m, uuidSync)
+      return await addMovimientoFallback(m, uuidSync, false, refetch)
     }
     throw err
   }

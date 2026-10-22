@@ -1389,9 +1389,12 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         perfil.nombre ?? perfil.correo ?? ''
       )
       const completo = actualizado.cantidadAtendida >= actualizado.cantidad
+      // Excedente automático: lo atendido puede superar lo pedido (p. ej. paleta
+      // completa de 123 mil para un pedido de 120 mil) — se muestra en el aviso.
+      const excedente = actualizado.cantidadAtendida - actualizado.cantidad
       toast.success(`Registrado en la RQ ${rqConfirmer.numeroRq}`, {
         description: completo
-          ? `Ya completaste este artículo: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad}. Toca «← Volver a Atención (RQ)» para seguir.`
+          ? `Ya completaste este artículo: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad}${excedente > 0 ? ` · Excedente: +${fmtRq(excedente)} ${actualizado.unidad}` : ''}. Toca «← Volver a Atención (RQ)» para seguir.`
           : `Atendido: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad} · Pendiente: ${fmtRq(Math.max(actualizado.cantidad - actualizado.cantidadAtendida, 0))}`,
         duration: 9000,
       })

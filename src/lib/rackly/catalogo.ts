@@ -222,6 +222,10 @@ function findCellValue(row: Record<string, unknown>, keys: string[]): string {
  * Antes enviaba TODO en UNA sola petición: con >1000 filas podía fallar por
  * payload/límites y los códigos duplicados dentro del archivo abortaban el
  * upsert completo ("ON CONFLICT cannot affect row a second time").
+ *
+ * Task 15 — UNIFICACIÓN DE CATÁLOGO: ya NO replica a piso_bloques. El módulo
+ * Piso lee descripción/unidad EN VIVO desde esta tabla (fuente única de
+ * verdad); piso_bloques queda como ancla técnica para la FK del historial.
  */
 export async function mergeCatalogo(
   nuevos: CatalogoItem[]
@@ -258,95 +262,62 @@ export async function mergeCatalogo(
       cargados += chunk.length
     }
   }
-  // Sincronizar: también upsert a piso_bloques
-  const sync = await syncToPisoBloques([...mapa.values()])
-  errores.push(...sync.errores.map((e) => `piso_bloques: ${e}`))
   return { catalogo: await fetchCatalogo(), cargados, errores }
 }
 
 export async function clearCatalogo(): Promise<CatalogoItem[]> {
   const { error } = await dataClient.from('catalogo').delete().neq('codigo', '')
   if (error) throw error
-  // Sincronizar: también limpiar piso_bloques
-  await clearPisoBloques()
+  // Poda FK-safe de las anclas de piso (solo las SIN movimientos históricos)
+  await podarAnclasPisoSinUso()
   return fetchCatalogo()
 }
 
-// ═══ Sincronización con piso_bloques ═══
-// Cuando se actualiza el catálogo de Racks, los cambios se replican a piso_bloques
-// para que la sección Piso tenga los mismos códigos disponibles.
+// ═══ Anclas de piso (piso_bloques) ═══
+// Task 15 — el catálogo de Piso fue eliminado como fuente de datos: `catalogo`
+// es la ÚNICA fuente (el módulo Piso la lee en vivo). piso_bloques existe solo
+// como ancla UUID para la FK piso_movimiento_detalles.bloque_id (historial
+// inmutable). No se replica nada hacia ella; solo se PODA lo que quedó sin uso.
 
-async function syncToPisoBloques(items: CatalogoItem[]): Promise<{ cargados: number; errores: string[] }> {
-  if (items.length === 0) return { cargados: 0, errores: [] }
-  const rows = items.map((i) => ({
-    codigo: i.codigo.trim().toUpperCase(),
-    descripcion: i.descripcion,
-    unidad: i.un,
-  }))
-  const errores: string[] = []
-  let cargados = 0
-  const CHUNK = 500
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const chunk = rows.slice(i, i + CHUNK)
-    const { error } = await dataClient.from('piso_bloques').upsert(chunk, { onConflict: 'codigo' })
-    if (error) {
-      for (const r of chunk) {
-        const { error: singleErr } = await dataClient.from('piso_bloques').upsert(r, { onConflict: 'codigo' })
-        if (singleErr) errores.push(`${r.codigo}: ${singleErr.message}`)
-        else cargados++
-      }
-    } else {
-      cargados += chunk.length
-    }
+/**
+ * Poda en lote las anclas de piso que NO tienen movimientos históricos.
+ * FK-safe: primero excluye los bloque_id presentes en piso_movimiento_detalles.
+ */
+export async function podarAnclasPisoSinUso(): Promise<number> {
+  const usados = new Set<string>()
+  let from = 0
+  for (let page = 0; page < 50; page++) {
+    const { data, error } = await dataClient
+      .from('piso_movimiento_detalles')
+      .select('bloque_id')
+      .range(from, from + 999)
+    if (error) break
+    const rows = (data ?? []) as { bloque_id: string }[]
+    for (const r of rows) usados.add(r.bloque_id)
+    if (rows.length < 1000) break
+    from += 1000
   }
-  if (errores.length > 0) {
-    // Antes el error solo iba a console y el usuario veía éxito limpio con el
-    // catálogo de Piso sin sincronizar; ahora se propaga al llamador.
-    console.error('Error sincronizando a piso_bloques:', errores.slice(0, 5).join(' | '))
-  }
-  return { cargados, errores }
-}
-
-async function removeFromPisoBloques(codigo: string): Promise<void> {
-  const target = codigo.trim().toUpperCase()
-  // Buscar el bloque por código para obtener su ID
-  const { data: bloque, error: errBusqueda } = await dataClient
+  const { data: todas, error: errTodas } = await dataClient
     .from('piso_bloques')
     .select('id')
-    .eq('codigo', target)
-    .maybeSingle()
-  if (errBusqueda) throw errBusqueda
-  if (!bloque) return
-  const bloqueId = (bloque as { id: string }).id
-  // Eliminar asignaciones de columna primero (FK constraint)
-  const { error: errAsig } = await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', bloqueId)
-  if (errAsig) throw errAsig
-  // Luego eliminar el bloque
-  const { error: errBloque } = await dataClient.from('piso_bloques').delete().eq('id', bloqueId)
-  if (errBloque) throw errBloque
+  if (errTodas) throw errTodas
+  const aPodar = ((todas ?? []) as { id: string }[])
+    .map((b) => b.id)
+    .filter((id) => !usados.has(id))
+  let podadas = 0
+  const CHUNK = 500
+  for (let i = 0; i < aPodar.length; i += CHUNK) {
+    const { error } = await dataClient.from('piso_bloques').delete().in('id', aPodar.slice(i, i + CHUNK))
+    if (error) break
+    podadas += Math.min(CHUNK, aPodar.length - i)
+  }
+  return podadas
 }
 
-async function clearPisoBloques(): Promise<void> {
-  // Eliminar asignaciones de columna primero (FK constraint), por lotes
-  const { data: colBloques, error: errCol } = await dataClient.from('piso_columna_bloques').select('bloque_id')
-  if (errCol) throw errCol
-  if (colBloques && colBloques.length > 0) {
-    const ids = (colBloques as { bloque_id: string }[]).map(b => b.bloque_id)
-    for (let i = 0; i < ids.length; i += 500) {
-      const { error } = await dataClient.from('piso_columna_bloques').delete().in('bloque_id', ids.slice(i, i + 500))
-      if (error) throw error
-    }
-  }
-  // Luego eliminar todos los bloques, por lotes (URL con miles de IDs puede exceder límites)
-  const { data: allBloques, error: errAll } = await dataClient.from('piso_bloques').select('id')
-  if (errAll) throw errAll
-  if (allBloques && allBloques.length > 0) {
-    const ids = (allBloques as { id: string }[]).map(b => b.id)
-    for (let i = 0; i < ids.length; i += 500) {
-      const { error } = await dataClient.from('piso_bloques').delete().in('id', ids.slice(i, i + 500))
-      if (error) throw error
-    }
-  }
-}
-
-export { syncToPisoBloques, removeFromPisoBloques, clearPisoBloques }
+// ═══ (Eliminado) Sincronización catalogo → piso_bloques ═══
+// Hasta la unificación del catálogo (Task 15) cada guardado replicaba aquí el
+// catálogo completo a piso_bloques (upsert de ~1079 filas) — era LA fuente del
+// drift entre ambos catálogos y duplicaba la escritura. Hoy Piso lee el
+// catálogo en vivo (src/lib/piso/api.ts → resolverInfoBloques) y piso_bloques
+// se limita a ser el ancla FK del historial: se crea on-demand
+// (asegurarAnclaPiso) y se poda sin uso (podarAnclasPisoSinUso).

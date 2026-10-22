@@ -13,6 +13,7 @@ import {
   listarBloquesParaSelect,
   buscarBloquePorCodigo,
   crearBloque,
+  resolverInfoBloques,
   registrarIngresoPosicion,
   registrarSalidaPosicion,
   registrarTrasladoPosicion,
@@ -393,14 +394,10 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         200,
       )
       const detDataFiltrada = detData.filter(d => nivelIds.includes(d.nivel_id))
-      // 4) Obtener info de bloques
+      // 4) Obtener info de bloques — catálogo de Racks como fuente de verdad
+      //    (resolución central; respaldo histórico para códigos fuera de catálogo)
       const uniqueBloqueIds = [...new Set(detDataFiltrada.map((d) => d.bloque_id))]
-      const { data: bloqData, error: bloqErr } = await dataClient
-        .from('piso_bloques')
-        .select('id, codigo, descripcion, unidad')
-        .in('id', uniqueBloqueIds)
-      if (bloqErr) throw bloqErr
-      const bloqMap = new Map<string, { id: string; codigo: string; descripcion: string; unidad: string }>((bloqData ?? []).map((b: { id: string; codigo: string; descripcion: string; unidad: string }) => [b.id, b]))
+      const bloqMap = await resolverInfoBloques(uniqueBloqueIds)
       const movMap = new Map<string, { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }>((movData ?? []).map((m: { id: string; tipo: string; turno: string | null; fecha: string; usuario_nombre: string | null; codigo_inc: string | null }) => [m.id, m]))
       // 5) Crear items por detalle, manteniendo orden cronologico del movimiento
       const allItems: HistorialItem[] = []
@@ -907,10 +904,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
           return
         }
         const created = await crearBloque(upper, incDescripcion || '', incUn || 'KG')
-        if (created.length > 0) {
-          const found = created.find((b) => b.codigo === upper)
-          if (found) bloqueId = found.id
-        }
+        if (created) bloqueId = created.id
       }
       if (!bloqueId) { toast.error('No se pudo crear/encontrar el articulo'); setBusy(false); return }
 
@@ -1108,13 +1102,12 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     }
   }
 
-  // Auto-create manual_ bloques in piso_bloques before registering movement.
-  // También resuelve ids VIRTUALES `cat_<codigo>` (artículos que existen solo
-  // en el catálogo de Racks, de listarBloquesParaSelect): antes pasaban tal
-  // cual al INSERT de piso_movimiento_detalles y morían con violación de FK
-  // (bloque_id es UUID NOT NULL REFERENCES piso_bloques) — el ingreso se
-  // perdía con un error críptico. buscarBloquePorCodigo auto-crea el bloque
-  // real desde el catálogo (misma ruta que el onBlur).
+  // Resuelve ids VIRTUALES (`manual_<codigo>` / `cat_<codigo>`) a anclas REALES
+  // de piso_bloques antes de registrar movimientos (bloque_id es UUID NOT NULL
+  // REFERENCES piso_bloques). buscarBloquePorCodigo/crearBloque garantizan el
+  // ancla — buscando primero en el CATÁLOGO de Racks (fuente de verdad) y
+  // creándola on-demand si no existe. Si no se puede resolver, la fila se
+  // descarta con aviso — jamás registrar con un id virtual que viola la FK.
   async function ensureManualBloqueCreated(rows: RowEntry[]): Promise<RowEntry[]> {
     const resolved: RowEntry[] = []
     for (const r of rows) {
@@ -1122,13 +1115,9 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         const code = r.bloque_id.replace('manual_', '')
         try {
           const created = await crearBloque(code, r.descripcion || '', r.unidad || 'KG')
-          if (created.length > 0) {
-            // Find the newly created one
-            const found = created.find((b) => b.codigo === code)
-            if (found) {
-              resolved.push({ ...r, bloque_id: found.id })
-              continue
-            }
+          if (created && created.id) {
+            resolved.push({ ...r, bloque_id: created.id })
+            continue
           }
         } catch {
           // If creation fails, try searching for it (maybe it was already created)

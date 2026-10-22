@@ -195,14 +195,6 @@ export type Nivel = {
   codigo_ubicacion: string | null
 }
 
-export type Bloque = {
-  id: string
-  codigo: string
-  descripcion: string
-  unidad: string
-  created_at: string
-}
-
 export type PisoMovimiento = {
   id: string
   numero_operacion: number
@@ -335,153 +327,225 @@ export async function listarNivelesDeSubcolumna(
   }))
 }
 
-// ---- Bloques ----
-export async function listarBloques(): Promise<Bloque[]> {
-  const { data, error } = await dataClient
-    .from('piso_bloques')
-    .select('*')
-    .order('codigo')
-  if (error) throw error
-  return (data ?? []) as Bloque[]
+// ═══ Bloques — FUENTE ÚNICA DE VERDAD: catálogo de Racks ═══
+// Desde la unificación del catálogo (Task 15), `catalogo` es la ÚNICA fuente de
+// descripción/unidad. `piso_bloques` queda como ANCLA TÉCNICA: existe para dar
+// UUID a la FK piso_movimiento_detalles.bloque_id (historial inmutable) y solo
+// aporta datos propios para códigos históricos que ya NO están en catálogo.
+
+export type InfoBloque = { codigo: string; descripcion: string; unidad: string }
+
+/**
+ * PURO (testeable) — Fusiona anclas de piso, catálogo de Racks y respaldo
+ * histórico en un mapa id → info. Reglas:
+ *  1. El CÓDIGO del id: ancla real → su fila en piso_bloques; `cat_X`/`manual_X` → X.
+ *  2. descripcion/unidad: SIEMPRE del catálogo si el código existe ahí.
+ *  3. Respaldo: fila de piso_bloques (códigos históricos fuera de catálogo).
+ *  4. `manual_X` sin ningún registro → "Articulo nuevo (manual)" + KG.
+ *  5. Sin código resoluble → el id queda fuera del mapa (el llamador lo omite).
+ */
+export function fusionarInfoBloques(
+  ids: string[],
+  anclas: { id: string; codigo: string }[],
+  catFilas: { codigo: string; descripcion: string; un: string }[],
+  pisoFilas: { codigo: string; descripcion: string; unidad: string }[]
+): Map<string, InfoBloque> {
+  const anclaPorId = new Map(anclas.map((a) => [a.id, a.codigo]))
+  const catPorCodigo = new Map(
+    catFilas.map((c) => [c.codigo.trim().toUpperCase(), c])
+  )
+  const pisoPorCodigo = new Map(
+    pisoFilas.map((p) => [p.codigo.trim().toUpperCase(), p])
+  )
+
+  const info = new Map<string, InfoBloque>()
+  for (const id of ids) {
+    const codigo = (
+      id.startsWith('cat_') || id.startsWith('manual_')
+        ? id.slice(id.indexOf('_') + 1)
+        : anclaPorId.get(id)
+    )?.trim().toUpperCase()
+    if (!codigo) continue
+
+    const cat = catPorCodigo.get(codigo)
+    if (cat) {
+      info.set(id, { codigo, descripcion: cat.descripcion ?? '', unidad: cat.un ?? '' })
+      continue
+    }
+    const piso = pisoPorCodigo.get(codigo)
+    if (piso) {
+      info.set(id, { codigo, descripcion: piso.descripcion ?? '', unidad: piso.unidad ?? '' })
+      continue
+    }
+    if (id.startsWith('manual_')) {
+      info.set(id, { codigo, descripcion: 'Articulo nuevo (manual)', unidad: 'KG' })
+    }
+    // id real sin fila de catálogo ni piso y no-manual: no debería pasar
+    // (la ancla existe) — se omite igual que antes para no inventar datos.
+  }
+  return info
 }
 
+/**
+ * Resuelve id (UUID real, `cat_<codigo>` o `manual_<codigo>`) → info de artículo
+ * con el CATÁLOGO DE RACKS como fuente de verdad. piso_bloques solo aporta el
+ * mapeo id→codigo de las anclas y datos de respaldo para códigos históricos.
+ */
+export async function resolverInfoBloques(
+  ids: string[]
+): Promise<Map<string, InfoBloque>> {
+  const limpios = [...new Set(ids.filter(Boolean))]
+  if (limpios.length === 0) return new Map()
+
+  const reales = limpios.filter((id) => !id.startsWith('cat_') && !id.startsWith('manual_'))
+  const anclas: { id: string; codigo: string }[] = []
+  if (reales.length > 0) {
+    for (let i = 0; i < reales.length; i += 500) {
+      const { data, error } = await dataClient
+        .from('piso_bloques')
+        .select('id, codigo')
+        .in('id', reales.slice(i, i + 500))
+      if (error) throw error
+      for (const b of (data ?? []) as { id: string; codigo: string }[]) anclas.push(b)
+    }
+  }
+
+  // Códigos a consultar en catálogo: los de las anclas + los virtuales
+  const codigos = new Set<string>(
+    anclas.map((a) => a.codigo.trim().toUpperCase())
+  )
+  for (const id of limpios) {
+    if (id.startsWith('cat_') || id.startsWith('manual_')) {
+      const c = id.slice(id.indexOf('_') + 1).trim().toUpperCase()
+      if (c) codigos.add(c)
+    }
+  }
+
+  const catFilas: { codigo: string; descripcion: string; un: string }[] = []
+  const listaCodigos = [...codigos]
+  if (listaCodigos.length > 0) {
+    for (let i = 0; i < listaCodigos.length; i += 500) {
+      const { data, error } = await dataClient
+        .from('catalogo')
+        .select('codigo, descripcion, un')
+        .in('codigo', listaCodigos.slice(i, i + 500))
+      if (error) throw error
+      for (const c of (data ?? []) as { codigo: string; descripcion: string; un: string }[]) catFilas.push(c)
+    }
+  }
+
+  // Respaldo histórico: códigos que el catálogo no conoce → piso_bloques
+  const enCat = new Set(catFilas.map((c) => c.codigo.trim().toUpperCase()))
+  const faltantes = listaCodigos.filter((c) => !enCat.has(c))
+  const pisoFilas: { codigo: string; descripcion: string; unidad: string }[] = []
+  if (faltantes.length > 0) {
+    for (let i = 0; i < faltantes.length; i += 500) {
+      const { data, error } = await dataClient
+        .from('piso_bloques')
+        .select('codigo, descripcion, unidad')
+        .in('codigo', faltantes.slice(i, i + 500))
+      if (error) throw error
+      for (const p of (data ?? []) as { codigo: string; descripcion: string; unidad: string }[]) pisoFilas.push(p)
+    }
+  }
+
+  return fusionarInfoBloques(limpios, anclas, catFilas, pisoFilas)
+}
+
+/**
+ * Garantiza que exista la fila-ancla en piso_bloques para un código y devuelve
+ * su id (único propósito de la tabla desde la unificación del catálogo).
+ * Tolerante a carrera: si el insert falla por duplicado, reconsulta.
+ */
+async function asegurarAnclaPiso(codigo: string): Promise<{ id: string }> {
+  const target = codigo.trim().toUpperCase()
+  const { data: existing } = await dataClient
+    .from('piso_bloques')
+    .select('id')
+    .eq('codigo', target)
+    .limit(1)
+  if (existing && existing.length > 0) return { id: (existing[0] as { id: string }).id }
+  const { data: ins, error } = await dataClient
+    .from('piso_bloques')
+    .insert({ codigo: target })
+    .select('id')
+    .single()
+  if (ins) return { id: (ins as { id: string }).id }
+  if (error) {
+    // Carrera: otro usuario creó el ancla a la vez — reconsultar
+    const { data: recheck } = await dataClient
+      .from('piso_bloques')
+      .select('id')
+      .eq('codigo', target)
+      .limit(1)
+    if (recheck && recheck.length > 0) return { id: (recheck[0] as { id: string }).id }
+    throw error
+  }
+  throw new Error('No se pudo crear el ancla del artículo en piso')
+}
+
+/**
+ * Crea (o resuelve) el ancla de piso para un código. Fuente de verdad = catálogo:
+ *  - Si el código existe en catálogo → devuelve la info DEL CATÁLOGO y garantiza
+ *    el ancla en piso_bloques (sin duplicar descripciones divergentes).
+ *  - Si NO existe (artículo manual de INC/muestras) → crea el ancla con lo digitado.
+ * Devuelve el bloque resuelto (id REAL del ancla, necesario para la FK) o null.
+ */
 export async function crearBloque(
   codigo: string,
   descripcion: string,
   unidad: string
-): Promise<Bloque[]> {
-  const { error } = await dataClient.from('piso_bloques').insert({
-    codigo: codigo.trim().toUpperCase(),
-    descripcion,
-    unidad,
-  })
-  if (error) throw error
-  return listarBloques()
-}
+): Promise<InfoBloque & { id: string } | null> {
+  const upper = codigo.trim().toUpperCase()
+  if (!upper) return null
 
-export async function eliminarBloque(id: string): Promise<Bloque[]> {
-  const { error: errAsig } = await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', id)
-  if (errAsig) throw errAsig
-  const { error } = await dataClient.from('piso_bloques').delete().eq('id', id)
-  if (error) {
-    // FIX auditoría 2026-10-21 (P2): la FK de piso_movimiento_detalles.bloque_id
-    // es NO ACTION — un bloque CON historial moría con error críptico 23503
-    // (y solo DESPUÉS de borrar sus asignaciones). Mensaje claro para el usuario.
-    if ((error as { code?: string }).code === '23503') {
-      throw new Error('Este bloque tiene movimientos históricos y no puede eliminarse (protege la trazabilidad del inventario). Puede dejarlo sin usar o desasignarlo de las columnas.')
-    }
-    throw error
+  // 1) El catálogo manda: si existe, usar SUS datos (evita drift en el ancla)
+  const resuelto = await buscarBloquePorCodigo(upper)
+  if (resuelto) return resuelto
+
+  // 2) Artículo nuevo (fuera de catálogo): crear ancla con lo digitado
+  const desc = (descripcion || '').trim()
+  const un = (unidad || 'KG').trim() || 'KG'
+  const { error } = await dataClient.from('piso_bloques').insert({
+    codigo: upper,
+    descripcion: desc,
+    unidad: un,
+  })
+  if (!error) {
+    const ancla = await asegurarAnclaPiso(upper)
+    return { id: ancla.id, codigo: upper, descripcion: desc, unidad: un }
   }
-  return listarBloques()
+
+  // 3) Carrera (otro usuario lo creó a la vez): reconsultar
+  const retry = await buscarBloquePorCodigo(upper)
+  if (retry) return retry
+  throw error
 }
 
 /**
- * Reemplaza el catálogo de bloques de Piso con el contenido de un archivo.
- *
- * SEGURO (antes era destructivo): hacía DELETE de TODO + INSERT único en una
- * sola petición; si el insert fallaba (>1000 filas, payload, códigos duplicados),
- * la tabla quedaba VACÍA. Ahora:
- *  1) Normaliza y deduplica por código (conserva la última aparición del archivo).
- *  2) UPSERT por lotes ANTES de borrar nada — si algo falla, el catálogo actual
- *     queda intacto y se puede reintentar.
- *  3) Al final, poda SOLO los códigos que ya no vienen en el archivo (por lotes,
- *     no fatal: si no se pueden podar, el catálogo queda como superset válido).
+ * Poda el ancla de piso de un código SOLO si no tiene movimientos históricos
+ * (FK-safe: si tiene historial, se conserva — protege la trazabilidad).
+ * Silencioso por diseño: al borrar un código del catálogo el ancla es basura
+ * residual, pero si está atada a historia NO debe tocarse.
  */
-export async function reemplazarCatalogoBloques(
-  items: { codigo: string; descripcion: string; unidad: string }[]
-): Promise<{ bloques: Bloque[]; cargados: number; eliminados: number; errores: string[] }> {
-  const errores: string[] = []
-  // 1) Normalizar + deduplicar por código
-  const mapa = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
-  for (const i of items) {
-    const codigo = i.codigo.trim().toUpperCase()
-    if (!codigo) continue
-    mapa.set(codigo, { codigo, descripcion: i.descripcion, unidad: i.unidad })
-  }
-  const rows = [...mapa.values()]
-
-  // 2) Snapshot de los códigos actuales (para podar los que ya no vienen)
-  const { data: actuales, error: errActuales } = await dataClient
+export async function podarAnclaPisoSiSinUso(codigo: string): Promise<void> {
+  const target = codigo.trim().toUpperCase()
+  if (!target) return
+  const { data: bloque, error: errBusqueda } = await dataClient
     .from('piso_bloques')
-    .select('id, codigo')
-  if (errActuales) throw errActuales
-  const actualesRows = (actuales ?? []) as unknown as { id: string; codigo: string }[]
-
-  // 3) Upsert por lotes ANTES de borrar nada
-  const CHUNK = 500
-  let cargados = 0
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const chunk = rows.slice(i, i + CHUNK)
-    const { error } = await dataClient
-      .from('piso_bloques')
-      .upsert(chunk, { onConflict: 'codigo' })
-    if (error) {
-      // Fallback fila por fila para identificar la fila problemática y no perder el resto
-      for (const r of chunk) {
-        const { error: singleErr } = await dataClient
-          .from('piso_bloques')
-          .upsert(r, { onConflict: 'codigo' })
-        if (singleErr) errores.push(`${r.codigo}: ${singleErr.message}`)
-        else cargados++
-      }
-    } else {
-      cargados += chunk.length
-    }
+    .select('id')
+    .eq('codigo', target)
+    .maybeSingle()
+  if (errBusqueda) throw errBusqueda
+  if (!bloque) return
+  const bloqueId = (bloque as { id: string }).id
+  // Sin asignaciones de columna (tabla heredada, hoy vacía) ni movimientos
+  await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', bloqueId)
+  const { error } = await dataClient.from('piso_bloques').delete().eq('id', bloqueId)
+  if (error && (error as { code?: string }).code === '23503') {
+    // Tiene movimientos históricos: conservar (ancla legítima del historial)
+    return
   }
-
-  // 4) Podar los códigos que ya no vienen en el archivo (por lotes, no fatal)
-  const codigosArchivo = new Set(rows.map((r) => r.codigo))
-  const aPodar = actualesRows.filter((b) => !codigosArchivo.has(b.codigo)).map((b) => b.id)
-  let eliminados = 0
-  for (let i = 0; i < aPodar.length; i += CHUNK) {
-    const chunk = aPodar.slice(i, i + CHUNK)
-    const { error } = await dataClient.from('piso_bloques').delete().in('id', chunk)
-    if (error) {
-      // No fatal: el catálogo nuevo ya está cargado; los obsoletos quedan y se avisan
-      errores.push(`No se pudieron eliminar ${aPodar.length - i} bloque(s) obsoleto(s): ${error.message}`)
-      break
-    }
-    eliminados += chunk.length
-  }
-
-  const bloques = await listarBloques()
-  return { bloques, cargados, eliminados, errores }
-}
-
-// ---- Column-Block assignments ----
-export async function listarBloquesDeColumna(
-  columnaId: string
-): Promise<Bloque[]> {
-  const { data, error } = await dataClient
-    .from('piso_columna_bloques')
-    .select('bloque_id, piso_bloques(*)')
-    .eq('columna_id', columnaId)
-  if (error) throw error
-  // Filtrar asignaciones huérfanas (piso_bloques null tras podas del catálogo)
-  return ((data ?? []) as unknown as { bloque_id: string; piso_bloques: Bloque | null }[])
-    .map((r) => r.piso_bloques)
-    .filter((b): b is Bloque => b !== null)
-}
-
-export async function asignarBloqueAColumna(
-  bloqueId: string,
-  columnaId: string
-) {
-  const { error } = await dataClient
-    .from('piso_columna_bloques')
-    .insert({ bloque_id: bloqueId, columna_id: columnaId })
-  if (error) throw error
-}
-
-export async function quitarBloqueDeColumna(
-  bloqueId: string,
-  columnaId: string
-) {
-  const { error } = await dataClient
-    .from('piso_columna_bloques')
-    .delete()
-    .eq('bloque_id', bloqueId)
-    .eq('columna_id', columnaId)
   if (error) throw error
 }
 
@@ -1378,22 +1442,9 @@ export async function stockDetallePosicion(
   // Códigos de lote físico por (bloque, fecha) para mostrar junto a cada lote restante
   const loteFisMap = lotesFisicosPorFecha(detalles)
 
-  // Info de bloques
+  // Info de bloques — catálogo de Racks como fuente de verdad (resolución central)
   const bloqueIds = [...lotesRestantes.keys()]
-  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
-  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_'))
-  if (realIds.length > 0) {
-    const { data: bloqData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
-    for (const b of (bloqData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
-      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
-  }
-  const virtualIds = bloqueIds.filter((id) => id.startsWith('cat_'))
-  if (virtualIds.length > 0) {
-    const codes = virtualIds.map((id) => id.replace('cat_', ''))
-    const { data: catData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
-    for (const c of (catData ?? []) as { codigo: string; descripcion: string; un: string }[])
-      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
-  }
+  const bloqueInfoMap = await resolverInfoBloques(bloqueIds)
 
   const results: StockDetalleFila[] = []
   for (const [bloqueId, lots] of lotesRestantes) {
@@ -1475,28 +1526,9 @@ export async function stockDetalleNivel(
   // Códigos de lote físico por (bloque, fecha) para mostrar junto a cada lote restante
   const loteFisMap = lotesFisicosPorFecha(detalles)
 
-  // Info de bloques
+  // Info de bloques — catálogo de Racks como fuente de verdad (resolución central)
   const bloqueIds = [...lotesRestantes.keys()]
-  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
-  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_') && !id.startsWith('manual_'))
-  if (realIds.length > 0) {
-    const { data: bloqData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
-    for (const b of (bloqData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
-      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
-  }
-  const virtualIds = bloqueIds.filter((id) => id.startsWith('cat_'))
-  if (virtualIds.length > 0) {
-    const codes = virtualIds.map((id) => id.replace('cat_', ''))
-    const { data: catData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
-    for (const c of (catData ?? []) as { codigo: string; descripcion: string; un: string }[])
-      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
-  }
-  // Handle manual_ IDs
-  for (const id of bloqueIds) {
-    if (id.startsWith('manual_') && !bloqueInfoMap.has(id)) {
-      bloqueInfoMap.set(id, { codigo: id.replace('manual_', ''), descripcion: 'Articulo nuevo (manual)', unidad: 'KG' })
-    }
-  }
+  const bloqueInfoMap = await resolverInfoBloques(bloqueIds)
 
   const results: StockDetalleFila[] = []
   for (const [bloqueId, lots] of lotesRestantes) {
@@ -1977,37 +2009,17 @@ export async function stockPorNivelPosicion(
 }
 
 /**
- * Lista bloques disponibles para selección.
- * Busca en piso_bloques PRIMERO y luego en catalogo (Racks) como respaldo.
- * Fusiona ambos resultados sin duplicar por código.
+ * Lista artículos para los selectores de Piso — FUENTE ÚNICA: catálogo de Racks.
+ * Devuelve todo el catálogo con ids virtuales `cat_<codigo>` y añade al final
+ * los códigos SOLO-piso (anclas históricas cuyo código ya no está en catálogo,
+ * p.ej. muestras manuales) con su id real.
  */
 export async function listarBloquesParaSelect(): Promise<{ id: string; codigo: string; descripcion: string; unidad: string }[]> {
   const results: { id: string; codigo: string; descripcion: string; unidad: string }[] = []
-  const seen = new Map<string, boolean>()
+  const seen = new Set<string>()
 
-  // 1. piso_bloques (tabla local de Piso)
-  try {
-    const { data, error } = await dataClient
-      .from('piso_bloques')
-      .select('id, codigo, descripcion, unidad')
-      .order('codigo')
-    if (error) console.error('[Piso] Error consultando piso_bloques:', error.message)
-    for (const b of (data ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
-      const code = (b.codigo ?? '').trim().toUpperCase()
-      if (code && !seen.has(code)) {
-        seen.set(code, true)
-        results.push({
-          id: b.id,
-          codigo: code,
-          descripcion: b.descripcion ?? '',
-          unidad: b.unidad ?? '',
-        })
-      }
-    }
-    // items loaded from piso_bloques
-  } catch (err) { console.error('[Piso] Error en piso_bloques:', err) }
-
-  // 2. catalogo (tabla de Racks como respaldo)
+  // 1. CATÁLOGO DE RACKS — fuente de verdad (ids virtuales: el ancla real se
+  //    garantiza al usar el artículo, vía buscarBloquePorCodigo/crearBloque)
   try {
     const { data, error } = await dataClient
       .from('catalogo')
@@ -2017,32 +2029,69 @@ export async function listarBloquesParaSelect(): Promise<{ id: string; codigo: s
     for (const c of (data ?? []) as { codigo: string; descripcion: string; un: string }[]) {
       const code = (c.codigo ?? '').trim().toUpperCase()
       if (code && !seen.has(code)) {
-        seen.set(code, true)
+        seen.add(code)
         results.push({
-          id: `cat_${code}`, // ID virtual para items del catálogo de Racks
+          id: `cat_${code}`,
           codigo: code,
           descripcion: c.descripcion ?? '',
           unidad: c.un ?? '',
         })
       }
     }
-    // items merged from catalogo backup
   } catch (err) { console.error('[Piso] Error en catalogo:', err) }
+
+  // 2. Respaldo histórico: anclas de piso cuyo código NO está en catálogo
+  try {
+    const { data, error } = await dataClient
+      .from('piso_bloques')
+      .select('id, codigo, descripcion, unidad')
+      .order('codigo')
+    if (error) console.error('[Piso] Error consultando piso_bloques:', error.message)
+    for (const b of (data ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
+      const code = (b.codigo ?? '').trim().toUpperCase()
+      if (code && !seen.has(code)) {
+        seen.add(code)
+        results.push({
+          id: b.id,
+          codigo: code,
+          descripcion: b.descripcion ?? '',
+          unidad: b.unidad ?? '',
+        })
+      }
+    }
+  } catch (err) { console.error('[Piso] Error en piso_bloques:', err) }
 
   return results
 }
 
 /**
- * Busca un bloque por código exacto. Busca en piso_bloques primero, luego en catalogo.
- * Si lo encuentra en catalogo pero no en piso_bloques, lo crea automáticamente
- * (es legítimo: el producto existe en el sistema de Racks).
- * Si no se encuentra en ninguna tabla, retorna null (no auto-crea para evitar bloques basura).
+ * Busca un artículo por código exacto — CATÁLOGO DE RACKS PRIMERO (fuente de
+ * verdad de descripción/unidad); si existe, garantiza el ancla en piso_bloques
+ * (necesaria para la FK al registrar movimientos) y devuelve sus datos.
+ * Si no está en catálogo, respalda en piso_bloques (códigos históricos/muestras).
+ * Si no existe en ninguna fuente, retorna null (no auto-crea artículos basura).
  */
 export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: string; codigo: string; descripcion: string; unidad: string } | null> {
   const target = codigo.trim().toUpperCase()
   if (!target) return null
 
-  // 1. Buscar en piso_bloques
+  // 1. Catálogo de Racks (fuente de verdad)
+  try {
+    const { data, error } = await dataClient
+      .from('catalogo')
+      .select('codigo, descripcion, un')
+      .eq('codigo', target)
+      .limit(1)
+    if (error) console.error('[Piso] Error consultando catalogo:', error.message)
+    if (data && data.length > 0) {
+      const c = data[0] as { codigo: string; descripcion: string; un: string }
+      // Ancla garantizada para que la FK de piso_movimiento_detalles nunca falle
+      const ancla = await asegurarAnclaPiso(c.codigo)
+      return { id: ancla.id, codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' }
+    }
+  } catch (err) { console.error('[Piso] Error en búsqueda catalogo:', err) }
+
+  // 2. Respaldo histórico: piso_bloques (fuera de catálogo, p.ej. muestras)
   try {
     const { data, error } = await dataClient
       .from('piso_bloques')
@@ -2056,54 +2105,7 @@ export async function buscarBloquePorCodigo(codigo: string): Promise<{ id: strin
     }
   } catch (err) { console.error('[Piso] Error en búsqueda piso_bloques:', err) }
 
-  // 2. Buscar en catalogo (Racks) — si existe, auto-crear en piso_bloques
-  try {
-    const { data, error } = await dataClient
-      .from('catalogo')
-      .select('codigo, descripcion, un')
-      .eq('codigo', target)
-      .limit(1)
-    if (error) console.error('[Piso] Error buscando en catalogo:', error.message)
-    if (data && data.length > 0) {
-      const c = data[0] as { codigo: string; descripcion: string; un: string }
-      // Auto-crear en piso_bloques para futuro uso (producto legítimo del catálogo)
-      try {
-        const { data: inserted } = await dataClient
-          .from('piso_bloques')
-          .insert({ codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
-          .select('id')
-          .single()
-        if (inserted) {
-          return {
-            id: (inserted as { id: string }).id,
-            codigo: c.codigo,
-            descripcion: c.descripcion ?? '',
-            unidad: c.un ?? '',
-          }
-        }
-      } catch (insertErr) {
-        // FIX auditoría 2026-10-21 (P3): si el auto-create falla por carrera
-        // (dos usuarios dieron de alta el mismo código a la vez) el bloque YA
-        // existe — re-consultar ANTES de devolver el id virtual `cat_`, que
-        // moría con violación de FK en el INSERT de detalles.
-        try {
-          const { data: recheck } = await dataClient
-            .from('piso_bloques')
-            .select('id, codigo, descripcion, unidad')
-            .eq('codigo', c.codigo)
-            .limit(1)
-          const b = (recheck ?? [])[0] as { id: string; codigo: string; descripcion: string; unidad: string } | undefined
-          if (b) {
-            return { id: b.id, codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' }
-          }
-        } catch { /* cae al id virtual */ }
-        console.warn('[Piso] Auto-create piso_bloques falló, usando ID virtual:', insertErr)
-      }
-      return { id: `cat_${c.codigo}`, codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' }
-    }
-  } catch (err) { console.error('[Piso] Error en búsqueda catalogo:', err) }
-
-  // 3. No encontrado en ninguna tabla — retornar null (no auto-crear bloques basura)
+  // 3. No encontrado en ninguna fuente
   return null
 }
 
@@ -2234,26 +2236,9 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
 
   if (fefoResults.length === 0) return []
 
-  // 4. Resolve bloque info
+  // 4. Resolve bloque info — catálogo de Racks como fuente de verdad
   const bloqueIds = [...new Set(fefoResults.map(r => r.bloque_id))]
-  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
-  const realIds = bloqueIds.filter(id => !id.startsWith('cat_') && !id.startsWith('manual_'))
-  if (realIds.length > 0) {
-    const { data: bData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
-    for (const b of (bData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[])
-      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
-  }
-  const catIds = bloqueIds.filter(id => id.startsWith('cat_'))
-  if (catIds.length > 0) {
-    const codes = catIds.map(id => id.replace('cat_', ''))
-    const { data: cData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
-    for (const c of (cData ?? []) as { codigo: string; descripcion: string; un: string }[])
-      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
-  }
-  for (const id of bloqueIds) {
-    if (id.startsWith('manual_') && !bloqueInfoMap.has(id))
-      bloqueInfoMap.set(id, { codigo: id.replace('manual_', ''), descripcion: 'Articulo nuevo', unidad: 'KG' })
-  }
+  const bloqueInfoMap = await resolverInfoBloques(bloqueIds)
 
   // 5. Resolve location for each nivel_id
   const nivelIds = [...new Set(fefoResults.map(r => r.nivel_id))]
@@ -2404,21 +2389,41 @@ async function _stockPisoBuscarImpl(term: string): Promise<StockPisoItem[]> {
     const safe = t.replace(/[,()]/g, ' ').trim()
     if (!safe) return []
 
-    // ─── 1. Bloques que matchean (código o descripción), techo razonable ───
-    const { data: bloques, error: errB } = await dataClient
-      .from('piso_bloques')
-      .select('id, codigo, descripcion, unidad')
-      .or(`codigo.ilike.%${safe}%,descripcion.ilike.%${safe}%`)
-      .order('codigo')
-      .limit(80)
-    if (errB) throw errB
-    if (!bloques || bloques.length === 0) return []
+    // ─── 1. Códigos candidatos: CATÁLOGO DE RACKS (fuente de verdad, descripción
+    //        vigente) + anclas de piso (códigos históricos/muestras) ───
+    const [catRes, pisoRes] = await Promise.all([
+      dataClient
+        .from('catalogo')
+        .select('codigo')
+        .or(`codigo.ilike.%${safe}%,descripcion.ilike.%${safe}%`)
+        .order('codigo')
+        .limit(80),
+      dataClient
+        .from('piso_bloques')
+        .select('id, codigo')
+        .or(`codigo.ilike.%${safe}%,descripcion.ilike.%${safe}%`)
+        .order('codigo')
+        .limit(80),
+    ])
+    if (catRes.error) throw catRes.error
+    if (pisoRes.error) throw pisoRes.error
+    const codigosCandidatos = [...new Set([
+      ...((catRes.data ?? []) as { codigo: string }[]).map((c) => (c.codigo ?? '').trim().toUpperCase()),
+      ...((pisoRes.data ?? []) as { codigo: string }[]).map((b) => (b.codigo ?? '').trim().toUpperCase()),
+    ])].filter(Boolean)
+    if (codigosCandidatos.length === 0) return []
 
-    const bloqueIds = (bloques as { id: string; codigo: string; descripcion: string; unidad: string }[]).map((b) => b.id)
-    const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
-    for (const b of bloques as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
-      bloqueInfoMap.set(b.id, { codigo: b.codigo ?? '', descripcion: b.descripcion ?? '', unidad: b.unidad ?? 'KG' })
-    }
+    // ─── 1b. Anclas reales: solo ellas pueden tener movimientos/stock en piso ───
+    const { data: anclas, error: errA } = await dataClient
+      .from('piso_bloques')
+      .select('id, codigo')
+      .in('codigo', codigosCandidatos)
+    if (errA) throw errA
+    if (!anclas || anclas.length === 0) return []
+    const bloqueIds = (anclas as { id: string; codigo: string }[]).map((a) => a.id)
+
+    // ─── 1c. Info de artículo: catálogo primero (resolución central) ───
+    const bloqueInfoMap = await resolverInfoBloques(bloqueIds)
 
     // ─── 2. Detalles SOLO de esos bloques + ubicación resuelta en 1 query ───
     const { data: detalles, error: errD } = await dataClient
@@ -2734,23 +2739,8 @@ export async function cargarVistaColumna(
     stockMap.set(key, existing)
   }
 
-  // 5. Obtener info de bloques (1 query)
-  const bloqueInfoMap = new Map<string, { codigo: string; descripcion: string; unidad: string }>()
-  const realIds = [...bloqueIds].filter(id => !id.startsWith('cat_') && !id.startsWith('manual_'))
-  if (realIds.length > 0) {
-    const { data: bData } = await dataClient.from('piso_bloques').select('id, codigo, descripcion, unidad').in('id', realIds)
-    for (const b of (bData ?? []) as { id: string; codigo: string; descripcion: string; unidad: string }[]) {
-      bloqueInfoMap.set(b.id, { codigo: b.codigo, descripcion: b.descripcion ?? '', unidad: b.unidad ?? '' })
-    }
-  }
-  const catIds = [...bloqueIds].filter(id => id.startsWith('cat_'))
-  if (catIds.length > 0) {
-    const codes = catIds.map(id => id.replace('cat_', ''))
-    const { data: cData } = await dataClient.from('catalogo').select('codigo, descripcion, un').in('codigo', codes)
-    for (const c of (cData ?? []) as { codigo: string; descripcion: string; un: string }[]) {
-      bloqueInfoMap.set(`cat_${c.codigo}`, { codigo: c.codigo, descripcion: c.descripcion ?? '', unidad: c.un ?? '' })
-    }
-  }
+  // 5. Obtener info de bloques — catálogo de Racks como fuente de verdad
+  const bloqueInfoMap = await resolverInfoBloques([...bloqueIds])
 
   // 6. Build result: agrupar por posición
   const posMap = new Map<string, VistaPosicion>()

@@ -7,10 +7,9 @@ import {
   parseCatalogoExcelRows,
   mergeCatalogo,
   clearCatalogo,
-  syncToPisoBloques,
-  removeFromPisoBloques,
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
+import { podarAnclaPisoSiSinUso } from '@/lib/piso/api'
 import { useAuth } from '@/hooks/useAuth'
 import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { dataClient } from '@/lib/supabase/client'
@@ -45,9 +44,8 @@ import {
 export function CatalogoTab() {
   const { perfil } = useAuth()
   // FIX auditoría 2026-10-21 (P2): agregar/editar/eliminar del catálogo sin
-  // control de rol — un operario podía borrar un código (y su bloque en Piso
-  // vía removeFromPisoBloques). Regla: admin + supervisores/coordinador,
-  // igual que la eliminación de movimientos en page.tsx.
+  // control de rol — un operario podía borrar un código. Regla: admin +
+  // supervisores/coordinador, igual que la eliminación de movimientos en page.tsx.
   const SupervisoresSet = new Set<string>(ROLES_SUPERVISORES)
   const puedeEditarCatalogo = perfil?.rol === 'admin' || (perfil?.rol ? SupervisoresSet.has(perfil.rol) : false)
   const [text, setText] = useState('')
@@ -217,18 +215,8 @@ export function CatalogoTab() {
         if (error) throw error
         toast.success('Ítem agregado')
       }
-      // Sincronizar con piso_bloques (avisar si la sincronización falla)
-      const sync = await syncToPisoBloques([{
-        codigo: formCodigo.trim().toUpperCase(),
-        un: formUn.trim(),
-        descripcion: formDesc.trim(),
-        stock_big_magic: formSBM ? parseFloat(formSBM) || 0 : 0,
-      }])
-      if (sync.errores.length > 0) {
-        toast.warning('Ítem guardado en el catálogo, pero no se pudo sincronizar con Piso', {
-          description: sync.errores.slice(0, 3).join('\n'),
-        })
-      }
+      // Task 15 — catálogo único: NO se replica a piso_bloques (Piso lee en
+      // vivo esta tabla; el ancla se garantiza al usar el artículo).
       const data = await fetchCatalogo()
       setCatalogo(data)
       setShowAdd(false)
@@ -251,8 +239,9 @@ export function CatalogoTab() {
         .delete()
         .eq('codigo', deleteTarget)
       if (error) throw error
-      // Sincronizar: también eliminar de piso_bloques
-      await removeFromPisoBloques(deleteTarget)
+      // Task 15 — catálogo único: podar el ancla de piso SOLO si quedó sin
+      // movimientos (FK-safe; si tiene historial se conserva como respaldo).
+      await podarAnclaPisoSiSinUso(deleteTarget)
       const data = await fetchCatalogo()
       setCatalogo(data)
       setDeleteTarget(null)

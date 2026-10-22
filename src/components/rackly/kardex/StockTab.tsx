@@ -329,7 +329,11 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
   // permanentemente mientras hubiera un código seleccionado. Ahora la
   // enriquección FEFO lee por un ref (siempre fresco) sin disparar el efecto.
   const remInfoRef = useRef(remInfoByPos)
-  remInfoRef.current = remInfoByPos
+  // FIX lint react-hooks/refs: sincronizar el ref en efecto (nunca durante el
+  // render). El efecto va ANTES del consumidor para que el ref esté fresco.
+  useEffect(() => {
+    remInfoRef.current = remInfoByPos
+  }, [remInfoByPos])
 
   useEffect(() => {
     // FIX auditoría 2026-10-16: al cambiar de producto (A→B) había que limpiar

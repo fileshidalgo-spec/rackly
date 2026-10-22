@@ -81,13 +81,22 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
 
   // Re-inicializar cada vez que se abre o cambia el artículo/elección:
   // COMPLETAR parte vacío; CORREGIR prellena con los datos actuales del bucket.
-  useEffect(() => {
-    if (!open) return
-    setIdxOpcion(0)
-    const primera = articulo?.opciones?.[0]
-    setLote(primera?.loteFisico ?? '')
-    setFecha(primera?.fecha ?? '')
-  }, [open, articulo?.codigo, articulo?.opciones])
+  // FIX lint react-hooks/set-state-in-effect: el reset se hace ajustando el
+  // estado DURANTE el render (patrón oficial "adjust state when props change"),
+  // con una firma de contenido en vez de deps de identidad de arrays.
+  const firmaReset = `${open ? '1' : '0'}|${articulo?.codigo ?? ''}|${
+    (articulo?.opciones ?? []).map((o) => `${o.loteFisico}/${o.fecha}`).join(',')
+  }`
+  const [firmaPrev, setFirmaPrev] = useState(firmaReset)
+  if (firmaReset !== firmaPrev) {
+    setFirmaPrev(firmaReset)
+    if (open) {
+      setIdxOpcion(0)
+      const primera = articulo?.opciones?.[0]
+      setLote(primera?.loteFisico ?? '')
+      setFecha(primera?.fecha ?? '')
+    }
+  }
 
   /** Elegir otro bucket en el selector: los campos se prellenan con SUS datos. */
   function elegirOpcion(i: number) {

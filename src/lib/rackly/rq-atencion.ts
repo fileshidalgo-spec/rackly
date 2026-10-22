@@ -137,7 +137,10 @@ async function recalcularEstadoRq(rqId: string): Promise<void> {
   const pendientes = filas.filter((f) => toNum(f.cantidad_atendida) < toNum(f.cantidad)).length
   const estado =
     filas.length === 0 ? 'Pendiente' : pendientes === 0 ? 'Atendido' : pendientes === filas.length ? 'Pendiente' : 'En proceso'
-  await dataClient.from('rq_atenciones').update({ estado }).eq('id', rqId)
+  // FIX auditoría 2026-10-22 (P3): el resultado del UPDATE no se revisaba — un
+  // fallo dejaba el encabezado de la RQ con estado viejo y sin rastro.
+  const { error: eEstado } = await dataClient.from('rq_atenciones').update({ estado }).eq('id', rqId)
+  if (eEstado) throw eEstado
 }
 
 // ═══════════════════════════════════════════════════════════════════

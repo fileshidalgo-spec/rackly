@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { fetchMovimientos, calcularLotesRemanentes, proveedorPorVenc, type Movimiento } from '@/lib/rackly/kardex'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
+import { hoyISO } from '@/lib/rackly/formato'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -270,7 +271,7 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
       const ws = XLSX.utils.json_to_sheet(data)
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'FEFO')
-      XLSX.writeFile(wb, `RACKLY_FEFO_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      XLSX.writeFile(wb, `RACKLY_FEFO_${hoyISO()}.xlsx`)
       toast.success('FEFO exportado')
     } catch (err: unknown) {
       toast.error('Error al exportar', { description: err instanceof Error ? err.message : 'Error' })

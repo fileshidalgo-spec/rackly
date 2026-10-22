@@ -1024,7 +1024,10 @@ export type TrasladoInput = {
 }
 
 /** Fallback: insert directo para traslado cuando la RPC no existe en Supabase */
-async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento[]> {
+async function trasladarMovimientoFallback(
+  t: TrasladoInput,
+  refetch: boolean = true
+): Promise<Movimiento[]> {
   console.warn('[trasladarMovimiento] RPC no encontrada, usando insert directo como fallback')
   const codigo = t.codigo.trim().toUpperCase()
 
@@ -1129,6 +1132,7 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
     }
   }
   if (insErr) throw insErr
+  if (!refetch) return []
   try {
     return await fetchMovimientos()
   } catch (fetchErr) {
@@ -1137,7 +1141,21 @@ async function trasladarMovimientoFallback(t: TrasladoInput): Promise<Movimiento
   }
 }
 
-export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[]> {
+/**
+ * Registra un traslado (RPC atómica registrar_traslado_kardex).
+ *
+ * opts.refetch (default true): re-descarga TODA la tabla movimientos al final
+ * (contrato original). Con `refetch:false` retorna [] inmediatamente tras la
+ * RPC — FIX auditoría 2026-10-22 (P2): un traslado multi-lote hacía N RPC ×
+ * refetch completo (~30-40 s cada uno) con el formulario congelado. Los dos
+ * callers (OcupacionTab.ejecutarTraslado y TrasladoTab) ya refrescan por su
+ * cuenta al terminar.
+ */
+export async function trasladarMovimiento(
+  t: TrasladoInput,
+  opts?: { refetch?: boolean }
+): Promise<Movimiento[]> {
+  const refetch = opts?.refetch !== false
   // Usar RPC atómica con advisory locks en origen Y destino
   // p_lote SOLO se envía si el traslado aporta un lote inequívoco; si la RPC aún no
   // lo soporta (firma vieja) se reintenta SIN lote para conservar la atomicidad.
@@ -1190,7 +1208,7 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       }
       // Si la RPC no existe (404 / 42883 / 'Could not find'), usar fallback
       if (code === '42883' || code === 'PGRST202' || msg.includes('Could not find') || msg.includes('does not exist') || msg.includes('404')) {
-        return await trasladarMovimientoFallback(t)
+        return await trasladarMovimientoFallback(t, refetch)
       }
       // Origen = destino (server guard)
       if (msg.includes('SAME_ORIGIN_DESTINATION')) {
@@ -1200,8 +1218,9 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
       }
       throw error
     }
-    // RPC exitosa: refrescar movimientos, pero no fallar si fetchMovimientos falla.
-    // Retornar array vacío para evitar crashes en el UI.
+    // RPC exitosa: el traslado ya quedó registrado en la DB.
+    // Con refetch:false el caller refresca por su cuenta → retornar YA.
+    if (!refetch) return []
     try {
       return await fetchMovimientos()
     } catch (fetchErr) {
@@ -1213,7 +1232,7 @@ export async function trasladarMovimiento(t: TrasladoInput): Promise<Movimiento[
     const errMsg = err instanceof Error ? err.message : ''
     const errCode = err instanceof Error ? (err as unknown as Record<string, string>).code || '' : ''
     if (errCode === '42883' || errCode === 'PGRST202' || errMsg.includes('Could not find') || errMsg.includes('does not exist')) {
-      return await trasladarMovimientoFallback(t)
+      return await trasladarMovimientoFallback(t, refetch)
     }
     throw err
   }

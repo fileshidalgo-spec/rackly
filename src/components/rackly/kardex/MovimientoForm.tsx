@@ -26,6 +26,8 @@ import {
   isInsufficientStockError,
 } from '@/lib/utils'
 import { aNumero } from '@/lib/rackly/formato'
+import { detectarRqParaSalida, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
+import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -122,6 +124,8 @@ function IngresoForm({
   const [busy, setBusy] = useState(false)
   const [confirmData, setConfirmData] = useState<StockEnUbicacion[] | null>(null)
   const [salidaBusy, setSalidaBusy] = useState<string | null>(null)
+  // ── Atención a Línea (RQ): confirmador compartido para la salida del alerta ──
+  const [rqConfirmerIngreso, setRqConfirmerIngreso] = useState<RqSalidaDetectada | null>(null)
 
   const torres = torresDeBloque(bloque)
   const posiciones = posicionesDeBloque(bloque)
@@ -172,6 +176,13 @@ function IngresoForm({
   }
 
   async function doInsert(qty: number) {
+    // FIX auditoría 2026-10-22 (P3): guard de simetría — la cantidad ya se
+    // valida al enviar el formulario, pero doInsert re-parsea estado crudo en
+    // su único call site del confirm; un NaN aquí enviaría cantidad:null a la RPC.
+    if (!Number.isFinite(qty) || qty <= 0) {
+      toast.error('Cantidad inválida')
+      return
+    }
     setBusy(true)
     try {
       const movs = await addMovimiento({
@@ -241,6 +252,10 @@ function IngresoForm({
         codigoInc: stockItem.codigoInc || undefined,
       })
       toast.success(`Salida de ${stockItem.stock} ${stockItem.un} de ${stockItem.codigo}`)
+      // Atención a Línea (RQ): FIX auditoría 2026-10-22 — la salida desde el
+      // alerta de ubicación ocupada (durante un ingreso) TAMBIÉN ofrece el
+      // registro en la RQ si se llegó desde una. Sin contexto no aparece.
+      setRqConfirmerIngreso(detectarRqParaSalida([{ codigo: stockItem.codigo, cantidad: stockItem.stock, unidad: stockItem.un }]))
       onCreated(movs)
       // Refrescar datos del alerta
       const updated = await stockEnUbicacion(bloque, torre, piso, posicion)
@@ -568,6 +583,13 @@ function IngresoForm({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Atención a Línea (RQ): ¿registrar esta salida en la RQ? (compartido) ── */}
+      <RqSalidaConfirmador
+        conf={rqConfirmerIngreso}
+        onTerminar={() => setRqConfirmerIngreso(null)}
+        onCerrar={() => setRqConfirmerIngreso(null)}
+      />
     </>
   )
 }
@@ -599,6 +621,8 @@ function SalidaForm({
   const [qtyMap, setQtyMap] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
+  // ── Atención a Línea (RQ): confirmador compartido (salida simple y en masa) ──
+  const [rqConfirmerSalida, setRqConfirmerSalida] = useState<RqSalidaDetectada | null>(null)
   const searchCodeRef = useRef(searchCode)
   searchCodeRef.current = searchCode
 
@@ -659,6 +683,8 @@ function SalidaForm({
     let totalErrors = 0
     let stockErrors = 0
     const errorDetails: string[] = []
+    // Atención a Línea (RQ): lo salido en masa, por código, para la detección
+    const salidasParaRq: { codigo: string; cantidad: number; unidad?: string }[] = []
     try {
       // Usar los values actuales al momento de iniciar (no refs que cambian durante el loop)
       const selectedKeys = Array.from(selectedRef.current)
@@ -696,6 +722,8 @@ function SalidaForm({
             codigoInc: loc.codigoInc || undefined,
           }, undefined, { refetch: false })
           totalProcessed++
+          // Atención a Línea (RQ): acumular lo salido de este código
+          salidasParaRq.push({ codigo: loc.codigo, cantidad: finalQty, unidad: loc.un })
         } catch (err) {
           if (isInsufficientStockError(err)) {
             stockErrors++
@@ -717,6 +745,9 @@ function SalidaForm({
       } else {
         toast.success(`Salida registrada en ${totalProcessed} ubicacion${totalProcessed > 1 ? 'es' : ''}`)
       }
+      // Atención a Línea (RQ): ofrecer el registro de lo salido en masa (sin
+      // contexto RQ la detección devuelve null y no aparece nada).
+      if (totalProcessed > 0) setRqConfirmerSalida(detectarRqParaSalida(salidasParaRq))
       setMassConfirmOpen(false)
       setSelected(new Set())
       setQtyMap({})
@@ -948,6 +979,8 @@ function SalidaForm({
         codigoInc: loc.codigoInc || undefined,
       })
       toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
+      // Atención a Línea (RQ): ofrecer registro si se llegó DESDE una RQ
+      setRqConfirmerSalida(detectarRqParaSalida([{ codigo: loc.codigo, cantidad: qtyNum, unidad: loc.un }]))
       setConfirmState(null)
       setSearchCode('')
       setQtyMap({})
@@ -1451,6 +1484,13 @@ function SalidaForm({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Atención a Línea (RQ): ¿registrar esta salida en la RQ? (compartido) ── */}
+      <RqSalidaConfirmador
+        conf={rqConfirmerSalida}
+        onTerminar={() => setRqConfirmerSalida(null)}
+        onCerrar={() => setRqConfirmerSalida(null)}
+      />
     </div>
   )
 }

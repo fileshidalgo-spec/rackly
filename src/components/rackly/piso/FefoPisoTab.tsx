@@ -18,6 +18,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { stockPisoGlobal, type StockPisoItem } from '@/lib/piso/api'
 import { targetDesdeStockItem, type PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
+import { hoyISO } from '@/lib/rackly/formato'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -227,7 +228,7 @@ export function FefoPisoTab({ onGotoPosicion }: { onGotoPosicion?: (target: Piso
       const ws = XLSX.utils.json_to_sheet(data)
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'FEFO Piso')
-      XLSX.writeFile(wb, `RACKLY_FEFO_PISO_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      XLSX.writeFile(wb, `RACKLY_FEFO_PISO_${hoyISO()}.xlsx`)
       toast.success('FEFO Piso exportado')
     } catch (err: unknown) {
       toast.error('Error al exportar', { description: err instanceof Error ? err.message : 'Error' })

@@ -14,6 +14,8 @@ import { calcularTurno } from '@/lib/rackly/turno'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
 import { useAuth } from '@/hooks/useAuth'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+import { detectarRqParaSalida, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
+import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
 import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
 
@@ -78,6 +80,11 @@ function makeOriginKey(l: { bloque: string; torre: string; piso: string; posicio
 
 export function TrasladoTab() {
   const { perfil } = useAuth()
+
+  // ── Atención a Línea (RQ): FIX auditoría 2026-10-22 — la salida desde el
+  // alerta de destino ocupado también ofrece el registro en la RQ (sin contexto
+  // RQ el confirmador no aparece jamás; es regularización pura).
+  const [rqConfirmer, setRqConfirmer] = useState<RqSalidaDetectada | null>(null)
 
   const [step, setStep] = useState<1 | 2>(1)
   const [codigo, setCodigo] = useState('')
@@ -316,6 +323,8 @@ export function TrasladoTab() {
         codigoInc: stockItem.codigoInc || undefined,
       }, undefined, { refetch: false })
       toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
+      // Atención a Línea (RQ): ofrecer registro si se llegó DESDE una RQ
+      setRqConfirmer(detectarRqParaSalida([{ codigo: stockItem.codigo, cantidad: cantNum, unidad: stockItem.un }]))
       // FIX auditoría 2026-10-21 (P3): limpiar la cantidad digitada — sin esto,
       // un segundo clic repetía la salida sin re-tipear.
       setSalidaParcialCant((prev) => ({ ...prev, [itemKey]: '' }))
@@ -422,7 +431,7 @@ export function TrasladoTab() {
             codigoInc: origin.codigoInc,
             lote: llamada.row.loteFisico && !llamada.row.loteFisico.includes(',') ? llamada.row.loteFisico : undefined,
             cantidadAjuste: llamada.ajuste && Math.abs(llamada.ajuste) > 1e-9 ? llamada.ajuste : undefined,
-          })
+          }, { refetch: false })
           hechas++
         } catch (callErr) {
           if (hechas === 0) throw callErr // nada se movió: error normal
@@ -1331,6 +1340,13 @@ export function TrasladoTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Atención a Línea (RQ): ¿registrar esta salida en la RQ? (compartido) ── */}
+      <RqSalidaConfirmador
+        conf={rqConfirmer}
+        onTerminar={() => setRqConfirmer(null)}
+        onCerrar={() => setRqConfirmer(null)}
+      />
     </div>
   )
 }

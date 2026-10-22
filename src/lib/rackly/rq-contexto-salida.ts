@@ -72,3 +72,57 @@ export function limpiarContextoSalidaRq(): void {
 export function mismoCodigo(a: string, b: string): boolean {
   return (a ?? '').trim().toUpperCase() === (b ?? '').trim().toUpperCase()
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Detección UNIVERSAL de salidas que corresponden a una RQ abierta.
+//
+// FIX auditoría 2026-10-22 (P2): solo 2 de ~9 rutas de salida ofrecían el
+// registro en la RQ ("Ver ubicación → detalle de posición"), aunque el banner
+// "Atendiendo la RQ…" promete lo contrario. Con este helper TODAS las rutas
+// (salida simple, salida desde alerta de destino ocupado, salidas masivas,
+// SalidaForm por código) usan la MISMA detección: filtran lo salido por el
+// código de la RQ y devuelven el payload listo para el confirmador.
+// Las salidas INC se excluyen a propósito (stock no conforme, pool aparte).
+// ═══════════════════════════════════════════════════════════════════
+
+export type RqSalidaDetectada = {
+  numeroRq: string
+  itemId: string
+  codigo: string
+  unidad: string
+  /** Cantidad TOTAL de esta salida que corresponde al código de la RQ. */
+  cantidad: number
+  /** Cantidad requerida por la RQ (referencia para el aviso). */
+  requerido: number
+}
+
+/**
+ * Dadas las filas salidas ({codigo, cantidad, unidad?}), devuelve el
+ * registro pendiente para la RQ si hay coincidencia de código con el
+ * contexto efímero; null si no hay contexto, si el código no coincide o
+ * si la cantidad coincidente es 0.
+ */
+export function detectarRqParaSalida(
+  filas: Array<{ codigo: string; cantidad: number; unidad?: string }>
+): RqSalidaDetectada | null {
+  const ctx = leerContextoSalidaRq()
+  if (!ctx) return null
+  let total = 0
+  let unidad = ctx.unidad
+  for (const f of filas) {
+    if (!mismoCodigo(ctx.codigo, f.codigo)) continue
+    const q = Number(f.cantidad)
+    if (!Number.isFinite(q) || q <= 0) continue
+    total += q
+    if (!unidad && f.unidad) unidad = f.unidad
+  }
+  if (total <= 0) return null
+  return {
+    numeroRq: ctx.numeroRq,
+    itemId: ctx.itemId,
+    codigo: ctx.codigo,
+    unidad: unidad || '',
+    cantidad: total,
+    requerido: ctx.cantidadRequerida,
+  }
+}

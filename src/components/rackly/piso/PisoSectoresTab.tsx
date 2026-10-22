@@ -26,6 +26,7 @@ import {
 } from '@/lib/piso/api'
 import { resolverPosicionTarget, firmaTarget, type PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { calcularTurno } from '@/lib/rackly/turno'
+import { hoyISO } from '@/lib/rackly/formato'
 import { dataClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
@@ -43,8 +44,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { extractError } from '@/lib/utils'
 import { puedeEditarLote, construirOpcionesLote } from '@/lib/rackly/lote'
-import { atenderItemRq } from '@/lib/rackly/rq-atencion'
-import { leerContextoSalidaRq, mismoCodigo, type ContextoSalidaRq } from '@/lib/rackly/rq-contexto-salida'
+import { leerContextoSalidaRq, detectarRqParaSalida, type ContextoSalidaRq, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
+import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
 import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
 import {
   Download, Loader2, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft,
@@ -57,10 +58,6 @@ import {
 
 type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string; lote?: string }
 
-// Formato numérico para los avisos de atención de RQ (decimales suaves)
-function fmtRq(n: number): string {
-  return Number.isInteger(n) ? String(n) : n.toLocaleString('es-PE', { maximumFractionDigits: 3 })
-}
 type SalItem = {
   bloque_id: string
   bloque_codigo: string
@@ -176,10 +173,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   // ── Atención a Línea (RQ): confirmación tras dar salida (contexto efímero) ──
   // Solo si se llegó DESDE la RQ (sessionStorage): la salida puede registrarse
   // como atención o quedar como regularización pura (respuesta "No").
-  const [rqConfirmer, setRqConfirmer] = useState<{
-    numeroRq: string; itemId: string; codigo: string; unidad: string; cantidad: number; requerido: number
-  } | null>(null)
-  const [rqConfirmerBusy, setRqConfirmerBusy] = useState(false)
+  const [rqConfirmer, setRqConfirmer] = useState<RqSalidaDetectada | null>(null)
   const [ctxRqBanner, setCtxRqBanner] = useState<ContextoSalidaRq | null>(null)
   useEffect(() => {
     setCtxRqBanner(leerContextoSalidaRq())
@@ -465,7 +459,13 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
 
   // Cargar sectores
   const loadSectores = useCallback(async () => {
-    try { setSectores(await listarSectores()) } catch { /* ok */ }
+    // FIX auditoría 2026-10-22 (P3): el catch silencioso dejaba el selector de
+    // sectores vacío sin ningún aviso (el usuario concluía "no hay sectores").
+    try {
+      setSectores(await listarSectores())
+    } catch (err: unknown) {
+      toast.error('No se pudo cargar los sectores', { description: extractError(err) })
+    }
   }, [])
 
   // Cargar posiciones del sector seleccionado.
@@ -1335,21 +1335,12 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
       toast.success('Salida registrada')
       // Atención a Línea (RQ): si llegaste DESDE una RQ para este código, ofrece
       // registrar la salida como atención. Responder "No" = regularización pura.
-      const ctxRq = leerContextoSalidaRq()
-      if (ctxRq) {
-        const filasRq = validRows.filter((r) => mismoCodigo(ctxRq.codigo, r.bloque_codigo))
-        const totalRq = filasRq.reduce((s, r) => s + parseFloat(r.cantidad), 0)
-        if (totalRq > 0) {
-          setRqConfirmer({
-            numeroRq: ctxRq.numeroRq,
-            itemId: ctxRq.itemId,
-            codigo: ctxRq.codigo,
-            unidad: ctxRq.unidad || filasRq[0]?.bloque_unidad || '',
-            cantidad: totalRq,
-            requerido: ctxRq.cantidadRequerida,
-          })
-        }
-      }
+      // FIX auditoría 2026-10-22: detección unificada con todas las rutas de salida.
+      setRqConfirmer(
+        detectarRqParaSalida(
+          validRows.map((r) => ({ codigo: r.bloque_codigo, cantidad: parseFloat(r.cantidad), unidad: r.bloque_unidad }))
+        )
+      )
       // Recargar stock y stock por nivel
       const [stock, nivelStocks] = await Promise.all([
         stockDetallePosicion(detail.posicionId),
@@ -1377,34 +1368,10 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     } finally { setBusy(false) }
   }
 
-  // ── Atención a Línea (RQ): registrar la salida recién hecha en la RQ ──
-  // Suma la cantidad a lo ATENDIDO del material (RPC atómica; excedente permitido).
-  async function confirmarAtencionRqDesdeSalida() {
-    if (!rqConfirmer || !perfil) return
-    setRqConfirmerBusy(true)
-    try {
-      const actualizado = await atenderItemRq(
-        rqConfirmer.itemId,
-        rqConfirmer.cantidad,
-        perfil.nombre ?? perfil.correo ?? ''
-      )
-      const completo = actualizado.cantidadAtendida >= actualizado.cantidad
-      // Excedente automático: lo atendido puede superar lo pedido (p. ej. paleta
-      // completa de 123 mil para un pedido de 120 mil) — se muestra en el aviso.
-      const excedente = actualizado.cantidadAtendida - actualizado.cantidad
-      toast.success(`Registrado en la RQ ${rqConfirmer.numeroRq}`, {
-        description: completo
-          ? `Ya completaste este artículo: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad}${excedente > 0 ? ` · Excedente: +${fmtRq(excedente)} ${actualizado.unidad}` : ''}. Toca «← Volver a Atención (RQ)» para seguir.`
-          : `Atendido: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad} · Pendiente: ${fmtRq(Math.max(actualizado.cantidad - actualizado.cantidadAtendida, 0))}`,
-        duration: 9000,
-      })
-      setRqConfirmer(null)
-    } catch (err: unknown) {
-      toast.error('No se pudo registrar en la RQ', { description: extractError(err) })
-    } finally {
-      setRqConfirmerBusy(false)
-    }
-  }
+  // ── Atención a Línea (RQ): el registro se confirma/descarta en RqSalidaConfirmador ──
+  // FIX auditoría 2026-10-22: la RPC + avisos viven en el componente compartido;
+  // aquí solo se detecta la salida (detectarRqParaSalida) y se renderiza el
+  // confirmador al final del módulo.
 
   // Dar salida a un producto desde el alerta de destino ocupado (Piso traslado)
   async function handleTrSalidaDesdeAlerta(stockItem: DetailStock) {
@@ -1423,6 +1390,9 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         { nivel_id: trDestNivelDeBloque.get(stockItem.bloque_id) || trDestNivelId, bloque_id: stockItem.bloque_id, cantidad: cantNum, fecha_vencimiento: stockItem.fecha_vencimiento || null },
       ])
       toast.success(`Salida de ${cantNum} ${stockItem.bloque_unidad} de ${stockItem.bloque_codigo}`)
+      // Atención a Línea (RQ): FIX auditoría 2026-10-22 — esta ruta (destino
+      // ocupado durante traslado) también ofrece el registro en la RQ.
+      setRqConfirmer(detectarRqParaSalida([{ codigo: stockItem.bloque_codigo, cantidad: cantNum, unidad: stockItem.bloque_unidad }]))
       // Refrescar stock del destino
       const updated = await stockDetallePosicion(trDestPos.posicionId)
       setTrDestOccupied(updated)
@@ -1680,6 +1650,11 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     setMassBusy(true)
     let successCount = 0
     let errorCount = 0
+    // FIX auditoría 2026-10-22: detalle de errores por posición (antes se
+    // descartaba el motivo y el supervisor solo veía "N con error") + filas
+    // salidas por código para la detección RQ.
+    const erroresDetalle: string[] = []
+    const salidasParaRq: { codigo: string; cantidad: number; unidad?: string }[] = []
     try {
       const entries = [...massData.entries()]
       await Promise.all(entries.map(async ([posicionId, pd]) => {
@@ -1707,10 +1682,34 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
           if (detalles.length === 0) { return }
           await registrarSalidaPosicion(calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '', detalles)
           successCount++
-        } catch { errorCount++ }
+          // Mapear bloque_id → código para la detección RQ (los detalles no traen código)
+          const metaPorBloque = new Map<string, { codigo: string; unidad: string }>()
+          for (const niv of pd.niveles) {
+            for (const s of pd.stockByNivel[niv.id] ?? []) {
+              metaPorBloque.set(s.bloque_id, { codigo: s.bloque_codigo, unidad: s.bloque_unidad })
+            }
+          }
+          for (const d of detalles) {
+            const meta = metaPorBloque.get(d.bloque_id)
+            if (meta) salidasParaRq.push({ codigo: meta.codigo, cantidad: d.cantidad, unidad: meta.unidad })
+          }
+        } catch (err: unknown) {
+          errorCount++
+          erroresDetalle.push(extractError(err))
+        }
       }))
-      if (successCount > 0) toast.success(`Salida registrada en ${successCount} posicion(es)`)
-      if (errorCount > 0) toast.error(`${errorCount} posicion(es) con error`)
+      if (successCount > 0) {
+        toast.success(`Salida registrada en ${successCount} posicion(es)`)
+        // Atención a Línea (RQ): la salida en masa también ofrece el registro
+        // (mismo criterio que la salida simple; sin contexto RQ no aparece).
+        setRqConfirmer(detectarRqParaSalida(salidasParaRq))
+      }
+      if (errorCount > 0) {
+        toast.error(`${errorCount} posicion(es) con error`, {
+          description: erroresDetalle.slice(0, 3).join('\n'),
+          duration: 8000,
+        })
+      }
       setMassDialogOpen(false)
       setMassSelected(new Set())
       setMassMode(false)
@@ -1756,7 +1755,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         Estado: p.stock <= 0 ? 'Vacio' : p.bloques.length > 1 ? 'Multiple' : 'Ocupado',
       }))
       const ws = XLSX.utils.json_to_sheet(data); const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, ws, 'Sectores Piso'); XLSX.writeFile(wb, `RACKLY_SectoresPiso_${new Date().toISOString().slice(0, 10)}.xlsx`); toast.success('Exportado')
+      XLSX.utils.book_append_sheet(wb, ws, 'Sectores Piso'); XLSX.writeFile(wb, `RACKLY_SectoresPiso_${hoyISO()}.xlsx`); toast.success('Exportado')
     } catch (err: unknown) { toast.error('Error al exportar', { description: extractError(err) }) } finally { setBusyExport(false) }
   }
 
@@ -4067,41 +4066,13 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         </DialogContent>
       </Dialog>
 
-      {/* ── Atención a Línea (RQ): ¿registrar esta salida en la RQ? ── */}
-      <AlertDialog open={!!rqConfirmer} onOpenChange={(o) => { if (!o && !rqConfirmerBusy) setRqConfirmer(null) }}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              ¿Registrar esta salida en la RQ {rqConfirmer?.numeroRq || ''}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Saliste <b>{rqConfirmer ? fmtRq(rqConfirmer.cantidad) : ''} {rqConfirmer?.unidad}</b> de{' '}
-              <b className="font-mono">{rqConfirmer?.codigo}</b>.
-              <br />
-              <br />
-              <b>Sí</b> → suma la cantidad a lo ATENDIDO de la RQ; si alcanza o supera lo requerido
-              ({rqConfirmer ? fmtRq(rqConfirmer.requerido) : ''}), el material queda COMPLETO (el
-              excedente se registra tal cual salió).
-              <br />
-              <b>No</b> → la salida queda solo como movimiento de stock (regularización); la RQ no
-              cambia. Úsalo si el stock del sistema no existía físicamente.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={rqConfirmerBusy} className="sm:mr-auto">
-              No, solo salida
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => { e.preventDefault(); void confirmarAtencionRqDesdeSalida() }}
-              disabled={rqConfirmerBusy}
-              className="bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 text-white"
-            >
-              {rqConfirmerBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Sí, registrar en la RQ
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* ── Atención a Línea (RQ): ¿registrar esta salida en la RQ? (compartido) ── */}
+      <RqSalidaConfirmador
+        conf={rqConfirmer}
+        hintVolver
+        onTerminar={() => setRqConfirmer(null)}
+        onCerrar={() => setRqConfirmer(null)}
+      />
 
       {/* ── Editar lote / fecha de vencimiento (almacenero/admin) ── */}
       <EditarLoteVencimientoDialog

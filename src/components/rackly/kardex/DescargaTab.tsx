@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { fetchMovimientos, addMovimientosBatch, listarMovimientoIds, eliminarMovimientosPorIds, calcularLotesRemanentes, proveedorPorVenc, compararFEFO, compararUbicacionNum, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
-import { aNumero } from '@/lib/rackly/formato'
+import { aNumero, hoyISO } from '@/lib/rackly/formato'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
@@ -153,7 +153,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
         XLSX.utils.book_append_sheet(wb, ws2, 'Stock Real')
       }
 
-      const fecha = new Date().toISOString().slice(0, 10)
+      const fecha = hoyISO() // hora local Lima (antes UTC: "mañana" tras las 19:00)
       XLSX.writeFile(wb, `RACKLY_${fecha}.xlsx`)
       toast.success('Archivo descargado')
     } catch (err: unknown) {

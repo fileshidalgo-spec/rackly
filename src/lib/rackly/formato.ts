@@ -49,3 +49,18 @@ export function aNumero(valor: string): number {
   }
   return parseFloat(normalizado)
 }
+
+/**
+ * Fecha de HOY en hora LOCAL (America/Lima) como YYYY-MM-DD.
+ *
+ * FIX auditoría 2026-10-22 (P3): los nombres de archivo exportados usaban
+ * new Date().toISOString().slice(0,10) (UTC) — después de las 19:00 en Lima
+ * el archivo se nombraba con la fecha de "mañana". Usa esta helper en toda
+ * exportación (OcupacionTab ya la usaba en local; ahora es compartida).
+ */
+export function hoyISO(): string {
+  const d = new Date()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${mm}-${dd}`
+}

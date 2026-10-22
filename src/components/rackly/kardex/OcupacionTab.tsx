@@ -2006,7 +2006,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
 
       {/* ═══ DESTINO OCUPADO ALERTA (Transferir) ═══ */}
       <AlertDialog open={trDestAlertOpen} onOpenChange={setTrDestAlertOpen}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
           {/* Header */}
           <div className={`px-4 sm:px-6 py-5 text-white shrink-0 ${
             trDestStock.length > 0

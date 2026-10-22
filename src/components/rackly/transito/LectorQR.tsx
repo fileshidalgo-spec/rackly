@@ -54,6 +54,11 @@ type Props = {
    * que el operario vea el acumulado sin salir del escáner.
    */
   contador?: { tomas: number; total: string }
+  /**
+   * Indicador de actividad en curso (ej. "Leyendo guía…"): da feedback
+   * mientras el módulo resuelve el escaneo — la cámara nunca parece colgada.
+   */
+  ocupado?: string
 }
 
 /** Detector nativo (BarcodeDetector) tipado mínimo — no está en lib.dom. */
@@ -71,6 +76,7 @@ export function LectorQR({
   titulo,
   descripcion,
   contador,
+  ocupado,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -238,7 +244,7 @@ export function LectorQR({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[92dvh] p-0 gap-0 overflow-hidden flex flex-col">
+      <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[92dvh] p-0 gap-0 overflow-hidden flex flex-col">
         <DialogHeader className="px-5 pt-5 pb-3 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ScanLine className="h-4 w-4 text-fuchsia-600" />
@@ -320,16 +326,23 @@ export function LectorQR({
         </div>
 
         <div className="px-5 py-3 border-t bg-white shrink-0 flex items-center justify-between gap-2">
-          {contador ? (
-            <span
-              className="text-[11px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-full px-2.5 py-1 truncate"
-              aria-live="polite"
-            >
-              {contador.tomas} {contador.tomas === 1 ? 'toma' : 'tomas'} · Total {contador.total}
-            </span>
-          ) : (
-            <p className="text-[11px] text-slate-400 truncate">Rótulos sin QR: usa la lista o la búsqueda.</p>
-          )}
+          <div className="flex items-center gap-1.5 min-w-0">
+            {contador ? (
+              <span
+                className="text-[11px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-full px-2.5 py-1 truncate"
+                aria-live="polite"
+              >
+                {contador.tomas} {contador.tomas === 1 ? 'toma' : 'tomas'} · Total {contador.total}
+              </span>
+            ) : (
+              <p className="text-[11px] text-slate-400 truncate">Rótulos sin QR: usa la lista o la búsqueda.</p>
+            )}
+            {ocupado && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1 shrink-0">
+                <Loader2 className="h-3 w-3 animate-spin" /> {ocupado}
+              </span>
+            )}
+          </div>
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Cerrar
           </Button>

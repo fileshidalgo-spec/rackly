@@ -36,6 +36,7 @@ import {
   ArrowRightLeft,
   Warehouse,
   Layers3,
+  XCircle,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -103,6 +104,8 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
   const [registrando, setRegistrando] = useState(false)
   const [confirmarAbierto, setConfirmarAbierto] = useState(false)
   const [confirmaExcedente, setConfirmaExcedente] = useState(false)
+  /** Alerta de PRODUCTO INCORRECTO: código escaneado que no pertenece a la RQ. */
+  const [alertaAjeno, setAlertaAjeno] = useState<string | null>(null)
 
   // Ruta manual: filas del código ordenadas FEFO
   const [filasManual, setFilasManual] = useState<ArticuloTransito[] | null>(null)
@@ -139,6 +142,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
       setConfirmaExcedente(false)
       setFilasManual(null)
       setSaldosRack({})
+      setAlertaAjeno(null)
       cacheRef.current = new Map()
     }
   }, [open])
@@ -175,6 +179,24 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
     }
   }, [item.codigo])
 
+  /** Vibración larga de error (PC no vibra: el alerta visual basta). */
+  const vibrarError = useCallback(() => {
+    try {
+      navigator.vibrate?.([120, 60, 120])
+    } catch {
+      // Sin vibración — alerta visual.
+    }
+  }, [])
+
+  /** Levanta la alerta de producto incorrecto con el código escaneado. */
+  const avisoProductoAjeno = useCallback(
+    (codigoQr: string) => {
+      vibrarError()
+      setAlertaAjeno(codigoQr.trim().toUpperCase())
+    },
+    [vibrarError]
+  )
+
   /** Puerta única de tomas: cámara o pistola. Nunca interrumpe la sesión. */
   const procesarTexto = useCallback(
     async (texto: string) => {
@@ -187,9 +209,9 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
           return
         }
         if (payload.codigo.trim().toUpperCase() !== item.codigo.trim().toUpperCase()) {
-          toast.error('Ese código no pertenece a este material de la RQ', {
-            description: `QR=${payload.codigo} · RQ=${item.codigo}`,
-          })
+          // ALERTA visible (no solo toast): el operario está mirando la cámara,
+          // el aviso debe ser inconfundible y nombrar el producto equivocado.
+          avisoProductoAjeno(payload.codigo)
           return
         }
         let filas: ArticuloTransito[]
@@ -225,6 +247,10 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
             nuevoUuid,
           })
           if (res.estado === 'rechazada') {
+            if (res.razon === 'CODIGO_AJENO') {
+              avisoProductoAjeno(payload.codigo)
+              return carritoActual
+            }
             toast.error('Toma rechazada', { description: res.mensaje })
             return carritoActual
           }
@@ -245,7 +271,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
         resolviendoRef.current = false
       }
     },
-    [item.codigo, obtenerFilas, asegurarSaldos]
+    [item.codigo, obtenerFilas, asegurarSaldos, avisoProductoAjeno]
   )
 
   /** Carga el listado FEFO del código para la ruta manual. */
@@ -374,7 +400,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
               <ScanLine className="h-4 w-4 text-teal-600" />
               Atender con QR · <span className="font-mono text-indigo-700">{item.codigo}</span>
             </DialogTitle>
-            <DialogDescription className="truncate">
+            <DialogDescription>
               RQ {rqNumero} · pide {fmt(item.cantidad)} {item.unidad} · pendiente {fmt(pendienteRq)}
             </DialogDescription>
           </DialogHeader>
@@ -405,7 +431,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
           </div>
 
           {/* Tabs */}
-          <div className="px-5 pt-3 flex gap-1.5 shrink-0">
+          <div className="px-5 pt-3 flex flex-wrap gap-1.5 shrink-0">
             {(
               [
                 { id: 'escanear', label: 'Escanear', icon: ScanLine },
@@ -542,13 +568,14 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
 
                       {t.ruta === 'posicion' && t.origen && (
                         <div className="space-y-1">
-                          <p className="text-[11px] flex items-center gap-1 text-emerald-700 bg-emerald-50/60 border border-emerald-100 rounded px-2 py-1">
+                          <p className="text-[11px] flex items-center gap-1 min-w-0 text-emerald-700 bg-emerald-50/60 border border-emerald-100 rounded px-2 py-1">
                             {t.origen.rack ? (
                               <Warehouse className="h-3 w-3 shrink-0" />
                             ) : (
                               <Layers3 className="h-3 w-3 shrink-0" />
                             )}
-                            Salida de <b className="truncate">{t.origen.etiqueta}</b>
+                            <span className="shrink-0">Salida de</span>
+                            <b className="truncate min-w-0">{t.origen.etiqueta}</b>
                             {t.origen.rack && saldo !== undefined && (
                               <span className="text-slate-400 shrink-0">· saldo {fmt(saldo)}</span>
                             )}
@@ -770,11 +797,42 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
         titulo="Escaneo en lote — Atender"
         descripcion="Cada QR agregado suma su cantidad de Recepción. El total se registra al final."
         contador={{ tomas: totales.tomas, total: `${fmt(totales.total)} ${item.unidad}` }}
+        ocupado={cargandoFilas ? 'Leyendo guía…' : undefined}
       />
+
+      {/* Alerta PRODUCTO INCORRECTO (QR de otro material) */}
+      <AlertDialog open={!!alertaAjeno} onOpenChange={(o) => !o && setAlertaAjeno(null)}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md border-rose-200">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-rose-700">
+              <XCircle className="h-5 w-5 shrink-0" /> Producto incorrecto
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              El QR escaneado corresponde a{' '}
+              <b className="font-mono text-rose-700">{alertaAjeno ?? ''}</b>, que <b>NO es el
+              producto correcto</b> de esta atención
+              {item.codigo ? (
+                <>
+                  {' '}(<b className="font-mono">{item.codigo}</b> en la RQ {rqNumero})
+                </>
+              ) : null}
+              .
+              <br />
+              <br />
+              No se agregó nada al carrito. Verifica el rótulo y escanea el material de la RQ.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction className="bg-rose-600 hover:bg-rose-700 text-white">
+              Entendido
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Confirmación única del lote */}
       <AlertDialog open={confirmarAbierto} onOpenChange={setConfirmarAbierto}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle>¿Registrar la atención del lote?</AlertDialogTitle>
             <AlertDialogDescription>

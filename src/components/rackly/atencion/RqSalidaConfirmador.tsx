@@ -99,7 +99,7 @@ export function RqSalidaConfirmador({
         if (!o && !busy) onCerrar()
       }}
     >
-      <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md">
+      <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md">
         <AlertDialogHeader>
           <AlertDialogTitle>
             ¿Registrar esta salida en la RQ {conf?.numeroRq || ''}?

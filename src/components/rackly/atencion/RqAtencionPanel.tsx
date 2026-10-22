@@ -442,7 +442,7 @@ export function RqAtencionPanel({
               <span>Fecha: {r.fecha}</span>
               <span>Turno: {r.turno}</span>
               {r.ordenProduccion && <span>OP: {r.ordenProduccion}</span>}
-              {r.solicitante && <span className="truncate" title={r.solicitante}>Pide: {r.solicitante}</span>}
+              {r.solicitante && <span className="min-w-0 truncate" title={r.solicitante}>Pide: {r.solicitante}</span>}
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -494,7 +494,7 @@ export function RqAtencionPanel({
 
       {/* ── Confirmar eliminación ── */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
           <AlertDialogHeader>
             <AlertDialogTitle>Eliminar RQ</AlertDialogTitle>
             <AlertDialogDescription>

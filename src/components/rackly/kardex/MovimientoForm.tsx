@@ -438,7 +438,7 @@ function IngresoForm({
 
       {/* ═══ DIÁLOGO DE CONFIRMACIÓN — Ubicación Ocupada ═══ */}
       <AlertDialog open={!!confirmData} onOpenChange={() => setConfirmData(null)}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
           {/* Header con gradiente */}
           <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 px-4 sm:px-6 py-5 text-white shrink-0">
             <div className="flex items-center gap-3">
@@ -1302,7 +1302,7 @@ function SalidaForm({
 
       {/* Diálogo de confirmación Sí/No */}
       <AlertDialog open={!!confirmState} onOpenChange={(open) => { if (!open) setConfirmState(null) }}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[85vh] flex flex-col overflow-hidden">
           <AlertDialogHeader className="shrink-0">
             <AlertDialogTitle>
               {confirmState?.full ? 'Retirar todo el stock' : 'Confirmar salida'}
@@ -1382,7 +1382,7 @@ function SalidaForm({
 
       {/* ═══ DIÁLOGO DE CONFIRMACIÓN — Salida Masiva ═══ */}
       <AlertDialog open={massConfirmOpen} onOpenChange={(open) => { if (!open) setMassConfirmOpen(false) }}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
           {/* Header con gradiente rojo */}
           <div className="bg-gradient-to-r from-red-600 to-red-700 px-4 sm:px-6 py-5 text-white shrink-0">
             <div className="flex items-center gap-3">
@@ -2139,7 +2139,7 @@ function SalidaIncForm({
 
       {/* Diálogo de confirmación individual */}
       <AlertDialog open={!!confirmState} onOpenChange={(open) => { if (!open) setConfirmState(null) }}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[85vh] flex flex-col overflow-hidden">
           <AlertDialogHeader className="shrink-0">
             <AlertDialogTitle className="flex items-center gap-2">
               <TriangleAlert className="h-5 w-5 text-rose-500" />
@@ -2204,7 +2204,7 @@ function SalidaIncForm({
 
       {/* Diálogo de confirmación masiva */}
       <AlertDialog open={massConfirmOpen} onOpenChange={(open) => { if (!open) setMassConfirmOpen(false) }}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-lg p-0 max-h-[85vh] flex flex-col overflow-hidden">
           <div className="bg-gradient-to-r from-rose-600 to-pink-600 px-4 sm:px-6 py-5 text-white shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center flex-shrink-0">

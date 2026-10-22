@@ -570,7 +570,7 @@ export function MovimientosTab() {
 
       {/* ── Delete confirmation dialog ── */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[85vh] flex flex-col overflow-hidden">
           <AlertDialogHeader className="shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-full bg-red-600/15 flex items-center justify-center flex-shrink-0">

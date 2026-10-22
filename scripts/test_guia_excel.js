@@ -96,9 +96,9 @@ check('turnoDeFila directo 19:21 Lima → T2', turnoDeFila({ createdAt: '2026-10
 // ─── 2c. filasGuiaATablaTurno — hoja Guía ───
 console.log('\n[2c] filasGuiaATablaTurno — columnas EXACTAS del formato pedido')
 const tabla = filasGuiaATablaTurno(filas)
-check('cabecera exacta (11 columnas, Turno al final)', JSON.stringify(tabla[0]) === JSON.stringify(['Fecha', 'Nº de documento', 'Código', 'Descripción', 'Unidad', 'Cantidad', 'Lote', 'F. producción', 'F. vencimiento', 'Registró', 'Turno']), JSON.stringify(tabla[0]))
+check('cabecera exacta (12 columnas, Proveedor + Turno al final)', JSON.stringify(tabla[0]) === JSON.stringify(['Fecha', 'Nº de documento', 'Código', 'Descripción', 'Proveedor', 'Unidad', 'Cantidad', 'Lote', 'F. producción', 'F. vencimiento', 'Registró', 'Turno']), JSON.stringify(tabla[0]))
 check('1 fila por fila registrada + cabecera', tabla.length === filas.length + 1)
-check('fila incluye fecha/nº doc/código y SU turno', tabla[1][0] === '2026-10-12' && tabla[1][1] === 'T173-00004090' && tabla[1][2] === '5653' && tabla[1][10] === 'T2')
+check('fila incluye fecha/nº doc/código/proveedor y SU turno', tabla[1][0] === '2026-10-12' && tabla[1][1] === 'T173-00004090' && tabla[1][2] === '5653' && tabla[1][4] === 'AJEPER' && tabla[1][11] === 'T2')
 check('guía vacía → solo cabecera', filasGuiaATablaTurno([]).length === 1)
 
 // ─── 3. exportarGuiaExcel — el libro REAL se genera en node ───
@@ -143,7 +143,7 @@ console.log('\n[3] exportarGuiaExcel — libro real (.xlsx) generado')
     // Layout del CONSTRUCTOR PURO (lo que el lector no restaura se prueba aquí)
     const XS = require('xlsx-js-style')
     const hoja = construirHojaGuia({ fecha: '2026-10-12', tipoDocumento: 'Guia', numeroDocumento: 'T173-00004090', proveedor: 'AJEPER', placa: 'V3P-114', fotoUrl: fila({}).fotoUrl, estado: 'Pendiente', usuarioNombre: 'Miguel', usuarioCorreo: 'm@e.pe', filas, cantidadTotal: 1075 }, XS)
-    check('constructor: 11 anchos de columna', Array.isArray(hoja['!cols']) && hoja['!cols'].length === 11, String(hoja['!cols'] && hoja['!cols'].length))
+    check('constructor: 12 anchos de columna (Proveedor desde 2026-10-22)', Array.isArray(hoja['!cols']) && hoja['!cols'].length === 12, String(hoja['!cols'] && hoja['!cols'].length))
     check('constructor: 2 fusiones de título', Array.isArray(hoja['!merges']) && hoja['!merges'].length === 2)
     check('constructor: márgenes de impresión estrechos', hoja['!margins'] && hoja['!margins'].left === 0.3)
     check('constructor: estilo del título (fondo 1E3A5F, bold 16)', (() => { const s = hoja['A1'].s; return s && s.fill && String(s.fill.fgColor.rgb).endsWith('1E3A5F') && s.font && s.font.bold && s.font.sz === 16 })())

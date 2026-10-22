@@ -1552,7 +1552,7 @@ export function RecepcionModule() {
 
       {/* ── Confirmar eliminación POR GUÍA ── */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[85vh] overflow-y-auto overscroll-contain">
           <AlertDialogHeader>
             <AlertDialogTitle>Eliminar la guía completa</AlertDialogTitle>
             <AlertDialogDescription>

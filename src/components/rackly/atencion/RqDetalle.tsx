@@ -366,7 +366,7 @@ export function RqDetalle({
           {rq.ordenProduccion && <span>OP: <b>{rq.ordenProduccion}</b></span>}
           <span>Fecha: <b>{rq.fecha}</b></span>
           <span>Turno: <b>{rq.turno}</b></span>
-          {rq.solicitante && <span className="col-span-2 min-[430px]:col-span-1 truncate" title={rq.solicitante}>Solicitante: <b>{rq.solicitante}</b></span>}
+          {rq.solicitante && <span className="col-span-2 min-[430px]:col-span-1 min-w-0 truncate" title={rq.solicitante}>Solicitante: <b>{rq.solicitante}</b></span>}
           <span>Registró: <b>{rq.usuarioNombre || '—'}</b></span>
         </div>
         {rq.notas && <p className="text-xs text-slate-500 whitespace-pre-wrap">{rq.notas}</p>}
@@ -707,7 +707,7 @@ export function RqDetalle({
 
       {/* ── Confirmación de ATENDER (aviso del usuario) ── */}
       <AlertDialog open={!!confirmarAtender} onOpenChange={(o) => !o && setConfirmarAtender(null)}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle>¿Confirmas la atención?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -753,7 +753,7 @@ export function RqDetalle({
 
       {/* ── Confirmación de REVERTIR ── */}
       <AlertDialog open={!!confirmarRevertir} onOpenChange={(o) => !o && setConfirmarRevertir(null)}>
-        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md">
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle>¿Revertir la atención?</AlertDialogTitle>
             <AlertDialogDescription>

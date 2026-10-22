@@ -297,13 +297,15 @@ export function filtrarArticulos(
 ): ArticuloTransito[] {
   const q = busqueda.trim().toLowerCase()
   if (!q) return articulos
+  // Campos con respaldo a '' — una fila con texto ausente jamás rompe el
+  // filtrado de TODO el listado (crash toLowerCase de undefined, 2026-10-23).
   return articulos.filter(
     (a) =>
-      a.empresaOrigen.toLowerCase().includes(q) ||
-      a.proveedor.toLowerCase().includes(q) ||
-      a.codigo.toLowerCase().includes(q) ||
-      a.descripcion.toLowerCase().includes(q) ||
-      a.numeroDocumento.toLowerCase().includes(q)
+      (a.empresaOrigen ?? '').toLowerCase().includes(q) ||
+      (a.proveedor ?? '').toLowerCase().includes(q) ||
+      (a.codigo ?? '').toLowerCase().includes(q) ||
+      (a.descripcion ?? '').toLowerCase().includes(q) ||
+      (a.numeroDocumento ?? '').toLowerCase().includes(q)
   )
 }
 

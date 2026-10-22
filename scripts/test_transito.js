@@ -197,6 +197,7 @@ const art = (over = {}) => ({
   fecha: '2026-10-14',
   tipoDocumento: 'Guia',
   numeroDocumento: 'G-100',
+  empresaOrigen: 'ACME',
   proveedor: 'ACME',
   codigo: 'A',
   descripcion: 'd',
@@ -255,17 +256,27 @@ t('contarPendientes: solo artículos con pendiente > 0', () => {
   assert.strictEqual(n, 2)
 })
 
-t('filtrarArticulos: proveedor, código, descripción y nº doc (insensible a mayúsculas)', () => {
+t('filtrarArticulos: empresa, proveedor, código, descripción y nº doc (insensible a mayúsculas)', () => {
   const lista = [
-    art({ id: '1', proveedor: 'Ajeper', codigo: 'ZZ1', descripcion: 'Harina', numeroDocumento: 'G-1' }),
+    art({ id: '1', empresaOrigen: 'Ajeper S.A.', proveedor: 'Film Co', codigo: 'ZZ1', descripcion: 'Harina', numeroDocumento: 'G-1' }),
     art({ id: '2', proveedor: 'Otro', codigo: 'ACIDO', descripcion: 'x', numeroDocumento: 'G-2' }),
   ]
-  assert.strictEqual(filtrarArticulos(lista, 'ajep').length, 1)
+  assert.strictEqual(filtrarArticulos(lista, 'ajep').length, 1)   // empresa de origen
+  assert.strictEqual(filtrarArticulos(lista, 'film').length, 1)   // proveedor del artículo
   assert.strictEqual(filtrarArticulos(lista, 'acido').length, 1)
   assert.strictEqual(filtrarArticulos(lista, 'harina').length, 1)
   assert.strictEqual(filtrarArticulos(lista, 'g-2').length, 1)
   assert.strictEqual(filtrarArticulos(lista, '   ').length, 2)
   assert.strictEqual(filtrarArticulos(lista, 'nadaquever').length, 0)
+})
+
+t('filtrarArticulos: fila con campos de texto ausentes NO rompe la búsqueda', () => {
+  const lista = [
+    { ...art({ id: '1' }), descripcion: undefined, proveedor: undefined, numeroDocumento: undefined, empresaOrigen: undefined },
+    art({ id: '2', codigo: 'ACIDO' }),
+  ]
+  assert.strictEqual(filtrarArticulos(lista, 'acido').length, 1)
+  assert.strictEqual(filtrarArticulos(lista, 'harina').length, 0)
 })
 
 // ── Validaciones ──

@@ -8,6 +8,8 @@ import {
   mergeCatalogo,
   clearCatalogo,
   type CatalogoItem,
+  type ParseStats,
+  type ProgresoMerge,
 } from '@/lib/rackly/catalogo'
 import { podarAnclaPisoSiSinUso } from '@/lib/piso/api'
 import { useAuth } from '@/hooks/useAuth'
@@ -63,6 +65,9 @@ export function CatalogoTab() {
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [excelBusy, setExcelBusy] = useState(false)
+  // Task 16 — progreso de la carga masiva: el botón muestra "Lote 2/5…" y el
+  // usuario VE que avanza (antes solo un spinner callado = "se cortó").
+  const [progreso, setProgreso] = useState<ProgresoMerge | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function loadCatalogo() {
@@ -76,19 +81,32 @@ export function CatalogoTab() {
     }
   }
 
+  // Task 16 — resumen truthful del merge para el toast: el usuario ve el
+  // destino de TODAS las filas (cargadas / duplicadas / ignoradas) y el corte
+  // silencioso deja de ser posible.
+  function descripcionResumen(items: number, stats: ParseStats, res: { cargados: number; errores: string[] }): string {
+    const duplicadas = Math.max(0, items - res.cargados - res.errores.length)
+    const partes = [`Archivo: ${items + stats.ignoradas} filas (${stats.ignoradas} ignoradas sin datos válidos)`]
+    if (duplicadas > 0) partes.push(`${duplicadas} duplicada(s) en el archivo`)
+    return partes.join(' · ')
+  }
+
   async function handleImport() {
     if (!text.trim()) {
       toast.error('Pega los datos primero')
       return
     }
-    const items = parseCatalogoText(text)
+    const stats: ParseStats = { leidas: 0, validas: 0, ignoradas: 0 }
+    const items = parseCatalogoText(text, stats)
     if (items.length === 0) {
       toast.error('No se encontraron datos válidos')
       return
     }
+    setExcelBusy(true)
+    setProgreso(null)
     try {
       // Merge por lotes con dedupe: reporta el conteo REAL cargado y las filas con problema
-      const res = await mergeCatalogo(items)
+      const res = await mergeCatalogo(items, setProgreso)
       setCatalogo(res.catalogo)
       setText('')
       if (res.errores.length > 0) {
@@ -97,11 +115,17 @@ export function CatalogoTab() {
           duration: 10000,
         })
       } else {
-        toast.success(`${res.cargados} ítem(s) importados`)
+        toast.success(`${res.cargados} ítem(s) importados`, {
+          description: descripcionResumen(items.length, stats, res),
+          duration: 6000,
+        })
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
       toast.error('Error al importar', { description: message })
+    } finally {
+      setExcelBusy(false)
+      setProgreso(null)
     }
   }
 
@@ -109,6 +133,7 @@ export function CatalogoTab() {
     const file = e.target.files?.[0]
     if (!file) return
     setExcelBusy(true)
+    setProgreso(null)
     try {
       const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
@@ -119,12 +144,13 @@ export function CatalogoTab() {
         toast.error('El archivo está vacío')
         return
       }
-      const items = parseCatalogoExcelRows(rows)
+      const stats: ParseStats = { leidas: 0, validas: 0, ignoradas: 0 }
+      const items = parseCatalogoExcelRows(rows, stats)
       if (items.length === 0) {
         toast.error('No se encontraron columnas válidas (CÓDIGO, DESCRIPCIÓN, UN, STOCK BIG MAGIC)')
         return
       }
-      const res = await mergeCatalogo(items)
+      const res = await mergeCatalogo(items, setProgreso)
       setCatalogo(res.catalogo)
       if (res.errores.length > 0) {
         toast.warning(`Cargados ${res.cargados} ítem(s) con ${res.errores.length} con problema`, {
@@ -132,13 +158,17 @@ export function CatalogoTab() {
           duration: 10000,
         })
       } else {
-        toast.success(`${res.cargados} ítem(s) importados desde Excel`)
+        toast.success(`${res.cargados} ítem(s) importados desde Excel`, {
+          description: descripcionResumen(items.length, stats, res),
+          duration: 6000,
+        })
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error'
       toast.error('Error al procesar Excel', { description: message })
     } finally {
       setExcelBusy(false)
+      setProgreso(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -324,7 +354,11 @@ export function CatalogoTab() {
             className="gap-1.5 border-dashed"
           >
             {excelBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
-            {excelBusy ? 'Procesando...' : 'Subir Excel'}
+            {excelBusy
+              ? progreso
+                ? `Lote ${progreso.lote}/${progreso.totalLotes}…`
+                : 'Procesando...'
+              : 'Subir Excel'}
           </Button>
         </div>
       </div>
@@ -342,8 +376,9 @@ export function CatalogoTab() {
             rows={3}
             className="text-xs"
           />
-          <Button onClick={handleImport} size="sm" variant="outline" className="gap-1.5" disabled={!puedeEditarCatalogo}>
-            <Upload className="h-4 w-4" /> Importar texto
+          <Button onClick={handleImport} size="sm" variant="outline" className="gap-1.5" disabled={!puedeEditarCatalogo || excelBusy}>
+            {excelBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            {excelBusy ? 'Importando…' : 'Importar texto'}
           </Button>
         </div>
       </details>

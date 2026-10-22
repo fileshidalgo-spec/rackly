@@ -149,7 +149,13 @@ export function isCatalogoLoaded(): boolean {
   return _cacheLoaded
 }
 
-export function parseCatalogoText(text: string): CatalogoItem[] {
+// Task 16 — transparencia del parseo: el corte histórico "se cortaba" también
+// venía de filas descartadas EN SILENCIO (sin código, cabecera, columnas no
+// reconocidas). Con stats el usuario ve exactamente cuántas entraron y cuántas
+// se ignoraron. Parámetro opcional: los llamadores existentes no cambian.
+export type ParseStats = { leidas: number; validas: number; ignoradas: number }
+
+export function parseCatalogoText(text: string, stats?: ParseStats): CatalogoItem[] {
   // FIX auditoría 2026-10-21: aNumero soporta "1.250,50" (coma decimal es-PE);
   // parseFloat("1250,5") → 1250 corrompía el Stock Big Magic. El código se
   // normaliza a UPPER/TRIM (los RPCs comparan con UPPER(TRIM(codigo))).
@@ -157,6 +163,7 @@ export function parseCatalogoText(text: string): CatalogoItem[] {
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0)
+  if (stats) stats.leidas = lines.length
 
   const items: CatalogoItem[] = []
   for (const line of lines) {
@@ -178,11 +185,16 @@ export function parseCatalogoText(text: string): CatalogoItem[] {
       stock_big_magic: sbm,
     })
   }
+  if (stats) {
+    stats.validas = items.length
+    stats.ignoradas = stats.leidas - items.length
+  }
   return items
 }
 
 // Parsear filas desde un archivo Excel (columnas: CÓDIGO, DESCRIPCIÓN, UN, STOCK BIG MAGIC)
-export function parseCatalogoExcelRows(rows: Record<string, unknown>[]): CatalogoItem[] {
+export function parseCatalogoExcelRows(rows: Record<string, unknown>[], stats?: ParseStats): CatalogoItem[] {
+  if (stats) stats.leidas = rows.length
   const items: CatalogoItem[] = []
   for (const row of rows) {
     // Buscar columnas por nombre flexible
@@ -201,6 +213,10 @@ export function parseCatalogoExcelRows(rows: Record<string, unknown>[]): Catalog
       descripcion: (descripcion || '').trim(),
       stock_big_magic: aNumero(String(sbmRaw || '0')) || 0,
     })
+  }
+  if (stats) {
+    stats.validas = items.length
+    stats.ignoradas = stats.leidas - items.length
   }
   return items
 }
@@ -226,9 +242,25 @@ function findCellValue(row: Record<string, unknown>, keys: string[]): string {
  * Task 15 — UNIFICACIÓN DE CATÁLOGO: ya NO replica a piso_bloques. El módulo
  * Piso lee descripción/unidad EN VIVO desde esta tabla (fuente única de
  * verdad); piso_bloques queda como ancla técnica para la FK del historial.
+ *
+ * Task 16 — CARGAS >2000 LÍNEAS (verificadas E2E a 2500):
+ *  - `onProgreso`: el UI muestra "Lote 2/5…" — el usuario VE que avanza y ya
+ *    no interpreta un botón callado como "se cortó".
+ *  - 1 reintento por lote: en la red del almacén una petición puede perderse;
+ *    reenviar el MISMO lote es idempotente (upsert por PK `codigo`).
+ *  - Tras el reintento fallido, fallback fila-a-fila (idéntico al anterior)
+ *    para aislar la fila problemática sin perder el resto.
  */
+export type ProgresoMerge = {
+  cargados: number
+  total: number
+  lote: number
+  totalLotes: number
+}
+
 export async function mergeCatalogo(
-  nuevos: CatalogoItem[]
+  nuevos: CatalogoItem[],
+  onProgreso?: (p: ProgresoMerge) => void
 ): Promise<{ catalogo: CatalogoItem[]; cargados: number; errores: string[] }> {
   if (nuevos.length === 0) return { catalogo: await fetchCatalogo(), cargados: 0, errores: [] }
   // Dedupe por código (conserva la última aparición del archivo)
@@ -248,9 +280,19 @@ export async function mergeCatalogo(
   const errores: string[] = []
   let cargados = 0
   const CHUNK = 500
+  const totalLotes = Math.ceil(rows.length / CHUNK)
+  let lote = 0
   for (let i = 0; i < rows.length; i += CHUNK) {
+    lote++
     const chunk = rows.slice(i, i + CHUNK)
-    const { error } = await dataClient.from('catalogo').upsert(chunk, { onConflict: 'codigo' })
+    // Task 16: 2 intentos por lote (1 reintento) — reenvío idempotente por PK.
+    let error: { message: string } | null = null
+    for (let intento = 0; intento < 2; intento++) {
+      const res = await dataClient.from('catalogo').upsert(chunk, { onConflict: 'codigo' })
+      error = res.error
+      if (!error) break
+      if (intento === 0) await new Promise((r) => setTimeout(r, 800)) // pausa breve antes de reintentar
+    }
     if (error) {
       // Fallback fila por fila para identificar la fila problemática
       for (const r of chunk) {
@@ -261,6 +303,7 @@ export async function mergeCatalogo(
     } else {
       cargados += chunk.length
     }
+    onProgreso?.({ cargados, total: rows.length, lote, totalLotes })
   }
   return { catalogo: await fetchCatalogo(), cargados, errores }
 }

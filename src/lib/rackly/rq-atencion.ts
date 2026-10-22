@@ -8,13 +8,17 @@
  *     y lee Storage para la foto de la RQ (bucket atencion-rq).
  *   · Las ubicaciones de producto se consultan con los lectores de Racks
  *     (fetchStockPorCodigoRPC) y Piso (stockPisoBuscar) — SOLO LECTURA.
- *   · Escrituras operativas con dataClient (anon + JWT de sesión; RLS real).
+ *   · PUENTE Atención↔Tránsito (2026-10-23): las atenciones por lote van por
+ *     RPC atómica (rq_atender_lote / rq_revertir_origen) que SÍ toca
+ *     recepcion_registros (columna transito) y posiciones — SIEMPRE del lado
+ *     de la BD, nunca el cliente; aquí solo se invoca y se lee el historial.
  *   · atender/revertir van por RPC atómico (rq_atender_item/rq_revertir_item)
  *     con respaldo optimista si la RPC no estuviera disponible.
  */
 
 import { dataClient } from '@/lib/supabase/client'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
+import { FECHA_INICIO_TRANSITO } from '@/lib/rackly/transito-core'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS
@@ -367,6 +371,172 @@ export async function revertirItemRq(itemId: string, cantidad: number): Promise<
     throw new Error('Otro usuario modificó este artículo al mismo tiempo. Recarga e intenta de nuevo.')
   await recalcularEstadoRq(itemPrevio.rqId)
   return mapItem(upd as Record<string, unknown>)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PUENTE ATENCIÓN ↔ TRÁNSITO (lote por QR — RPCs atómicas)
+// ═══════════════════════════════════════════════════════════════════
+
+export type TomaPuentePayload = {
+  uuid: string
+  recepcion_id: string
+  ruta: 'transito' | 'posicion'
+  cantidad: number
+  rack: { bloque: string; torre: string; piso: string; posicion: string } | null
+  piso: { nivel_id: string; posicion_id?: string; nivel_numero?: number | null } | null
+  ubicacion: string
+}
+
+export type ResultadoLoteRq = {
+  ok: boolean
+  duplicado?: boolean
+  total_atendido?: number
+  tomas_ok?: number
+  nuevo_atendido?: number
+  pendiente_rq?: number
+  estado_rq?: string
+  /** Reversa (rq_revertir_origen). */
+  total_revertido?: number
+  tomas_revertidas?: number
+  fallo?: { codigo: string; mensaje: string; toma: string | null }
+}
+
+/**
+ * Registra la atención POR LOTE (todas las tomas del escaneo) con la RPC
+ * atómica rq_atender_lote: descuenta guías en tránsito y/o registra salidas
+ * de posiciones, actualiza el item y el estado de la RQ en UNA transacción.
+ * All-or-nothing: si una toma falla, NADA queda escrito.
+ */
+export async function atenderLotePuente(args: {
+  itemId: string
+  batchUuid: string
+  tomas: TomaPuentePayload[]
+  confirmaExcedente: boolean
+  turno: string
+  usuario: { id: string; nombre: string; correo: string }
+}): Promise<ResultadoLoteRq> {
+  const { data, error } = await dataClient.rpc('rq_atender_lote', {
+    p_item_id: args.itemId,
+    p_batch_uuid: args.batchUuid,
+    p_tomas: args.tomas as unknown as Record<string, unknown>[],
+    p_confirma_excedente: args.confirmaExcedente,
+    p_turno: args.turno,
+    p_usuario_id: args.usuario.id || null,
+    p_usuario_nombre: args.usuario.nombre,
+    p_usuario_correo: args.usuario.correo,
+  })
+  if (error) {
+    // La RPC devuelve fallos estructurados; si falla por otro motivo (red, RPC
+    // ausente), lo envolvemos con el mismo formato para una sola UI de error.
+    const msg = error.message ?? 'Error desconocido'
+    const pipe = msg.indexOf('|')
+    return {
+      ok: false,
+      fallo: {
+        codigo: pipe > 0 ? msg.slice(0, pipe) : 'RPC_ERROR',
+        mensaje: pipe > 0 ? msg.slice(pipe + 1) : msg,
+        toma: null,
+      },
+    }
+  }
+  return (data ?? {
+    ok: false,
+    fallo: { codigo: 'SIN_RESPUESTA', mensaje: 'La RPC no respondió', toma: null },
+  }) as ResultadoLoteRq
+}
+
+/**
+ * Revierte las atenciones del puente de un material (todas, o solo el lote
+ * pedido): compensa guías (reversa_atencion) y re-ingresa posiciones con el
+ * mismo lote, en UNA transacción (rq_revertir_origen).
+ */
+export async function revertirOrigenRq(
+  itemId: string,
+  batchUuid: string | null,
+  turno: string,
+  usuario: { id: string; nombre: string; correo: string }
+): Promise<ResultadoLoteRq> {
+  const { data, error } = await dataClient.rpc('rq_revertir_origen', {
+    p_item_id: itemId,
+    p_batch_uuid: batchUuid,
+    p_turno: turno,
+    p_usuario_id: usuario.id || null,
+    p_usuario_nombre: usuario.nombre,
+    p_usuario_correo: usuario.correo,
+  })
+  if (error) {
+    const msg = error.message ?? 'Error desconocido'
+    const pipe = msg.indexOf('|')
+    return {
+      ok: false,
+      fallo: {
+        codigo: pipe > 0 ? msg.slice(0, pipe) : 'RPC_ERROR',
+        mensaje: pipe > 0 ? msg.slice(pipe + 1) : msg,
+        toma: null,
+      },
+    }
+  }
+  return (data ?? {
+    ok: false,
+    fallo: { codigo: 'SIN_RESPUESTA', mensaje: 'La RPC no respondió', toma: null },
+  }) as ResultadoLoteRq
+}
+
+export type LotePuenteDeItem = {
+  lote: string
+  rq: string
+  tomas: number
+  total: number
+  ultimaToma: string
+}
+
+/**
+ * Lista los LOTES del puente registrados para un material (leyendo los envíos
+ * 'atencion'/'atencion_posicion' de las guías del mismo código). La usa el
+ * diálogo de reversa para saber si un material tiene atenciones con origen.
+ */
+export async function listarLotesPuenteDeItem(
+  itemId: string,
+  codigo: string
+): Promise<LotePuenteDeItem[]> {
+  const c = codigo.trim()
+  if (!c || !itemId.trim()) return []
+  const { data, error } = await dataClient
+    .from('recepcion_registros')
+    .select('transito')
+    .ilike('codigo', c)
+    .gte('fecha', FECHA_INICIO_TRANSITO)
+    .limit(2000)
+  if (error) throw error
+  const porLote = new Map<string, LotePuenteDeItem>()
+  for (const fila of (data ?? []) as Record<string, unknown>[]) {
+    const envios = (fila.transito as Record<string, unknown> | null)?.envios
+    if (!Array.isArray(envios)) continue
+    for (const e of envios as Record<string, unknown>[]) {
+      if (e.item_id !== itemId) continue
+      const destino = String(e.destino ?? '')
+      if (destino !== 'atencion' && destino !== 'atencion_posicion') continue
+      if (!e.lote || e.reversa_de) continue
+      const key = String(e.lote)
+      const cant =
+        destino === 'atencion' ? Number(e.cantidad ?? 0) : Number(e.cantidad_atencion ?? 0)
+      const previa = porLote.get(key)
+      if (previa) {
+        previa.tomas += 1
+        previa.total += cant
+        if (String(e.fecha ?? '') > previa.ultimaToma) previa.ultimaToma = String(e.fecha ?? '')
+      } else {
+        porLote.set(key, {
+          lote: key,
+          rq: String(e.rq ?? ''),
+          tomas: 1,
+          total: cant,
+          ultimaToma: String(e.fecha ?? ''),
+        })
+      }
+    }
+  }
+  return [...porLote.values()].sort((a, b) => b.ultimaToma.localeCompare(a.ultimaToma))
 }
 
 // ═══════════════════════════════════════════════════════════════════

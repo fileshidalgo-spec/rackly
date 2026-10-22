@@ -46,6 +46,14 @@ type Props = {
   onOpenChange: (open: boolean) => void
   /** Texto decodificado (cámara o Enter manual), ya limpio de espacios. */
   onDetectar: (texto: string, fuente: 'camara' | 'manual') => void
+  /** Copy alternativo (modo lote del puente Atención) — default: Tránsito. */
+  titulo?: string
+  descripcion?: string
+  /**
+   * Contador vivo del carrito (modo lote): se pinta en la barra inferior para
+   * que el operario vea el acumulado sin salir del escáner.
+   */
+  contador?: { tomas: number; total: string }
 }
 
 /** Detector nativo (BarcodeDetector) tipado mínimo — no está en lib.dom. */
@@ -55,7 +63,15 @@ type DetectorCtor = new (opts?: { formats?: string[] }) => DetectorLike
 const INTERVALO_MS = 150
 const COOLDOWN_MS = 2500
 
-export function LectorQR({ open, pausado, onOpenChange, onDetectar }: Props) {
+export function LectorQR({
+  open,
+  pausado,
+  onOpenChange,
+  onDetectar,
+  titulo,
+  descripcion,
+  contador,
+}: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -226,10 +242,11 @@ export function LectorQR({ open, pausado, onOpenChange, onDetectar }: Props) {
         <DialogHeader className="px-5 pt-5 pb-3 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2 text-base">
             <ScanLine className="h-4 w-4 text-fuchsia-600" />
-            Escanear rótulo
+            {titulo ?? 'Escanear rótulo'}
           </DialogTitle>
           <DialogDescription>
-            Apunta al QR de la esquina izquierda del rótulo — abre la transferencia de ese artículo.
+            {descripcion ??
+              'Apunta al QR de la esquina izquierda del rótulo — abre la transferencia de ese artículo.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -303,7 +320,16 @@ export function LectorQR({ open, pausado, onOpenChange, onDetectar }: Props) {
         </div>
 
         <div className="px-5 py-3 border-t bg-white shrink-0 flex items-center justify-between gap-2">
-          <p className="text-[11px] text-slate-400 truncate">Rótulos sin QR: usa la lista o la búsqueda.</p>
+          {contador ? (
+            <span
+              className="text-[11px] font-bold text-teal-700 bg-teal-50 border border-teal-200 rounded-full px-2.5 py-1 truncate"
+              aria-live="polite"
+            >
+              {contador.tomas} {contador.tomas === 1 ? 'toma' : 'tomas'} · Total {contador.total}
+            </span>
+          ) : (
+            <p className="text-[11px] text-slate-400 truncate">Rótulos sin QR: usa la lista o la búsqueda.</p>
+          )}
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Cerrar
           </Button>

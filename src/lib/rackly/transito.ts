@@ -114,6 +114,29 @@ export async function listarArticulosPorGuiaId(guiaId: string): Promise<Articulo
   return ((data ?? []) as Record<string, unknown>[]).map(mapArticuloTransito)
 }
 
+/**
+ * Filas de TODAS las guías de UN código (desde la fecha de implementación de
+ * Tránsito), más antigua primero. Lo usa el wizard del puente Atención↔Tránsito
+ * para la ruta MANUAL (sin QR): muestra guías con pendiente/posicionado y el
+ * usuario elige (nunca auto-elegir en silencio). ilike = exacto sin mayúsculas.
+ */
+export async function listarArticulosPorCodigo(
+  codigo: string,
+  maxFilas = 500
+): Promise<ArticuloTransito[]> {
+  const c = codigo.trim()
+  if (!c) return []
+  const { data, error } = await dataClient
+    .from('recepcion_registros')
+    .select('*')
+    .ilike('codigo', c)
+    .gte('fecha', FECHA_INICIO_TRANSITO)
+    .order('created_at', { ascending: true })
+    .limit(maxFilas)
+  if (error) throw error
+  return ((data ?? []) as Record<string, unknown>[]).map(mapArticuloTransito)
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // TRANSFERENCIAS (RPC atómica)
 // ═══════════════════════════════════════════════════════════════════

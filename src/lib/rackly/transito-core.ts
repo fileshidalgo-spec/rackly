@@ -15,11 +15,25 @@ export const FECHA_INICIO_TRANSITO = '2026-10-13'
 
 export type DestinoTransito = 'rack' | 'piso'
 
+/**
+ * Destinos posibles de un envío registrado en recepcion_registros.transito:
+ *   · rack / piso           → transferencia normal de Tránsito.
+ *   · atencion              → puente Atención↔Tránsito: descuento de la guía
+ *                             (la cantidad REAL baja el pendiente).
+ *   · atencion_posicion     → puente: marcador de salida desde una ubicación
+ *                             (cantidad=0 para NO alterar el semáforo; la
+ *                             cantidad real va en `cantidad_atencion`).
+ *   · reversa_atencion      → compensación de una atención (cantidad negativa
+ *                             en ruta tránsito; 0 + cantidad_atencion negativa
+ *                             en ruta posición). Devuelve el pendiente.
+ */
+export type DestinoEnvio = DestinoTransito | 'atencion' | 'atencion_posicion' | 'reversa_atencion'
+
 export type EnvioTransito = {
   uuid: string
   /** 'YYYY-MM-DD HH:MI' hora Lima (la graba la RPC). */
   fecha: string
-  destino: DestinoTransito
+  destino: DestinoEnvio
   /** Etiqueta legible de la ubicación (ej. B3·T2·P1·Pos07 / SA·A·2·1·N3). */
   ubicacion: string
   cantidad: number
@@ -28,6 +42,16 @@ export type EnvioTransito = {
   turno: string
   rack?: { bloque: string; torre: string; piso: string; posicion: string } | null
   piso?: { nivel_id: string; posicion_id?: string; nivel_numero?: number } | null
+  /** Puente Atención (2026-10-23): RQ a la que se atendió (destino atencion*). */
+  rq?: string
+  /** Id del material RQ (rq_atencion_items.id) que consumió esta toma. */
+  item_id?: string
+  /** Identificador del LOTE de tomas (idempotencia + trazabilidad de la reversa). */
+  lote?: string
+  /** Reversas: uuid de la toma original compensada. */
+  reversa_de?: string
+  /** En atencion_posicion/reversa_atencion: cantidad REAL atendida (cantidad=0). */
+  cantidad_atencion?: number
 }
 
 export type EstadoSem = 'ROJO' | 'AMAR' | 'VERDE'
@@ -138,6 +162,15 @@ export function datosFaltantes(a: {
   return faltan
 }
 
+function destinoValido(v: unknown): DestinoEnvio {
+  const s = str(v)
+  if (s === 'piso') return 'piso'
+  if (s === 'atencion') return 'atencion'
+  if (s === 'atencion_posicion') return 'atencion_posicion'
+  if (s === 'reversa_atencion') return 'reversa_atencion'
+  return 'rack'
+}
+
 export function parseEnvios(raw: unknown): EnvioTransito[] {
   if (!Array.isArray(raw)) return []
   return raw
@@ -145,7 +178,7 @@ export function parseEnvios(raw: unknown): EnvioTransito[] {
     .map((e) => ({
       uuid: str(e.uuid),
       fecha: str(e.fecha),
-      destino: e.destino === 'piso' ? ('piso' as const) : ('rack' as const),
+      destino: destinoValido(e.destino),
       ubicacion: str(e.ubicacion),
       cantidad: aNum(e.cantidad),
       usuario_id: (e.usuario_id as string | null) ?? null,
@@ -153,6 +186,17 @@ export function parseEnvios(raw: unknown): EnvioTransito[] {
       turno: str(e.turno),
       rack: (e.rack as EnvioTransito['rack']) ?? null,
       piso: (e.piso as EnvioTransito['piso']) ?? null,
+      // Puente Atención (opcional — filas legacy no las traen)
+      rq: str(e.rq) || undefined,
+      item_id: str(e.item_id) || undefined,
+      lote: str(e.lote) || undefined,
+      reversa_de: str(e.reversa_de) || undefined,
+      cantidad_atencion:
+        typeof e.cantidad_atencion === 'number'
+          ? e.cantidad_atencion
+          : e.cantidad_atencion != null && !isNaN(parseFloat(String(e.cantidad_atencion)))
+            ? parseFloat(String(e.cantidad_atencion))
+            : undefined,
     }))
     .filter((e) => e.uuid !== '')
 }

@@ -44,6 +44,7 @@ import {
   Search,
   Truck,
   Users,
+  RotateCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/hooks/useAuth'
@@ -665,7 +666,16 @@ function FilaArticulo({
               Enviado: {formatearNum(a.enviados)}/{formatearNum(a.cantidad)}
               {a.pendiente > EPS ? ` · Pendiente: ${formatearNum(a.pendiente)}` : ' · Completo'}
               {a.envios.length > 0 && (
-                <> · Último: {a.envios[a.envios.length - 1].ubicacion || a.envios[a.envios.length - 1].destino}</>
+                <>
+                  {' '}· Último:{' '}
+                  {(() => {
+                    const u = a.envios[a.envios.length - 1]
+                    if (u.destino === 'atencion' || u.destino === 'atencion_posicion')
+                      return u.rq ? `Atendido RQ ${u.rq}` : 'Atendido'
+                    if (u.destino === 'reversa_atencion') return 'Reversa de atención'
+                    return u.ubicacion || u.destino
+                  })()}
+                </>
               )}
             </p>
           )}
@@ -727,6 +737,51 @@ function FilaArticulo({
 }
 
 function LineaEnvio({ envio: e }: { envio: EnvioTransito }) {
+  // Puente Atención↔Tránsito: los envíos 'atencion*' no son traslados —
+  // se presentan como atenciones (badge propio) y la reversa como devolución.
+  if (
+    e.destino === 'atencion' ||
+    e.destino === 'atencion_posicion' ||
+    e.destino === 'reversa_atencion'
+  ) {
+    const esReversa = e.destino === 'reversa_atencion'
+    const cant = Math.abs(e.cantidad_atencion ?? e.cantidad)
+    const etiqueta = esReversa
+      ? 'Reversa de atención'
+      : e.destino === 'atencion_posicion'
+        ? 'Atendido desde la posición'
+        : 'Atendido (sin posición aún)'
+    return (
+      <p className="text-[11px] text-slate-600 flex items-start gap-1.5">
+        {esReversa ? (
+          <RotateCcw className="h-3 w-3 mt-0.5 text-amber-500 shrink-0" />
+        ) : (
+          <ScanLine className="h-3 w-3 mt-0.5 text-teal-500 shrink-0" />
+        )}
+        <span>
+          <span className={`font-bold ${esReversa ? 'text-amber-600' : 'text-teal-700'}`}>
+            {etiqueta}
+          </span>{' '}
+          por {e.usuario_nombre || '—'} el día {formatearFechaHora(e.fecha)}
+          {e.ubicacion ? (
+            <>
+              {' '}
+              desde <span className="font-semibold">{e.ubicacion}</span>
+            </>
+          ) : null}{' '}
+          · {formatearNum(cant)}
+          {esReversa ? ' (devuelto a pendiente)' : ''}
+          {e.rq ? (
+            <>
+              {' '}
+              · RQ <span className="font-semibold">{e.rq}</span>
+            </>
+          ) : null}
+          {' '}· Turno {e.turno || '—'}
+        </span>
+      </p>
+    )
+  }
   return (
     <p className="text-[11px] text-slate-600 flex items-start gap-1.5">
       <ArrowRightLeft className="h-3 w-3 mt-0.5 text-fuchsia-500 shrink-0" />

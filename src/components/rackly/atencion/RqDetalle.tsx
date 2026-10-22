@@ -64,7 +64,15 @@ import {
   PackageOpen,
   Undo2,
   Plus,
+  ScanLine,
 } from 'lucide-react'
+import { RqAtenderQrWizard } from '@/components/rackly/atencion/RqAtenderQrWizard'
+import {
+  listarLotesPuenteDeItem,
+  revertirOrigenRq,
+  type LotePuenteDeItem,
+} from '@/lib/rackly/rq-atencion'
+import { calcularTurno } from '@/lib/rackly/turno'
 
 const ESTADO_ITEM_CLASE: Record<string, string> = {
   Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -119,6 +127,11 @@ export function RqDetalle({
   const [confirmarAtender, setConfirmarAtender] = useState<ConfirmacionAtender | null>(null)
   const [confirmarRevertir, setConfirmarRevertir] = useState<ConfirmacionRevertir | null>(null)
   const [ubicaciones, setUbicaciones] = useState<UbicacionAbierta | null>(null)
+  /** Wizard del puente Atención↔Tránsito abierto para un material. */
+  const [qrWizard, setQrWizard] = useState<UbicacionAbierta | null>(null)
+  /** Lotes del puente del material en el diálogo de reversa (opción con origen). */
+  const [lotesPuente, setLotesPuente] = useState<LotePuenteDeItem[] | null>(null)
+  const [revertiendoOrigen, setRevertiendoOrigen] = useState(false)
   /** Filas COMPLETAS donde el usuario abrió el atender para añadir EXCEDENTE. */
   const [excedenteAbierto, setExcedenteAbierto] = useState<Record<string, boolean>>({})
 
@@ -237,6 +250,58 @@ export function RqDetalle({
     }
   }
 
+  /** Reversa del puente: compensa guías (Tránsito) y re-ingresa posiciones. */
+  async function ejecutarRevertirOrigen() {
+    const conf = confirmarRevertir
+    if (!conf) return
+    setRevertiendoOrigen(true)
+    try {
+      const r = await revertirOrigenRq(
+        conf.item.id,
+        null, // todos los lotes del puente de este material
+        calcularTurno(),
+        {
+          id: perfil?.id ?? '',
+          nombre: perfil?.nombre || perfil?.correo || '',
+          correo: perfil?.correo ?? '',
+        }
+      )
+      if (!r.ok) {
+        toast.error('No se pudo revertir con origen', {
+          description: r.fallo?.mensaje ?? 'Error desconocido',
+        })
+        return
+      }
+      if (r.duplicado) {
+        toast.info('Ya estaba revertida — no se duplicó nada')
+      } else {
+        toast.success(`Revertido con origen: ${fmt(r.total_revertido ?? 0)} ${conf.item.unidad}`, {
+          description: `${r.tomas_revertidas ?? 0} toma(s) devuelta(s) a su origen (guía/posición).`,
+        })
+      }
+      setConfirmarRevertir(null)
+      void cargar()
+    } catch (err: unknown) {
+      toast.error('No se pudo revertir con origen', {
+        description: err instanceof Error ? err.message : 'Error desconocido',
+      })
+    } finally {
+      setRevertiendoOrigen(false)
+    }
+  }
+
+  /** Al abrir el diálogo de reversa, detecta si el material tiene lotes del puente. */
+  async function abrirReversion(item: RqItem) {
+    setConfirmarRevertir({ item, cantidad: item.cantidadAtendida })
+    setLotesPuente(null)
+    try {
+      const lotes = await listarLotesPuenteDeItem(item.id, item.codigo)
+      setLotesPuente(lotes)
+    } catch {
+      setLotesPuente([])
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16 text-sm text-slate-500 gap-2">
@@ -334,7 +399,7 @@ export function RqDetalle({
               <th className="px-3 py-2 w-[100px] text-right" title="TOTAL real que salió = pedido + excedente">Atendido</th>
               <th className="px-3 py-2 w-[100px] text-right" title="Cantidad − atendido (nunca negativo)">Pendiente</th>
               <th className="px-3 py-2 w-[190px]">Atender</th>
-              <th className="px-3 py-2 w-[120px]">Ubicación</th>
+              <th className="px-3 py-2 w-[120px]">Ubicación / QR</th>
             </tr>
           </thead>
           <tbody>
@@ -435,7 +500,7 @@ export function RqDetalle({
                             size="icon"
                             className="h-7 w-7 text-slate-400 hover:text-amber-600"
                             title="Revertir atención"
-                            onClick={() => setConfirmarRevertir({ item: it, cantidad: it.cantidadAtendida })}
+                            onClick={() => void abrirReversion(it)}
                           >
                             <Undo2 className="h-3.5 w-3.5" />
                           </Button>
@@ -443,7 +508,7 @@ export function RqDetalle({
                       </div>
                     )}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2 space-y-1">
                     <Button
                       variant="outline"
                       size="sm"
@@ -460,6 +525,24 @@ export function RqDetalle({
                       }
                     >
                       <MapPin className="h-3.5 w-3.5" /> Ver ubicación
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 w-full border-teal-200 text-teal-700 hover:bg-teal-50"
+                      title="Escanear paletas: descuenta la guía en Tránsito o da salida desde la posición"
+                      onClick={() =>
+                        setQrWizard({
+                          codigo: it.codigo,
+                          descripcion: it.descripcion,
+                          unidad: it.unidad,
+                          itemId: it.id,
+                          cantidadRequerida: it.cantidad,
+                          cantidadAtendida: it.cantidadAtendida,
+                        })
+                      }
+                    >
+                      <ScanLine className="h-3.5 w-3.5" /> Atender con QR
                     </Button>
                   </td>
                 </tr>
@@ -573,7 +656,7 @@ export function RqDetalle({
                         variant="outline"
                         size="sm"
                         className="h-8 gap-1 text-slate-500"
-                        onClick={() => setConfirmarRevertir({ item: it, cantidad: it.cantidadAtendida })}
+                        onClick={() => void abrirReversion(it)}
                       >
                         <Undo2 className="h-3.5 w-3.5" /> Revertir
                       </Button>
@@ -582,23 +665,41 @@ export function RqDetalle({
                 </div>
               )}
 
-              {/* VER UBICACIÓN */}
-              <Button
-                variant="outline"
-                className="h-9 gap-1.5 w-full border-violet-200 text-violet-700 hover:bg-violet-50"
-                onClick={() =>
-                  setUbicaciones({
-                    codigo: it.codigo,
-                    descripcion: it.descripcion,
-                    unidad: it.unidad,
-                    itemId: it.id,
-                    cantidadRequerida: it.cantidad,
-                    cantidadAtendida: it.cantidadAtendida,
-                  })
-                }
-              >
-                <MapPin className="h-4 w-4" /> Ver ubicación del producto
-              </Button>
+              {/* VER UBICACIÓN + ATENDER CON QR (puente con Tránsito) */}
+              <div className="grid grid-cols-2 gap-1.5">
+                <Button
+                  variant="outline"
+                  className="h-9 gap-1 w-full border-violet-200 text-violet-700 hover:bg-violet-50 px-1"
+                  onClick={() =>
+                    setUbicaciones({
+                      codigo: it.codigo,
+                      descripcion: it.descripcion,
+                      unidad: it.unidad,
+                      itemId: it.id,
+                      cantidadRequerida: it.cantidad,
+                      cantidadAtendida: it.cantidadAtendida,
+                    })
+                  }
+                >
+                  <MapPin className="h-4 w-4" /> Ver ubicación
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-9 gap-1 w-full border-teal-200 text-teal-700 hover:bg-teal-50 px-1"
+                  onClick={() =>
+                    setQrWizard({
+                      codigo: it.codigo,
+                      descripcion: it.descripcion,
+                      unidad: it.unidad,
+                      itemId: it.id,
+                      cantidadRequerida: it.cantidad,
+                      cantidadAtendida: it.cantidadAtendida,
+                    })
+                  }
+                >
+                  <ScanLine className="h-4 w-4" /> Atender con QR
+                </Button>
+              </div>
             </div>
           )
         })}
@@ -663,13 +764,49 @@ export function RqDetalle({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={ejecutarRevertir}
-              className="bg-amber-500 hover:bg-amber-600 text-white"
-            >
+            <AlertDialogAction onClick={ejecutarRevertir} className="bg-amber-500 hover:bg-amber-600 text-white">
               Revertir
             </AlertDialogAction>
           </AlertDialogFooter>
+
+          {/* Puente Atención↔Tránsito: reversa que también devuelve el material */}
+          <div className="border-t pt-3 space-y-1.5">
+            {lotesPuente === null ? (
+              <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                <Loader2 className="h-3 w-3 animate-spin" /> Revisando atenciones con origen…
+              </p>
+            ) : lotesPuente.length > 0 ? (
+              <>
+                <p className="text-[11px] text-slate-500">
+                  Este material tiene <b>{lotesPuente.length}</b> atención(es) del puente{' '}
+                  (QR/Tránsito) por{' '}
+                  <b>
+                    {fmt(lotesPuente.reduce((s, l) => s + l.total, 0))} {confirmarRevertir?.item.unidad}
+                  </b>{' '}
+                  — {lotesPuente[0].rq ? `RQ ${lotesPuente[0].rq}` : 'sin RQ'}.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={revertiendoOrigen}
+                  onClick={ejecutarRevertirOrigen}
+                  className="w-full gap-1.5 border-teal-200 text-teal-700 hover:bg-teal-50"
+                >
+                  {revertiendoOrigen ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  )}
+                  Revertir atención con origen (devuelve guías/posiciones)
+                </Button>
+              </>
+            ) : (
+              <p className="text-[11px] text-slate-400">
+                Sin atenciones del puente (QR) para este material — la reversa simple de arriba solo
+                ajusta cantidades.
+              </p>
+            )}
+          </div>
         </AlertDialogContent>
       </AlertDialog>
 
@@ -715,6 +852,23 @@ export function RqDetalle({
           onIrAPiso(target)
         }}
       />
+      {/* ── Wizard del puente Atención↔Tránsito (escaneo en lote) ── */}
+      {rq && (
+        <RqAtenderQrWizard
+          open={!!qrWizard}
+          onOpenChange={(o) => !o && setQrWizard(null)}
+          rqNumero={rq.numeroRq || 'sin número'}
+          item={{
+            id: qrWizard?.itemId ?? '',
+            codigo: qrWizard?.codigo ?? '',
+            descripcion: qrWizard?.descripcion ?? '',
+            unidad: qrWizard?.unidad ?? '',
+            cantidad: qrWizard?.cantidadRequerida ?? 0,
+            cantidadAtendida: qrWizard?.cantidadAtendida ?? 0,
+          }}
+          onRegistrado={() => void cargar()}
+        />
+      )}
     </div>
   )
 }

@@ -89,6 +89,7 @@ type FormRq = {
   productoDescripcion: string
   fecha: string
   turno: string
+  linea: string
   solicitante: string
   notas: string
   items: ItemRqForm[]
@@ -107,6 +108,7 @@ function formVacio(): FormRq {
     productoDescripcion: '',
     fecha: hoyISO(),
     turno: calcularTurnoRecepcion(new Date()),
+    linea: '',
     solicitante: '',
     notas: '',
     items: [itemVacio()],
@@ -192,6 +194,7 @@ export function RqFotoForm({
       productoCodigo: datos.productoCodigo,
       productoDescripcion: datos.productoDescripcion,
       fecha: datos.fecha || hoyISO(),
+      linea: datos.linea,
       solicitante: datos.solicitante,
       items: itemsOcr.length > 0 ? itemsOcr : [itemVacio()],
     })
@@ -217,6 +220,7 @@ export function RqFotoForm({
           [
             datos.numeroRq ? `RQ ${datos.numeroRq}` : '',
             datos.ordenProduccion ? `OP ${datos.ordenProduccion}` : '',
+            datos.linea ? `Línea ${datos.linea}` : '',
           ]
             .filter(Boolean)
             .join(' · ') +
@@ -372,6 +376,7 @@ export function RqFotoForm({
           productoCodigo: form.productoCodigo.trim(),
           productoDescripcion: form.productoDescripcion.trim(),
           turno: form.turno,
+          linea: form.linea.trim(),
           solicitante: form.solicitante.trim(),
           notas: form.notas.trim(),
           fotoUrl,
@@ -397,6 +402,7 @@ export function RqFotoForm({
           productoCodigo: form.productoCodigo.trim(),
           productoDescripcion: form.productoDescripcion.trim(),
           turno: form.turno,
+          linea: form.linea.trim(),
           solicitante: form.solicitante.trim(),
           estado: 'Pendiente',
           fotoUrl,
@@ -619,6 +625,25 @@ export function RqFotoForm({
               <SelectItem value="T2">T2 (19:21 – 07:19)</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Línea de producción</Label>
+          <Input
+            list="lineas-rq-sugeridas"
+            placeholder="L1, L2, JARABES…"
+            title="Campo «Línea:» de la requisición física — se llena con el OCR y queda editable"
+            maxLength={80}
+            value={form.linea}
+            onChange={(e) => set('linea', e.target.value)}
+          />
+          <datalist id="lineas-rq-sugeridas">
+            <option value="L1" />
+            <option value="L2" />
+            <option value="L3" />
+            <option value="L4" />
+            <option value="L5" />
+            <option value="JARABES" />
+          </datalist>
         </div>
         <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
           <Label className="text-xs">Notas (opcional)</Label>

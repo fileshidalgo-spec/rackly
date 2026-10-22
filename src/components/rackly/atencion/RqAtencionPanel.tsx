@@ -329,13 +329,14 @@ export function RqAtencionPanel({
 
       {/* ── Listado desktop ── */}
       <div className="hidden md:block rounded-lg border bg-white overflow-x-auto">
-        <table className="w-full text-sm min-w-[820px]">
+        <table className="w-full text-sm min-w-[960px]">
           <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-3 py-2 w-[110px]">Nº RQ</th>
               <th className="px-3 py-2">Producto / OP</th>
               <th className="px-3 py-2 w-[120px]">Fecha</th>
               <th className="px-3 py-2 w-[70px]">Turno</th>
+              <th className="px-3 py-2 w-[150px]">Línea</th>
               <th className="px-3 py-2 w-[120px]">Solicitante</th>
               <th className="px-3 py-2 w-[110px]">Estado</th>
               <th className="px-3 py-2 w-[190px]">Acciones</th>
@@ -344,7 +345,7 @@ export function RqAtencionPanel({
           <tbody>
             {filas.length === 0 && !loading && (
               <tr>
-                <td colSpan={7} className="text-center text-sm text-slate-400 py-10">
+                <td colSpan={8} className="text-center text-sm text-slate-400 py-10">
                   <Inbox className="h-8 w-8 mx-auto mb-2 text-slate-300" />
                   No hay RQ registradas con los filtros actuales.
                 </td>
@@ -369,6 +370,15 @@ export function RqAtencionPanel({
                   <Badge variant="outline" className="text-[10px]">
                     {r.turno}
                   </Badge>
+                </td>
+                <td className="px-3 py-2 max-w-[150px]">
+                  {r.linea ? (
+                    <span className="block text-xs text-slate-600 truncate" title={r.linea}>
+                      {r.linea}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-300">—</span>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-xs truncate max-w-[120px]" title={r.solicitante}>
                   {r.solicitante || '—'}
@@ -441,6 +451,11 @@ export function RqAtencionPanel({
             <div className="grid grid-cols-2 gap-1 text-xs text-slate-500">
               <span>Fecha: {r.fecha}</span>
               <span>Turno: {r.turno}</span>
+              {r.linea && (
+                <span className="min-w-0 truncate col-span-2" title={r.linea}>
+                  Línea: {r.linea}
+                </span>
+              )}
               {r.ordenProduccion && <span>OP: {r.ordenProduccion}</span>}
               {r.solicitante && <span className="min-w-0 truncate" title={r.solicitante}>Pide: {r.solicitante}</span>}
             </div>

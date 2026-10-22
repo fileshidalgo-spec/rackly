@@ -366,6 +366,11 @@ export function RqDetalle({
           {rq.ordenProduccion && <span>OP: <b>{rq.ordenProduccion}</b></span>}
           <span>Fecha: <b>{rq.fecha}</b></span>
           <span>Turno: <b>{rq.turno}</b></span>
+          {rq.linea && (
+            <span className="min-w-0 truncate col-span-2 min-[430px]:col-span-1" title={rq.linea}>
+              Línea: <b>{rq.linea}</b>
+            </span>
+          )}
           {rq.solicitante && <span className="col-span-2 min-[430px]:col-span-1 min-w-0 truncate" title={rq.solicitante}>Solicitante: <b>{rq.solicitante}</b></span>}
           <span>Registró: <b>{rq.usuarioNombre || '—'}</b></span>
         </div>

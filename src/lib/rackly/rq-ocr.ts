@@ -6,13 +6,16 @@
  *
  * Calibrado con la RQ real AJEPER Nº 0000191373: impresión monoespaciada,
  * encabezado con etiquetas (Nº, Orden de Producción, Producto, Fecha,
- * Solicitante, Almacén, Lote de Sistema, Cantidad…) y una tabla de
+ * Solicitante, Almacén, Lote de Sistema, Cantidad, Línea…) y una tabla de
  * materiales «CÓDIGO · DESCRIPCIÓN · U/M · CANTIDAD».
  *
  * Reglas del negocio (pedido del usuario 2026-10-22):
  *   · Del ENCABEZADO se ignoran "Lote de Sistema" y "Cantidad" — no se extraen.
  *   · El TURNO del sistema NO se lee de la RQ: la app lo calcula sola con la
  *     regla T1/T2 existente (turno.ts — 07:20→19:20:59 = T1) y queda editable.
+ *   · La LÍNEA de producción SÍ se lee del campo «Línea:» del documento
+ *     (pedido del usuario 2026-10-23): valores tipo L1, L2, L3, JARABES… y
+ *     queda editable en el formulario.
  *
  * El OCR lo corre el componente (tesseract.js, spa, igual que la guía);
  * este módulo entrega SOLO utilidades puras y testables:
@@ -46,6 +49,8 @@ export type DatosRq = {
   productoDescripcion: string
   /** 'YYYY-MM-DD' o '' si no se leyó. */
   fecha: string
+  /** Campo «Línea:» del documento (L1, L2, JARABES…) o '' si no se leyó. */
+  linea: string
   solicitante: string
   items: ItemRq[]
 }
@@ -70,6 +75,19 @@ const RE_ORDEN =
 
 /** Fecha dd/mm/aaaa (tolera - y . y año de 2 dígitos → 20xx). */
 const RE_FECHA = /\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b/
+
+/**
+ * Línea de producción: campo «Línea : 0 TANQUES DE JARABE GASEOSA» del
+ * documento real. EXIGE separador ([+.:=] o raya) tras la etiqueta: así un
+ * material cuya descripción menciona "LINEA 3" (sin dos puntos) nunca se
+ * confunde con el encabezado. Si el OCR pierde el «:», el campo queda
+ * vacío y se completa a mano (editable en el formulario).
+ */
+const RE_LINEA = /(?:^|\s)L[IÍ]NEA\s*[-—–+.:=]\s*(\S.*)$/
+
+/** Etiquetas que cortan el valor de Línea si el OCR fusiona dos renglones. */
+const RE_CORTE_LINEA =
+  /\s+(SOLICITANT?E|TURNO|FECHA|ORDEN|ALMAC[EÉ]N|PRODUCTO|ART[IÍ]CULO|LOTE|MONEDA|CANTIDAD|OBSERVACI|I[TÍ]EM)\b.*/i
 
 /**
  * Solicitante: texto tras la etiqueta (corta en la siguiente etiqueta).
@@ -199,6 +217,20 @@ function vecinoUnDigito(
   return null
 }
 
+/**
+ * Limpia el valor del campo «Línea:»: corta en la siguiente etiqueta si el
+ * OCR fusionó renglones, quita colas de separadores y limita a 80 caracteres
+ * (el valor real es una línea corta del encabezado).
+ */
+function limpiarValorLinea(texto: string): string {
+  return texto
+    .replace(RE_CORTE_LINEA, '')
+    .replace(/[\s.:;\-–—]+$/, '')
+    .trim()
+    .slice(0, 80)
+    .trim()
+}
+
 /** Quita colas que el OCR pega al solicitante + el DNI de empleado delante. */
 function limpiarSolicitante(texto: string): string {
   return texto
@@ -226,6 +258,7 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
     productoCodigo: '',
     productoDescripcion: '',
     fecha: '',
+    linea: '',
     solicitante: '',
     items: [],
   }
@@ -257,6 +290,13 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
           const iso = normalizarFecha(mF[1], mF[2], mF[3])
           if (iso) res.fecha = iso
         }
+      }
+    }
+    if (!res.linea) {
+      const mLinea = linea.match(RE_LINEA)
+      if (mLinea) {
+        const limpio = limpiarValorLinea(mLinea[1])
+        if (limpio.length >= 2) res.linea = limpio
       }
     }
     if (!res.solicitante) {
@@ -392,6 +432,7 @@ export function fusionarDatosRq(a: DatosRq, b: DatosRq): DatosRq {
     productoCodigo: a.productoCodigo || b.productoCodigo,
     productoDescripcion: a.productoDescripcion || b.productoDescripcion,
     fecha: a.fecha || b.fecha,
+    linea: a.linea || b.linea,
     solicitante: a.solicitante || b.solicitante,
     items,
   }
@@ -403,6 +444,7 @@ export function puntuarExtraccionRq(d: DatosRq): number {
   if (d.numeroRq) p += 2
   if (d.ordenProduccion) p += 1
   if (d.fecha) p += 1
+  if (d.linea) p += 1
   if (d.solicitante) p += 1
   if (d.productoCodigo) p += 1
   p += d.items.filter((i) => i.enCatalogo).length

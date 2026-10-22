@@ -36,6 +36,8 @@ export type RqAtencion = {
   productoDescripcion: string
   /** T1/T2 — calculado por la app con la regla del almacén (turno.ts). */
   turno: string
+  /** Línea/área que pide la RQ (campo "Línea:" del documento físico). */
+  linea: string
   solicitante: string
   /** 'Pendiente' | 'En proceso' | 'Atendido' (lo mantiene la RPC). */
   estado: string
@@ -105,6 +107,7 @@ function mapRq(r: Record<string, unknown>): RqAtencion {
     productoCodigo: str(r.producto_codigo),
     productoDescripcion: str(r.producto_descripcion),
     turno: str(r.turno) || 'T1',
+    linea: str(r.linea),
     solicitante: str(r.solicitante),
     estado: str(r.estado) || 'Pendiente',
     fotoUrl: str(r.foto_url),
@@ -227,6 +230,8 @@ export type NuevoRq = {
   productoCodigo: string
   productoDescripcion: string
   turno: string
+  /** Línea/área de producción (L1, L2, JARABES…). Vacío = no indicada. */
+  linea: string
   solicitante: string
   notas?: string
   fotoUrl?: string
@@ -251,6 +256,7 @@ export async function crearRq(
     producto_codigo: datos.productoCodigo,
     producto_descripcion: datos.productoDescripcion,
     turno: datos.turno || 'T1',
+    linea: datos.linea ?? '',
     solicitante: datos.solicitante,
     estado: 'Pendiente',
     foto_url: datos.fotoUrl ?? '',

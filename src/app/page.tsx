@@ -29,6 +29,7 @@ import { RecepcionModule } from '@/components/rackly/recepcion/RecepcionModule'
 import { AtencionModule } from '@/components/rackly/atencion/AtencionModule'
 import { TransitoModule } from '@/components/rackly/transito/TransitoModule'
 import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
+import { limpiarContextoSalidaRq } from '@/lib/rackly/rq-contexto-salida'
 import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -121,6 +122,7 @@ function RacklyApp() {
     // Salto desde Atención (RQ): el retorno es al MÓDULO Atención, no a una
     // pestaña de Racks (sentinel '__atencion__' en lugar de una tab real).
     if (ubicacionOrigen?.tab === '__atencion__') {
+      limpiarContextoSalidaRq() // fin del ciclo salida→RQ: sin diálogos fantasma
       setView('atencion')
       return
     }
@@ -152,6 +154,7 @@ function RacklyApp() {
   function volverAPisoStock() {
     // Salto desde Atención (RQ): regresa al MÓDULO Atención
     if (pisoOrigen?.tab === '__atencion__') {
+      limpiarContextoSalidaRq() // fin del ciclo salida→RQ: sin diálogos fantasma
       setView('atencion')
       return
     }

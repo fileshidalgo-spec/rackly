@@ -17,6 +17,8 @@ import {
   type TrasladoInput,
 } from '@/lib/rackly/kardex'
 import { puedeEditarLote, construirOpcionesLote } from '@/lib/rackly/lote'
+import { atenderItemRq } from '@/lib/rackly/rq-atencion'
+import { leerContextoSalidaRq, mismoCodigo, type ContextoSalidaRq } from '@/lib/rackly/rq-contexto-salida'
 import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from '@/lib/rackly/ubicaciones'
 import { supabase, dataClient } from '@/lib/supabase/client'
@@ -48,6 +50,8 @@ import {
   AlertDialogDescription,
   AlertDialogCancel,
   AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogAction,
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import {
@@ -92,6 +96,11 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
     if (count > 1) multiples.add(code)
   }
   return multiples
+}
+
+// Formato numérico para los avisos de atención de RQ (decimales suaves)
+function fmtRq(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('es-PE', { maximumFractionDigits: 3 })
 }
 
 // Calcula ocupación desde movimientos — stock POR CÓDIGO (no por lote).
@@ -154,6 +163,18 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   const puedeEditarDatosLote = puedeEditarLote(perfil?.rol)
   const [editLoteTarget, setEditLoteTarget] = useState<ArticuloAEditar | null>(null)
   const [editLoteBusy, setEditLoteBusy] = useState(false)
+
+  // ── Atención a Línea (RQ): confirmación tras dar salida (contexto efímero) ──
+  // Solo si se llegó DESDE la RQ: la salida puede registrarse como atención o
+  // quedar como regularización pura (respuesta "No"). Sin contexto jamás aparece.
+  const [rqConfirmer, setRqConfirmer] = useState<{
+    numeroRq: string; itemId: string; codigo: string; unidad: string; cantidad: number; requerido: number
+  } | null>(null)
+  const [rqConfirmerBusy, setRqConfirmerBusy] = useState(false)
+  const [ctxRqBanner, setCtxRqBanner] = useState<ContextoSalidaRq | null>(null)
+  useEffect(() => {
+    setCtxRqBanner(leerContextoSalidaRq())
+  }, [targetUbicacion])
 
   // ── Auto-navegar a ubicación objetivo (desde Stock/Stock INC) ──
   // Se usa un ref + timeout para evitar problemas de stale closure con handleCellClick
@@ -680,6 +701,19 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         codigoInc: item.codigoInc || undefined,
       })
       toast.success('Salida registrada')
+      // Atención a Línea (RQ): si llegaste DESDE una RQ para este código, ofrece
+      // registrar la salida como atención. Responder "No" = regularización pura.
+      const ctxRq = leerContextoSalidaRq()
+      if (ctxRq && mismoCodigo(ctxRq.codigo, item.codigo)) {
+        setRqConfirmer({
+          numeroRq: ctxRq.numeroRq,
+          itemId: ctxRq.itemId,
+          codigo: ctxRq.codigo,
+          unidad: ctxRq.unidad || item.un,
+          cantidad: qty,
+          requerido: ctxRq.cantidadRequerida,
+        })
+      }
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
@@ -688,6 +722,32 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         refreshDetail(); refreshData()
       } else { toast.error('Error al registrar salida', { description: extractError(err) }) }
     } finally { setActionBusy(false) }
+  }
+
+  // ── Atención a Línea (RQ): registrar la salida recién hecha en la RQ ──
+  // Suma la cantidad a lo ATENDIDO del material (RPC atómica; excedente permitido).
+  async function confirmarAtencionRqDesdeSalida() {
+    if (!rqConfirmer || !perfil) return
+    setRqConfirmerBusy(true)
+    try {
+      const actualizado = await atenderItemRq(
+        rqConfirmer.itemId,
+        rqConfirmer.cantidad,
+        perfil.nombre || perfil.correo || ''
+      )
+      const completo = actualizado.cantidadAtendida >= actualizado.cantidad
+      toast.success(`Registrado en la RQ ${rqConfirmer.numeroRq}`, {
+        description: completo
+          ? `Ya completaste este artículo: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad}. Toca «← Volver a Atención (RQ)» para seguir.`
+          : `Atendido: ${fmtRq(actualizado.cantidadAtendida)} de ${fmtRq(actualizado.cantidad)} ${actualizado.unidad} · Pendiente: ${fmtRq(Math.max(actualizado.cantidad - actualizado.cantidadAtendida, 0))}`,
+        duration: 9000,
+      })
+      setRqConfirmer(null)
+    } catch (err: unknown) {
+      toast.error('No se pudo registrar en la RQ', { description: extractError(err) })
+    } finally {
+      setRqConfirmerBusy(false)
+    }
   }
 
   // Dar salida a un producto desde el alerta de destino ocupado (OcupacionTab)
@@ -901,7 +961,17 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
               <p className="text-xs font-bold text-violet-200 truncate">
                 Posición {targetUbicacion.bloque}-{targetUbicacion.torre}-{targetUbicacion.piso}-{targetUbicacion.posicion}
               </p>
-              <p className="text-[10px] text-slate-400">Realiza aquí los movimientos y vuelve a la búsqueda cuando termines.</p>
+              <p className="text-[10px] text-slate-400">
+                {ctxRqBanner ? (
+                  <>
+                    Atendiendo la RQ <b className="text-violet-300">{ctxRqBanner.numeroRq}</b> ·{' '}
+                    <span className="font-mono">{ctxRqBanner.codigo}</span>: al dar SALIDA de este artículo
+                    se ofrecerá registrarla en la RQ.
+                  </>
+                ) : (
+                  'Realiza aquí los movimientos y vuelve a la búsqueda cuando termines.'
+                )}
+              </p>
             </div>
           </div>
           <button
@@ -2168,6 +2238,42 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
               )}
               {trDestStock.length > 0 ? 'Trasladar de todas formas' : 'Confirmar Traslado'}
             </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── Atención a Línea (RQ): ¿registrar esta salida en la RQ? ── */}
+      <AlertDialog open={!!rqConfirmer} onOpenChange={(o) => { if (!o && !rqConfirmerBusy) setRqConfirmer(null) }}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              ¿Registrar esta salida en la RQ {rqConfirmer?.numeroRq || ''}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Saliste <b>{rqConfirmer ? fmtRq(rqConfirmer.cantidad) : ''} {rqConfirmer?.unidad}</b> de{' '}
+              <b className="font-mono">{rqConfirmer?.codigo}</b>.
+              <br />
+              <br />
+              <b>Sí</b> → suma la cantidad a lo ATENDIDO de la RQ; si alcanza o supera lo requerido
+              ({rqConfirmer ? fmtRq(rqConfirmer.requerido) : ''}), el material queda COMPLETO (el
+              excedente se registra tal cual salió).
+              <br />
+              <b>No</b> → la salida queda solo como movimiento de stock (regularización); la RQ no
+              cambia. Úsalo si el stock del sistema no existía físicamente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rqConfirmerBusy} className="sm:mr-auto">
+              No, solo salida
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); void confirmarAtencionRqDesdeSalida() }}
+              disabled={rqConfirmerBusy}
+              className="bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 text-white"
+            >
+              {rqConfirmerBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              Sí, registrar en la RQ
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

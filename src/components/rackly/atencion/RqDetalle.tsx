@@ -29,6 +29,7 @@ import {
   type RqItem,
 } from '@/lib/rackly/rq-atencion'
 import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
+import { guardarContextoSalidaRq } from '@/lib/rackly/rq-contexto-salida'
 import { RqUbicacionesDialog } from '@/components/rackly/atencion/RqUbicacionesDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -53,6 +54,7 @@ import {
   CheckCircle2,
   PackageOpen,
   Undo2,
+  Plus,
 } from 'lucide-react'
 
 const ESTADO_ITEM_CLASE: Record<string, string> = {
@@ -72,7 +74,14 @@ function fmt(n: number): string {
 }
 
 /** Objetivo abierto en el diálogo de ubicaciones. */
-type UbicacionAbierta = { codigo: string; descripcion: string; unidad: string }
+type UbicacionAbierta = {
+  codigo: string
+  descripcion: string
+  unidad: string
+  itemId: string
+  cantidadRequerida: number
+  cantidadAtendida: number
+}
 
 /** Atención pendiente de confirmar (item + cantidad digitada). */
 type ConfirmacionAtender = { item: RqItem; cantidad: number }
@@ -101,6 +110,8 @@ export function RqDetalle({
   const [confirmarAtender, setConfirmarAtender] = useState<ConfirmacionAtender | null>(null)
   const [confirmarRevertir, setConfirmarRevertir] = useState<ConfirmacionRevertir | null>(null)
   const [ubicaciones, setUbicaciones] = useState<UbicacionAbierta | null>(null)
+  /** Filas COMPLETAS donde el usuario abrió el atender para añadir EXCEDENTE. */
+  const [excedenteAbierto, setExcedenteAbierto] = useState<Record<string, boolean>>({})
 
   const genRef = useRef(0)
   const savingRef = useRef(false)
@@ -152,11 +163,10 @@ export function RqDetalle({
       toast.error('Digita la cantidad a atender')
       return
     }
-    const pendiente = pendienteDeItem(item)
-    if (leida > pendiente) {
-      toast.error(`Excede lo pendiente: quedan ${fmt(pendiente)} ${item.unidad}`.trim())
-      return
-    }
+    // v2 sobreatención: se PERMITE atender más de lo pendiente (p. ej. tapas:
+    // piden 120 mil, el formato por paleta trae 123 mil → se registran 123 mil
+    // y el material queda COMPLETO). La regla es "puede ser más, nunca menos";
+    // la confirmación avisa del excedente antes de registrar.
     setConfirmarAtender({ item, cantidad: leida })
   }
 
@@ -174,15 +184,20 @@ export function RqDetalle({
       )
       setItems((prev) => prev.map((it) => (it.id === actualizado.id ? actualizado : it)))
       setCantidades((prev) => ({ ...prev, [actualizado.id]: String(pendienteDeItem(actualizado) || '') }))
+      const completo = estadoDeItem(actualizado) === 'Atendido'
       toast.success(
         `Atendido: ${fmt(conf.cantidad)} ${conf.item.unidad}`.trim(),
         {
-          description:
-            pendienteDeItem(actualizado) === 0
-              ? 'Material completo ✓'
-              : `Pendiente: ${fmt(pendienteDeItem(actualizado))} ${conf.item.unidad}`.trim(),
+          description: completo
+            ? actualizado.cantidadAtendida > actualizado.cantidad
+              ? `Ya completaste este artículo (excedente: ${fmt(actualizado.cantidadAtendida - actualizado.cantidad)} ${actualizado.unidad})`.trim()
+              : 'Ya completaste este artículo'
+            : `Pendiente: ${fmt(pendienteDeItem(actualizado))} ${conf.item.unidad}`.trim(),
         }
       )
+      if (completo) {
+        setExcedenteAbierto((prev) => ({ ...prev, [actualizado.id]: false }))
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
       toast.error('No se pudo atender', { description: message })
@@ -237,7 +252,8 @@ export function RqDetalle({
   const atendidos = items.filter((it) => estadoDeItem(it) === 'Atendido').length
   const cantSolicitada = items.reduce((s, it) => s + it.cantidad, 0)
   const cantAtendida = items.reduce((s, it) => s + it.cantidadAtendida, 0)
-  const progresoPct = cantSolicitada > 0 ? Math.round((cantAtendida / cantSolicitada) * 100) : 0
+  // Con sobreatención el avance puede pasar del 100%: la barra se satura en 100.
+  const progresoPct = cantSolicitada > 0 ? Math.min(100, Math.round((cantAtendida / cantSolicitada) * 100)) : 0
 
   return (
     <div className="space-y-4">
@@ -353,13 +369,14 @@ export function RqDetalle({
                   <td className={`px-3 py-2 text-right font-bold ${pendiente > 0 ? 'text-amber-700' : 'text-slate-300'}`}>
                     {fmt(pendiente)}
                   </td>
-                  {/* ATENDER: digita la cantidad y confirma */}
+                  {/* ATENDER: digita la cantidad y confirma (excedente permitido) */}
                   <td className="px-3 py-2">
-                    {pendiente > 0 ? (
+                    {pendiente > 0 || excedenteAbierto[it.id] ? (
                       <div className="flex items-center gap-1.5">
                         <Input
                           className="h-8 w-[74px] text-right"
                           inputMode="decimal"
+                          placeholder={pendiente > 0 ? undefined : '+ excedente'}
                           value={cantidades[it.id] ?? ''}
                           onChange={(e) =>
                             setCantidades((prev) => ({ ...prev, [it.id]: e.target.value }))
@@ -380,9 +397,20 @@ export function RqDetalle({
                       </div>
                     ) : (
                       <div className="flex items-center gap-1">
-                        <span className="text-[11px] text-emerald-600 flex items-center gap-1">
+                        <span className="text-[11px] text-emerald-600 flex items-center gap-1" title="Ya completaste este artículo">
                           <PackageOpen className="h-3.5 w-3.5" /> Completo
                         </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-1.5 text-[10px] text-slate-400 hover:text-teal-600"
+                          title="Agregar excedente (más de lo requerido)"
+                          onClick={() =>
+                            setExcedenteAbierto((prev) => ({ ...prev, [it.id]: !prev[it.id] }))
+                          }
+                        >
+                          <Plus className="h-3 w-3" /> Excedente
+                        </Button>
                         {it.cantidadAtendida > 0 && (
                           <Button
                             variant="ghost"
@@ -403,7 +431,14 @@ export function RqDetalle({
                       size="sm"
                       className="h-8 gap-1.5 w-full border-violet-200 text-violet-700 hover:bg-violet-50"
                       onClick={() =>
-                        setUbicaciones({ codigo: it.codigo, descripcion: it.descripcion, unidad: it.unidad })
+                        setUbicaciones({
+                          codigo: it.codigo,
+                          descripcion: it.descripcion,
+                          unidad: it.unidad,
+                          itemId: it.id,
+                          cantidadRequerida: it.cantidad,
+                          cantidadAtendida: it.cantidadAtendida,
+                        })
                       }
                     >
                       <MapPin className="h-3.5 w-3.5" /> Ver ubicación
@@ -466,13 +501,17 @@ export function RqDetalle({
                 <p className="text-[10px] text-slate-400">Atendió: {it.usuarioAtencion}</p>
               )}
 
-              {/* ATENDER: digita + confirma */}
-              {pendiente > 0 ? (
+              {/* ATENDER: digita + confirma (excedente permitido) */}
+              {pendiente > 0 || excedenteAbierto[it.id] ? (
                 <div className="flex items-center gap-2">
                   <Input
                     className="h-9 flex-1 text-right"
                     inputMode="decimal"
-                    placeholder={`Cantidad a atender (máx ${fmt(pendiente)})`}
+                    placeholder={
+                      pendiente > 0
+                        ? `Cantidad a atender (puedes atender más: quedan ${fmt(pendiente)})`
+                        : 'Cantidad adicional (excedente)'
+                    }
                     value={cantidades[it.id] ?? ''}
                     onChange={(e) => setCantidades((prev) => ({ ...prev, [it.id]: e.target.value }))}
                   />
@@ -488,18 +527,30 @@ export function RqDetalle({
               ) : (
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
-                    <PackageOpen className="h-3.5 w-3.5" /> Material completo
+                    <PackageOpen className="h-3.5 w-3.5" /> Ya completaste este artículo
                   </span>
-                  {it.cantidadAtendida > 0 && (
+                  <div className="flex items-center gap-1">
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
-                      className="h-8 gap-1 text-slate-500"
-                      onClick={() => setConfirmarRevertir({ item: it, cantidad: it.cantidadAtendida })}
+                      className="h-8 gap-1 text-[11px] text-slate-400 hover:text-teal-600"
+                      onClick={() =>
+                        setExcedenteAbierto((prev) => ({ ...prev, [it.id]: !prev[it.id] }))
+                      }
                     >
-                      <Undo2 className="h-3.5 w-3.5" /> Revertir
+                      <Plus className="h-3 w-3" /> Excedente
                     </Button>
-                  )}
+                    {it.cantidadAtendida > 0 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1 text-slate-500"
+                        onClick={() => setConfirmarRevertir({ item: it, cantidad: it.cantidadAtendida })}
+                      >
+                        <Undo2 className="h-3.5 w-3.5" /> Revertir
+                      </Button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -508,7 +559,14 @@ export function RqDetalle({
                 variant="outline"
                 className="h-9 gap-1.5 w-full border-violet-200 text-violet-700 hover:bg-violet-50"
                 onClick={() =>
-                  setUbicaciones({ codigo: it.codigo, descripcion: it.descripcion, unidad: it.unidad })
+                  setUbicaciones({
+                    codigo: it.codigo,
+                    descripcion: it.descripcion,
+                    unidad: it.unidad,
+                    itemId: it.id,
+                    cantidadRequerida: it.cantidad,
+                    cantidadAtendida: it.cantidadAtendida,
+                  })
                 }
               >
                 <MapPin className="h-4 w-4" /> Ver ubicación del producto
@@ -528,12 +586,24 @@ export function RqDetalle({
               {confirmarAtender?.item.unidad}</b> del material{' '}
               <b className="font-mono">{confirmarAtender?.item.codigo}</b>{' '}
               {confirmarAtender?.item.descripcion ? `(${confirmarAtender.item.descripcion})` : ''}.
+              {confirmarAtender &&
+                confirmarAtender.cantidad > pendienteDeItem(confirmarAtender.item) && (
+                  <>
+                    <br />
+                    <br />
+                    <span className="font-semibold text-amber-700">
+                      Atiendes MÁS de lo requerido (excedente:{' '}
+                      {fmt(confirmarAtender.cantidad - pendienteDeItem(confirmarAtender.item))}{' '}
+                      {confirmarAtender.item.unidad}): el material quedará COMPLETO.
+                    </span>
+                  </>
+                )}
               <br />
               <br />
               Pendiente después:{' '}
               <b>
                 {confirmarAtender
-                  ? fmt(pendienteDeItem(confirmarAtender.item) - confirmarAtender.cantidad)
+                  ? fmt(Math.max(pendienteDeItem(confirmarAtender.item) - confirmarAtender.cantidad, 0))
                   : ''}{' '}
                 {confirmarAtender?.item.unidad}
               </b>
@@ -583,10 +653,36 @@ export function RqDetalle({
         descripcion={ubicaciones?.descripcion ?? ''}
         unidad={ubicaciones?.unidad ?? ''}
         onIrARacks={(bloque, torre, piso, posicion) => {
+          // Contexto efímero: al llegar a Racks, una salida de ESTE código
+          // ofrecerá registrarse en esta RQ. Regularización responde "No".
+          if (ubicaciones && rq) {
+            guardarContextoSalidaRq({
+              rqId: rq.id,
+              numeroRq: rq.numeroRq,
+              itemId: ubicaciones.itemId,
+              codigo: ubicaciones.codigo,
+              descripcion: ubicaciones.descripcion,
+              unidad: ubicaciones.unidad,
+              cantidadRequerida: ubicaciones.cantidadRequerida,
+              cantidadAtendida: ubicaciones.cantidadAtendida,
+            })
+          }
           setUbicaciones(null)
           onIrARacks(bloque, torre, piso, posicion)
         }}
         onIrAPiso={(target) => {
+          if (ubicaciones && rq) {
+            guardarContextoSalidaRq({
+              rqId: rq.id,
+              numeroRq: rq.numeroRq,
+              itemId: ubicaciones.itemId,
+              codigo: ubicaciones.codigo,
+              descripcion: ubicaciones.descripcion,
+              unidad: ubicaciones.unidad,
+              cantidadRequerida: ubicaciones.cantidadRequerida,
+              cantidadAtendida: ubicaciones.cantidadAtendida,
+            })
+          }
           setUbicaciones(null)
           onIrAPiso(target)
         }}

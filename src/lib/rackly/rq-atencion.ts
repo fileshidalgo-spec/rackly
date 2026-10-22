@@ -307,12 +307,11 @@ export async function atenderItemRq(
   if (ePrevio) throw ePrevio
   if (!previo) throw new Error('Artículo no encontrado')
   const itemPrevio = mapItem(previo as Record<string, unknown>)
-  const nuevo = itemPrevio.cantidadAtendida + cantidad
   if (cantidad <= 0) throw new Error('La cantidad a atender debe ser mayor que cero')
-  if (nuevo > itemPrevio.cantidad)
-    throw new Error(
-      `Excede lo pendiente: quedan ${itemPrevio.cantidad - itemPrevio.cantidadAtendida} de ${itemPrevio.cantidad} (${itemPrevio.unidad})`
-    )
+  // v2 sobreatención: SIN tope superior — la salida física puede exceder lo
+  // requerido (p. ej. formato por paleta 123 mil vs requerido 120 mil).
+  // El estado pasa a 'Atendido' al alcanzar o superar la cantidad pedida.
+  const nuevo = itemPrevio.cantidadAtendida + cantidad
   const { data: upd, error: eUpd } = await dataClient
     .from('rq_atencion_items')
     .update({

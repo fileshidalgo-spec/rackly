@@ -939,11 +939,6 @@ export async function fetchOcupacionCeldasV2(): Promise<OcupacionCelda[] | null>
       tieneInc: false,
       incItems: [],
     }))
-    // Diagnóstico: muestra si hay celdas en bloques 7-9 con posiciones normalizadas
-    const b789 = cells.filter(c => ['7','8','9'].includes(c.bloque))
-    if (b789.length > 0) {
-      console.log('[OcupacionV2] Muestra bloques 7-9:', b789.slice(0, 5).map(c => `B${c.bloque}-T${c.torre}-P${c.piso}-Pos${c.posicion} stock=${c.stock}`))
-    }
     return cells
   } catch (err) {
     console.warn('[fetchOcupacionCeldasV2] Falló:', err)

@@ -351,7 +351,6 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
 
         if (missingBlocks.length === 0) {
           // RPC completo → usarlo (el camino más rápido)
-          console.log('[Ocupacion] Fuente: RPC v2 ✓ —', rpcCeldas.length, 'celdas, 9 bloques')
           setDataSource('RPC v2 (' + rpcCeldas.length + ')')
           const celdaMap = buildCellMap(rpcCeldas, incMap)
           setOcupacion(Array.from(celdaMap.values()))
@@ -368,7 +367,6 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       if (!mountedRef.current) return
 
       const celdas = calcularOcupacion(movs)
-      console.log('[Ocupacion] Fuente: Client-side —', movs.length, 'movs →', celdas.length, 'celdas')
       setDataSource('Client (' + movs.length + ' movs)')
       const celdaMap = buildCellMap(celdas, incMap)
       setOcupacion(Array.from(celdaMap.values()))

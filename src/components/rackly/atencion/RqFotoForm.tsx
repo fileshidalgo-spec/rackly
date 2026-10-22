@@ -21,9 +21,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import type { PSM } from 'tesseract.js'
-import { fetchCatalogo, getCachedCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
-import { mejorarImagenOCR, reducirImagen } from '@/lib/rackly/guia-ocr'
 import {
+  buscarCatalogo,
+  fetchCatalogo,
+  getCachedCatalogo,
+  searchCatalogo,
+  type CatalogoItem,
+} from '@/lib/rackly/catalogo'
+import {
+  dividirFranjaEnBandas,
+  extraerPalabras,
+  mejorarImagenOCR,
+  MARGEN_OCR,
+  recortarFranjaTabla,
+  reducirImagen,
+} from '@/lib/rackly/guia-ocr'
+import {
+  anclasTablaRq,
   extraerDatosRqDeTexto,
   fusionarDatosRq,
   type DatosRq,
@@ -61,6 +75,8 @@ import {
   CheckCircle2,
   XCircle,
   PackageOpen,
+  SearchCheck,
+  TriangleAlert,
 } from 'lucide-react'
 
 function hoyISO(): string {
@@ -78,6 +94,11 @@ export type ItemRqForm = {
   unidad: string
   enCatalogo: boolean
   revision: boolean
+  /** El OCR adoptó el código por similitud de descripción (chip azul). */
+  matchPorDescripcion: boolean
+  /** El usuario escribió la descripción/unidad a mano: el autocompletado no las borra. */
+  descripcionManual: boolean
+  unidadManual: boolean
 }
 
 type Paso = 'elegir' | 'recortar' | 'procesando' | 'confirmar'
@@ -96,7 +117,17 @@ type FormRq = {
 }
 
 function itemVacio(): ItemRqForm {
-  return { codigo: '', descripcion: '', cantidad: '', unidad: '', enCatalogo: false, revision: false }
+  return {
+    codigo: '',
+    descripcion: '',
+    cantidad: '',
+    unidad: '',
+    enCatalogo: false,
+    revision: false,
+    matchPorDescripcion: false,
+    descripcionManual: false,
+    unidadManual: false,
+  }
 }
 
 /** Estado inicial FRESCO: fecha/turno del momento (no congelados al montar). */
@@ -124,6 +155,9 @@ function itemsDesdeOcr(datos: DatosRq): ItemRqForm[] {
     unidad: it.unidad,
     enCatalogo: it.enCatalogo,
     revision: it.revision,
+    matchPorDescripcion: it.matchPorDescripcion ?? false,
+    descripcionManual: false,
+    unidadManual: false,
   }))
 }
 
@@ -163,7 +197,13 @@ export function RqFotoForm({
   const originalRef = useRef<File | null>(null)
 
   useEffect(() => {
-    fetchCatalogo().then((c) => setCatalogo(c))
+    fetchCatalogo()
+      .then((c) => {
+        setCatalogo(c)
+        // Carga respondió pero vacía (BD sin códigos o red caída): avisar.
+        if (c.length === 0) setCatError(true)
+      })
+      .catch(() => setCatError(true))
   }, [])
 
   function set<K extends keyof FormRq>(k: K, v: FormRq[K]) {
@@ -175,6 +215,90 @@ export function RqFotoForm({
       ...prev,
       items: prev.items.map((it, i) => (i === idx ? { ...it, ...parche } : it)),
     }))
+  }
+
+  // ── CATÁLOGO · AUTOCOMPLETADO (igual que Recepción) ───────────────
+  // Al escribir/corregir el código se jala la descripción y la unidad del
+  // catálogo; si no matchea, se limpian SALVO que el usuario las escriba a
+  // mano (flags descripcionManual/unidadManual). Menú de sugerencias con
+  // teclado (↑ ↓ Enter Esc) igual que RecepcionItemsEditor.
+  const [catError, setCatError] = useState(false)
+  const [menuIdx, setMenuIdx] = useState<number | null>(null)
+  const [resaltado, setResaltado] = useState(0)
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (blurTimer.current) clearTimeout(blurTimer.current)
+    },
+    []
+  )
+
+  function sugerenciasPara(codigo: string): CatalogoItem[] {
+    const q = codigo.trim()
+    if (!q) return []
+    return searchCatalogo(q, 8)
+  }
+
+  function onCodigoRq(idx: number, valor: string) {
+    const it = form.items[idx]
+    const cat = valor.trim() ? buscarCatalogo(valor) : undefined
+    let descripcion = it.descripcion
+    let unidad = it.unidad
+    if (!valor.trim()) {
+      if (!it.descripcionManual) descripcion = ''
+      if (!it.unidadManual) unidad = ''
+    } else if (cat) {
+      // En catálogo: descripción y unidad OFICIALES (el usuario pidió
+      // "al colocar el código que jale la descripción y und del catálogo").
+      descripcion = cat.descripcion
+      unidad = cat.un || it.unidad
+    } else {
+      // El texto previo pertenecía al código anterior → fuera (si no es manual)
+      if (!it.descripcionManual) descripcion = ''
+      if (!it.unidadManual) unidad = ''
+    }
+    setItem(idx, {
+      codigo: valor,
+      descripcion,
+      unidad,
+      enCatalogo: Boolean(cat),
+      matchPorDescripcion: false,
+      revision: false,
+    })
+    if (valor.trim()) {
+      setResaltado(0)
+      setMenuIdx(idx)
+    } else {
+      setMenuIdx(null)
+    }
+  }
+
+  function aplicarSugerencia(idx: number, cat: CatalogoItem) {
+    setItem(idx, {
+      codigo: cat.codigo,
+      descripcion: cat.descripcion,
+      unidad: cat.un || '',
+      enCatalogo: true,
+      matchPorDescripcion: false,
+      revision: false,
+    })
+    setMenuIdx(null)
+  }
+
+  function navMenu(e: React.KeyboardEvent<HTMLInputElement>, idx: number, sugerencias: CatalogoItem[]) {
+    if (menuIdx !== idx || sugerencias.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setResaltado((r) => Math.min(r + 1, sugerencias.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setResaltado((r) => Math.max(r - 1, 0))
+    } else if (e.key === 'Enter' && sugerencias[resaltado]) {
+      e.preventDefault()
+      aplicarSugerencia(idx, sugerencias[resaltado])
+    } else if (e.key === 'Escape') {
+      setMenuIdx(null)
+    }
   }
 
   async function asegurarCatalogo(): Promise<boolean> {
@@ -278,15 +402,22 @@ export function RqFotoForm({
       // las columnas de la tabla de materiales.
       await worker.setParameters({ user_defined_dpi: '300', preserve_interword_spaces: '1' })
 
-      async function ocrTexto(psm: PSM, con: Blob): Promise<string> {
+      async function ocrData(psm: PSM, con: Blob, conBloques = false) {
         await worker.setParameters({ tessedit_pageseg_mode: psm })
-        const { data } = await worker.recognize(con, {}, {})
-        return data.text ?? ''
+        const { data } = await worker.recognize(con, {}, conBloques ? { blocks: true } : {})
+        return data
+      }
+      async function ocrTexto(psm: PSM, con: Blob): Promise<string> {
+        return (await ocrData(psm, con)).text ?? ''
       }
 
       try {
-        // PASADA 1 — PSM 6 (bloque uniforme) sobre la página completa
-        const texto1 = await ocrTexto(PSM.SINGLE_BLOCK, imagen)
+        // PASADA 1 — PSM 6 (bloque uniforme) sobre la página completa.
+        // Con `blocks: true` entrega las cajas de palabras para localizar
+        // la franja de la tabla (zoom "cuadro por cuadro", igual que la guía).
+        const d1 = await ocrData(PSM.SINGLE_BLOCK, imagen, true)
+        const texto1 = d1.text ?? ''
+        const palabras1 = extraerPalabras(d1)
         const catalogoParaOCR = catOk ? getCachedCatalogo() : []
         let datos = extraerDatosRqDeTexto(texto1, catalogoParaOCR)
 
@@ -307,6 +438,46 @@ export function RqFotoForm({
           datos = fusion
         } else if (!extraccionSuficiente(datos) && extraccionSuficiente(datos2)) {
           datos = datos2
+        }
+
+        // PASADA ZOOM — "cuadro por cuadro" (el truco que rescata los códigos
+        // de letra pequeña en la guía): si quedaron materiales fuera de
+        // catálogo o no se leyó ninguno, se relee SOLO la franja de la tabla
+        // escalada ×3 en tramos con solape. Coordenadas: la imagen leída viene
+        // de mejorarImagenOCR (2800px + MARGEN_OCR) → original = (y − margen)/escala.
+        // SOLO se adopta si reduce las filas a revisar (o llena una lectura
+        // vacía) — la fusión jamás puede empeorar la lectura.
+        const aRevisar = (d: DatosRq) => d.items.filter((i) => i.revision || !i.enCatalogo).length
+        if (catOk && (datos.items.length === 0 || aRevisar(datos) > 0)) {
+          try {
+            setEtapa('Releyendo la tabla de materiales con zoom…')
+            const bmpProc = await createImageBitmap(imagen)
+            const altoProc = bmpProc.height
+            bmpProc.close()
+            const franja = anclasTablaRq(palabras1, altoProc)
+            const bmpOrig = await createImageBitmap(archivo)
+            const escala = 2800 / Math.max(bmpOrig.width, bmpOrig.height)
+            bmpOrig.close()
+            const aOriginal = (yOcr: number) => Math.max(0, (yOcr - MARGEN_OCR) / escala)
+            const bandas = dividirFranjaEnBandas(aOriginal(franja.yTop), aOriginal(franja.yBot))
+            let textoZoom = ''
+            for (const b of bandas) {
+              const trozo = await recortarFranjaTabla(archivo, b.y0, b.y1, 3)
+              const t = await ocrTexto(PSM.SINGLE_BLOCK, trozo)
+              if (t.trim()) textoZoom += (textoZoom ? '\n' : '') + t
+            }
+            if (textoZoom.trim()) {
+              const datosZoom = extraerDatosRqDeTexto(textoZoom, catalogoParaOCR)
+              if (datos.items.length === 0 && datosZoom.items.length > 0) {
+                datos = datosZoom
+              } else {
+                const fusionZoom = fusionarDatosRq(datos, datosZoom)
+                if (aRevisar(fusionZoom) < aRevisar(datos)) datos = fusionZoom
+              }
+            }
+          } catch {
+            // Zoom oportunista: si falla queda la lectura de página completa.
+          }
         }
 
         procesarExtraccion(datos)
@@ -526,6 +697,9 @@ export function RqFotoForm({
 
   // ── CONFIRMAR (con o sin foto) ──
   const fechaCorta = 'w-[130px] min-[430px]:w-auto'
+  // Sugerencias del catálogo para la fila con el menú abierto (se recalcula
+  // en cada render con el código actual de esa fila).
+  const sugerencias = menuIdx != null ? sugerenciasPara(form.items[menuIdx]?.codigo ?? '') : []
   return (
     <div className="rounded-xl border border-teal-100 bg-white p-4 space-y-4">
       {!thumb ? (
@@ -671,6 +845,13 @@ export function RqFotoForm({
             <Plus className="h-3.5 w-3.5" /> Agregar material
           </Button>
         </div>
+        <p className="text-[11px] text-slate-500">
+          {catError
+            ? 'Catálogo no disponible: escribe la descripción y la unidad a mano.'
+            : catalogo.length > 0
+              ? 'Catálogo listo: al colocar el código se jala la descripción y la unidad del catálogo.'
+              : 'Cargando catálogo…'}
+        </p>
 
         {/* Desktop: tabla */}
         <div className="hidden md:block rounded-lg border overflow-x-auto">
@@ -688,26 +869,71 @@ export function RqFotoForm({
               {form.items.map((it, idx) => (
                 <tr key={idx} className="border-t align-middle">
                   <td className="px-2 py-1.5">
-                    <Input
-                      className="h-8 font-mono"
-                      inputMode="numeric"
-                      value={it.codigo}
-                      onChange={(e) => setItem(idx, { codigo: e.target.value })}
-                    />
+                    <div className="relative">
+                      <Input
+                        className="h-8 font-mono"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={it.codigo}
+                        onChange={(e) => onCodigoRq(idx, e.target.value)}
+                        onFocus={() => {
+                          if (it.codigo.trim()) {
+                            setResaltado(0)
+                            setMenuIdx(idx)
+                          }
+                        }}
+                        onBlur={() => {
+                          blurTimer.current = setTimeout(() => setMenuIdx(null), 130)
+                        }}
+                        onKeyDown={(e) => navMenu(e, idx, sugerencias)}
+                      />
+                      {menuIdx === idx && sugerencias.length > 0 && (
+                        <div className="absolute z-30 top-full left-0 mt-0.5 w-full min-w-[240px] max-w-[300px] max-h-48 overflow-y-auto rounded-md border bg-white shadow-lg">
+                          {sugerencias.map((c, si) => (
+                            <button
+                              key={`${c.codigo}-${si}`}
+                              type="button"
+                              className={`w-full text-left px-2.5 py-1.5 text-xs flex items-baseline gap-2 ${
+                                si === resaltado ? 'bg-amber-50' : 'bg-white'
+                              } hover:bg-amber-50`}
+                              onMouseDown={(e) => {
+                                e.preventDefault() // aplica antes del blur del input
+                                aplicarSugerencia(idx, c)
+                              }}
+                            >
+                              <span className="font-bold text-slate-800 w-14 shrink-0">{c.codigo}</span>
+                              <span className="truncate text-slate-500">{c.descripcion}</span>
+                              {c.un && <span className="ml-auto text-[9px] text-slate-400 shrink-0">{c.un}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td className="px-2 py-1.5">
                     <div className="flex items-center gap-1.5">
                       <Input
                         className="h-8"
+                        placeholder={it.enCatalogo ? '' : 'Se autocompleta al escribir el código'}
                         value={it.descripcion}
-                        onChange={(e) => setItem(idx, { descripcion: e.target.value })}
+                        onChange={(e) =>
+                          setItem(idx, { descripcion: e.target.value, descripcionManual: Boolean(e.target.value.trim()) })
+                        }
                       />
-                      {it.enCatalogo ? (
-                        <span title="En catálogo">
+                      {it.enCatalogo && !it.matchPorDescripcion ? (
+                        <span title="Del catálogo">
                           <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                         </span>
+                      ) : it.matchPorDescripcion && !it.revision ? (
+                        <span title="Código adoptado por descripción — confírmalo">
+                          <SearchCheck className="h-4 w-4 text-sky-500 shrink-0" />
+                        </span>
                       ) : it.revision ? (
-                        <span title="Fuera de catálogo">
+                        <span title="Fuera de catálogo — revisar">
+                          <TriangleAlert className="h-4 w-4 text-amber-500 shrink-0" />
+                        </span>
+                      ) : it.codigo.trim() ? (
+                        <span title="No está en catálogo">
                           <XCircle className="h-4 w-4 text-amber-500 shrink-0" />
                         </span>
                       ) : null}
@@ -725,7 +951,9 @@ export function RqFotoForm({
                     <Input
                       className="h-8 uppercase"
                       value={it.unidad}
-                      onChange={(e) => setItem(idx, { unidad: e.target.value.toUpperCase() })}
+                      onChange={(e) =>
+                        setItem(idx, { unidad: e.target.value.toUpperCase(), unidadManual: Boolean(e.target.value.trim()) })
+                      }
                     />
                   </td>
                   <td className="px-2 py-1.5 text-center">
@@ -755,16 +983,54 @@ export function RqFotoForm({
           {form.items.map((it, idx) => (
             <div key={idx} className="rounded-lg border p-2.5 space-y-2 bg-slate-50/50">
               <div className="flex items-center gap-2">
-                <Input
-                  className="h-9 flex-1 font-mono"
-                  inputMode="numeric"
-                  placeholder="Código"
-                  value={it.codigo}
-                  onChange={(e) => setItem(idx, { codigo: e.target.value })}
-                />
-                {it.enCatalogo ? (
+                <div className="relative flex-1">
+                  <Input
+                    className="h-9 font-mono"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="Código"
+                    value={it.codigo}
+                    onChange={(e) => onCodigoRq(idx, e.target.value)}
+                    onFocus={() => {
+                      if (it.codigo.trim()) {
+                        setResaltado(0)
+                        setMenuIdx(idx)
+                      }
+                    }}
+                    onBlur={() => {
+                      blurTimer.current = setTimeout(() => setMenuIdx(null), 130)
+                    }}
+                    onKeyDown={(e) => navMenu(e, idx, sugerencias)}
+                  />
+                  {menuIdx === idx && sugerencias.length > 0 && (
+                    <div className="absolute z-30 top-full left-0 mt-0.5 w-full min-w-[200px] max-h-48 overflow-y-auto rounded-md border bg-white shadow-lg">
+                      {sugerencias.map((c, si) => (
+                        <button
+                          key={`${c.codigo}-${si}`}
+                          type="button"
+                          className={`w-full text-left px-2.5 py-1.5 text-xs flex items-baseline gap-2 ${
+                            si === resaltado ? 'bg-amber-50' : 'bg-white'
+                          } hover:bg-amber-50`}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            aplicarSugerencia(idx, c)
+                          }}
+                        >
+                          <span className="font-bold text-slate-800 w-14 shrink-0">{c.codigo}</span>
+                          <span className="truncate text-slate-500">{c.descripcion}</span>
+                          {c.un && <span className="ml-auto text-[9px] text-slate-400 shrink-0">{c.un}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {it.enCatalogo && !it.matchPorDescripcion ? (
                   <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                ) : it.matchPorDescripcion && !it.revision ? (
+                  <SearchCheck className="h-4 w-4 text-sky-500 shrink-0" />
                 ) : it.revision ? (
+                  <TriangleAlert className="h-4 w-4 text-amber-500 shrink-0" />
+                ) : it.codigo.trim() ? (
                   <XCircle className="h-4 w-4 text-amber-500 shrink-0" />
                 ) : null}
                 <Button
@@ -781,11 +1047,27 @@ export function RqFotoForm({
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
+              {(it.matchPorDescripcion || it.revision || (!it.enCatalogo && it.codigo.trim())) && (
+                <p className="flex items-center gap-1 text-[10px] font-semibold text-slate-500">
+                  {it.matchPorDescripcion && !it.revision ? (
+                    <span className="inline-flex items-center gap-1 text-sky-700">
+                      <SearchCheck className="h-3 w-3" /> código por descripción — confírmalo
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-amber-700">
+                      <TriangleAlert className="h-3 w-3" />{' '}
+                      {it.revision ? 'fuera de catálogo — corrige el código' : 'no está en catálogo'}
+                    </span>
+                  )}
+                </p>
+              )}
               <Input
                 className="h-9"
-                placeholder="Descripción"
+                placeholder={it.enCatalogo ? 'Descripción' : 'Descripción (se autocompleta con el código)'}
                 value={it.descripcion}
-                onChange={(e) => setItem(idx, { descripcion: e.target.value })}
+                onChange={(e) =>
+                  setItem(idx, { descripcion: e.target.value, descripcionManual: Boolean(e.target.value.trim()) })
+                }
               />
               <div className="flex gap-2">
                 <Input
@@ -799,7 +1081,9 @@ export function RqFotoForm({
                   className="h-9 w-20 uppercase"
                   placeholder="UN"
                   value={it.unidad}
-                  onChange={(e) => setItem(idx, { unidad: e.target.value.toUpperCase() })}
+                  onChange={(e) =>
+                    setItem(idx, { unidad: e.target.value.toUpperCase(), unidadManual: Boolean(e.target.value.trim()) })
+                  }
                 />
               </div>
             </div>

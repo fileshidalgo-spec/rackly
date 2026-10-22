@@ -111,9 +111,10 @@ const RE_SKIP_LINEA =
 /** Tope de artículos reconocidos por guía (el usuario pidió soportar 20+). */
 const MAX_ITEMS = 30
 
-/** Umbrales del matching por descripción (calibrados con la guía real). */
-const UMBRAL_AUTO = 0.82 // ≥ auto: código del catálogo, chip azul de confirmación
-const UMBRAL_MIN = 0.62 // ≥ débil: código sugerido + revisión
+/** Umbrales del matching por descripción (calibrados con la guía real).
+ *  Exportados: el OCR de RQ (rq-ocr.ts) reutiliza el MISMO criterio. */
+export const UMBRAL_AUTO = 0.82 // ≥ auto: código del catálogo, chip azul de confirmación
+export const UMBRAL_MIN = 0.62 // ≥ débil: código sugerido + revisión
 const COHERENCIA_CODIGO = 0.45 // código exacto cuya descripción debe coincidir
 
 // ═══════════════════════════════════════════════════════════════════

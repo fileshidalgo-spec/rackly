@@ -23,9 +23,12 @@
  *
  * Aislamiento: NO toca guia-ocr.ts (otro formato de documento) ni catálogo
  * (solo LO LEE para validar códigos y completar descripción/unidad).
+ * Reutiliza 2 utilidades PURAS de guia-ocr (buscarPorDescripcion + umbrales)
+ * para que una RQ y una guía juzguen la similitud EXACTAMENTE igual.
  */
 
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
+import { buscarPorDescripcion, UMBRAL_AUTO, type PalabraOCR } from '@/lib/rackly/guia-ocr'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS
@@ -40,6 +43,8 @@ export type ItemRq = {
   enCatalogo: boolean
   /** Requiere revisión humana (fuera de catálogo o sin cantidad legible). */
   revision: boolean
+  /** El código se adoptó por similitud de descripción — el usuario lo confirma. */
+  matchPorDescripcion?: boolean
 }
 
 export type DatosRq = {
@@ -118,6 +123,21 @@ const UNIDADES = new Set([
  */
 const RE_SKIP_LINEA =
   /(REQUISICI|ALMAC[EÉ]N|ORDEN|FECHA|TURNO|SOLICIT|PRODUCTO|LOTE|MONEDA|OBSERVACI|SUPERVIS|APROB|RECIBI|V[º°]?B|VO\.?BO|NOTA|P[ÁA]GINA|PAG|HORA|IMPRIMI|DESCRIPCI|CANTIDAD|UNIDAD\s+DE\s+MEDIDA|U\/M|^\s*I[TÍ]EM\s*$|C[ÓO]DIGO|SUB\s?TOTAL|TOTAL|FIRMA|NOMBRE|AREA|GU[IÍ]A|SALIDA\s+DE|DESPACHO\s+DE)/i
+
+/**
+ * FECHA disfrazada de material: si el OCR parte el renglón "TURNO Y FECH :
+ * 004  21/10/2026" en dos líneas, "004  21/10/2026" cumple el patrón de fila
+ * (código + cantidad al final: cantidad=2026) y nacía un material fantasma.
+ * Descripción hecha SOLO de dígitos/fecha → JAMÁS es un material.
+ */
+const RE_SOLO_DIGITOS_FECHA = /^[\d\s./\-]+$/
+const RE_PAR_FECHA = /\d{1,2}[/.-]\d{1,2}/
+
+/** ¿La descripción capturada es en realidad un fragmento de fecha? */
+function esFragmentoFecha(desc: string): boolean {
+  const d = desc.trim()
+  return d.length > 0 && RE_SOLO_DIGITOS_FECHA.test(d) && RE_PAR_FECHA.test(d)
+}
 
 /** Filas de material reconocidas como máximo por RQ. */
 const MAX_ITEMS = 40
@@ -353,6 +373,9 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
     const unidad = (mCant[2] ?? '').trim()
 
     // Descripción demasiado corta → tratar de completarla con el catálogo
+    // ANTI-FECHAS (pedido del usuario 2026-10-23): un fragmento de fecha
+    // jamás se registra como material.
+    if (esFragmentoFecha(descripcion)) continue
     let cat = enCatalogoPorCodigo(codigo, catalogo)
     if (cat) {
       if (descripcion.length < DESC_MIN) descripcion = cat.descripcion
@@ -360,6 +383,19 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
       // VECINO A 1 DÍGITO validado por descripción ("115"→"118" en la RQ real)
       const vecino = vecinoUnDigito(codigo, descripcion, catalogo)
       if (vecino) cat = vecino
+    }
+    // MATCH POR DESCRIPCIÓN (igual que la guía): el código salió ilegible o
+    // errado pero la descripción coincide con el catálogo → se adopta el
+    // código catalogado. score < UMBRAL_AUTO queda marcado para revisión.
+    let porDescripcion = false
+    let revisionPorScore = false
+    if (!cat && descripcion.length >= DESC_MIN && catalogo.length > 0) {
+      const alt = buscarPorDescripcion(descripcion, catalogo)
+      if (alt) {
+        cat = alt.item
+        porDescripcion = true
+        revisionPorScore = alt.score < UMBRAL_AUTO
+      }
     }
     if (descripcion.length < DESC_MIN) continue
 
@@ -378,7 +414,8 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
       cantidad,
       unidad: unidad || cat?.un || '',
       enCatalogo: Boolean(cat),
-      revision: !cat || cantidad <= 0,
+      revision: !cat || revisionPorScore,
+      matchPorDescripcion: porDescripcion,
     })
   }
 
@@ -454,4 +491,28 @@ export function puntuarExtraccionRq(d: DatosRq): number {
 /** ¿La lectura alcanza para no re-procesar? (3 pilares: items + RQ + fecha) */
 export function extraccionSuficienteRq(d: DatosRq): boolean {
   return d.items.length > 0 && Boolean(d.numeroRq) && Boolean(d.fecha)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FRANJA DE LA TABLA (zoom "cuadro por cuadro" — igual que la guía)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Localiza la franja de la tabla de materiales de la RQ usando las palabras
+ * del OCR: la tabla vive SIEMPRE después del bloque de etiquetas del
+ * encabezado (Solicitante / TURNO Y FECH / Línea). Devuelve coordenadas en
+ * el MISMO espacio de la imagen que se leyó; yBot = alto de la imagen porque
+ * la tabla corre hasta el final del documento.
+ * Si no hay anclas (OCR del encabezado falló) usa el 30% como inicio seguro.
+ */
+export function anclasTablaRq(
+  palabras: PalabraOCR[],
+  altoImagen: number
+): { yTop: number; yBot: number } {
+  const yEtiquetas = palabras
+    .filter((p) => /^(SOLICITANT?E?|TURNO|L[IÍ]NEA|FECHA)/.test(p.t))
+    .reduce((m, p) => Math.max(m, p.y1), 0)
+  const yTop = yEtiquetas > 0 ? yEtiquetas + 4 : Math.round(altoImagen * 0.3)
+  if (yTop >= altoImagen - 40) return { yTop: Math.round(altoImagen * 0.3), yBot: altoImagen }
+  return { yTop, yBot: altoImagen }
 }

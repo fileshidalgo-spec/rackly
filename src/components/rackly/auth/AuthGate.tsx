@@ -106,7 +106,6 @@ async function limpiarPerfilHuerfano(email: string): Promise<boolean> {
       console.error('[RACKLY] limpiar_perfil_huerfano error:', error.message)
       return false
     }
-    if (data) console.log('[RACKLY] Perfil huérfano limpiado para:', lower)
     return !!data
   } catch {
     return false

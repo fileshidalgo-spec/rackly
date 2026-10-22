@@ -1313,9 +1313,10 @@ export type UploadStockRow = {
 }
 
 /**
- * Inserta movimientos de ingreso masivamente desde un archivo Excel.
- * Usa service_role para bypassear RLS.
- * Usa batch inserts de 1000 filas para no exceder límites de Supabase.
+ * Carga masiva de ingresos desde el Excel de Descarga.
+ * FIX auditoría 2026-10-21 (f9a5bae): usa dataClient (anon + JWT de sesión;
+ * RLS aplica) — la service_role NUNCA entra al bundle.
+ * Batch inserts de 1000 filas para no exceder límites de Supabase.
  */
 export async function addMovimientosBatch(
   rows: UploadStockRow[],
@@ -1323,7 +1324,7 @@ export async function addMovimientosBatch(
   usuarioNombre?: string,
   usuarioCorreo?: string,
 ): Promise<{ inserted: number; errors: string[] }> {
-  // Usar dataClient (service role) ya configurado — sin credenciales hardcodeadas
+  // dataClient (anon + JWT de sesión) — ya configurado, sin credenciales hardcodeadas
   const admin = dataClient
 
   const turno = (await import('./turno')).calcularTurno()

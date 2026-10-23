@@ -115,7 +115,7 @@ const MAX_ITEMS = 30
  *  Exportados: el OCR de RQ (rq-ocr.ts) reutiliza el MISMO criterio. */
 export const UMBRAL_AUTO = 0.82 // ≥ auto: código del catálogo, chip azul de confirmación
 export const UMBRAL_MIN = 0.62 // ≥ débil: código sugerido + revisión
-const COHERENCIA_CODIGO = 0.45 // código exacto cuya descripción debe coincidir
+export const COHERENCIA_CODIGO = 0.45 // código exacto cuya descripción debe coincidir
 
 // ═══════════════════════════════════════════════════════════════════
 // 2. UTILIDADES DE TEXTO

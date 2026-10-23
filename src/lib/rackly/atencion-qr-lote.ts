@@ -76,7 +76,7 @@ export type RechazoToma =
   | 'FILA_SIN_ORIGEN'
 
 export type ResultadoResolucion =
-  | { estado: 'ok'; toma: TomaQR }
+  | { estado: 'ok'; toma: TomaQR; /** Aviso no bloqueante (paleta ambigua, etc.). */ aviso?: string }
   | { estado: 'rechazada'; razon: RechazoToma; mensaje: string }
 
 export const MENSAJE_RECHAZO: Record<RechazoToma, string> = {
@@ -223,7 +223,7 @@ export function resolverToma(args: {
     return rechazo(
       'GUIA_NO_RESUELTA',
       payload.guiaId
-        ? `guía ${payload.numeroDocumento || payload.guiaId.slice(0, 8)}`
+        ? `el rótulo es de la guía ${payload.numeroDocumento || payload.guiaId.slice(0, 8)} y el código ${codigo} no está en ella — si la guía fue registrada 2 veces, usa el rótulo del otro registro o agrégalo desde la lista manual`
         : 'rótulo sin guia_id'
     )
   }
@@ -238,7 +238,19 @@ export function resolverToma(args: {
     if (args.carrito.some((t) => t.recepcionId === elegida.id)) {
       return rechazo('PALETA_YA_EN_CARRITO', `paleta ${payload.paleta} · guía ${elegida.numeroDocumento}`)
     }
-    return construirToma(elegida, payload.paleta, args.nuevoUuid)
+    // PALETA AMBIGUA (Task 23): el mismo nº de paleta en varias filas de la
+    // guía (guía registrada 2 veces / re-registrada por paleta) — la fila
+    // elegida por FEFO puede no ser la paleta física: el operario lo sabe.
+    const res = construirToma(elegida, payload.paleta, args.nuevoUuid)
+    if (res.estado !== 'ok') return res
+    return {
+      estado: 'ok',
+      toma: res.toma,
+      aviso:
+        dePaleta.length > 1
+          ? `Paleta ${payload.paleta} aparece ${dePaleta.length} veces en la guía — verifica que la cantidad sea la de la paleta física`
+          : undefined,
+    }
   }
 
   // Rótulo SIN paleta: cada toma consume la siguiente fila con pendiente (FEFO).

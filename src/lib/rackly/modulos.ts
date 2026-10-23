@@ -308,6 +308,37 @@ export async function crearRecepciones(
     if (!ok) throw new Error('REGISTRO_CANCELADO|Registro cancelado por posible duplicado.')
   }
 
+  // ANTI-GUÍA-DUPLICADA (Task 23): el mismo Nº de documento registrado 2
+  // veces crea DOS guías con rótulos idénticos a la vista — al escanear el
+  // QR, cada rótulo resuelve a su registro y el operario ve datos distintos
+  // para "la misma" guía (casos reales T173-00004192 y T012-00000188).
+  // NO bloquea (puede ser una carga distinta legítima): avisa con el
+  // contexto y deja que el operario decida — decisión informada, no sorpresa.
+  const docNuevo = (items[0]?.numeroDocumento ?? '').trim()
+  if (docNuevo) {
+    const { data: previa, error: errPrev } = await dataClient
+      .from('recepcion_registros')
+      .select('fecha, created_at')
+      .eq('numero_documento', docNuevo)
+      .order('created_at', { ascending: false })
+      .limit(1)
+    if (!errPrev && previa && previa.length > 0) {
+      const p = previa[0] as { fecha: string | null; created_at: string | null }
+      const cuando = p.fecha
+        ? `el ${p.fecha}`
+        : p.created_at
+          ? `el ${new Date(p.created_at).toLocaleDateString('es-PE')}`
+          : 'anteriormente'
+      const ok = window.confirm(
+        `El documento ${docNuevo} YA fue registrado ${cuando}.\n\n` +
+          'Si es LA MISMA carga: cancela y ábrela desde la lista de Recepción ' +
+          '(registrarla otra vez duplica sus rótulos QR y confunde el escaneo).\n\n' +
+          '¿Registrar de todos modos como carga distinta?'
+      )
+      if (!ok) throw new Error('REGISTRO_CANCELADO|Registro cancelado: el documento ya estaba registrado.')
+    }
+  }
+
   const filas = items.map((datos) => ({
     fecha: datos.fecha,
     tipo_documento: datos.tipoDocumento,

@@ -296,6 +296,9 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
             } · ${t.ruta === 'transito' ? 'se descuenta de la guía' : `salida de ${t.origen?.etiqueta ?? 'posición'}`}`,
           }
         )
+        // RIGOR QR (Task 23): paleta ambigua (guía registrada 2 veces) — la
+        // toma entra igual, pero el operario verifica la cantidad del físico.
+        if (res.aviso) toast.warning(res.aviso)
         if (t.ruta === 'posicion') void asegurarSaldos()
       } finally {
         // nada: la cola la drena procesarTexto

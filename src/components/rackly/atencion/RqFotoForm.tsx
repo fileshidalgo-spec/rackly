@@ -188,6 +188,9 @@ export function RqFotoForm({
   const [fotoBlob, setFotoBlob] = useState<Blob | null>(null)
   const [form, setForm] = useState<FormRq>(formVacio())
   const [saving, setSaving] = useState(false)
+  /** Rigor numérico (Task 23): discrepancias entre lecturas que el usuario
+   *  debe verificar antes de registrar (Nº RQ / OP / producto / cantidades). */
+  const [avisos, setAvisos] = useState<string[]>([])
 
   const inputCamaraRef = useRef<HTMLInputElement>(null)
   const inputGaleriaRef = useRef<HTMLInputElement>(null)
@@ -310,8 +313,9 @@ export function RqFotoForm({
   }
 
   /** Aplica la mejor extracción al formulario + resumen de lo detectado. */
-  function procesarExtraccion(datos: DatosRq) {
+  function procesarExtraccion(datos: DatosRq, avisosExtra: string[] = []) {
     const itemsOcr = itemsDesdeOcr(datos)
+    setAvisos(avisosExtra)
     setForm({
       ...formVacio(),
       numeroRq: datos.numeroRq,
@@ -336,6 +340,13 @@ export function RqFotoForm({
     if (!datos.fecha) faltantes.push('fecha')
     const enCat = itemsOcr.filter((i) => i.enCatalogo).length
     const rev = itemsOcr.filter((i) => i.revision).length
+    if (avisosExtra.length > 0) {
+      // RIGOR NUMÉRICO: discrepancias entre lecturas — el usuario pidió
+      // máxima certeza con los números (un error malogra el proceso).
+      toast.warning('Verifica los números señalados', {
+        description: avisosExtra.join(' · ')
+      })
+    }
     toast.success(
       itemsOcr.length > 0
         ? `Se detectaron ${itemsOcr.length} material(es)${enCat > 0 ? ` · ${enCat} en catálogo` : ''}`
@@ -424,6 +435,8 @@ export function RqFotoForm({
 
         // PASADA 2 — SIEMPRE: releer con PSM 3 (layout automático) y fusionar
         // (unión sin duplicados; rescata filas que el 1er pase omitió).
+        // La fusión trae los AVISOS de rigor numérico (cantidades que
+        // difieren entre pases — Task 23).
         setEtapa('Revisando la lectura con un segundo pase…')
         const imagenBase = await reducirImagen(archivo, 2800, 0.9)
         const texto2 = await ocrTexto(PSM.AUTO, imagenBase)
@@ -441,25 +454,27 @@ export function RqFotoForm({
           datos = datos2
         }
 
-        // PASADA ZOOM — "cuadro por cuadro" (el truco que rescata los códigos
-        // de letra pequeña en la guía): si quedaron materiales fuera de
-        // catálogo o no se leyó ninguno, se relee SOLO la franja de la tabla
-        // escalada ×3 en tramos con solape. Coordenadas: la imagen leída viene
+        // Geometría compartida de las 2 pasadas zoom: la imagen leída viene
         // de mejorarImagenOCR (2800px + MARGEN_OCR) → original = (y − margen)/escala.
+        const bmpProc = await createImageBitmap(imagen)
+        const altoProc = bmpProc.height
+        bmpProc.close()
+        const franja = anclasTablaRq(palabras1, altoProc)
+        const bmpOrig = await createImageBitmap(archivo)
+        const escala = 2800 / Math.max(bmpOrig.width, bmpOrig.height)
+        bmpOrig.close()
+        const aOriginal = (yOcr: number) => Math.max(0, (yOcr - MARGEN_OCR) / escala)
+
+        // PASADA ZOOM · TABLA — "cuadro por cuadro" (el truco que rescata los
+        // códigos de letra pequeña en la guía): si quedaron materiales fuera
+        // de catálogo o no se leyó ninguno, se relee SOLO la franja de la
+        // tabla escalada ×3 en tramos con solape.
         // SOLO se adopta si reduce las filas a revisar (o llena una lectura
         // vacía) — la fusión jamás puede empeorar la lectura.
         const aRevisar = (d: DatosRq) => d.items.filter((i) => i.revision || !i.enCatalogo).length
         if (catOk && (datos.items.length === 0 || aRevisar(datos) > 0)) {
           try {
             setEtapa('Releyendo la tabla de materiales con zoom…')
-            const bmpProc = await createImageBitmap(imagen)
-            const altoProc = bmpProc.height
-            bmpProc.close()
-            const franja = anclasTablaRq(palabras1, altoProc)
-            const bmpOrig = await createImageBitmap(archivo)
-            const escala = 2800 / Math.max(bmpOrig.width, bmpOrig.height)
-            bmpOrig.close()
-            const aOriginal = (yOcr: number) => Math.max(0, (yOcr - MARGEN_OCR) / escala)
             const bandas = dividirFranjaEnBandas(aOriginal(franja.yTop), aOriginal(franja.yBot))
             let textoZoom = ''
             for (const b of bandas) {
@@ -481,7 +496,50 @@ export function RqFotoForm({
           }
         }
 
-        procesarExtraccion(datos)
+        // PASADA ZOOM · ENCABEZADO (Task 23 — rigor numérico, pedido del
+        // usuario: "tienes que ser muy riguroso al momento de leer los
+        // números"). El Nº de RQ, la OP y el producto se releen a ×3 sobre
+        // la banda del encabezado. Si el zoom (mayor resolución) DIFIERE de
+        // la lectura de página completa, GANA el zoom y se muestra un aviso
+        // visible con ambas lecturas — el usuario verifica antes de registrar.
+        const avisos: string[] = [...(fusion.avisos ?? [])]
+        try {
+          setEtapa('Verificando los números del encabezado…')
+          const yTopOrig = Math.min(aOriginal(franja.yTop), Math.max(60, altoProc / 4))
+          if (yTopOrig >= 60) {
+            const trozo = await recortarFranjaTabla(archivo, 0, yTopOrig, 3)
+            const textoHz = await ocrTexto(PSM.SINGLE_BLOCK, trozo)
+            if (textoHz.trim()) {
+              const hz = extraerDatosRqDeTexto(textoHz, catalogoParaOCR)
+              const campos: { k: 'numeroRq' | 'ordenProduccion' | 'productoCodigo'; etq: string }[] = [
+                { k: 'numeroRq', etq: 'Nº de RQ' },
+                { k: 'ordenProduccion', etq: 'Orden de producción' },
+                { k: 'productoCodigo', etq: 'Código del producto' },
+              ]
+              let adoptoProducto = false
+              for (const { k, etq } of campos) {
+                const leidoZoom = hz[k].trim()
+                if (!leidoZoom) continue
+                const leidoActual = (datos[k] ?? '').trim()
+                if (!leidoActual) {
+                  datos = { ...datos, [k]: leidoZoom }
+                  if (k === 'productoCodigo') adoptoProducto = true
+                } else if (leidoZoom !== leidoActual) {
+                  datos = { ...datos, [k]: leidoZoom }
+                  avisos.push(`${etq}: el zoom leyó ${leidoZoom} (antes ${leidoActual}) — verifica`)
+                  if (k === 'productoCodigo') adoptoProducto = true
+                }
+              }
+              if (adoptoProducto && !datos.productoDescripcion.trim() && hz.productoDescripcion.trim()) {
+                datos = { ...datos, productoDescripcion: hz.productoDescripcion }
+              }
+            }
+          }
+        } catch {
+          // Zoom oportunista: sin él queda la lectura de página completa.
+        }
+
+        procesarExtraccion(datos, avisos)
       } finally {
         await worker.terminate()
       }
@@ -500,6 +558,7 @@ export function RqFotoForm({
     setFotoBlob(null)
     setForm(formVacio())
     setProgreso(0)
+    setAvisos([])
     originalRef.current = null
     setPendiente(null)
     setPaso('elegir')
@@ -734,6 +793,21 @@ export function RqFotoForm({
           >
             <Crop className="h-3.5 w-3.5" /> Reajustar recorte
           </Button>
+        </div>
+      )}
+
+      {/* AVISOS DE RIGOR NUMÉRICO (Task 23): discrepancias entre lecturas
+          — el usuario las verifica ANTES de registrar (revisión > corrección). */}
+      {avisos.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 space-y-1">
+          <p className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+            <TriangleAlert className="h-3.5 w-3.5" /> Verifica estos datos con el documento físico
+          </p>
+          <ul className="list-disc pl-6 text-[11px] text-amber-800 space-y-0.5">
+            {avisos.map((a, i) => (
+              <li key={i}>{a}</li>
+            ))}
+          </ul>
         </div>
       )}
 

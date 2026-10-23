@@ -213,17 +213,26 @@ export function TransitoModule() {
   }
 
   /** Artículo objetivo del escaneo: código (case-insensitive) y, si el
-   *  rótulo era de una paleta, la paleta EXACTA primero. */
+   *  rótulo era de una paleta, la paleta EXACTA primero.
+   *  Task 23 (rigor QR): dentro del código manda la fila CON PENDIENTE —
+   *  porCodigo[0]/find podían caer en una fila ya transferida (o en otra
+   *  fila gemela de una guía registrada 2 veces) y mostrar datos equivocados
+   *  del físico. Con varias filas del mismo código/paleta se elige la que
+   *  aún tiene pendiente; si ninguna, la primera (aviso "ya transferido"). */
   function objetivoDelPayload(arts: ArticuloTransito[], p: PayloadQRRotulo): ArticuloTransito | null {
     if (!p.codigo) return null
     const c = p.codigo.toLowerCase()
     const porCodigo = arts.filter((a) => a.codigo.toLowerCase() === c)
     if (porCodigo.length === 0) return null
     if (p.paleta != null) {
-      const paleta = porCodigo.find((a) => a.nPaleta === p.paleta)
-      if (paleta) return paleta
+      const dePaleta = porCodigo.filter((a) => a.nPaleta === p.paleta)
+      if (dePaleta.length > 0) {
+        const conPendiente = dePaleta.filter((a) => a.pendiente > EPS)
+        return conPendiente[0] ?? dePaleta[0]
+      }
     }
-    return porCodigo[0]
+    const conPendiente = porCodigo.filter((a) => a.pendiente > EPS)
+    return conPendiente[0] ?? porCodigo[0]
   }
 
   /**
@@ -268,6 +277,37 @@ export function TransitoModule() {
       setGuiasAbiertas((prev) => new Set(prev).add(guia.key))
       const objetivo = objetivoDelPayload(arts, p)
       const etiquetaGuia = guia.numeroDocumento || `guía del ${formatearFecha(guia.fecha)}`
+
+      // ── AVISOS DE RIGOR QR (Task 23) — el escaneo nunca se bloquea, pero
+      // el operario DEBE saber cuando los datos vienen de un registro ambiguo.
+      // a) La guía del QR está registrada MÁS DE UNA vez en Recepción (dos
+      //    guia_id para el mismo Nº — casos reales T173-00004192 y
+      //    T012-00000188): hay rótulos de dos registros circulando.
+      if (p.numeroDocumento) {
+        const guiasDelDoc = new Set(
+          base
+            .filter((a) => a.numeroDocumento === p.numeroDocumento)
+            .map((a) => a.guiaId)
+        )
+        if (guiasDelDoc.size > 1) {
+          toast.warning(`Guía ${p.numeroDocumento} está registrada ${guiasDelDoc.size} veces en Recepción`, {
+            description: 'Puede haber rótulos de dos registros mezclados — verifica que el artículo y la cantidad sean los del físico.',
+          })
+        }
+      }
+      // b) PALETA AMBIGUA: el mismo Nº de paleta aparece en varias filas de
+      //    la guía (registro repetido por paleta) — la fila elegida puede no
+      //    ser la paleta física escaneada.
+      if (p.paleta != null) {
+        const gemelas = arts.filter(
+          (a) => a.codigo.toLowerCase() === p.codigo.toLowerCase() && a.nPaleta === p.paleta
+        ).length
+        if (gemelas > 1) {
+          toast.warning(`Paleta ${p.paleta} aparece ${gemelas} veces en la guía ${etiquetaGuia}`, {
+            description: 'Se tomó la fila con pendiente — confirma que la cantidad coincida con la paleta física.',
+          })
+        }
+      }
 
       if (!objetivo) {
         toast.info(`Guía ${etiquetaGuia}: ${arts.length} artículo(s)`, {

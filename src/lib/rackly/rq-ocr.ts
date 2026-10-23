@@ -28,7 +28,14 @@
  */
 
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
-import { buscarPorDescripcion, UMBRAL_AUTO, type PalabraOCR } from '@/lib/rackly/guia-ocr'
+import {
+  buscarPorDescripcion,
+  COHERENCIA_CODIGO,
+  similitudDescripcion,
+  UMBRAL_AUTO,
+  UMBRAL_MIN,
+  type PalabraOCR,
+} from '@/lib/rackly/guia-ocr'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS
@@ -58,6 +65,12 @@ export type DatosRq = {
   linea: string
   solicitante: string
   items: ItemRq[]
+  /**
+   * Rigor numérico (Task 23): discrepancias detectadas entre lecturas/pases
+   * que el usuario DEBE verificar antes de registrar (Nº RQ, producto,
+   * cantidades). Vacío = lectura sin señales de error.
+   */
+  avisos?: string[]
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -231,6 +244,34 @@ function vecinoUnDigito(
 }
 
 /**
+ * MEJOR VECINO A 1 DÍGITO por similitud de descripción (Task 23 — rigor
+ * numérico). A diferencia de `vecinoUnDigito` (criterio débil de familia,
+ * usado cuando el código NO está en catálogo), esta versión devuelve la
+ * variante que MEJOR explica la descripción leída con umbral estricto
+ * (UMBRAL_MIN) — la usa la compuerta de coherencia del match directo.
+ */
+function mejorVecinoUnDigito(
+  codigo: string,
+  descripcionLeida: string,
+  catalogo: CatalogoItem[]
+): { item: CatalogoItem; score: number } | null {
+  const c = codigo.replace(/\D/g, '')
+  if (!c || c.length < 2 || c.length > 8) return null
+  let mejor: { item: CatalogoItem; score: number } | null = null
+  for (let pos = 0; pos < c.length; pos++) {
+    for (let d = 0; d <= 9; d++) {
+      if (d === parseInt(c[pos], 10)) continue
+      const variante = c.slice(0, pos) + d + c.slice(pos + 1)
+      const cat = enCatalogoPorCodigo(variante, catalogo)
+      if (!cat) continue
+      const score = similitudDescripcion(descripcionLeida, cat.descripcion)
+      if (score >= UMBRAL_MIN && (!mejor || score > mejor.score)) mejor = { item: cat, score }
+    }
+  }
+  return mejor
+}
+
+/**
  * Limpia el valor del campo «Línea:»: corta en la siguiente etiqueta si el
  * OCR fusionó renglones, quita colas de separadores y limita a 80 caracteres
  * (el valor real es una línea corta del encabezado).
@@ -244,16 +285,37 @@ function limpiarValorLinea(texto: string): string {
     .trim()
 }
 
-/** Quita colas que el OCR pega al solicitante + el DNI de empleado delante. */
+/**
+ * SOLICITANTE = SOLO nombre y apellidos (pedido del usuario 2026-10-24).
+ * El documento imprime el DNI delante ("7126 CHINCHAY…") y el OCR añade
+ * ruido suelto ("H", rayas, dos puntos). Se limpia TODO lo que no es
+ * nombre: dígitos en cualquier posición, símbolos, y los tokens basura
+ * previos al primer apellido — sin tocar partículas legítimas (DE, LA).
+ */
 function limpiarSolicitante(texto: string): string {
-  return texto
-    .replace(/^[\s\d]{2,12}/, (m) => (m.trim() ? '' : m)) // "7126 CHINCHAY" → "CHINCHAY"
+  const sinEtiquetas = texto
     .replace(
       /\s+(ALMAC[EÉ]N|ORDEN|FECHA|TURNO|PRODUCTO|LOTE|MONEDA|OBSERVACI|SUPERVIS|I[TÍ]EM|CANTIDAD|DESCRIPCI).*/i,
       ''
     )
-    .replace(/[\s.:]+$/, '')
+    // DNI / códigos de empleado en CUALQUIER posición ("H 7126 CHINCHAY")
+    .replace(/\b\d{1,12}\b/g, ' ')
+    // Símbolos que el OCR pega al nombre (—, :, (, ), etc.)
+    .replace(/[^A-ZÁÉÍÓÚÑÜa-záéíóúñü ,'\-]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim()
+  // Empieza en el PRIMER apellido: descarta tokens iniciales de 1-2 letras
+  // que no sean partículas de apellido reales ("H CHINCHAY…" → "CHINCHAY…")
+  const PARTICULAS = new Set(['DE', 'LA', 'EL', 'Y', 'LO', 'MA'])
+  const toks = sinEtiquetas.split(' ').filter(Boolean)
+  while (toks.length > 1) {
+    const t = toks[0].toUpperCase()
+    const esParticula = PARTICULAS.has(t)
+    const esApellido = /^[A-ZÁÉÍÓÚÑÜ]{3,}$/.test(t)
+    if (esParticula || esApellido) break
+    toks.shift()
+  }
+  return toks.join(' ').replace(/[\s.:\-–—]+$/, '').trim()
 }
 
 /**
@@ -438,6 +500,37 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
     // jamás se registra como material.
     if (esFragmentoFecha(descripcion)) continue
     let cat = enCatalogoPorCodigo(codigo, catalogo)
+    // ── COMPUERTA DE COHERENCIA (Task 23 — igual que la guía, guia-ocr) ──
+    // El OCR confundió un dígito del código y aterrizó en OTRO producto real
+    // del catálogo (caso real 24-10: 57268 leído 57265 = ETIQUETA AGUA
+    // CIELO): el match directo "existe" y la descripción OFICIAL enmascaraba
+    // el error → fila fantasma con check verde. Ahora el match directo
+    // DEBE explicar la descripción leída; si no:
+    //   a) un vecino a 1 dígito que la explique MUCHO mejor reemplaza al
+    //      código (57265 → 57268), y la fila queda a revisión de todos modos;
+    //   b) sin vecino convincente, el match queda marcado a revisión
+    //      (descripción con ruido OCR — el usuario la confirma a mano).
+    let revisionPorIncoherencia = false
+    if (cat && descripcion.length >= DESC_MIN) {
+      const sDirecto = similitudDescripcion(descripcion, cat.descripcion)
+      const vecino = mejorVecinoUnDigito(codigo, descripcion, catalogo)
+      if (sDirecto < COHERENCIA_CODIGO) {
+        if (vecino && vecino.item.codigo !== cat.codigo && vecino.score >= sDirecto) {
+          cat = vecino.item
+        }
+        revisionPorIncoherencia = true
+      } else if (
+        vecino &&
+        vecino.item.codigo !== cat.codigo &&
+        vecino.score >= UMBRAL_MIN &&
+        vecino.score >= sDirecto + 0.15
+      ) {
+        // Familia con nombres casi idénticos: el vecino explica la lectura
+        // mucho mejor que el match directo → el dígito confundido manda.
+        cat = vecino.item
+        revisionPorIncoherencia = true
+      }
+    }
     if (cat) {
       if (descripcion.length < DESC_MIN) descripcion = cat.descripcion
     } else if (descripcion.length >= DESC_MIN) {
@@ -462,6 +555,7 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
 
     // El vecino validado REEMPLAZA al código leído (115 → 118)
     const codigoFinal = cat && cat.codigo.replace(/\D/g, '') !== codigo ? cat.codigo : codigo
+    const codigoCambioPorRigor = codigoFinal !== codigo
 
     // Dedupe por CÓDIGO (una requisición no repite un material; el OCR sí
     // repite filas al releer la misma tabla en 2 pases con cantidad distinta)
@@ -479,8 +573,13 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
       cantidad,
       unidad: unidad || cat?.un || '',
       enCatalogo: Boolean(cat),
-      revision: !cat || revisionPorScore,
+      revision: !cat || revisionPorScore || revisionPorIncoherencia,
       matchPorDescripcion: porDescripcion,
+      // Rigor: el código cambió por la compuerta de coherencia (no por
+      // matchPorDescripcion, que ya marca su propio chip).
+      ...(codigoCambioPorRigor && !porDescripcion
+        ? { matchPorDescripcion: true, revision: true }
+        : {}),
     })
   }
 
@@ -513,6 +612,7 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
  */
 export function fusionarDatosRq(a: DatosRq, b: DatosRq): DatosRq {
   const items: ItemRq[] = []
+  const avisos: string[] = [...(a.avisos ?? []), ...(b.avisos ?? [])]
   const vistas = new Set<string>()
   for (const it of [...a.items, ...b.items]) {
     if (vistas.has(it.codigo)) {
@@ -522,6 +622,21 @@ export function fusionarDatosRq(a: DatosRq, b: DatosRq): DatosRq {
         previo.revision = false
         if (it.descripcion.length > previo.descripcion.length) previo.descripcion = it.descripcion
         if (!previo.unidad && it.unidad) previo.unidad = it.unidad
+      }
+      // ── VOTACIÓN DE CANTIDAD (Task 23 — rigor numérico) ──
+      // El mismo material leído con cifras DISTINTAS en 2 pases = dígito
+      // dudoso (4↔9). No se adivina cuál es: manda la lectura con catálogo
+      // (o la primera) y la fila queda marcada a revisión con aviso visible.
+      if (
+        previo &&
+        Math.abs(previo.cantidad - it.cantidad) > 0.0005 &&
+        it.cantidad > 0
+      ) {
+        if (!previo.enCatalogo && it.enCatalogo) previo.cantidad = it.cantidad
+        previo.revision = true
+        avisos.push(
+          `Cantidad de ${previo.codigo} difiere entre lecturas (${previo.cantidad} / ${it.cantidad}) — revisa`
+        )
       }
       continue
     }
@@ -537,6 +652,7 @@ export function fusionarDatosRq(a: DatosRq, b: DatosRq): DatosRq {
     linea: a.linea || b.linea,
     solicitante: a.solicitante || b.solicitante,
     items,
+    ...(avisos.length > 0 ? { avisos } : {}),
   }
 }
 

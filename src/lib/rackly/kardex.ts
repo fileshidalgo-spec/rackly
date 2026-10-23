@@ -679,6 +679,10 @@ export async function stockEnUbicacion(
         .eq('piso', piso)
         .eq('posicion', posicion)
         .order('f_modificacion', { ascending: true })
+        // FIX auditoría Task 20 (P1): tiebreaker — varios movimientos comparten
+        // el mismo segundo de f_modificacion y sin desempate el paginado podía
+        // repetir u omitir filas al cruzar 1,000 registros de una celda.
+        .order('id', { ascending: true })
         .range(from, from + BATCH - 1)
 
       if (error) throw error
@@ -856,6 +860,9 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
         .select('bloque, torre, piso, posicion, codigo, descripcion, un, codigo_inc, tipo, cantidad')
         .not('codigo_inc', 'is', null)
         .neq('codigo_inc', '')
+        // FIX auditoría Task 20 (P1): orden determinista — sin .order() el
+        // paginado INC (>1,000 filas) podía repetir/omitir filas entre páginas.
+        .order('id', { ascending: true })
         .range(from, from + BATCH - 1)
       if (error) {
         console.error('[fetchIncPorUbicacion] Error en paginación INC:', error.message)
@@ -1332,9 +1339,30 @@ export async function addMovimientosBatch(
   let inserted = 0
   const BATCH_SIZE = 1000
 
+  // FIX auditoría Task 20 (K1): defensa en profundidad anti-fechas absurdas.
+  // Esta vía de INSERT directo no pasa por registrar_movimiento_kardex (que
+  // valida año 2000-2100 en BD desde v8); sin este guard un Excel con
+  // "3027-12-30" o serial ~2119 corrompía el orden FEFO de forma persistente.
+  const fechaVencValida = (f?: string): boolean => {
+    if (!f) return true // sin vencimiento es válido (lote sin fecha)
+    const m = /^(\d{4})-\d{2}-\d{2}/.exec(f)
+    if (!m) return false // formato no ISO no debería llegar aquí
+    const y = Number(m[1])
+    return y >= 2000 && y <= 2100
+  }
+
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const batch = rows.slice(i, i + BATCH_SIZE)
-    const inserts = batch.map((r) => ({
+    const inserts: Record<string, unknown>[] = []
+    for (let j = 0; j < batch.length; j++) {
+      const r = batch[j]
+      if (!fechaVencValida(r.fVencimiento)) {
+        errors.push(
+          `Fila ${i + j + 1} (código ${r.codigo}): vencimiento "${r.fVencimiento}" fuera del rango 2000-2100 — fila descartada`,
+        )
+        continue
+      }
+      inserts.push({
       tipo: 'ingreso' as const,
       bloque: norm(r.bloque),
       torre: norm(r.torre),
@@ -1351,7 +1379,10 @@ export async function addMovimientosBatch(
       usuario_correo: usuarioCorreo ?? null,
       proveedor: r.proveedor ? r.proveedor : null,
       codigo_inc: r.codigoInc ? r.codigoInc.trim() : null,
-    }))
+      })
+    }
+
+    if (inserts.length === 0) continue
 
     const { error } = await admin.from('movimientos').insert(inserts)
     if (error) {
@@ -1368,7 +1399,7 @@ export async function addMovimientosBatch(
         }
       }
     } else {
-      inserted += batch.length
+      inserted += inserts.length
     }
   }
 

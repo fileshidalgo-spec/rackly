@@ -47,6 +47,7 @@ import {
 import { MapaRackSelector, type SeleccionRack } from './MapaRackSelector'
 import { MapaPisoSelector, type SeleccionPiso } from './MapaPisoSelector'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
+import { aNumero } from '@/lib/rackly/formato'
 
 type Paso = 'destino' | 'mapaRack' | 'mapaPiso' | 'confirmar' | 'ejecutando' | 'resultado'
 
@@ -97,10 +98,11 @@ export function DialogoTransferir({
     [items]
   )
 
+  // FIX auditoría Task 20 (A-1): usar el parser canónico aNumero. Antes
+  // replace(',','.') + parseFloat convertía "1,500" (miles es-PE) en 1.5:
+  // se transfería una milésima de lo pedido y sin ningún error visible.
   const cantidadDe = (a: ArticuloTransito): number => {
-    const raw = (cantidades[a.id] ?? '').trim().replace(',', '.')
-    const n = parseFloat(raw)
-    return isNaN(n) ? 0 : n
+    return aNumero(cantidades[a.id] ?? '')
   }
 
   const validarTodo = (): string | null => {

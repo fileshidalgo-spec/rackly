@@ -44,6 +44,7 @@ import {
 } from '@/lib/rackly/rq-ocr'
 import { calcularTurnoRecepcion } from '@/lib/rackly/turno'
 import { crearRq, subirFotoRq, type RqAtencion } from '@/lib/rackly/rq-atencion'
+import { aNumero } from '@/lib/rackly/formato'
 import {
   RecortarImagenDialog,
   type OrigenRecorte,
@@ -516,8 +517,10 @@ export function RqFotoForm({
       toast.error('Sesión no disponible')
       return
     }
+    // FIX auditoría Task 20 (M2): aNumero en vez de parseFloat — cantidades
+    // con coma ("1,5" → 1, "1,234" → 1.234) se guardaban mal en la RQ.
     const itemsValidos = form.items.filter(
-      (it) => it.codigo.trim() && parseFloat(it.cantidad) > 0
+      (it) => it.codigo.trim() && aNumero(it.cantidad) > 0
     )
     if (itemsValidos.length === 0) {
       toast.error('Agrega al menos un material con código y cantidad')
@@ -556,7 +559,7 @@ export function RqFotoForm({
           codigo: it.codigo.trim(),
           descripcion: it.descripcion.trim(),
           unidad: it.unidad.trim(),
-          cantidad: parseFloat(it.cantidad),
+          cantidad: aNumero(it.cantidad),
         })),
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
       )

@@ -365,21 +365,33 @@ export function TrasladoTab() {
       const baseKey = `${origin.bloque}-${origin.torre}-${origin.piso}-${origin.posicion}`
       const lotesPos = locations
         .filter((l) => `${l.bloque}-${l.torre}-${l.piso}-${l.posicion}` === baseKey && l.stock > 1e-9)
-      const esMultiLote = lotesPos.length > 1 && Math.abs(qtyNum - origin.stock) >= 1e-9
 
       type Llamada = { row: LocStock; cantidad: number; ajuste?: number }
       let llamadas: Llamada[] = []
       let fantasmaSalida = 0 // salida en origen para corregir diferencia (qty < total)
 
+      const cantidadEfectiva = qtyNum || originTotal
+      // FIX auditoría Task 20 (A-2): si la cantidad CABE en el lote que el
+      // usuario seleccionó, se toma SOLO de ese lote. Antes cualquier parcial
+      // distinto del stock del lote disparaba el reparto FEFO entre TODOS los
+      // lotes (ignoraba la selección): pedías 10 del lote B (venc 2027-01) y
+      // salían 10 del lote A (venc 2026-12) — el destino quedaba con la fecha
+      // equivocada y el FEFO distorsionado de forma persistente.
+      const cabeEnLoteElegido = cantidadEfectiva <= origin.stock + 1e-9
+      const esMultiLote = lotesPos.length > 1 && !cabeEnLoteElegido
+
       if (!esMultiLote) {
-        // Comportamiento original (posición con 1 lote, o qty exacta del lote elegido)
+        // Comportamiento original (posición con 1 lote, o cantidad que cabe en
+        // el lote elegido): toda la cantidad sale del lote seleccionado.
         const cantidadFinal = qtyNum || originTotal
         llamadas = [{ row: origin, cantidad: cantidadFinal, ajuste: ajusteActivo ? round3(diferencia) : undefined }]
         if (faltaStock && !corregirDiferencia) fantasmaSalida = 0
       } else {
-        // Reparto FEFO: lotes con fecha primero (ya ordenados en locations)
-        let restante = qtyNum || originTotal
-        for (const lote of lotesPos) {
+        // Reparto: PRIMERO el lote seleccionado (honra la elección del usuario),
+        // luego el resto en orden FEFO (lotes con fecha primero, ya ordenados en locations)
+        let restante = cantidadEfectiva
+        const ordenLotes = [origin, ...lotesPos.filter((l) => l !== origin)]
+        for (const lote of ordenLotes) {
           if (restante <= 1e-9) break
           const toma = Math.min(restante, lote.stock)
           if (toma > 1e-9) {
@@ -855,6 +867,7 @@ export function TrasladoTab() {
                 <p className="text-xs text-sky-700 dark:text-sky-300">
                   <strong>Traslado Parcial:</strong> Ingresa la cantidad que deseas mover.
                   El <strong>saldo restante ({originTotal} - cantidad)</strong> se quedará en la ubicación de origen.
+                  Si la cantidad cabe en el lote seleccionado, sale solo de ese lote; si lo excede, el resto sale FEFO de los demás lotes.
                 </p>
               </>
             )}

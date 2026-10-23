@@ -73,6 +73,7 @@ import {
   type LotePuenteDeItem,
 } from '@/lib/rackly/rq-atencion'
 import { calcularTurno } from '@/lib/rackly/turno'
+import { aNumero } from '@/lib/rackly/formato'
 
 const ESTADO_ITEM_CLASE: Record<string, string> = {
   Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -180,7 +181,9 @@ export function RqDetalle({
   useRegistrosRealtime('rq_atenciones', recargar)
 
   function abrirConfirmacion(item: RqItem) {
-    const leida = parseFloat(cantidades[item.id] ?? '')
+    // FIX auditoría Task 20 (M2): aNumero en vez de parseFloat — "1,5" antes
+    // se leía como 1 (se atendía MENOS de lo físico) y "1,234" como 1.234.
+    const leida = aNumero(cantidades[item.id] ?? '')
     if (!leida || leida <= 0) {
       toast.error('Digita la cantidad a atender')
       return

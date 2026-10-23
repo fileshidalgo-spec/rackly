@@ -779,29 +779,101 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
     const qty = parseFloat(trCantidad)
     setActionBusy(true)
     try {
-      const input: TrasladoInput = {
-        codigo: trItem.codigo, descripcion: trItem.descripcion, un: trItem.un, cantidad: qty,
-        origen: { bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion },
-        destino: { bloque: trDestBloque, torre: trDestTorre, piso: trDestPiso, posicion: trDestPos },
-        turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
-        // LOTE ELEGIDO por el usuario (FEFO pre-marcado): el traslado descuenta de ese lote
-        // en origen y el material llega al destino con la MISMA fecha (no fechas fantasma).
-        fVencimiento: trLoteFV || trItem.fVencimiento || '',
-        // Código de lote físico del material: solo si es inequívoco (un solo código en el lote elegido)
-        lote: (() => {
-          if (trItem.lotes?.length) {
-            const sel = trItem.lotes.find(l => (l.fVencimiento || '') === (trLoteFV || trItem.fVencimiento || ''))
-            const fis = sel?.lotesFisicos ?? []
-            return fis.length === 1 ? fis[0] : undefined
-          }
-          const fis = trItem.loteFisico || ''
-          return fis && !fis.includes(',') ? fis : undefined
-        })(),
-        cantidadAjuste: trTieneAjuste ? trDiferencia : 0,
-        codigoInc: trItem.codigoInc || undefined,
+      // FIX auditoría Task 20 (M-1): traslado LOTE-POR-LOTE (misma corrección
+      // que TrasladoTab A-2). Antes TODO iba en UNA llamada con la fecha del
+      // lote elegido: si la cantidad excedía el stock de ese lote, el desborde
+      // FEFO salía de otros lotes en origen pero el destino recibía TODO con
+      // UNA sola fecha — los vencimientos reales se perdían en destino.
+      const fvElegido = trLoteFV || trItem.fVencimiento || ''
+      type Llamada = { fv: string; cantidad: number; ajuste?: number; loteFisico?: string }
+      const llamadas: Llamada[] = []
+      let fantasmaSalida = 0
+
+      const loteElegido = trItem.lotes?.find((l) => (l.fVencimiento || '') === fvElegido)
+      const stockLoteElegido = loteElegido ? loteElegido.cantidad : trItem.stock
+      const cabeEnLoteElegido = qty <= stockLoteElegido + 1e-9
+
+      const loteFisicoDe = (fv: string): string | undefined => {
+        const sel = trItem.lotes?.find((l) => (l.fVencimiento || '') === fv)
+        const fis = sel?.lotesFisicos ?? []
+        if (fis.length === 1) return fis[0]
+        const unico = trItem.loteFisico || ''
+        return unico && !unico.includes(',') ? unico : undefined
       }
-      await trasladarMovimiento(input, { refetch: false })
+
+      if (cabeEnLoteElegido) {
+        // La cantidad cabe en el lote seleccionado: UNA llamada (comportamiento previo)
+        llamadas.push({ fv: fvElegido, cantidad: qty, ajuste: trTieneAjuste ? trDiferencia : 0, loteFisico: loteFisicoDe(fvElegido) })
+        if (trFalta && !trCorregirDiferencia) fantasmaSalida = 0
+      } else {
+        // Reparto: PRIMERO el lote elegido, luego el resto en orden FEFO
+        // (lotes con fecha primero ascendente, sin fecha al final).
+        const ordenLotes = [
+          ...(loteElegido ? [loteElegido] : []),
+          ...(trItem.lotes ?? [])
+            .filter((l) => l !== loteElegido)
+            .sort((a, b) => {
+              if (!a.fVencimiento) return 1 // sin fecha al final
+              if (!b.fVencimiento) return -1
+              return a.fVencimiento < b.fVencimiento ? -1 : a.fVencimiento > b.fVencimiento ? 1 : 0
+            }),
+        ]
+        let restante = qty
+        for (const lote of ordenLotes) {
+          if (restante <= 1e-9) break
+          const toma = Math.min(restante, lote.cantidad)
+          if (toma > 1e-9) {
+            const fv = lote.fVencimiento || ''
+            llamadas.push({ fv, cantidad: toma, loteFisico: loteFisicoDe(fv) })
+            restante = Math.round((restante - toma) * 1000) / 1000
+          }
+        }
+        // Excedente físico sin registro: traslado con ajuste positivo (igual que TrasladoTab)
+        if (restante > 1e-9) {
+          llamadas.push({ fv: fvElegido, cantidad: restante, ajuste: restante, loteFisico: loteFisicoDe(fvElegido) })
+          restante = 0
+        } else if (trFalta && trCorregirDiferencia) {
+          // Dejar la posición en 0: lo que NO se trasladó sale en origen (stock fantasma)
+          fantasmaSalida = Math.round((trItem.stock - qty) * 1000) / 1000
+        }
+      }
+
+      let hechas = 0
+      for (const llamada of llamadas) {
+        const input: TrasladoInput = {
+          codigo: trItem.codigo, descripcion: trItem.descripcion, un: trItem.un, cantidad: llamada.cantidad,
+          origen: { bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion },
+          destino: { bloque: trDestBloque, torre: trDestTorre, piso: trDestPiso, posicion: trDestPos },
+          turno: calcularTurno(), usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+          // La fecha del LOTE de esta llamada viaja al destino (FEFO intacto)
+          fVencimiento: llamada.fv,
+          lote: llamada.loteFisico,
+          cantidadAjuste: llamada.ajuste && Math.abs(llamada.ajuste) > 1e-9 ? llamada.ajuste : 0,
+          codigoInc: trItem.codigoInc || undefined,
+        }
+        await trasladarMovimiento(input, { refetch: false })
+        hechas++
+      }
+
+      // Salida fantasma en origen (corrección de diferencia, multi-lote)
+      if (fantasmaSalida > 1e-9) {
+        await addMovimiento({
+          tipo: 'salida',
+          bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion,
+          codigo: trItem.codigo, descripcion: trItem.descripcion, un: trItem.un,
+          cantidad: fantasmaSalida,
+          fVencimiento: fvElegido,
+          turno: calcularTurno(),
+          usuarioId: perfil.id, usuarioNombre: perfil.nombre, usuarioCorreo: perfil.correo,
+          proveedor: trItem.proveedor,
+          codigoInc: trItem.codigoInc || undefined,
+        }, undefined, { refetch: false })
+      }
+
       toast.success('Traslado registrado')
+      if (hechas > 1) {
+        toast.info(`Multi-lote: ${hechas} llamada(s), cada lote conservó su fecha de vencimiento en destino.`, { duration: 6000 })
+      }
       if (trFalta && trCorregirDiferencia) {
         toast.info(`Salida de ajuste: -${Math.abs(trDiferencia)} ${trItem.un} en origen`, { duration: 6000 })
       }

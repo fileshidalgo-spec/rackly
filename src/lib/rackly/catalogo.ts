@@ -2,6 +2,7 @@
 
 import { dataClient } from '@/lib/supabase/client'
 import { aNumero } from '@/lib/rackly/formato'
+import { toast } from 'sonner'
 
 export type CatalogoItem = {
   codigo: string
@@ -50,8 +51,14 @@ export function fetchCatalogo(): Promise<CatalogoItem[]> {
       return _cache
     } catch (err) {
       // Antes: fallo de red = [] silencioso — los formularios autocompletaban
-      // "sin resultados" y nadie sabía por qué. Al menos dejar rastro.
+      // "sin resultados" y nadie sabía por qué. FIX auditoría Task 20 (E2):
+      // aviso visible (el contrato Promise<CatalogoItem[]> NO cambia — los
+      // consumidores siguen recibiendo cache o [], sin try/catch nuevo).
+      // El dedupe _fetchEnVuelo evita ráfagas de toasts duplicados.
       console.warn('[catalogo] No se pudo cargar el catálogo:', err)
+      toast.error('No se pudo cargar el catálogo', {
+        description: 'El autocompletado puede estar incompleto. Reintenta en unos segundos.',
+      })
       if (_cache.length > 0) return _cache
       return []
     } finally {

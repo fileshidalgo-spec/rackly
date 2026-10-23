@@ -166,7 +166,11 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
       }
       setNetos(net)
       setResults(filtered)
-    } catch {
+    } catch (err) {
+      // FIX auditoría Task 20 (E3): la UI ya mostraba el estado de error, pero
+      // la causa se tragaba sin rastro — imposible diagnosticar fallas de red/
+      // RLS desde los logs del navegador.
+      console.error('[StockIncTab] Error cargando stock INC:', err)
       setError(true)
     } finally {
       setLoading(false)

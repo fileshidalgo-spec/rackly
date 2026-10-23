@@ -239,10 +239,19 @@ function UpDataSection() {
    * Con cellDates:true XLSX entrega Date; se mantiene fallback para seriales
    * y texto.
    */
+  // FIX auditoría Task 20 (K1): rango de año centralizado. Antes solo la rama
+  // dd/mm/yyyy validaba el año: "3027-12-30" (texto ISO) y seriales ~2119
+  // entraban a movimientos y corrompían el orden FEFO de forma persistente
+  // (mismo guard que registrar_movimiento_kardex v8 en BD).
+  const ANIO_MIN = 2000
+  const ANIO_MAX = 2100
+  const anioValido = (y: number) => y >= ANIO_MIN && y <= ANIO_MAX
+
   function fechaExcelAISO(v: unknown): string | undefined {
     if (v == null || v === '') return undefined
     if (v instanceof Date && !isNaN(v.getTime())) {
       const y = v.getFullYear()
+      if (!anioValido(y)) return undefined
       const m = String(v.getMonth() + 1).padStart(2, '0')
       const d = String(v.getDate()).padStart(2, '0')
       return `${y}-${m}-${d}`
@@ -253,6 +262,7 @@ function UpDataSection() {
       const dt = new Date(ms)
       if (!isNaN(dt.getTime())) {
         const y = dt.getUTCFullYear()
+        if (!anioValido(y)) return undefined
         const m = String(dt.getUTCMonth() + 1).padStart(2, '0')
         const d = String(dt.getUTCDate()).padStart(2, '0')
         return `${y}-${m}-${d}`
@@ -262,13 +272,14 @@ function UpDataSection() {
     const s = String(v).trim()
     // Serial en texto ("45123")
     if (/^\d{5}$/.test(s)) return fechaExcelAISO(Number(s))
-    // Ya es texto ISO: validar RANGO real (mes 1-12, día válido para el mes).
+    // Ya es texto ISO: validar RANGO real (año 2000-2100, mes 1-12, día válido para el mes).
     // FIX auditoría 2026-10-21 (P3): antes "2026-99-99" pasaba tal cual y
     // rompía el orden FEFO y los filtros por rango de fechas.
     if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
       const yy = Number(s.slice(0, 4))
       const mm = Number(s.slice(5, 7))
       const dd = Number(s.slice(8, 10))
+      if (!anioValido(yy)) return undefined
       const diasMes = [31, (yy % 4 === 0 && (yy % 100 !== 0 || yy % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
       if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= diasMes[mm - 1]) return s.slice(0, 10)
       return undefined
@@ -285,7 +296,7 @@ function UpDataSection() {
       const mmN = Number(mm)
       const yyN = Number(yy)
       if (mmN < 1 || mmN > 12 || ddN < 1 || ddN > 31) return undefined
-      if (yyN < 2000 || yyN > 2100) return undefined
+      if (!anioValido(yyN)) return undefined
       const diasMes = [31, (yyN % 4 === 0 && (yyN % 100 !== 0 || yyN % 400 === 0)) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
       if (ddN > diasMes[mmN - 1]) return undefined
       return `${yy}-${mm}-${dd}`

@@ -69,6 +69,7 @@ import {
   type TomaQR,
 } from '@/lib/rackly/atencion-qr-lote'
 import { atenderLotePuente, type TomaPuentePayload } from '@/lib/rackly/rq-atencion'
+import { aNumero } from '@/lib/rackly/formato'
 
 type ItemWizard = {
   id: string
@@ -114,23 +115,49 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
   // Saldos actuales de posiciones rack (pre-chequeo — la RPC revalida)
   const [saldosRack, setSaldosRack] = useState<Record<string, number>>({})
 
+  // FIX Task 20 (M3): texto crudo del input de cantidad por toma — permite
+  // tipear decimales ("0.") sin que se normalice a número en cada tecla.
+  const [cantTexto, setCantTexto] = useState<Record<string, string>>({})
+
   /** Cache de filas por clave (guía:{guiaId} | codigo:{codigo}) — 50 tomas sin re-descargar. */
   const cacheRef = useRef(new Map<string, ArticuloTransito[]>())
   const resolviendoRef = useRef(false)
   const manualRef = useRef<HTMLInputElement | null>(null)
+  // FIX Task 20 (A3): cola de escaneos — la pistola dispara más rápido que la
+  // resolución; antes los escaneos durante la resolución se DESCARTABAN en
+  // silencio (el operario veía el flash verde de LectorQR pero la toma nunca
+  // entraba). Ahora esperan en cola y se procesan en orden.
+  const colaRef = useRef<string[]>([])
+  // FIX Task 20 (B4): espejo del carrito para resolver FUERA del updater de
+  // setTomas (StrictMode ejecutaba los updaters 2 veces → toasts duplicados
+  // y doble fetch de saldos).
+  const tomasRef = useRef<TomaQR[]>([])
+  useEffect(() => {
+    tomasRef.current = tomas
+  }, [tomas])
 
   const pendienteRq = Math.max(item.cantidad - item.cantidadAtendida, 0)
   const totales = useMemo(() => totalesCarrito(tomas), [tomas])
   const excede = totales.total > pendienteRq + 0.0005
 
-  // Líneas POSICIÓN-rack sin saldo suficiente (bloquean la confirmación)
+  // Líneas POSICIÓN-rack sin saldo suficiente (bloquean la confirmación).
+  // FIX Task 20 (M7): suma AGREGADA por celda — el chequeo toma-por-toma
+  // dejaba pasar 2 tomas de 8 sobre la misma celda con saldo 10.
   const lineasSinSaldo = useMemo(() => {
-    return tomas.filter((t) => {
-      if (t.ruta !== 'posicion' || !t.origen?.rack) return false
+    const sumaPorCelda = new Map<string, number>()
+    const tomasConClave: { toma: TomaQR; clave: string }[] = []
+    for (const t of tomas) {
+      if (t.ruta !== 'posicion' || !t.origen?.rack) continue
       const clave = claveCeldaRack(t.origen.rack)
-      const saldo = saldosRack[clave]
-      return saldo !== undefined && t.cantidad > saldo + 0.0005
-    })
+      tomasConClave.push({ toma: t, clave })
+      sumaPorCelda.set(clave, (sumaPorCelda.get(clave) ?? 0) + t.cantidad)
+    }
+    return tomasConClave
+      .filter(({ clave }) => {
+        const saldo = saldosRack[clave]
+        return saldo !== undefined && (sumaPorCelda.get(clave) ?? 0) > saldo + 0.0005
+      })
+      .map(({ toma }) => toma)
   }, [tomas, saldosRack])
 
   // Reset al abrir/cerrar
@@ -143,7 +170,10 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
       setFilasManual(null)
       setSaldosRack({})
       setAlertaAjeno(null)
+      setCantTexto({})
       cacheRef.current = new Map()
+      colaRef.current = []
+      tomasRef.current = []
     }
   }, [open])
 
@@ -197,11 +227,9 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
     [vibrarError]
   )
 
-  /** Puerta única de tomas: cámara o pistola. Nunca interrumpe la sesión. */
-  const procesarTexto = useCallback(
+  /** Resuelve un texto ya desencolado y AGREGA la toma (efectos fuera del updater). */
+  const resolverTexto = useCallback(
     async (texto: string) => {
-      if (resolviendoRef.current) return
-      resolviendoRef.current = true
       try {
         const payload = payloadDeTexto(texto)
         if (!payload) {
@@ -238,40 +266,69 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
           }
         }
 
-        setTomas((carritoActual) => {
-          const res = resolverToma({
-            texto,
-            codigoRq: item.codigo,
-            filas,
-            carrito: carritoActual,
-            nuevoUuid,
-          })
-          if (res.estado === 'rechazada') {
-            if (res.razon === 'CODIGO_AJENO') {
-              avisoProductoAjeno(payload.codigo)
-              return carritoActual
-            }
-            toast.error('Toma rechazada', { description: res.mensaje })
-            return carritoActual
-          }
-          const t = res.toma
-          const esNuevaPosicion = t.ruta === 'posicion'
-          toast.success(
-            `Toma ${t.cantidad === t.cantidadOriginal ? `${fmt(t.cantidad)} ${t.unidad}` : `${fmt(t.cantidad)} ${t.unidad} (ajustable)`}`,
-            {
-              description: `Guía ${t.numeroDocumento || t.fecha}${t.paleta != null ? ` · Paleta ${t.paleta}` : ''}${
-                t.lote ? ` · Lote ${t.lote}` : ''
-              } · ${t.ruta === 'transito' ? 'se descuenta de la guía' : `salida de ${t.origen?.etiqueta ?? 'posición'}`}`,
-            }
-          )
-          if (esNuevaPosicion) void asegurarSaldos()
-          return [...carritoActual, t]
+        // FIX Task 20 (B4): se resuelve contra el espejo tomasRef y los efectos
+        // (toasts, saldos) van FUERA del updater de setTomas.
+        const res = resolverToma({
+          texto,
+          codigoRq: item.codigo,
+          filas,
+          carrito: tomasRef.current,
+          nuevoUuid,
         })
+        if (res.estado === 'rechazada') {
+          if (res.razon === 'CODIGO_AJENO') {
+            avisoProductoAjeno(payload.codigo)
+            return
+          }
+          toast.error('Toma rechazada', { description: res.mensaje })
+          return
+        }
+        const t = res.toma
+        // Dedupe defensivo (la cola serializa, pero el botón manual no).
+        if (tomasRef.current.some((x) => x.uuid === t.uuid)) return
+        tomasRef.current = [...tomasRef.current, t]
+        setTomas(tomasRef.current)
+        toast.success(
+          `Toma ${t.cantidad === t.cantidadOriginal ? `${fmt(t.cantidad)} ${t.unidad}` : `${fmt(t.cantidad)} ${t.unidad} (ajustable)`}`,
+          {
+            description: `Guía ${t.numeroDocumento || t.fecha}${t.paleta != null ? ` · Paleta ${t.paleta}` : ''}${
+              t.lote ? ` · Lote ${t.lote}` : ''
+            } · ${t.ruta === 'transito' ? 'se descuenta de la guía' : `salida de ${t.origen?.etiqueta ?? 'posición'}`}`,
+          }
+        )
+        if (t.ruta === 'posicion') void asegurarSaldos()
+      } finally {
+        // nada: la cola la drena procesarTexto
+      }
+    },
+    [item.codigo, obtenerFilas, asegurarSaldos, avisoProductoAjeno]
+  )
+
+  /** Puerta única de tomas: cámara o pistola. Nunca interrumpe la sesión.
+   * FIX Task 20 (A3): los escaneos que llegan durante una resolución NO se
+   * descartan — entran a una cola (máx 12) y se procesan en orden al terminar. */
+  const procesarTexto = useCallback(
+    async (texto: string) => {
+      if (resolviendoRef.current) {
+        if (colaRef.current.length >= 12) {
+          colaRef.current.shift()
+          toast.warning('Cola de escaneos llena (12): se descartó el más antiguo')
+        }
+        colaRef.current.push(texto)
+        return
+      }
+      resolviendoRef.current = true
+      try {
+        await resolverTexto(texto)
+        while (colaRef.current.length > 0) {
+          const siguiente = colaRef.current.shift()
+          if (siguiente) await resolverTexto(siguiente)
+        }
       } finally {
         resolviendoRef.current = false
       }
     },
-    [item.codigo, obtenerFilas, asegurarSaldos, avisoProductoAjeno]
+    [resolverTexto]
   )
 
   /** Carga el listado FEFO del código para la ruta manual. */
@@ -293,36 +350,39 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
 
   const agregarManual = useCallback(
     (fila: ArticuloTransito) => {
-      setTomas((carritoActual) => {
-        const res = agregarFilaManual(fila, carritoActual, nuevoUuid)
-        if (res.estado === 'rechazada') {
-          toast.error('No se agregó', { description: res.mensaje })
-          return carritoActual
-        }
-        const t = res.toma
-        toast.success(`Toma ${fmt(t.cantidad)} ${t.unidad}`, {
-          description: `Guía ${t.numeroDocumento || t.fecha}${t.paleta != null ? ` · Paleta ${t.paleta}` : ''} · ${
-            t.ruta === 'transito' ? 'se descuenta de la guía' : `salida de ${t.origen?.etiqueta ?? 'posición'}`
-          }`,
-        })
-        if (t.ruta === 'posicion') void asegurarSaldos()
-        return [...carritoActual, t]
+      // FIX Task 20 (B4): resolución contra el espejo + efectos fuera del updater.
+      const res = agregarFilaManual(fila, tomasRef.current, nuevoUuid)
+      if (res.estado === 'rechazada') {
+        toast.error('No se agregó', { description: res.mensaje })
+        return
+      }
+      const t = res.toma
+      if (tomasRef.current.some((x) => x.uuid === t.uuid)) return
+      tomasRef.current = [...tomasRef.current, t]
+      setTomas(tomasRef.current)
+      toast.success(`Toma ${fmt(t.cantidad)} ${t.unidad}`, {
+        description: `Guía ${t.numeroDocumento || t.fecha}${t.paleta != null ? ` · Paleta ${t.paleta}` : ''} · ${
+          t.ruta === 'transito' ? 'se descuenta de la guía' : `salida de ${t.origen?.etiqueta ?? 'posición'}`
+        }`,
       })
+      if (t.ruta === 'posicion') void asegurarSaldos()
     },
     [asegurarSaldos]
   )
 
   /** Cambiar la ubicación de una línea posición (entre las de SUS envíos). */
   const cambiarOrigen = useCallback((uuid: string, indice: number) => {
-    setTomas((prev) =>
+    // FIX Task 20 (B4): el espejo tomasRef se sincroniza también aquí para que
+    // la próxima toma resuelva contra el origen actualizado.
+    const aplicar = (prev: TomaQR[]) =>
       prev.map((t) => {
         if (t.uuid !== uuid) return t
-        const opciones = t.opcionesOrigen
-        const elegida = opciones[indice]
+        const elegida = t.opcionesOrigen[indice]
         if (!elegida) return t
         return { ...t, origen: elegida }
       })
-    )
+    tomasRef.current = aplicar(tomasRef.current)
+    setTomas(tomasRef.current)
   }, [])
 
   async function ejecutarRegistro() {
@@ -559,7 +619,13 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
                             size="icon"
                             className="h-7 w-7 text-slate-400 hover:text-rose-600"
                             title="Quitar toma"
-                            onClick={() => setTomas((prev) => prev.filter((x) => x.uuid !== t.uuid))}
+                            onClick={() => {
+                              setTomas((prev) => prev.filter((x) => x.uuid !== t.uuid))
+                              setCantTexto((prev) => {
+                                const { [t.uuid]: _omit, ...resto } = prev
+                                return resto
+                              })
+                            }}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -610,16 +676,34 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
                         <Input
                           className="h-8 w-[110px] text-right"
                           inputMode="decimal"
-                          value={String(t.cantidad)}
+                          value={cantTexto[t.uuid] ?? String(t.cantidad)}
                           onChange={(e) => {
-                            const v = parseFloat(e.target.value.replace(',', '.'))
+                            // FIX Task 20 (M3): texto crudo + aNumero. Antes
+                            // parseFloat normalizaba cada tecla: imposible
+                            // tipear "0.5" y "-5" se aceptaba como cantidad.
+                            const crudo = e.target.value
+                            setCantTexto((prev) => ({ ...prev, [t.uuid]: crudo }))
+                            const terminado = crudo.trim()
+                            if (terminado === '' || terminado === '-' || terminado.endsWith('.') || terminado.endsWith(',')) return
+                            const v = aNumero(terminado)
+                            const cantidad = !isFinite(v) || v < 0 ? 0 : v
                             setTomas((prev) =>
-                              prev.map((x) =>
-                                x.uuid === t.uuid
-                                  ? { ...x, cantidad: isNaN(v) ? 0 : v }
-                                  : x
-                              )
+                              prev.map((x) => (x.uuid === t.uuid ? { ...x, cantidad } : x))
                             )
+                          }}
+                          onBlur={() => {
+                            // Al salir del campo: parsea el texto pendiente y normaliza.
+                            const crudo = cantTexto[t.uuid]
+                            if (crudo === undefined) return
+                            const v = aNumero(crudo)
+                            const cantidad = !isFinite(v) || v < 0 ? 0 : v
+                            setTomas((prev) =>
+                              prev.map((x) => (x.uuid === t.uuid ? { ...x, cantidad } : x))
+                            )
+                            setCantTexto((prev) => {
+                              const { [t.uuid]: _omit, ...resto } = prev
+                              return resto
+                            })
                           }}
                         />
                         <span className="text-[10px] text-slate-400 truncate">

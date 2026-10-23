@@ -2147,6 +2147,10 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
     const { data: pageData, error: detErr } = await dataClient
       .from('piso_movimiento_detalles')
       .select('bloque_id, nivel_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc, fecha)')
+      // FIX auditoría Task 20 (P1): orden determinista — sin .order(), al cruzar
+      // 2,000 detalles PostgREST puede repetir u omitir filas entre páginas y el
+      // stock FEFO global se suma mal (filas fantasma o perdidas).
+      .order('id')
       .range(detFrom, detTo)
     if (detErr) throw detErr
     const rows = pageData ?? []
@@ -2646,7 +2650,13 @@ export async function cargarVistaColumna(
     .eq('sector_id', sectorId)
     .eq('letra', columnaLetra)
     .single()
-  if (colErr || !colData) return []
+  // FIX auditoría Task 20 (E1): un error de consulta ya NO se traga devolviendo
+  // [] (el usuario veía la columna vacía sin saber que falló). throw → el
+  // consumidor principal (loadColumnDetail) ya muestra toast de error; el
+  // refresh silencioso realtime conserva su .catch(() => {}) intencional.
+  // !colData (columna sin fila) sigue siendo un estado legítimo → [].
+  if (colErr) throw colErr
+  if (!colData) return []
 
   // 2. Obtener subcolumnas → posiciones → niveles en una sola query anidada
   const { data: treeData, error: treeErr } = await dataClient
@@ -2657,7 +2667,8 @@ export async function cargarVistaColumna(
     `)
     .eq('columna_id', colData.id)
     .order('codigo')
-  if (treeErr || !treeData) return []
+  if (treeErr) throw treeErr
+  if (!treeData) return []
 
   // Build flat structure
   type FlatNivel = { id: string; numero: number; posicionId: string; posicionNumero: number; subcolCodigo: string }

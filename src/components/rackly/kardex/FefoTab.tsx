@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { fetchMovimientos, calcularLotesRemanentes, proveedorPorVenc, type Movimiento } from '@/lib/rackly/kardex'
-import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
+import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { hoyISO } from '@/lib/rackly/formato'
 import { Input } from '@/components/ui/input'
@@ -96,6 +97,9 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
   // Búsqueda + filtros persistidos (inicializador lazy): al volver desde
   // Ocupación (botón de retorno) continúa donde quedó.
   const [movs, setMovs] = useState<Movimiento[]>([])
+  // Task 24: estado honesto de sincronización (spinner mientras descarga;
+  // antes mostraba "Sin lotes FEFO" durante los primeros 30-60 s)
+  const [estadoMovs, setEstadoMovs] = useState<EstadoMovs>('cargando')
   const [search, setSearch] = useState(() => loadTabState('racks.fefo', FEFO_FILTROS_BASE).search)
   const [fechaDesde, setFechaDesde] = useState(() => loadTabState('racks.fefo', FEFO_FILTROS_BASE).desde)
   const [fechaHasta, setFechaHasta] = useState(() => loadTabState('racks.fefo', FEFO_FILTROS_BASE).hasta)
@@ -105,7 +109,7 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
   })
   const [busy, setBusy] = useState(false)
 
-  useMovimientosRealtime(setMovs)
+  useMovimientosRealtime(setMovs, setEstadoMovs)
 
   // Persistir búsqueda + filtros (se restauran al volver desde Ocupación)
   useEffect(() => {
@@ -513,6 +517,10 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
             </Badge>
           </div>
         </>
+      ) : estadoMovs !== 'listo' && fefoData.length === 0 ? (
+        // Task 24: mientras el dataset descarga (o si falló), NO mostrar el
+        // vacío real — mostrar spinner honesto / panel de reintento
+        <EstadoCargaMovs estado={estadoMovs} onRetry={reintentarMovimientos} />
       ) : (
         <div className="flex flex-col items-center gap-2 text-muted-foreground py-10 justify-center">
           <PackageSearch className="h-8 w-8" />

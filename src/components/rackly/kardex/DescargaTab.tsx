@@ -3,7 +3,8 @@
 import { useState, useRef } from 'react'
 import { fetchMovimientos, addMovimientosBatch, listarMovimientoIds, eliminarMovimientosPorIds, calcularLotesRemanentes, proveedorPorVenc, compararFEFO, compararUbicacionNum, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
 import { aNumero, hoyISO } from '@/lib/rackly/formato'
-import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
+import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -727,9 +728,10 @@ const ROLES_UPDATA = new Set(['admin', 'coordinador_operaciones'])
 export function DescargaTab() {
   const { perfil } = useAuth()
   const [movs, setMovs] = useState<Movimiento[]>([])
+  const [estadoMovs, setEstadoMovs] = useState<EstadoMovs>('cargando')
   const [section, setSection] = useState<'download' | 'upload'>('download')
 
-  useMovimientosRealtime(setMovs)
+  useMovimientosRealtime(setMovs, setEstadoMovs)
 
   const puedeSubir = perfil ? ROLES_UPDATA.has(perfil.rol) : false
 
@@ -769,7 +771,11 @@ export function DescargaTab() {
       </div>
 
       {/* Content */}
-      {section === 'download' && <DownloadSection movs={movs} />}
+      {section === 'download' && (movs.length === 0 && estadoMovs !== 'listo' ? (
+        /* Task 24: spinner honesto mientras el dataset carga (antes: botones
+           de exportación deshabilitados sin explicación aparente) */
+        <EstadoCargaMovs estado={estadoMovs} onRetry={reintentarMovimientos} />
+      ) : <DownloadSection movs={movs} />)}
       {section === 'upload' && puedeSubir && <UpDataSection />}
       {section === 'upload' && !puedeSubir && (
         <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-6 flex flex-col items-center justify-center text-center gap-3">

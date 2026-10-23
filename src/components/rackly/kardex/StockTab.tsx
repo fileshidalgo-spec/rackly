@@ -18,7 +18,8 @@ import {
   searchCatalogo,
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
-import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
+import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -42,6 +43,9 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
   // Ocupación (botón de retorno) la búsqueda continúa donde quedó.
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [query, setQuery] = useState(() => loadTabState('racks.stock', { q: '', sel: '', filter: 'todos' }).q)
+  // Task 24: estado honesto de sincronización (spinner en vez de "Sin stock"
+  // mientras el dataset de movimientos descarga)
+  const [estadoMovs, setEstadoMovs] = useState<EstadoMovs>('cargando')
   const [selectedCodigo, setSelectedCodigo] = useState(() => loadTabState('racks.stock', { q: '', sel: '', filter: 'todos' }).sel)
   const [stockFilter, setStockFilter] = useState<'todos' | 'disponibles' | 'inc'>(() => {
     const f = loadTabState('racks.stock', { q: '', sel: '', filter: 'todos' }).filter
@@ -63,7 +67,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
     }[]
   >([])
 
-  useMovimientosRealtime(setMovs)
+  useMovimientosRealtime(setMovs, setEstadoMovs)
 
   // Persistir la búsqueda en curso (se restaura al volver desde Ocupación)
   useEffect(() => {
@@ -645,7 +649,11 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       </div>
 
       {/* Stock por ubicación */}
-      {displayStock.length > 0 ? (
+      {selectedCodigo && displayStock.length === 0 && estadoMovs !== 'listo' ? (
+        // Task 24: mientras el dataset descarga NO mostrar "Sin stock en
+        // ubicaciones de RACKLY" (dato falso) — spinner/reintento honesto
+        <EstadoCargaMovs estado={estadoMovs} onRetry={reintentarMovimientos} />
+      ) : displayStock.length > 0 ? (
         <>
         <div className="space-y-3">
 

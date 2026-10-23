@@ -83,25 +83,50 @@ function fromRow(r: Record<string, unknown>): Movimiento {
 }
 
 export async function fetchMovimientos(): Promise<Movimiento[]> {
-  const all: Record<string, unknown>[] = []
-  let from = 0
-  let iterations = 0
-  while (iterations < FETCH_MOV_MAX_PAGES) {
-    iterations++
-    const to = from + PAGE_SIZE - 1
-    const { data, error } = await dataClient
-      .from('movimientos')
-      .select('*')
+  // ── FIX Task 24 (pestañas sin datos) ──
+  // La descarga completa era SECUENCIAL (51 páginas de 500 en serie ≈ 30-60 s
+  // con 25K+ filas): FEFO/Traslado/Stock/Movimientos parecían "sin datos"
+  // durante todo ese lapso. Ahora se descarga la 1ª página con `count: exact`
+  // para dimensionar la tabla y el resto se pide en OLEADAS CONCURRENTES
+  // (8 en paralelo). Mismo orden (f_modificacion DESC, id ASC), mismo
+  // resultado y mismos topes (FETCH_MOV_MAX_PAGES) — solo más rápido (~6-8×).
+  const CONCURRENCY = 8
+
+  function pagina(from: number, conCount: boolean) {
+    let q = dataClient.from('movimientos').select('*', conCount ? { count: 'exact' } : undefined)
+    return q
       .order('f_modificacion', { ascending: false })
       .order('id', { ascending: true })
-      .range(from, to)
-    if (error) throw error
-    const rows = data ?? []
-    all.push(...rows)
-    if (rows.length < PAGE_SIZE) break
-    from += PAGE_SIZE
+      .range(from, from + PAGE_SIZE - 1)
   }
-  return all.map(fromRow)
+
+  // 1ª página: datos + total real (content-range) para calcular las páginas restantes
+  const primera = await pagina(0, true)
+  if (primera.error) throw primera.error
+  const primeraData = (primera.data ?? []) as Record<string, unknown>[]
+  if (primeraData.length < PAGE_SIZE) return primeraData.map(fromRow) // tabla pequeña: 1 página
+  const total = primera.count ?? primeraData.length
+  const totalPaginas = Math.min(Math.ceil(total / PAGE_SIZE), FETCH_MOV_MAX_PAGES)
+
+  const paginas: Record<string, unknown>[][] = [primeraData]
+  const numerosPagina: number[] = []
+  for (let p = 1; p < totalPaginas; p++) numerosPagina.push(p)
+
+  // Oleadas de CONCURRENCY peticiones en paralelo; el índice preserva el orden global
+  for (let cursor = 0; cursor < numerosPagina.length; cursor += CONCURRENCY) {
+    const lote = numerosPagina.slice(cursor, cursor + CONCURRENCY)
+    const resultados = await Promise.all(
+      lote.map(async (p) => {
+        const from = p * PAGE_SIZE
+        const r = await pagina(from, false)
+        if (r.error) throw r.error
+        return (r.data ?? []) as Record<string, unknown>[]
+      })
+    )
+    paginas.push(...resultados)
+  }
+
+  return paginas.flat().map(fromRow)
 }
 
 export async function fetchMovimientosByCodigo(codigo: string): Promise<Movimiento[]> {

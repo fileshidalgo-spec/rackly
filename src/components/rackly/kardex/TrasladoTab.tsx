@@ -13,9 +13,10 @@ import {
 import { calcularTurno } from '@/lib/rackly/turno'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
 import { useAuth } from '@/hooks/useAuth'
-import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
 import { detectarRqParaSalida, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
 import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
+import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
 import { findCatalogoByCodigo } from '@/lib/rackly/catalogo'
 
@@ -109,8 +110,11 @@ export function TrasladoTab() {
   const [corregirDiferencia, setCorregirDiferencia] = useState(false)
 
   const [movs, setMovs] = useState<Movimiento[]>([])
+  // Task 24: estado honesto de sincronización — antes la pestaña mostraba
+  // "0 ubicaciones" mientras el dataset completo descargaba (30-60 s)
+  const [estadoMovs, setEstadoMovs] = useState<EstadoMovs>('cargando')
 
-  useMovimientosRealtime(setMovs)
+  useMovimientosRealtime(setMovs, setEstadoMovs)
 
   // NOTA: el early-return de carga se hace DESPUÉS de todos los hooks (más abajo),
   // para no violar las Rules of Hooks (antes los hooks condicionales provocaban
@@ -139,7 +143,10 @@ export function TrasladoTab() {
       salidas: Array<{ venc: string; qty: number }>
       lotesFis: Map<string, Set<string>>  // códigos de lote físicos por fecha (trazabilidad)
     }>()
-    const relevant = movs.filter((m) => m.codigo === code && !m.codigoInc)
+    // FIX Task 24: normalizar AMBOS lados (trim + mayúsculas) igual que Stock y
+    // FEFO — la igualdad estricta excluía filas cuyo codigo viniera con espacios
+    // o minúsculas en BD (clase entera de "no me da información")
+    const relevant = movs.filter((m) => m.codigo.trim().toUpperCase() === code && !m.codigoInc)
     const POS_TYPES = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
     for (const m of relevant) {
       const qty = m.cantidad
@@ -561,6 +568,12 @@ export function TrasladoTab() {
             </Badge>
           </div>
         </div>
+      )}
+
+      {/* Task 24: spinner/reintento mientras el dataset de movimientos carga —
+          si hay código buscado y aún no hay datos, NO decir "0 ubicaciones" */}
+      {codigo && locations.length === 0 && estadoMovs !== 'listo' && (
+        <EstadoCargaMovs estado={estadoMovs} onRetry={reintentarMovimientos} />
       )}
 
       {locations.length > 0 && (

@@ -30,7 +30,8 @@ import { AtencionModule } from '@/components/rackly/atencion/AtencionModule'
 import { TransitoModule } from '@/components/rackly/transito/TransitoModule'
 import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
 import { limpiarContextoSalidaRq } from '@/lib/rackly/rq-contexto-salida'
-import { useMovimientosRealtime } from '@/hooks/useMovimientosRealtime'
+import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
+import { EstadoCargaMovs } from '@/components/rackly/kardex/EstadoCargaMovs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -102,6 +103,9 @@ function RacklyApp() {
   const [view, setView] = useState<'inicio' | VistaModulo>('inicio')
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [expandMovs, setExpandMovs] = useState(false)
+  // Task 24: estado honesto de sincronización de movimientos (spinner en la
+  // pestaña Movimientos mientras el dataset completo descarga)
+  const [estadoMovs, setEstadoMovs] = useState<EstadoMovs>('cargando')
   const [filterTipo, setFilterTipo] = useState('todos')
   const [filterUsuario, setFilterUsuario] = useState('todos')
   const [filterCodigo, setFilterCodigo] = useState('')
@@ -169,7 +173,7 @@ function RacklyApp() {
     setView('piso')
   }
 
-  useMovimientosRealtime(setMovs)
+  useMovimientosRealtime(setMovs, setEstadoMovs)
 
   // Los flujos masivos llaman onCreated([]) solo para forzar re-render: si se
   // pasara tal cual, la lista global de movimientos se pisaba con vacío y
@@ -555,6 +559,11 @@ function RacklyApp() {
                     </div>
                   )}
 
+                  {movs.length === 0 && estadoMovs !== 'listo' ? (
+                    // Task 24: spinner/reintento honesto mientras el dataset de
+                    // movimientos carga — antes la tabla quedaba vacía 30-60 s
+                    <EstadoCargaMovs estado={estadoMovs} onRetry={reintentarMovimientos} />
+                  ) : (
                   <div className="overflow-x-auto rounded-xl border border-slate-200/60">
                     <Table className="min-w-[800px]">
                       <TableHeader>
@@ -627,6 +636,7 @@ function RacklyApp() {
                       </TableBody>
                     </Table>
                   </div>
+                  )}
                   {movsFiltrados.length > 5 && (
                     <div className="mt-4 flex justify-center">
                       <Button variant="outline" size="sm" onClick={() => setExpandMovs((v) => !v)} className="gap-2 rounded-xl border-dashed font-medium">

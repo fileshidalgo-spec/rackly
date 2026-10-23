@@ -454,7 +454,8 @@ export function RqDetalle({
                   <td className="px-3 py-2 text-right font-bold text-emerald-700">
                     {fmt(it.cantidadAtendida)}
                   </td>
-                  <td className={`px-3 py-2 text-right font-bold ${pendiente > 0 ? 'text-amber-700' : 'text-slate-300'}`}>
+                  {/* FIX Task 18: pendiente 0 → VERDE (ítem completo), antes gris */}
+                  <td className={`px-3 py-2 text-right font-bold ${pendiente > 0 ? 'text-amber-700' : 'text-emerald-600 dark:text-emerald-400'}`}>
                     {fmt(pendiente)}
                   </td>
                   {/* ATENDER: digita la cantidad y confirma (excedente permitido) */}
@@ -597,7 +598,8 @@ export function RqDetalle({
                 </div>
                 <div className="rounded-lg bg-amber-50/60 border border-amber-100 py-1.5">
                   <p className="text-[9px] font-bold uppercase tracking-wide text-amber-500">Pendiente</p>
-                  <p className={`text-sm font-extrabold ${pendiente > 0 ? 'text-amber-700' : 'text-slate-300'}`}>
+                  {/* FIX Task 18: pendiente 0 → VERDE (ítem completo), antes gris */}
+                  <p className={`text-sm font-extrabold ${pendiente > 0 ? 'text-amber-700' : 'text-emerald-600'}`}>
                     {fmt(pendiente)}
                   </p>
                 </div>

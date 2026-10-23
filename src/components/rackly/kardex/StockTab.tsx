@@ -260,7 +260,9 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         }
       }
       for (const [posKey, stock] of incCellMap) {
-        if (stock <= 0) continue
+        // FIX Task 18: las ubicaciones en 0 exacto (con historial) TAMBIÉN se
+        // listan — se pintan en verde como "vacía". Solo se excluyen negativos.
+        if (stock < 0) continue
         const desc = descMap.get(posKey)
         if (!desc) continue
         const [bloque, torre, piso, posicion] = posKey.split('-')
@@ -275,10 +277,12 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         })
       }
     } else {
-      // Modo normal: filtrar celdas donde el código seleccionado tiene stock > 0
+      // Modo normal: celdas del código con stock > 0 MÁS las ubicaciones en 0
+      // exacto (con historial de movimientos) que se muestran en verde como
+      // "vacía" — antes desaparecían de la lista al quedarse sin stock.
       for (const [posKey, codeMap] of cellMap) {
         const posStock = codeMap.get(code)
-        if (!posStock || posStock <= 0) continue
+        if (!posStock || posStock < 0) continue
         const desc = descMap.get(posKey)
         if (!desc) continue
         const [bloque, torre, piso, posicion] = posKey.split('-')
@@ -613,7 +617,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
           <Warehouse className="h-3.5 w-3.5" />
-          {displayStock.length > 0 ? 'Stock por ubicación en RACKLY · toca la ubicación para ir a Ocupación' : 'Sin stock en ubicaciones de RACKLY'}
+          {displayStock.length > 0 ? 'Stock por ubicación en RACKLY · toca la ubicación para ir a Ocupación · en VERDE: ubicación en 0 (vacía)' : 'Sin stock en ubicaciones de RACKLY'}
         </p>
       </div>
       <div className="flex gap-2">
@@ -659,7 +663,18 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                     <ExternalLink className="h-2.5 w-2.5 text-violet-400" />
                   </button>
                   <div className="flex items-center gap-2">
-                    <Badge variant="default" className="text-sm">{s.stock}</Badge>
+                    {/* FIX Task 18: stock 0 → badge VERDE (ubicación vacía, no desaparece) */}
+                    {s.stock === 0 ? (
+                      <Badge
+                        variant="outline"
+                        className="text-sm bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                        title="Ubicación vacía · stock 0"
+                      >
+                        0
+                      </Badge>
+                    ) : (
+                      <Badge variant="default" className="text-sm">{s.stock}</Badge>
+                    )}
                     {esAdmin && (
                       <Button
                         variant="ghost"
@@ -777,7 +792,18 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                       )}
                     </TableCell>
                     <TableCell className="text-right font-medium">
-                      <Badge variant="default">{s.stock}</Badge>
+                      {/* FIX Task 18: stock 0 → badge VERDE (ubicación vacía, no desaparece) */}
+                      {s.stock === 0 ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                          title="Ubicación vacía · stock 0"
+                        >
+                          0
+                        </Badge>
+                      ) : (
+                        <Badge variant="default">{s.stock}</Badge>
+                      )}
                     </TableCell>
                     {esAdmin && (
                       <TableCell>

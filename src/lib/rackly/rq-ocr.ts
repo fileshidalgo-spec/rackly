@@ -118,13 +118,6 @@ const UNIDADES = new Set([
 ])
 
 /**
- * Líneas que JAMÁS son filas de materiales: etiquetas del encabezado,
- * pies, firmas y encabezados de columna de la tabla.
- */
-const RE_SKIP_LINEA =
-  /(REQUISICI|ALMAC[EÉ]N|ORDEN|FECHA|TURNO|SOLICIT|PRODUCTO|LOTE|MONEDA|OBSERVACI|SUPERVIS|APROB|RECIBI|V[º°]?B|VO\.?BO|NOTA|P[ÁA]GINA|PAG|HORA|IMPRIMI|DESCRIPCI|CANTIDAD|UNIDAD\s+DE\s+MEDIDA|U\/M|^\s*I[TÍ]EM\s*$|C[ÓO]DIGO|SUB\s?TOTAL|TOTAL|FIRMA|NOMBRE|AREA|GU[IÍ]A|SALIDA\s+DE|DESPACHO\s+DE)/i
-
-/**
  * FECHA disfrazada de material: si el OCR parte el renglón "TURNO Y FECH :
  * 004  21/10/2026" en dos líneas, "004  21/10/2026" cumple el patrón de fila
  * (código + cantidad al final: cantidad=2026) y nacía un material fantasma.
@@ -263,6 +256,23 @@ function limpiarSolicitante(texto: string): string {
     .trim()
 }
 
+/**
+ * Quita el ESTADO por fila que el formato AJEPER 2026 (RQ 0000191740) imprime
+ * al final de cada material: «… UN 165,000.0000 120,000.0000 Pendiente».
+ * Un token sin dígitos tras la última cifra NO es parte del material (el
+ * estado puede salir con ruido OCR: "Pendiante", "Pend iente"…), así que se
+ * retiran hasta 3 tokens finales sin dígitos y se detiene en la primera cifra.
+ */
+function quitarEstadoFinal(texto: string): string {
+  let t = texto
+  for (let i = 0; i < 3; i++) {
+    const recortada = t.replace(/\s+[^\d\s]+$/i, '')
+    if (recortada === t) break
+    t = recortada
+  }
+  return t.trimEnd()
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // EXTRACCIÓN PRINCIPAL
 // ═══════════════════════════════════════════════════════════════════
@@ -335,14 +345,12 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
     }
 
     // ── Filas de la tabla de materiales ──
-    // PRIMERO se intenta leer la fila (código + cantidad final): un material
-    // cuya descripción menciona "CANTIDAD"/"FECHA" no debe perderse por el
-    // filtro de etiquetas. El filtro SOLO descarta lo que NO es fila válida.
-    const mFila = linea.match(/^(\d{1,8})\s+(.{3,})$/)
-    if (!mFila) {
-      if (RE_SKIP_LINEA.test(linea)) continue
-      continue
-    }
+    // PRIMERO se intenta leer la fila (código + cantidad): un material cuya
+    // descripción menciona "CANTIDAD"/"FECHA" no debe perderse. El guion
+    // separador de la tabla que el OCR pega al inicio de la fila se retira
+    // antes ("---- 001 57268 …", típico en el pase zoom).
+    const mFila = linea.replace(/^[-—–_\s]+/, '').match(/^(\d{1,8})\s+(.{3,})$/)
+    if (!mFila) continue
     const codigoBruto = mFila[1]
     // La línea del PRODUCTO TERMINADO del encabezado no es un material
     if (codigoBruto === res.productoCodigo) continue
@@ -360,17 +368,70 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
       }
     }
 
-    // Cantidad + unidad al FINAL de la línea (ancla fuerte: sin cantidad
-    // final la línea NO es un material — evita capturar datos sueltos)
-    const mCant = resto.match(new RegExp('(' + RE_CANTIDAD.source + ')\\s*(' + [...UNIDADES].join('|') + ')?\\s*$'))
-    if (!mCant) {
-      if (RE_SKIP_LINEA.test(linea)) continue
-      continue
+    // ── CANTIDAD: ancla doble (2 formatos AJEPER) ────────────────────
+    //
+    // ANCLA A · formato clásico (RQ 0000191373): cantidad [+ unidad] al
+    // FINAL de la línea — sin cantidad final la línea NO es un material.
+    //   «001 55487 BASE PARA BEBIDA … PIVA 5   24.0000»
+    //
+    // ANCLA B · formato con ESTADO y SALDO por fila (RQ 0000191740,
+    // 2026-10-24): la unidad PRECEDE a la cantidad (UNID. → CANTIDAD) y
+    // tras ella pueden venir el saldo y el estado:
+    //   «001 57268 ETIQUETA … DIS.25 UN 165,000.0000 120,000.0000 Pendiente»
+    // La columna de estado ("Pendiente") y el saldo rompían el ancla
+    // clásica y NINGÚN material entraba ("no jala los items", error
+    // reportado 24-10-2026). Selección:
+    //   · Si tras la «unidad cantidad» quedan cifras (columna de saldo) o
+    //     el ancla clásica no cuadra → manda la cantidad marcada por la
+    //     ÚLTIMA unidad con número detrás (la cifra sobrante es el saldo).
+    //   · Si no, manda el ancla clásica (compatibilidad total: cero cambio
+    //     para las RQ que ya funcionaban).
+    //   · Último recurso: ancla clásica tras quitar el estado
+    //     («24.0000 Pendiente» / «24.0000 UN Pendiente»).
+    const reCantFinal = new RegExp(
+      '(' + RE_CANTIDAD.source + ')\\s*(' + [...UNIDADES].join('|') + ')?\\s*$'
+    )
+    let cantidad = 0
+    let unidad = ''
+    let descripcion = ''
+    const cerrarFinal = (fuente: string, m: RegExpMatchArray) => {
+      cantidad = aNumero(m[1])
+      unidad = (m[2] ?? '').trim()
+      descripcion = fuente.slice(0, m.index ?? 0).replace(/[\s.\-–—:]+$/, '').trim()
     }
-    const cantidad = aNumero(mCant[1])
+    const cerrarUnidad = (fuente: string, m: RegExpExecArray) => {
+      cantidad = aNumero(m[2])
+      unidad = m[1]
+      descripcion = fuente.slice(0, m.index).replace(/[\s.\-–—:]+$/, '').trim()
+    }
+
+    const mFinal = resto.match(reCantFinal)
+    const cola = quitarEstadoFinal(resto)
+    const reUnidadCant = new RegExp(
+      '\\b(' + [...UNIDADES].join('|') + ')\\b\\s*[-—–+.:]?\\s*(' + RE_CANTIDAD.source + ')',
+      'g'
+    )
+    let mU: RegExpExecArray | null
+    let ultima: RegExpExecArray | null = null
+    while ((mU = reUnidadCant.exec(cola))) {
+      if (aNumero(mU[2]) > 0) ultima = mU
+    }
+    // ¿Quedan cifras DESPUÉS de la «unidad cantidad»? → columna de saldo
+    const haySaldo = ultima ? /\d/.test(cola.slice(ultima.index + ultima[0].length)) : false
+
+    if (ultima && (haySaldo || !mFinal)) {
+      cerrarUnidad(cola, ultima)
+    } else if (mFinal) {
+      cerrarFinal(resto, mFinal)
+    } else {
+      const mCola = cola.match(reCantFinal)
+      if (mCola) {
+        cerrarFinal(cola, mCola)
+      } else {
+        continue
+      }
+    }
     if (cantidad <= 0) continue
-    let descripcion = resto.slice(0, mCant.index).replace(/[\s.\-–—:]+$/, '').trim()
-    const unidad = (mCant[2] ?? '').trim()
 
     // Descripción demasiado corta → tratar de completarla con el catálogo
     // ANTI-FECHAS (pedido del usuario 2026-10-23): un fragmento de fecha
@@ -410,7 +471,11 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
     if (res.items.length >= MAX_ITEMS) break
     res.items.push({
       codigo: codigoFinal,
-      descripcion,
+      // El catálogo es la fuente de verdad: si el código existe, la
+      // descripción OFICIAL reemplaza a la leída por OCR (corrige de paso
+      // las lecturas con ruido: "36.1"→"38.1", "MÍ"→"ML"). Sin catálogo
+      // se conserva la lectura y la fila queda marcada para revisión.
+      descripcion: cat ? cat.descripcion : descripcion,
       cantidad,
       unidad: unidad || cat?.un || '',
       enCatalogo: Boolean(cat),

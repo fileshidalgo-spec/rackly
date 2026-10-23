@@ -260,9 +260,10 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         }
       }
       for (const [posKey, stock] of incCellMap) {
-        // FIX Task 18: las ubicaciones en 0 exacto (con historial) TAMBIÉN se
-        // listan — se pintan en verde como "vacía". Solo se excluyen negativos.
-        if (stock < 0) continue
+        // FIX Task 19: la búsqueda lista SOLO stock > 0. Las ubicaciones donde el
+        // INC ya no está (stock 0 con historial) y las negativas NO se muestran
+        // (Task 18 las mostraba en verde; generaba listas 82% ruido histórico).
+        if (stock <= 0) continue
         const desc = descMap.get(posKey)
         if (!desc) continue
         const [bloque, torre, piso, posicion] = posKey.split('-')
@@ -277,12 +278,13 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         })
       }
     } else {
-      // Modo normal: celdas del código con stock > 0 MÁS las ubicaciones en 0
-      // exacto (con historial de movimientos) que se muestran en verde como
-      // "vacía" — antes desaparecían de la lista al quedarse sin stock.
+      // Modo normal: SOLO celdas del código con stock > 0. Las ubicaciones donde
+      // el producto YA NO ESTÁ (stock 0 con historial de movimientos) no se
+      // listan — Task 19: "posiciones donde estuvo el producto con stock 0 no
+      // deberían mostrarse". Negativas tampoco (estado de error).
       for (const [posKey, codeMap] of cellMap) {
         const posStock = codeMap.get(code)
-        if (!posStock || posStock < 0) continue
+        if (!posStock || posStock <= 0) continue
         const desc = descMap.get(posKey)
         if (!desc) continue
         const [bloque, torre, piso, posicion] = posKey.split('-')
@@ -617,7 +619,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
           <Warehouse className="h-3.5 w-3.5" />
-          {displayStock.length > 0 ? 'Stock por ubicación en RACKLY · toca la ubicación para ir a Ocupación · en VERDE: ubicación en 0 (vacía)' : 'Sin stock en ubicaciones de RACKLY'}
+          {displayStock.length > 0 ? 'Stock por ubicación en RACKLY · toca la ubicación para ir a Ocupación · solo ubicaciones con stock' : 'Sin stock en ubicaciones de RACKLY'}
         </p>
       </div>
       <div className="flex gap-2">
@@ -663,7 +665,9 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                     <ExternalLink className="h-2.5 w-2.5 text-violet-400" />
                   </button>
                   <div className="flex items-center gap-2">
-                    {/* FIX Task 18: stock 0 → badge VERDE (ubicación vacía, no desaparece) */}
+                    {/* Defensa Task 19: una fila en 0 ya no debería llegar aquí
+                        (cliente y RPC filtran > 0); si una carrera realtime la
+                        colara, se pinta VERDE (vacía), nunca como stock real. */}
                     {s.stock === 0 ? (
                       <Badge
                         variant="outline"
@@ -792,7 +796,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                       )}
                     </TableCell>
                     <TableCell className="text-right font-medium">
-                      {/* FIX Task 18: stock 0 → badge VERDE (ubicación vacía, no desaparece) */}
+                      {/* Defensa Task 19 (ver comentario en vista móvil). */}
                       {s.stock === 0 ? (
                         <Badge
                           variant="outline"

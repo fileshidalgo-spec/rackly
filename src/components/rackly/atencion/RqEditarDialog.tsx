@@ -30,17 +30,23 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   validarEdicionRq,
   editarRq,
+  revertirItemRq,
+  revertirOrigenRq,
+  obtenerRqCompleta,
+  listarLotesPuenteDeItem,
   type RqAtencion,
   type RqItem,
   type ItemEditarRq,
   type EncabezadoEditarRq,
   type ResultadoEdicionRq,
+  type LotePuenteDeItem,
 } from '@/lib/rackly/rq-atencion'
 import {
   fetchCatalogo,
   getCachedCatalogo,
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
+import { calcularTurno } from '@/lib/rackly/turno'
 import { aNumero } from '@/lib/rackly/formato'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
@@ -64,7 +70,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
-import { Loader2, Plus, Trash2, TriangleAlert } from 'lucide-react'
+import { Loader2, Plus, Trash2, TriangleAlert, Undo2 } from 'lucide-react'
 
 /** Fila editable del diálogo (cantidad como texto; key estable para React). */
 type FilaEdicion = {
@@ -93,6 +99,12 @@ const ETIQUETAS: Record<string, string> = {
 }
 
 let seqFila = 0
+
+/** Formato numérico es-PE (igual que el resto del módulo). */
+function fmt(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('es-PE', { maximumFractionDigits: 3 })
+}
+
 function filaVacia(): FilaEdicion {
   seqFila += 1
   return { key: `nueva-${seqFila}`, id: '', codigo: '', descripcion: '', unidad: '', cantidad: '', atendida: 0 }
@@ -160,12 +172,15 @@ export function RqEditarDialog({
   rq,
   items,
   onGuardada,
+  onSincronizada,
 }: {
   open: boolean
   onOpenChange: (o: boolean) => void
   rq: RqAtencion
   items: RqItem[]
   onGuardada: (r: ResultadoEdicionRq) => void
+  /** Task 27: tras revertir dentro del editor, sincroniza rq+items con el padre. */
+  onSincronizada?: (rq: RqAtencion, items: RqItem[]) => void
 }) {
   const { perfil } = useAuth()
 
@@ -185,6 +200,11 @@ export function RqEditarDialog({
   const [errores, setErrores] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [confirmar, setConfirmar] = useState(false)
+
+  // ── Reversa guiada de material ATENDIDO (Task 27: «editar los atendidos») ──
+  const [revertirFila, setRevertirFila] = useState<FilaEdicion | null>(null)
+  const [lotesDeFila, setLotesDeFila] = useState<LotePuenteDeItem[] | null>(null)
+  const [revirtiendo, setRevirtiendo] = useState(false)
 
   /** Catálogo cargado una vez (autocompletado de códigos). */
   const [catalogo, setCatalogo] = useState<CatalogoItem[]>([])
@@ -250,6 +270,52 @@ export function RqEditarDialog({
 
   function agregarFila() {
     setFilas((prev) => [...prev, filaVacia()])
+  }
+
+  /** Abre la reversa guiada de un material con atención (primero revertir,
+   *  luego el código/unidad/cantidad quedan editables). */
+  async function abrirReversionFila(f: FilaEdicion) {
+    setRevertirFila(f)
+    setLotesDeFila(null)
+    try {
+      const lotes = await listarLotesPuenteDeItem(f.id, f.codigo)
+      setLotesDeFila(lotes)
+    } catch {
+      setLotesDeFila([])
+    }
+  }
+
+  /** Revierte TODA la atención de la fila (con origen si tiene lotes del
+   *  puente: devuelve guías/posiciones) y refresca el editor. */
+  async function ejecutarReversionFila() {
+    const f = revertirFila
+    if (!f || !f.id) return
+    setRevirtiendo(true)
+    try {
+      if (lotesDeFila && lotesDeFila.length > 0) {
+        const r = await revertirOrigenRq(f.id, null, calcularTurno(), {
+          id: perfil?.id ?? '',
+          nombre: perfil?.nombre || perfil?.correo || '',
+          correo: perfil?.correo ?? '',
+        })
+        if (!r.ok) throw new Error(r.fallo?.mensaje ?? 'No se pudo revertir con origen')
+      } else {
+        await revertirItemRq(f.id, f.atendida)
+      }
+      const completa = await obtenerRqCompleta(rq.id)
+      setFilas(completa.items.length > 0 ? completa.items.map(filaDeItem) : [filaVacia()])
+      setRevertirFila(null)
+      onSincronizada?.(completa.rq, completa.items)
+      toast.success(
+        `Atención revertida: ${f.codigo} vuelve a pendiente`,
+        { description: 'Ahora puedes corregir su código, unidad, cantidad o quitarlo, y volver a atender.' }
+      )
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('No se pudo revertir la atención', { description: message })
+    } finally {
+      setRevirtiendo(false)
+    }
   }
 
   /** Adopta código del catálogo: completa descripción/unidad si están vacíos. */
@@ -458,10 +524,34 @@ export function RqEditarDialog({
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
+                      {/* Task 27: revertir la atención de este material AQUÍ (guiado) */}
+                      {f.id && f.atendida > 0 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                          disabled={revirtiendo}
+                          title="Revertir su atención para poder corregirlo"
+                          onClick={() => void abrirReversionFila(f)}
+                        >
+                          <Undo2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                     {f.atendida > 0 && (
-                      <p className="text-[10px] font-semibold text-emerald-700 pl-5">
-                        Atendidos: {f.atendida} — código y unidad congelados; la cantidad no puede bajar de {f.atendida}.
+                      <p className="text-[10px] font-semibold text-emerald-700 pl-5 flex items-center flex-wrap gap-x-2">
+                        <span>
+                          Atendidos: {f.atendida} — para corregir código/unidad o quitarlo, revierte su atención
+                          (botón ⟲); la cantidad no puede bajar de {f.atendida}.
+                        </span>
+                        <button
+                          type="button"
+                          className="underline text-amber-700 hover:text-amber-800"
+                          onClick={() => void abrirReversionFila(f)}
+                        >
+                          Revertir ahora
+                        </button>
                       </p>
                     )}
                   </div>
@@ -564,11 +654,53 @@ export function RqEditarDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/* ── Confirmación de la reversa guiada (Task 27) ── */}
+      <AlertDialog open={!!revertirFila} onOpenChange={(o) => !o && !revirtiendo && setRevertirFila(null)}>
+        <AlertDialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md max-h-[85vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Revertir la atención de {revertirFila?.codigo}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  Se devolverán <b>{revertirFila ? fmt(revertirFila.atendida) : ''} {revertirFila?.unidad}</b> a pendiente
+                  y el material quedará EDITABLE (código, unidad, cantidad o quitarlo).
+                </p>
+                {lotesDeFila === null ? (
+                  <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Revisando atenciones con origen…
+                  </p>
+                ) : lotesDeFila.length > 0 ? (
+                  <p className="text-[11px] text-slate-600 rounded-lg border border-teal-100 bg-teal-50/60 p-2">
+                    Este material tiene <b>{lotesDeFila.length}</b> atención(es) del puente (QR/Tránsito) — la reversa
+                    devolverá las guías/posiciones a su origen (compensación física completa).
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-500">
+                    La reversa solo ajusta cantidades de la RQ; no toca el stock físico (no hubo puente de escaneo).
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={revirtiendo}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                void ejecutarReversionFila()
+              }}
+              disabled={revirtiendo}
+              className="bg-amber-500 hover:bg-amber-600 text-white"
+            >
+              {revirtiendo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
+              Sí, revertir y editar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }
-
-// ── Helpers puros (montan el estado local → tipos de la capa de datos) ──
 
 function encabezadoDesdeEstado(s: {
   numeroRq: string

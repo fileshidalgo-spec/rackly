@@ -610,24 +610,239 @@ export async function editarRq(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// TOMAS DE ATENCIÓN (Task 27 — ledger rq_atencion_tomas)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Posición de una salida que se registra como atención de la RQ.
+ * La usan las rutas de salida de Racks/Piso (RqSalidaConfirmador) para dejar
+ * en el ledger DESDE DÓNDE salió el material.
+ */
+export type TomaUbicacion = {
+  /** Etiqueta legible de la posición (mismo formato que el app). */
+  ubicacion: string
+  cantidad: number
+  /** racks | piso (transito/manual los decide la RPC). */
+  origen?: 'racks' | 'piso'
+}
+
+/** Fila del ledger de tomas (rq_atencion_tomas). */
+export type TomaLedger = {
+  id: string
+  origen: string
+  /** Positivo = salida · Negativo = reversa. */
+  cantidad: number
+  ubicacion: string
+  /** Saldo de la posición TRAS la toma (exacto en ruta racks del puente). */
+  saldoResultante: number | null
+  usuarioNombre: string
+  fecha: string
+  lote: string
+}
+
+/** Agrupación por posición para la vista «Revisar». */
+export type RevisionPosicion = {
+  ubicacion: string
+  origen: 'racks' | 'piso'
+  /** Neto sacado de ESTA posición para esta RQ (reversas descontadas). */
+  sacado: number
+  /** Saldo que quedó AL MOMENTO de la última toma (si la BD lo reportó). */
+  saldoAlMomento: number | null
+  /** Saldo HOY en esa posición (lookup de stock actual; null = sin dato). */
+  saldoActual: number | null
+  /** Toma(s) crono de esta posición (incluye sus reversas). */
+  tomas: TomaLedger[]
+  usuarios: string[]
+  ultimaFecha: string
+}
+
+/** Resultado de «Revisar» un material: desde dónde se atendió y saldos. */
+export type RevisionAtencion = {
+  posiciones: RevisionPosicion[]
+  /** Descontado de guías en tránsito (puente QR). */
+  desdeTransito: { sacado: number; tomas: TomaLedger[] } | null
+  /** Atención digitada (botón Atender) sin posición registrada + sus reversas. */
+  manualSinPosicion: { sacado: number; tomas: TomaLedger[] } | null
+  /** Total revertido (absoluto) en el ledger. */
+  totalRevertido: number
+  /** Suma de salidas NETAS con posición conocida (racks+piso). */
+  coberturaConPosicion: number
+}
+
+/** Lista el ledger de tomas de un material (cronológico). */
+export async function listarTomasDeItem(itemId: string): Promise<TomaLedger[]> {
+  if (!itemId.trim()) return []
+  const { data, error } = await dataClient
+    .from('rq_atencion_tomas')
+    .select('*')
+    .eq('item_id', itemId)
+    .order('creado_en', { ascending: true })
+    .limit(500)
+  if (error) throw error
+  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id ?? ''),
+    origen: str(r.origen),
+    cantidad: toNum(r.cantidad),
+    ubicacion: str(r.ubicacion),
+    saldoResultante: r.saldo_resultante === null || r.saldo_resultante === undefined ? null : toNum(r.saldo_resultante),
+    usuarioNombre: str(r.usuario_nombre),
+    fecha: str(r.creado_en),
+    lote: str(r.lote),
+  }))
+}
+
+/**
+ * Agregación PURA del ledger → vista «Revisar» (testeable sin red).
+ * Agrupa tomas por posición (racks/piso), separa tránsito y manual, y
+ * conecta el saldo ACTUAL de cada posición desde los mapas de stock.
+ */
+export function agregarRevision(
+  tomas: TomaLedger[],
+  saldoRacks: Map<string, number>,
+  saldoPiso: Map<string, number>
+): RevisionAtencion {
+  const porPosicion = new Map<string, RevisionPosicion>()
+  const transito: TomaLedger[] = []
+  const manual: TomaLedger[] = []
+  let totalRevertido = 0
+  let cobertura = 0
+
+  for (const t of tomas) {
+    if (t.origen === 'reversa') totalRevertido += Math.abs(t.cantidad)
+    if (t.origen === 'transito') {
+      transito.push(t)
+      continue
+    }
+    const conPosicion = (t.origen === 'racks' || t.origen === 'piso') && t.ubicacion.trim() !== ''
+    if (conPosicion) {
+      const previa = porPosicion.get(t.ubicacion)
+      if (previa) {
+        previa.sacado += t.cantidad
+        if (t.cantidad > 0) cobertura += t.cantidad
+        previa.tomas.push(t)
+        if (t.saldoResultante !== null) previa.saldoAlMomento = t.saldoResultante
+        if (t.usuarioNombre && !previa.usuarios.includes(t.usuarioNombre)) previa.usuarios.push(t.usuarioNombre)
+        if (t.fecha > previa.ultimaFecha) previa.ultimaFecha = t.fecha
+      } else {
+        if (t.cantidad > 0) cobertura += t.cantidad
+        porPosicion.set(t.ubicacion, {
+          ubicacion: t.ubicacion,
+          origen: t.origen === 'piso' ? 'piso' : 'racks',
+          sacado: t.cantidad,
+          saldoAlMomento: t.saldoResultante,
+          saldoActual:
+            t.origen === 'racks'
+              ? (saldoRacks.get(t.ubicacion) ?? 0)
+              : saldoPiso.has(t.ubicacion)
+                ? Number(saldoPiso.get(t.ubicacion))
+                : null,
+          tomas: [t],
+          usuarios: t.usuarioNombre ? [t.usuarioNombre] : [],
+          ultimaFecha: t.fecha,
+        })
+      }
+      continue
+    }
+    // Manual sin posición + reversas sin posición (revertir simple).
+    manual.push(t)
+  }
+
+  return {
+    posiciones: [...porPosicion.values()].sort(
+      (a, b) => b.sacado - a.sacado || a.ubicacion.localeCompare(b.ubicacion)
+    ),
+    desdeTransito:
+      transito.length > 0
+        ? { sacado: transito.reduce((s, t) => s + t.cantidad, 0), tomas: transito }
+        : null,
+    manualSinPosicion:
+      manual.length > 0
+        ? { sacado: manual.reduce((s, t) => s + t.cantidad, 0), tomas: manual }
+        : null,
+    totalRevertido,
+    coberturaConPosicion: cobertura,
+  }
+}
+
+/**
+ * «Revisar» un material (Task 27): desde qué posiciones se atendió y el saldo
+ * de cada una. Combina el LEDGER (rq_atencion_tomas) con el stock ACTUAL de
+ * Racks/Piso (solo lectura, mismos lectores que «Ver ubicación»).
+ */
+export async function revisarAtencionItem(
+  item: Pick<RqItem, 'id' | 'codigo' | 'unidad' | 'cantidad' | 'cantidadAtendida'>
+): Promise<RevisionAtencion> {
+  const [tomas, stockRacks, stockPiso] = await Promise.all([
+    listarTomasDeItem(item.id),
+    import('@/lib/rackly/kardex')
+      .then((m) => m.fetchStockPorCodigoRPC(item.codigo, false))
+      .catch(() => null),
+    import('@/lib/piso/api')
+      .then((m) => m.stockPisoBuscar(item.codigo))
+      .catch(() => []),
+  ])
+
+  // Mapas de saldo ACTUAL por posición (mismas etiquetas que el ledger).
+  const saldoRacks = new Map<string, number>()
+  for (const r of stockRacks ?? []) {
+    saldoRacks.set(`B${r.bloque}·T${r.torre}·P${r.piso}·Pos${r.posicion}`, r.stock)
+  }
+  const saldoPiso = new Map<string, string>()
+  for (const p of stockPiso ?? []) {
+    if (p.ubicacion) saldoPiso.set(p.ubicacion, String(p.cantidad))
+  }
+
+  return agregarRevision(
+    tomas,
+    saldoRacks,
+    new Map<string, number>([...saldoPiso].map(([k, v]) => [k, Number(v)]))
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ATENDER / REVERTIR (RPC atómica + respaldo optimista)
 // ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Payload PURO de p_toma para la RPC rq_atender_item (testeable con esbuild+node).
+ * Normaliza el origen y recorta la ubicación; null = sin posiciones (la RPC
+ * registra una toma 'manual').
+ */
+export function payloadRpcTomas(
+  tomas?: TomaUbicacion[]
+): Record<string, unknown>[] | null {
+  if (!tomas || tomas.length === 0) return null
+  return tomas.map((t) => ({
+    origen: t.origen ?? 'manual',
+    ubicacion: t.ubicacion.trim(),
+    cantidad: t.cantidad,
+  }))
+}
 
 /**
  * Registra cantidad atendida de un material. RPC atómica: valida el tope,
  * suma y recalcula el estado del encabezado en UNA transacción en la BD
  * (dos celulares atendiendo a la vez nunca sobrepasan lo pendiente).
+ *
+ * `tomas` (Task 27): posiciones desde donde salió físicamente el material
+ * (rutas de salida de Racks/Piso con contexto RQ). La RPC las valida (la
+ * suma debe ser la cantidad) y las deja en el ledger rq_atencion_tomas;
+ * sin tomas registra una toma 'manual' para trazabilidad de quién atendió.
  */
 export async function atenderItemRq(
   itemId: string,
   cantidad: number,
-  usuarioNombre: string
+  usuarioNombre: string,
+  tomas?: TomaUbicacion[]
 ): Promise<RqItem> {
-  const { data, error } = await dataClient.rpc('rq_atender_item', {
+  const args: Record<string, unknown> = {
     p_item_id: itemId,
     p_cantidad: cantidad,
     p_usuario: usuarioNombre,
-  })
+  }
+  const pToma = payloadRpcTomas(tomas)
+  if (pToma) args.p_toma = pToma
+  const { data, error } = await dataClient.rpc('rq_atender_item', args)
   if (!error && data) return mapItem(data as Record<string, unknown>)
 
   // Respaldo (RPC no disponible): lectura → suma con guard optimista

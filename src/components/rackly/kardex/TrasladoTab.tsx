@@ -331,7 +331,12 @@ export function TrasladoTab() {
       }, undefined, { refetch: false })
       toast.success(`Salida de ${cantNum} ${stockItem.un} de ${stockItem.codigo}`)
       // Atención a Línea (RQ): ofrecer registro si se llegó DESDE una RQ
-      setRqConfirmer(detectarRqParaSalida([{ codigo: stockItem.codigo, cantidad: cantNum, unidad: stockItem.un }]))
+      // Task 27: la posición viaja al ledger rq_atencion_tomas (Revisar).
+      setRqConfirmer(detectarRqParaSalida([{
+        codigo: stockItem.codigo, cantidad: cantNum, unidad: stockItem.un,
+        ubicacion: `B${destBloque}·T${destTorre}·P${destPiso || '1'}·Pos${destPos}`,
+        origen: 'racks',
+      }]))
       // FIX auditoría 2026-10-21 (P3): limpiar la cantidad digitada — sin esto,
       // un segundo clic repetía la salida sin re-tipear.
       setSalidaParcialCant((prev) => ({ ...prev, [itemKey]: '' }))

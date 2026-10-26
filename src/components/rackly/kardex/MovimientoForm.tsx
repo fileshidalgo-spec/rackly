@@ -255,7 +255,12 @@ function IngresoForm({
       // Atención a Línea (RQ): FIX auditoría 2026-10-22 — la salida desde el
       // alerta de ubicación ocupada (durante un ingreso) TAMBIÉN ofrece el
       // registro en la RQ si se llegó desde una. Sin contexto no aparece.
-      setRqConfirmerIngreso(detectarRqParaSalida([{ codigo: stockItem.codigo, cantidad: stockItem.stock, unidad: stockItem.un }]))
+      // Task 27: la posición viaja al ledger rq_atencion_tomas (Revisar).
+      setRqConfirmerIngreso(detectarRqParaSalida([{
+        codigo: stockItem.codigo, cantidad: stockItem.stock, unidad: stockItem.un,
+        ubicacion: `B${bloque}·T${torre}·P${piso}·Pos${posicion}`,
+        origen: 'racks',
+      }]))
       onCreated(movs)
       // Refrescar datos del alerta
       const updated = await stockEnUbicacion(bloque, torre, piso, posicion)
@@ -684,7 +689,7 @@ function SalidaForm({
     let stockErrors = 0
     const errorDetails: string[] = []
     // Atención a Línea (RQ): lo salido en masa, por código, para la detección
-    const salidasParaRq: { codigo: string; cantidad: number; unidad?: string }[] = []
+    const salidasParaRq: { codigo: string; cantidad: number; unidad?: string; ubicacion?: string; origen?: 'racks' | 'piso' }[] = []
     try {
       // Usar los values actuales al momento de iniciar (no refs que cambian durante el loop)
       const selectedKeys = Array.from(selectedRef.current)
@@ -723,7 +728,12 @@ function SalidaForm({
           }, undefined, { refetch: false })
           totalProcessed++
           // Atención a Línea (RQ): acumular lo salido de este código
-          salidasParaRq.push({ codigo: loc.codigo, cantidad: finalQty, unidad: loc.un })
+          // Task 27: la posición viaja al ledger rq_atencion_tomas (Revisar).
+          salidasParaRq.push({
+            codigo: loc.codigo, cantidad: finalQty, unidad: loc.un,
+            ubicacion: `B${loc.bloque}·T${loc.torre}·P${loc.piso}·Pos${loc.posicion}`,
+            origen: 'racks',
+          })
         } catch (err) {
           if (isInsufficientStockError(err)) {
             stockErrors++
@@ -980,7 +990,12 @@ function SalidaForm({
       })
       toast.success(`Salida de ${qtyNum} ${loc.un} registrada`)
       // Atención a Línea (RQ): ofrecer registro si se llegó DESDE una RQ
-      setRqConfirmerSalida(detectarRqParaSalida([{ codigo: loc.codigo, cantidad: qtyNum, unidad: loc.un }]))
+      // Task 27: la posición viaja al ledger rq_atencion_tomas (Revisar).
+      setRqConfirmerSalida(detectarRqParaSalida([{
+        codigo: loc.codigo, cantidad: qtyNum, unidad: loc.un,
+        ubicacion: `B${loc.bloque}·T${loc.torre}·P${loc.piso}·Pos${loc.posicion}`,
+        origen: 'racks',
+      }]))
       setConfirmState(null)
       setSearchCode('')
       setQtyMap({})

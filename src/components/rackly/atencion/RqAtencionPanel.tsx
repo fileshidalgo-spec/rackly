@@ -580,7 +580,7 @@ export function RqAtencionPanel({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ── Edición supervisada (Task 26) ── */}
+      {/* ── Edición supervisada (Task 26 + reversa guiada Task 27) ── */}
       {editarTarget && (
         <RqEditarDialog
           open={!!editarTarget}
@@ -588,6 +588,16 @@ export function RqAtencionPanel({
           rq={editarTarget}
           items={editarItems}
           onGuardada={() => {
+            cargar(0, true, {
+              busqueda: filtrosActivosRef.current.busqueda,
+              estado: filtrosActivosRef.current.estado,
+            })
+          }}
+          onSincronizada={(rqNueva, itemsNuevos) => {
+            // Reversa guiada dentro del editor: mantiene rq+items frescos
+            // (el estado de la RQ puede cambiar de Atendido a En proceso).
+            setEditarTarget(rqNueva)
+            setEditarItems(itemsNuevos)
             cargar(0, true, {
               busqueda: filtrosActivosRef.current.busqueda,
               estado: filtrosActivosRef.current.estado,

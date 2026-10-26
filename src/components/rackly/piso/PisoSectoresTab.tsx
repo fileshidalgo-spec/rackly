@@ -1325,9 +1325,14 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
       // Atención a Línea (RQ): si llegaste DESDE una RQ para este código, ofrece
       // registrar la salida como atención. Responder "No" = regularización pura.
       // FIX auditoría 2026-10-22: detección unificada con todas las rutas de salida.
+      // Task 27: la posición viaja al ledger rq_atencion_tomas (Revisar).
       setRqConfirmer(
         detectarRqParaSalida(
-          validRows.map((r) => ({ codigo: r.bloque_codigo, cantidad: parseFloat(r.cantidad), unidad: r.bloque_unidad }))
+          validRows.map((r) => ({
+            codigo: r.bloque_codigo, cantidad: parseFloat(r.cantidad), unidad: r.bloque_unidad,
+            ubicacion: `Piso · ${detail.columnaLetra ? `${detail.columnaLetra}-` : ''}Pos ${detail.posicionNumero ?? '?'}`,
+            origen: 'piso' as const,
+          }))
         )
       )
       // Recargar stock y stock por nivel
@@ -1381,7 +1386,12 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
       toast.success(`Salida de ${cantNum} ${stockItem.bloque_unidad} de ${stockItem.bloque_codigo}`)
       // Atención a Línea (RQ): FIX auditoría 2026-10-22 — esta ruta (destino
       // ocupado durante traslado) también ofrece el registro en la RQ.
-      setRqConfirmer(detectarRqParaSalida([{ codigo: stockItem.bloque_codigo, cantidad: cantNum, unidad: stockItem.bloque_unidad }]))
+      // Task 27: la posición viaja al ledger rq_atencion_tomas (Revisar).
+      setRqConfirmer(detectarRqParaSalida([{
+        codigo: stockItem.bloque_codigo, cantidad: cantNum, unidad: stockItem.bloque_unidad,
+        ubicacion: `Piso · ${trDestPos.columnaLetra ? `${trDestPos.columnaLetra}-` : ''}Pos ${trDestPos.posicionNumero ?? '?'}`,
+        origen: 'piso',
+      }]))
       // Refrescar stock del destino
       const updated = await stockDetallePosicion(trDestPos.posicionId)
       setTrDestOccupied(updated)
@@ -1643,7 +1653,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     // descartaba el motivo y el supervisor solo veía "N con error") + filas
     // salidas por código para la detección RQ.
     const erroresDetalle: string[] = []
-    const salidasParaRq: { codigo: string; cantidad: number; unidad?: string }[] = []
+    const salidasParaRq: { codigo: string; cantidad: number; unidad?: string; ubicacion?: string; origen?: 'racks' | 'piso' }[] = []
     try {
       const entries = [...massData.entries()]
       await Promise.all(entries.map(async ([posicionId, pd]) => {
@@ -1681,6 +1691,11 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
           for (const d of detalles) {
             const meta = metaPorBloque.get(d.bloque_id)
             if (meta) salidasParaRq.push({ codigo: meta.codigo, cantidad: d.cantidad, unidad: meta.unidad })
+          }
+          // Task 27: la posición de ESTA salida en masa (para el ledger RQ).
+          const ubiPiso = `Piso · ${pd.pos.columnaLetra ? `${pd.pos.columnaLetra}-` : ''}Pos ${pd.pos.posicionNumero}`
+          for (const s of salidasParaRq) {
+            if (!s.ubicacion) { s.ubicacion = ubiPiso; s.origen = 'piso' }
           }
         } catch (err: unknown) {
           errorCount++

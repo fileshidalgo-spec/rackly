@@ -66,10 +66,13 @@ export function RqSalidaConfirmador({
     if (!conf) return
     setBusy(true)
     try {
+      // Task 27: las posiciones detectadas viajan al ledger rq_atencion_tomas
+      // (desde dónde salió el material); sin posiciones queda toma 'manual'.
       const actualizado = await atenderItemRq(
         conf.itemId,
         conf.cantidad,
-        perfil?.nombre || perfil?.correo || ''
+        perfil?.nombre || perfil?.correo || '',
+        conf.tomas
       )
       const completo = actualizado.cantidadAtendida >= actualizado.cantidad
       // Excedente automático: lo atendido puede superar lo pedido (p. ej. paleta

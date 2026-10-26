@@ -696,7 +696,12 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       toast.success('Salida registrada')
       // Atención a Línea (RQ): si llegaste DESDE una RQ para este código, ofrece
       // registrar la salida como atención. Responder "No" = regularización pura.
-      setRqConfirmer(detectarRqParaSalida([{ codigo: item.codigo, cantidad: qty, unidad: item.un }]))
+      // Task 27: la posición viaja al ledger rq_atencion_tomas (Revisar).
+      setRqConfirmer(detectarRqParaSalida([{
+        codigo: item.codigo, cantidad: qty, unidad: item.un,
+        ubicacion: `B${detail.bloque}·T${detail.torre}·P${detail.piso}·Pos${detail.posicion}`,
+        origen: 'racks',
+      }]))
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {
@@ -748,7 +753,12 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       // Atención a Línea (RQ): FIX auditoría 2026-10-22 — esta ruta de salida
       // (destino ocupado durante traslado) TAMBIÉN ofrece el registro en la RQ;
       // antes solo lo hacía doSalida y el banner prometía lo contrario.
-      setRqConfirmer(detectarRqParaSalida([{ codigo: stockItem.codigo, cantidad: cantNum, unidad: stockItem.un }]))
+      // Task 27: la posición viaja al ledger rq_atencion_tomas (Revisar).
+      setRqConfirmer(detectarRqParaSalida([{
+        codigo: stockItem.codigo, cantidad: cantNum, unidad: stockItem.un,
+        ubicacion: `B${trDestBloque}·T${trDestTorre}·P${trDestPiso}·Pos${trDestPos}`,
+        origen: 'racks',
+      }]))
       // Refrescar stock del destino — validar _error (patrón IngresoForm): sin
       // esto se mostraba una fila fantasma con código vacío y stock 0
       const updated = await stockEnUbicacion(trDestBloque, trDestTorre, trDestPiso, trDestPos)

@@ -94,27 +94,43 @@ export type RqSalidaDetectada = {
   cantidad: number
   /** Cantidad requerida por la RQ (referencia para el aviso). */
   requerido: number
+  /** Task 27: posiciones desde donde salió el material (para el ledger). */
+  tomas: Array<{ ubicacion: string; cantidad: number; origen: 'racks' | 'piso' }>
 }
 
 /**
- * Dadas las filas salidas ({codigo, cantidad, unidad?}), devuelve el
- * registro pendiente para la RQ si hay coincidencia de código con el
- * contexto efímero; null si no hay contexto, si el código no coincide o
- * si la cantidad coincidente es 0.
+ * Dadas las filas salidas ({codigo, cantidad, unidad?, ubicacion?, origen?}),
+ * devuelve el registro pendiente para la RQ si hay coincidencia de código con
+ * el contexto efímero; null si no hay contexto, si el código no coincide o
+ * si la cantidad coincidente es 0. Las filas con `ubicacion` agregan tomas
+ * (agrupadas por posición) que el ledger de la RQ registra con la atención.
  */
 export function detectarRqParaSalida(
-  filas: Array<{ codigo: string; cantidad: number; unidad?: string }>
+  filas: Array<{
+    codigo: string
+    cantidad: number
+    unidad?: string
+    ubicacion?: string
+    origen?: 'racks' | 'piso'
+  }>
 ): RqSalidaDetectada | null {
   const ctx = leerContextoSalidaRq()
   if (!ctx) return null
   let total = 0
   let unidad = ctx.unidad
+  const tomas = new Map<string, { ubicacion: string; cantidad: number; origen: 'racks' | 'piso' }>()
   for (const f of filas) {
     if (!mismoCodigo(ctx.codigo, f.codigo)) continue
     const q = Number(f.cantidad)
     if (!Number.isFinite(q) || q <= 0) continue
     total += q
     if (!unidad && f.unidad) unidad = f.unidad
+    const ubic = (f.ubicacion ?? '').trim()
+    if (ubic) {
+      const previa = tomas.get(ubic)
+      if (previa) previa.cantidad += q
+      else tomas.set(ubic, { ubicacion: ubic, cantidad: q, origen: f.origen === 'piso' ? 'piso' : 'racks' })
+    }
   }
   if (total <= 0) return null
   return {
@@ -124,5 +140,6 @@ export function detectarRqParaSalida(
     unidad: unidad || '',
     cantidad: total,
     requerido: ctx.cantidadRequerida,
+    tomas: [...tomas.values()],
   }
 }

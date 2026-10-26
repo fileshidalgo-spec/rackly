@@ -43,6 +43,7 @@ import {
 import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { guardarContextoSalidaRq } from '@/lib/rackly/rq-contexto-salida'
 import { RqUbicacionesDialog } from '@/components/rackly/atencion/RqUbicacionesDialog'
+import { RqRevisarDialog } from '@/components/rackly/atencion/RqRevisarDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -70,6 +71,7 @@ import {
   ScanLine,
   Pencil,
   History,
+  ClipboardCheck,
 } from 'lucide-react'
 import { RqAtenderQrWizard } from '@/components/rackly/atencion/RqAtenderQrWizard'
 import { RqEditarDialog } from '@/components/rackly/atencion/RqEditarDialog'
@@ -180,6 +182,8 @@ export function RqDetalle({
   const [ubicaciones, setUbicaciones] = useState<UbicacionAbierta | null>(null)
   /** Wizard del puente Atención↔Tránsito abierto para un material. */
   const [qrWizard, setQrWizard] = useState<UbicacionAbierta | null>(null)
+  /** Revisar la atención de un material (Task 27: posiciones + saldos). */
+  const [revisar, setRevisar] = useState<RqItem | null>(null)
   /** Lotes del puente del material en el diálogo de reversa (opción con origen). */
   const [lotesPuente, setLotesPuente] = useState<LotePuenteDeItem[] | null>(null)
   const [revertiendoOrigen, setRevertiendoOrigen] = useState(false)
@@ -648,6 +652,16 @@ export function RqDetalle({
                     >
                       <ScanLine className="h-3.5 w-3.5" /> Atender con QR
                     </Button>
+                    {/* Task 27: Revisar — desde qué posiciones se atendió y saldos */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 w-full border-slate-200 text-slate-600 hover:bg-slate-50"
+                      title="Desde qué posiciones se atendió y qué saldo quedó en cada una"
+                      onClick={() => setRevisar(it)}
+                    >
+                      <ClipboardCheck className="h-3.5 w-3.5" /> Revisar
+                    </Button>
                   </td>
                 </tr>
               )
@@ -770,8 +784,8 @@ export function RqDetalle({
                 </div>
               )}
 
-              {/* VER UBICACIÓN + ATENDER CON QR (puente con Tránsito) */}
-              <div className="grid grid-cols-2 gap-1.5">
+              {/* VER UBICACIÓN + ATENDER CON QR + REVISAR (puente con Tránsito) */}
+              <div className="grid grid-cols-3 gap-1.5">
                 <Button
                   variant="outline"
                   className="h-9 gap-1 w-full border-violet-200 text-violet-700 hover:bg-violet-50 px-1"
@@ -802,7 +816,15 @@ export function RqDetalle({
                     })
                   }
                 >
-                  <ScanLine className="h-4 w-4" /> Atender con QR
+                  <ScanLine className="h-4 w-4" /> Atender QR
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-9 gap-1 w-full border-slate-200 text-slate-600 hover:bg-slate-50 px-1"
+                  title="Desde qué posiciones se atendió y qué saldo quedó en cada una"
+                  onClick={() => setRevisar(it)}
+                >
+                  <ClipboardCheck className="h-4 w-4" /> Revisar
                 </Button>
               </div>
             </div>
@@ -975,6 +997,13 @@ export function RqDetalle({
         />
       )}
 
+      {/* ── Revisar atención (Task 27: posiciones + saldos) ── */}
+      <RqRevisarDialog
+        open={!!revisar}
+        onOpenChange={(o) => !o && setRevisar(null)}
+        item={revisar}
+      />
+
       {/* ── Edición supervisada de la RQ (Task 26) ── */}
       {rq && (
         <RqEditarDialog
@@ -989,6 +1018,18 @@ export function RqDetalle({
             setCantidades((prev) => {
               const next = { ...prev }
               for (const it of r.items) {
+                next[it.id] = String(pendienteDeItem(it) || '')
+              }
+              return next
+            })
+          }}
+          onSincronizada={(rqNueva, itemsNuevos) => {
+            // Reversa guiada dentro del editor (Task 27): sincroniza al instante
+            setRq(rqNueva)
+            setItems(itemsNuevos)
+            setCantidades((prev) => {
+              const next = { ...prev }
+              for (const it of itemsNuevos) {
                 next[it.id] = String(pendienteDeItem(it) || '')
               }
               return next

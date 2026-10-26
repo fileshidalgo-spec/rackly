@@ -52,6 +52,13 @@ export type DatosGuia = {
   items: ItemGuia[]
   /** Cantidad de respaldo cuando el OCR no asoció ninguna a un código. */
   cantidadSugerida: string
+  /**
+   * Rigor numérico (Task 23): discrepancias detectadas entre lecturas/pases
+   * y números leídos con baja confianza — el usuario DEBE verificarlos antes
+   * de guardar (las cantidades mal leídas llegan a las paletas y a los
+   * rótulos QR). Vacío = lectura sin señales de error.
+   */
+  avisos?: string[]
 }
 
 /** Una fila cruda de la tabla de artículos, tal como salió del OCR. */
@@ -64,8 +71,12 @@ export type FilaTabla = {
   unidad: string
 }
 
-/** Palabra del OCR con su caja (para localizar la tabla en la página). */
-export type PalabraOCR = { t: string; x0: number; y0: number; x1: number; y1: number }
+/**
+ * Palabra del OCR con su caja (para localizar la tabla en la página).
+ * `conf` es la confianza de Tesseract (0-100) — antes se DESCARTABA y es
+ * justo la señal que delata las confusiones 4↔9/1↔7 en números (Task 23).
+ */
+export type PalabraOCR = { t: string; x0: number; y0: number; x1: number; y1: number; conf?: number }
 
 // ═══════════════════════════════════════════════════════════════════
 // 1. CONSTANTES
@@ -706,15 +717,11 @@ export function extraerDatosGuiaDeTextos(
       : []
   const itemsPagina = resolverFilas(extraerFilasDeTabla(texto), catalogo, indices, true)
   let items: ItemGuia[] = []
-  {
-    const vistas = new Set<string>()
-    for (const it of [...itemsZoom, ...itemsPagina]) {
-      const clave = claveItem(it)
-      if (vistas.has(clave)) continue
-      vistas.add(clave)
-      items.push(it)
-    }
-  }
+  const avisos: string[] = []
+  // Fusión zoom + página por IDENTIDAD con votación de cantidades (Task 23):
+  // el mismo artículo leído distinto en los 2 recorridos se unifica con
+  // revisión + aviso — antes quedaba DUPLICADO (claveItem incluía cantidad).
+  items = unirItemsGuia(itemsZoom, itemsPagina, avisos)
   if (items.length > MAX_ITEMS) items = items.slice(0, MAX_ITEMS)
   // EXHAUSTIVIDAD visible: una fila leída SIN cantidad es una lectura
   // incompleta (el OCR se comió el número) → queda marcada "revisar con la
@@ -728,6 +735,7 @@ export function extraerDatosGuiaDeTextos(
     proveedor: extraerProveedor(lineas),
     items,
     cantidadSugerida,
+    ...(avisos.length > 0 ? { avisos } : {}),
   }
 }
 
@@ -770,14 +778,161 @@ export function dividirFranjaEnBandas(
   return bandas
 }
 
-/** Clave de dedupe de un artículo (misma regla que resolverFilas.push). */
-function claveItem(it: ItemGuia): string {
+/**
+ * IDENTIDAD de un artículo SIN la cantidad (Task 23 — bug raíz del QR con
+ * "información incorrecta"): la clave anterior incluía la cantidad, así que
+ * dos pases que leían distinto el MISMO artículo ("2,884" vs "2,889" —
+ * confusión 4↔9) NO se deduplicaban: el artículo entraba DOS veces con
+ * cifras contradictorias y ambas llegaban a las paletas y a los rótulos.
+ * La identidad de un artículo es su código + descripción — NUNCA su cantidad.
+ */
+function claveIdentidad(it: ItemGuia): string {
   const descClave = quitarAcentos(it.descripcion)
     .replace(/[^A-Z0-9 ]/g, '')
     .trim()
   return it.codigo
-    ? `C:${it.codigo.toUpperCase().replace(/^0+/, '')}|${it.cantidad.trim()}|${descClave}`
-    : `D:${descClave}|${it.cantidad.trim()}`
+    ? `C:${it.codigo.toUpperCase().replace(/^0+/, '')}|${descClave}`
+    : `D:${descClave}`
+}
+
+/**
+ * Convierte una cantidad leída a número (mismo criterio que rq-ocr.aNumero:
+ * coma = miles, punto = decimales; "50,400.0000" → 50400; "2,884" → 2884).
+ * Copia local PURA: rq-ocr importa de este módulo (no hay que crear ciclo).
+ */
+function aNumeroGuia(lectura: string): number {
+  let s = (lectura ?? '').trim().replace(/[^\d.,]/g, '')
+  if (!s) return 0
+  if (s.includes(',') && s.includes('.')) {
+    s = s.replace(/,/g, '')
+  } else if (s.includes(',')) {
+    const partes = s.split(',')
+    s = partes.slice(1).every((p) => p.length === 3) ? partes.join('') : s.replace(',', '.')
+  }
+  const n = parseFloat(s)
+  return isNaN(n) ? 0 : n
+}
+
+/** Tolerancia para considerar dos cantidades la misma lectura. */
+const EPS_CANTIDAD = 0.0005
+
+/**
+ * Une dos listas de items SIN duplicados por IDENTIDAD (código + descripción
+ * — la cantidad NO es identidad, ver claveIdentidad). Reglas por artículo:
+ *   · lectura idéntica → se queda la primera (dedupe de pases);
+ *   · cifras que difieren en UN dígito confuso (4↔9…) → VOTACIÓN (mismo
+ *     criterio que rq-ocr.fusionarDatosRq): gana la lectura en catálogo (o
+ *     la primera), la fila queda a revisión y se emite aviso — jamás se
+ *     adivina el dígito;
+ *   · cifras MUY distintas (2+ dígitos) → filas legítimas de 2 lotes: se
+ *     conservan ambas (regresión: el mismo código en 2 filas es válido).
+ */
+function unirItemsGuia(base: ItemGuia[], extra: ItemGuia[], avisos: string[]): ItemGuia[] {
+  const out: ItemGuia[] = []
+  const indice = new Map<string, number[]>()
+  for (const it of [...base, ...extra]) {
+    const clave = claveIdentidad(it)
+    const posiciones = indice.get(clave) ?? []
+    let fusionada = false
+    for (const i of posiciones) {
+      const previo = out[i]
+      const ca = aNumeroGuia(previo.cantidad)
+      const cb = aNumeroGuia(it.cantidad)
+      if (Math.abs(ca - cb) <= EPS_CANTIDAD) {
+        fusionada = true // lectura idéntica: dedupe de pases
+        break
+      }
+      if (sonVarianteOCRdeCantidad(previo.cantidad, it.cantidad)) {
+        const ganador = !previo.enCatalogo && it.enCatalogo ? it : previo
+        const aviso = `Cantidad de ${previo.codigo || previo.descripcion.slice(0, 24)} difiere entre lecturas (${previo.cantidad.trim()} / ${it.cantidad.trim()}) — revisa`
+        if (!avisos.includes(aviso)) avisos.push(aviso)
+        out[i] = { ...ganador, revision: true }
+        fusionada = true
+        break
+      }
+    }
+    if (!fusionada) {
+      indice.set(clave, [...posiciones, out.length])
+      out.push(it)
+    }
+  }
+  return out
+}
+
+/**
+ * PARES DE DÍGITOS que el OCR confunde con más frecuencia (pedido explícito
+ * del usuario 2026-10-24: "confunde el 4 con el 9"). Compartido por la guía
+ * (votación de cantidades y vecinos de código) y la RQ (vecinos de código):
+ * una sustitución de un par confuso gana desempates (+0.02 — determinista,
+ * por debajo de cualquier diferencia real de similitud de descripción).
+ */
+export const PARES_CONFUSOS = new Set([
+  '49', '94', // 4↔9 — el par reportado por el usuario
+  '09', '90', // el 9 pierde la cola y parece 0
+  '17', '71', '19', '91', // 1 se difumina en 7/9
+  '06', '60', '08', '80', // contornos redondos
+  '56', '65', '38', '83', '27', '72',
+])
+
+/** +0.02 si la variante sustituye un dígito por su par confuso; 0 si no. */
+export function bonusConfusion(original: string, variante: string): number {
+  const o = original.replace(/\D/g, '')
+  const v = variante.replace(/\D/g, '')
+  if (o.length !== v.length) return 0
+  for (let i = 0; i < o.length; i++) {
+    if (o[i] !== v[i]) return PARES_CONFUSOS.has(o[i] + v[i]) ? 0.02 : 0
+  }
+  return 0
+}
+
+/**
+ * ¿Dos lecturas de cantidad son la MISMA cifra con UN dígito confundido?
+ * ("2,884" vs "2,889" → sí; "1,000" vs "2,500" → no: difieren en 2 dígitos
+ * — son filas legítimas de 2 lotes y se conservan ambas). Discrimina el
+ * ruido OCR de los lotes reales de un mismo artículo.
+ */
+export function sonVarianteOCRdeCantidad(x: string, y: string): boolean {
+  const dx = (x ?? '').replace(/\D/g, '')
+  const dy = (y ?? '').replace(/\D/g, '')
+  if (!dx || !dy || dx.length !== dy.length) return false
+  let pos = -1
+  for (let i = 0; i < dx.length; i++) {
+    if (dx[i] !== dy[i]) {
+      if (pos >= 0) return false // difieren en ≥2 dígitos: filas distintas
+      pos = i
+    }
+  }
+  return pos >= 0 && PARES_CONFUSOS.has(dx[pos] + dy[pos])
+}
+
+/**
+ * UMBRAL de confianza por palabra para números (0-100). Tesseract puntúa
+ * bajo (60-80) justo cuando confunde dígitos parecidos (4↔9, 1↔7, 0↔6):
+ * por debajo del umbral el número se reporta para verificación humana.
+ */
+export const UMBRAL_CONFIANZA_NUMERO = 75
+
+/**
+ * AVISOS por números leídos con baja confianza (Task 23 — "tienes que ser
+ * muy riguroso al momento de leer los números"). PURA y compartida por la
+ * RQ (rq-ocr) y la guía (GuiaFotoForm): tesseract entrega la confianza por
+ * palabra y antes se descartaba — un «4» leído como «9» con 61% de
+ * confianza pasaba sin advertencia salvo que 2 pases discreparan.
+ * Deduplica por texto y se acota a 6 para no inundar la UI.
+ */
+export function avisoNumerosDebiles(palabras: PalabraOCR[]): string[] {
+  const avisos: string[] = []
+  const vistos = new Set<string>()
+  for (const p of palabras) {
+    const t = (p.t ?? '').trim()
+    if (!/\d{2,}/.test(t)) continue // solo tokens con ≥2 dígitos seguidos
+    if (p.conf === undefined || p.conf >= UMBRAL_CONFIANZA_NUMERO) continue
+    if (vistos.has(t)) continue
+    vistos.add(t)
+    avisos.push(`Número «${t}» leído con ${Math.round(p.conf)}% de confianza — verifícalo`)
+    if (avisos.length >= 6) break
+  }
+  return avisos
 }
 
 /**
@@ -788,14 +943,12 @@ function claveItem(it: ItemGuia): string {
  * canónico T###-###### (el OCR confunde la T inicial con 7/1).
  */
 export function fusionarDatos(a: DatosGuia, b: DatosGuia): DatosGuia {
-  const items: ItemGuia[] = []
-  const vistas = new Set<string>()
-  for (const it of [...a.items, ...b.items]) {
-    const clave = claveItem(it)
-    if (vistas.has(clave)) continue
-    vistas.add(clave)
-    items.push(it)
-  }
+  const avisos: string[] = [...(a.avisos ?? []), ...(b.avisos ?? [])]
+  // Fusión de los 2 pases por IDENTIDAD con votación de cantidades (Task 23):
+  // el mismo artículo con cifras distintas queda 1 vez, a revisión, con aviso
+  // — antes la clave con cantidad DUPLICABA el artículo y ambas filas llegaban
+  // a las paletas/rótulos ("información incorrecta" reportada en Recepción).
+  const items = unirItemsGuia(a.items, b.items, avisos)
   const eligeGuia = (x: string, y: string): string => {
     if (!x) return y
     if (!y) return x
@@ -810,6 +963,7 @@ export function fusionarDatos(a: DatosGuia, b: DatosGuia): DatosGuia {
     proveedor: a.proveedor || b.proveedor,
     items,
     cantidadSugerida: a.cantidadSugerida || b.cantidadSugerida,
+    ...(avisos.length > 0 ? { avisos } : {}),
   }
 }
 
@@ -847,7 +1001,9 @@ export function extraerPalabras(data: unknown): PalabraOCR[] {
       for (const p of paragraphs) {
         const lines = (p as { lines?: unknown[] })?.lines ?? []
         for (const l of lines) {
-          const words = (l as { words?: Array<{ text?: string; bbox?: Partial<PalabraOCR> }> })?.words ?? []
+          const words = (l as {
+            words?: Array<{ text?: string; confidence?: unknown; bbox?: Partial<PalabraOCR> }>
+          })?.words ?? []
           for (const w of words) {
             if (!w?.bbox) continue
             out.push({
@@ -856,6 +1012,9 @@ export function extraerPalabras(data: unknown): PalabraOCR[] {
               y0: w.bbox.y0 ?? 0,
               x1: w.bbox.x1 ?? 0,
               y1: w.bbox.y1 ?? 0,
+              // Tesseract v5+ entrega `confidence` por palabra (0-100).
+              // Opcional: los tests y las lecturas sin bloques no la traen.
+              conf: typeof w.confidence === 'number' ? w.confidence : undefined,
             })
           }
         }

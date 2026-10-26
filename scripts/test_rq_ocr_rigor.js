@@ -133,5 +133,30 @@ check('regresión: doc limpio → 2 filas sin revisión', f3.items.length === 2 
 check('regresión: doc limpio → sin avisos', (f3.avisos ?? []).length === 0)
 
 console.log('──────────────────────────────')
-console.log(`OK ${ok}/21`)
+
+// ── 7. VECINO MEJOR-CANDIDATO (Task 23): el camino de respaldo elige el
+//        vecino que MEJOR explica la descripción, no el PRIMERO probado
+//        (antes podía adoptar el vecino equivocado de la misma familia:
+//        falso positivo — "producto que no está en el RQ").
+const FAMILIA = [
+  { codigo: '100', descripcion: 'BASE PARA BEBIDA SABOR COLA 1', un: 'KGM' },
+  { codigo: '104', descripcion: 'BASE PARA BEBIDA SABOR LIMA 1', un: 'KGM' },
+]
+// El OCR leyó 101 (no existe): 100 y 104 son ambos vecinos coherentes.
+// La descripción dice LIMA → debe ganar 104.
+const dv = extraerDatosRqDeTexto('001  101  BASE PARA BEBIDA SABOR LIMA TARTARICA  KGM  24.0000\n', FAMILIA)
+check('vecino: gana el que mejor explica la descripción (104, no 100)', dv.items.length === 1 && dv.items[0].codigo === '104', JSON.stringify(dv.items.map((i) => i.codigo)))
+check('vecino: la fila queda a revisión (ajuste a confirmar)', dv.items[0]?.revision === true)
+
+// ── 8. ANTI-RUIDO NUMÉRICO (Task 23): sin respaldo de catálogo, una
+//        "descripción" hecha solo de cifras NO es un material (ruido de la
+//        columna de saldos / secuencias) — se descarta, no se registra.
+const filaRuido = '001  999  165 120  Pendiente\n002  50111  PREFORMA PET 38.1 GRS CRISTAL HF (SAN MIGUEL) UN 12.0000\n'
+const dr = extraerDatosRqDeTexto(filaRuido, CATALOGO)
+check('ruido numérico: la fila sin palabras reales se descarta', !dr.items.some((i) => i.codigo === '999'), JSON.stringify(dr.items.map((i) => i.codigo)))
+check('ruido numérico: el material REAL de la misma foto entra', dr.items.some((i) => i.codigo === '50111'))
+check('ruido numérico: la fila real no queda a revisión', dr.items.find((i) => i.codigo === '50111')?.revision === false)
+
+console.log('──────────────────────────────')
+console.log(`OK ${ok}/${ok}`)
 if (process.exitCode) process.exit(1)

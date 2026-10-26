@@ -29,6 +29,7 @@
 
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 import {
+  bonusConfusion,
   buscarPorDescripcion,
   COHERENCIA_CODIGO,
   similitudDescripcion,
@@ -151,6 +152,17 @@ const MAX_ITEMS = 40
 /** Longitud mínima de descripción aceptable de un material. */
 const DESC_MIN = 2
 
+/**
+ * ¿Hay al menos UNA palabra REAL (≥3 letras) en la descripción? Todo
+ * material tiene nombre; una "descripción" hecha solo de cifras/símbolos
+ * es ruido numérico del OCR (secuencias, saldos, DNI) — otra variante del
+ * fantasma de fecha. Con catálogo no aplica: la descripción oficial ya
+ * reemplazó a la leída.
+ */
+function tienePalabraReal(desc: string): boolean {
+  return /[A-ZÁÉÍÓÚÑÜ]{3,}/.test(desc.toUpperCase())
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // UTILIDADES DE TEXTO
 // ═══════════════════════════════════════════════════════════════════
@@ -221,9 +233,11 @@ function descripcionCoherente(leida: string, catalogada: string): boolean {
 
 /**
  * VECINO A 1 DÍGITO (calibrado con la RQ real: "115" era "118"): el OCR
- * confunde un dígito del código. Genera las variantes a distancia 1 y
+ * confunde un dígito del código. Genera TODAS las variantes a distancia 1,
  * valida contra el catálogo SOLO si la descripción leída es coherente con
- * la del vecino — así no se "corrige" hacia un material distinto.
+ * la del vecino, y de entre los coherentes devuelve el que MEJOR explica la
+ * descripción (antes ganaba el PRIMERO probado — con familias de nombres
+ * parecidos podía adoptar el vecino equivocado: falso positivo).
  */
 function vecinoUnDigito(
   codigo: string,
@@ -232,15 +246,19 @@ function vecinoUnDigito(
 ): CatalogoItem | null {
   const c = codigo.replace(/\D/g, '')
   if (!c || c.length < 2 || c.length > 8) return null
+  let mejor: { item: CatalogoItem; score: number } | null = null
   for (let pos = 0; pos < c.length; pos++) {
     for (let d = 0; d <= 9; d++) {
       if (d === parseInt(c[pos], 10)) continue
       const variante = c.slice(0, pos) + d + c.slice(pos + 1)
       const cat = enCatalogoPorCodigo(variante, catalogo)
-      if (cat && descripcionCoherente(descripcionLeida, cat.descripcion)) return cat
+      if (!cat || !descripcionCoherente(descripcionLeida, cat.descripcion)) continue
+      const score =
+        similitudDescripcion(descripcionLeida, cat.descripcion) + bonusConfusion(c, variante)
+      if (!mejor || score > mejor.score) mejor = { item: cat, score }
     }
   }
-  return null
+  return mejor?.item ?? null
 }
 
 /**
@@ -264,7 +282,8 @@ function mejorVecinoUnDigito(
       const variante = c.slice(0, pos) + d + c.slice(pos + 1)
       const cat = enCatalogoPorCodigo(variante, catalogo)
       if (!cat) continue
-      const score = similitudDescripcion(descripcionLeida, cat.descripcion)
+      const score =
+        similitudDescripcion(descripcionLeida, cat.descripcion) + bonusConfusion(c, variante)
       if (score >= UMBRAL_MIN && (!mejor || score > mejor.score)) mejor = { item: cat, score }
     }
   }
@@ -552,6 +571,12 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
       }
     }
     if (descripcion.length < DESC_MIN) continue
+    // ANTI-RUIDO NUMÉRICO (Task 23): sin respaldo de catálogo, una
+    // descripción sin NI UNA palabra real no es un material — es ruido del
+    // OCR (cifras pegadas, saldo de la columna, secuencia). Con catálogo la
+    // descripción oficial ya reemplazó a la leída, así que este filtro no
+    // afecta materiales reales.
+    if (!cat && !tienePalabraReal(descripcion)) continue
 
     // El vecino validado REEMPLAZA al código leído (115 → 118)
     const codigoFinal = cat && cat.codigo.replace(/\D/g, '') !== codigo ? cat.codigo : codigo

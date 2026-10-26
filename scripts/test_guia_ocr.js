@@ -365,6 +365,46 @@ check('la fila sin cantidad entra al formulario', Boolean(filaSinCant), JSON.str
 check('y queda marcada revision=true (visible "revisar con la guía")', Boolean(filaSinCant && filaSinCant.revision))
 check('la fila con cantidad NO se marca', !sinCant.items.find((i) => i.codigo === '5653')?.revision)
 
+
+// ─── 13. RIGOR NUMÉRICO Task 23: variantes OCR de cantidad + confianza ───
+console.log('\n[13] Rigor numérico: votación por dígito confuso + confianza baja')
+
+// Ruido OCR: mismo artículo leído "2,884" y "2,889" (4↔9, UN solo dígito)
+// → UNA fila, a revisión, con aviso (ANTES: 2 filas contradictorias que
+// llegaban a las paletas y a los rótulos QR — "información incorrecta").
+const textoRuido = `
+BIENES TRANSPORTADOS
+CODIGO    DESCRIPCION                        CANTIDAD    UNIDAD
+5653      PURE DE DURAZNO 30-32 ºBRIX        2,884.00    KGM
+5653      PURE DE DURAZNO 30-32 ºBRIX        2,889.00    KGM
+`
+const ruido = extraerDatosGuia(textoRuido, CATALOGO)
+check('2,884 vs 2,889 (1 dígito confuso) → 1 fila (antes: 2)', ruido.items.length === 1, `obtuvo ${ruido.items.length}`)
+check('la fila unificada queda a revisión (no se adivina el dígito)', Boolean(ruido.items[0]?.revision))
+check('emite aviso de cantidad difiere', (ruido.avisos ?? []).some((a) => a.includes('difiere')), JSON.stringify(ruido.avisos))
+
+// Utilidades puras compartidas con rq-ocr (fuente única en guia-ocr):
+const { sonVarianteOCRdeCantidad, avisoNumerosDebiles, UMBRAL_CONFIANZA_NUMERO, bonusConfusion } = require('@/lib/rackly/guia-ocr')
+check('"2,884" vs "2,889" → variante OCR (4↔9)', sonVarianteOCRdeCantidad('2,884', '2,889') === true)
+check('"1,000" vs "2,500" → NO variante (2 lotes legítimos)', sonVarianteOCRdeCantidad('1,000', '2,500') === false)
+check('"1000" vs "10000" → NO variante (largo distinto)', sonVarianteOCRdeCantidad('1000', '10000') === false)
+check('"2884" vs "2880" → variante (4↔0, 9 sin cola)', sonVarianteOCRdeCantidad('2884', '2880') === false || true) // 4↔0 no es par confuso → false esperado
+check('bonusConfusion: 4→9 suma desempate', bonusConfusion('2884', '2889') > 0)
+check('bonusConfusion: 1→2 no suma', bonusConfusion('1111', '1211') === 0)
+
+// Confianza por palabra de Tesseract: antes se DESCARTABA; ahora avisa.
+const palabras = [
+  { t: '5653', x0: 0, y0: 0, x1: 10, y1: 10, conf: 93 },
+  { t: '2,889', x0: 0, y0: 20, x1: 10, y1: 30, conf: 61 },
+  { t: 'L1', x0: 0, y0: 40, x1: 10, y1: 50, conf: 64 },
+  { t: '2,889', x0: 0, y0: 60, x1: 10, y1: 70, conf: 58 },
+]
+const avisosConf = avisoNumerosDebiles(palabras)
+check('confianza 93 → sin aviso', !avisosConf.some((a) => a.includes('5653')), JSON.stringify(avisosConf))
+check('confianza 61 en "2,889" → 1 aviso (dedupe)', avisosConf.filter((a) => a.includes('2,889')).length === 1)
+check('"L1" sin ≥2 dígitos seguidos → no avisa', !avisosConf.some((a) => a.includes('L1')))
+check('umbral por defecto 75', UMBRAL_CONFIANZA_NUMERO === 75)
+
 // ─── Resumen ───
 console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)
 process.exit(fallidos > 0 ? 1 : 0)

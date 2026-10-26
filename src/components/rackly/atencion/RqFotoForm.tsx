@@ -29,6 +29,7 @@ import {
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
 import {
+  avisoNumerosDebiles,
   dividirFranjaEnBandas,
   extraerPalabras,
   mejorarImagenOCR,
@@ -502,7 +503,14 @@ export function RqFotoForm({
         // la banda del encabezado. Si el zoom (mayor resolución) DIFIERE de
         // la lectura de página completa, GANA el zoom y se muestra un aviso
         // visible con ambas lecturas — el usuario verifica antes de registrar.
-        const avisos: string[] = [...(fusion.avisos ?? [])]
+        // Rigor numérico (Task 23): avisos de la fusión (cantidades que
+        // difieren entre pases) + NÚMEROS leídos con baja confianza según
+        // Tesseract (ahí viven las confusiones 4↔9 — antes se descartaba
+        // la confianza por palabra y un «4»→«9» pasaba sin advertencia).
+        const avisos: string[] = [
+          ...avisoNumerosDebiles(palabras1),
+          ...(fusion.avisos ?? []),
+        ]
         try {
           setEtapa('Verificando los números del encabezado…')
           const yTopOrig = Math.min(aOriginal(franja.yTop), Math.max(60, altoProc / 4))
@@ -539,7 +547,7 @@ export function RqFotoForm({
           // Zoom oportunista: sin él queda la lectura de página completa.
         }
 
-        procesarExtraccion(datos, avisos)
+        procesarExtraccion(datos, Array.from(new Set(avisos)))
       } finally {
         await worker.terminate()
       }

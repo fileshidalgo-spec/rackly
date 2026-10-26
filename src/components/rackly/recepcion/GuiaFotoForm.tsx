@@ -30,6 +30,7 @@ import type { PSM } from 'tesseract.js'
 import { fetchCatalogo, getCachedCatalogo, type CatalogoItem } from '@/lib/rackly/catalogo'
 import {
   extraerDatosGuiaDeTextos,
+  avisoNumerosDebiles,
   extraerPalabras,
   extraerAnclasTabla,
   dividirFranjaEnBandas,
@@ -228,7 +229,19 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
   }
 
   /** Aplica la mejor extracción al formulario + resumen de lo detectado. */
-  function procesarExtraccion(datos: DatosGuia) {
+  function procesarExtraccion(datos: DatosGuia, avisosOCR: string[] = []) {
+    // RIGOR NUMÉRICO (Task 23): los avisos llegan de 2 fuentes — la
+    // fusión (mismo artículo con cantidades distintas entre pases, ahora
+    // unificado a revisión) y la confianza de Tesseract (números leídos
+    // por debajo del umbral — ahí viven las confusiones 4↔9). Se muestran
+    // con toast ANTES del resumen: la guía alimenta las paletas y los
+    // rótulos QR, un dígito errado se propaga a toda la cadena.
+    if (avisosOCR.length > 0) {
+      toast.warning(
+        `${avisosOCR.length} aviso(s) de lectura — verifica antes de guardar`,
+        { description: avisosOCR.slice(0, 3).join(' · ') }
+      )
+    }
     const itemsOcr = datos.items.map(itemDesdeOcr)
     setForm({
       ...formVacio(),
@@ -357,7 +370,8 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
         // OCR perdía filas enteras al final). Es lo que rescata los códigos
         // de letra pequeña (validado con la guía real AJER).
         let textoTabla: string | null = null
-        const anclas = extraerAnclasTabla(extraerPalabras(d1))
+        const palabras1 = extraerPalabras(d1)
+        const anclas = extraerAnclasTabla(palabras1)
         if (anclas) {
           try {
             const bitmap = await createImageBitmap(archivo)
@@ -398,12 +412,17 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
         // si faltaban pilares y el ganador por puntos DESCARTABA las filas
         // que el otro pase sí había leído — esa era la fuente principal de
         // datos omitidos. El 2º pase cuesta segundos y rescata filas.
+        // `avisosFusion` se IZA al nivel de la función del componente de
+        // proceso: importa aunque la fusión no gane (las discrepancias de
+        // cantidades entre pases avisan igual — votación Task 23).
+        let avisosFusion: string[] = []
         {
           setEtapa('Revisando la lectura con un segundo pase…')
           const imagenBase = await reducirImagen(archivo, 2800, 0.9)
           const texto2 = await ocrTexto(PSM.AUTO, imagenBase)
           const datos2 = extraerDatosGuiaDeTextos(texto2, textoTabla, catalogoParaOCR)
           const fusion = fusionarDatos(datos, datos2)
+          avisosFusion = fusion.avisos ?? []
           // La fusión gana si aporta algo (más artículos, guía o placa);
           // si el 2º pase no añadió nada, se queda la lectura original.
           if (
@@ -420,7 +439,17 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
           }
         }
 
-        procesarExtraccion(datos)
+        // Avisos combinados (Task 23): discrepancias de la fusión 2 pases
+        // + internos de la extracción ganadora + confianza baja por palabra.
+        // Dedupe: la fusión ya arrastra los internos de la 1ª extracción.
+        const avisosOCR = Array.from(
+          new Set([
+            ...avisosFusion,
+            ...(datos.avisos ?? []),
+            ...avisoNumerosDebiles(palabras1),
+          ])
+        )
+        procesarExtraccion(datos, avisosOCR)
       } finally {
         await worker.terminate()
       }

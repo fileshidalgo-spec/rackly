@@ -24,11 +24,14 @@ import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import {
   listarRqs,
   eliminarRq,
+  obtenerRqCompleta,
   type RqAtencion,
+  type RqItem,
 } from '@/lib/rackly/rq-atencion'
 import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { RqFotoForm, type RqRegistradaInfo } from '@/components/rackly/atencion/RqFotoForm'
 import { RqDetalle } from '@/components/rackly/atencion/RqDetalle'
+import { RqEditarDialog } from '@/components/rackly/atencion/RqEditarDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -59,6 +62,7 @@ import {
   Trash2,
   PackageOpen,
   Eye,
+  Pencil,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
@@ -97,6 +101,10 @@ export function RqAtencionPanel({
   const [estadoFiltro, setEstadoFiltro] = useState('todos')
   const [offset, setOffset] = useState(0)
   const [deleteTarget, setDeleteTarget] = useState<RqAtencion | null>(null)
+  /** Edición supervisada (Task 26): RQ + materiales cargados al abrir. */
+  const [editarTarget, setEditarTarget] = useState<RqAtencion | null>(null)
+  const [editarItems, setEditarItems] = useState<RqItem[]>([])
+  const [cargandoEdicion, setCargandoEdicion] = useState<string | null>(null)
 
   const cargaGenRef = useRef(0)
   const offsetRef = useRef(0)
@@ -211,6 +219,21 @@ export function RqAtencionPanel({
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Error desconocido'
       toast.error('No se pudo eliminar', { description: message })
+    }
+  }
+
+  /** Abre el editor con los materiales vigentes (una lectura al abrir). */
+  async function abrirEdicion(r: RqAtencion) {
+    setCargandoEdicion(r.id)
+    try {
+      const { items } = await obtenerRqCompleta(r.id)
+      setEditarItems(items)
+      setEditarTarget(r)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error('No se pudo abrir la edición', { description: message })
+    } finally {
+      setCargandoEdicion(null)
     }
   }
 
@@ -406,15 +429,31 @@ export function RqAtencionPanel({
                       )}
                     </Button>
                     {puedeEliminar && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-rose-500 hover:text-rose-700 hover:bg-rose-50"
-                        onClick={() => setDeleteTarget(r)}
-                        title="Eliminar RQ"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-slate-500 hover:text-teal-700 hover:bg-teal-50"
+                          onClick={() => void abrirEdicion(r)}
+                          disabled={cargandoEdicion === r.id}
+                          title="Editar RQ (corregir líneas erradas)"
+                        >
+                          {cargandoEdicion === r.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Pencil className="h-4 w-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-rose-500 hover:text-rose-700 hover:bg-rose-50"
+                          onClick={() => setDeleteTarget(r)}
+                          title="Eliminar RQ"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
                     )}
                   </div>
                 </td>
@@ -476,14 +515,30 @@ export function RqAtencionPanel({
                 )}
               </Button>
               {puedeEliminar && (
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9 shrink-0 text-rose-500 hover:bg-rose-50"
-                  onClick={() => setDeleteTarget(r)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 shrink-0 text-slate-500 hover:text-teal-700"
+                    onClick={() => void abrirEdicion(r)}
+                    disabled={cargandoEdicion === r.id}
+                    title="Editar RQ (corregir líneas erradas)"
+                  >
+                    {cargandoEdicion === r.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Pencil className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 shrink-0 text-rose-500 hover:bg-rose-50"
+                    onClick={() => setDeleteTarget(r)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -524,6 +579,22 @@ export function RqAtencionPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Edición supervisada (Task 26) ── */}
+      {editarTarget && (
+        <RqEditarDialog
+          open={!!editarTarget}
+          onOpenChange={(o) => !o && setEditarTarget(null)}
+          rq={editarTarget}
+          items={editarItems}
+          onGuardada={() => {
+            cargar(0, true, {
+              busqueda: filtrosActivosRef.current.busqueda,
+              estado: filtrosActivosRef.current.estado,
+            })
+          }}
+        />
+      )}
     </div>
   )
 }

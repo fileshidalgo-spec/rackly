@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
+import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import {
   atenderItemRq,
   revertirItemRq,
@@ -36,6 +37,8 @@ import {
   pendienteDeItem,
   type RqAtencion,
   type RqItem,
+  type RqEdicionLog,
+  type ResultadoEdicionRq,
 } from '@/lib/rackly/rq-atencion'
 import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { guardarContextoSalidaRq } from '@/lib/rackly/rq-contexto-salida'
@@ -65,8 +68,11 @@ import {
   Undo2,
   Plus,
   ScanLine,
+  Pencil,
+  History,
 } from 'lucide-react'
 import { RqAtenderQrWizard } from '@/components/rackly/atencion/RqAtenderQrWizard'
+import { RqEditarDialog } from '@/components/rackly/atencion/RqEditarDialog'
 import {
   listarLotesPuenteDeItem,
   revertirOrigenRq,
@@ -107,6 +113,47 @@ type ConfirmacionAtender = { item: RqItem; cantidad: number }
 /** Reversión pendiente de confirmar. */
 type ConfirmacionRevertir = { item: RqItem; cantidad: number }
 
+/** Etiquetas legibles de los campos (historial de ediciones). */
+const ETIQUETAS_CAMPO: Record<string, string> = {
+  numero_rq: 'Nº RQ',
+  orden_produccion: 'OP',
+  producto_codigo: 'Cód. producto',
+  producto_descripcion: 'Producto',
+  fecha: 'Fecha',
+  turno: 'Turno',
+  linea: 'Línea',
+  solicitante: 'Solicitante',
+  notas: 'Notas',
+  estado: 'Estado',
+  codigo: 'código',
+  unidad: 'unidad',
+  cantidad: 'cantidad',
+  descripcion: 'descripción',
+}
+
+/** Texto corto de una entrada del historial de ediciones. */
+function resumenEdicion(e: RqEdicionLog): string {
+  const r = e.resumen
+  const partes: string[] = []
+  if (r.encabezado > 0) partes.push(`${r.encabezado} campo${r.encabezado === 1 ? '' : 's'} del encabezado`)
+  if (r.materialesEditados > 0) partes.push(`${r.materialesEditados} material${r.materialesEditados === 1 ? '' : 'es'} corregido${r.materialesEditados === 1 ? '' : 's'}`)
+  if (r.materialesAgregados > 0) partes.push(`${r.materialesAgregados} agregado${r.materialesAgregados === 1 ? '' : 's'}`)
+  if (r.materialesQuitados > 0) partes.push(`${r.materialesQuitados} quitado${r.materialesQuitados === 1 ? '' : 's'}`)
+  return partes.join(' · ') || 'sin cambios'
+}
+
+/** Texto de UN cambio individual (antes → después). */
+function textoCambio(c: Record<string, unknown>): string {
+  const tipo = String(c.tipo ?? '')
+  if (tipo === 'material_agregado') return `+ ${String(c.item ?? '')} (${String(c.cantidad ?? '')} ${String(c.unidad ?? '')})`
+  if (tipo === 'material_quitado') return `− ${String(c.item ?? '')} (${String(c.cantidad ?? '')} ${String(c.unidad ?? '')})`
+  const campo = ETIQUETAS_CAMPO[String(c.campo ?? '')] ?? String(c.campo ?? '')
+  const antes = String(c.antes ?? '')
+  const despues = String(c.despues ?? '')
+  if (tipo === 'material') return `${String(c.item ?? '')} · ${campo}: ${antes || '—'} → ${despues || '—'}`
+  return `${campo}: ${antes || '—'} → ${despues || '—'}`
+}
+
 export function RqDetalle({
   rqId,
   onVolver,
@@ -119,6 +166,9 @@ export function RqDetalle({
   onIrAPiso: (target: PisoTargetPosicion) => void
 }) {
   const { perfil } = useAuth()
+  const SUPERVISORES_SET = new Set<string>(ROLES_SUPERVISORES)
+  const puedeEditar =
+    perfil?.rol === 'admin' || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
   const [rq, setRq] = useState<RqAtencion | null>(null)
   const [items, setItems] = useState<RqItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -135,6 +185,8 @@ export function RqDetalle({
   const [revertiendoOrigen, setRevertiendoOrigen] = useState(false)
   /** Filas COMPLETAS donde el usuario abrió el atender para añadir EXCEDENTE. */
   const [excedenteAbierto, setExcedenteAbierto] = useState<Record<string, boolean>>({})
+  /** Editor supervisado de la RQ (Task 26). */
+  const [editarAbierto, setEditarAbierto] = useState(false)
 
   const genRef = useRef(0)
   const savingRef = useRef(false)
@@ -361,9 +413,22 @@ export function RqDetalle({
               )}
             </p>
           </div>
-          <Badge variant="outline" className={`${ESTADO_RQ_CLASE[rq.estado] ?? ''} shrink-0`}>
-            {rq.estado}
-          </Badge>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {puedeEditar && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 border-slate-300 text-slate-600 hover:bg-slate-50"
+                onClick={() => setEditarAbierto(true)}
+                title="Corregir líneas erradas de la RQ"
+              >
+                <Pencil className="h-3.5 w-3.5" /> Editar
+              </Button>
+            )}
+            <Badge variant="outline" className={`${ESTADO_RQ_CLASE[rq.estado] ?? ''}`}>
+              {rq.estado}
+            </Badge>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600 min-[430px]:grid-cols-3">
           {rq.ordenProduccion && <span>OP: <b>{rq.ordenProduccion}</b></span>}
@@ -378,6 +443,36 @@ export function RqDetalle({
           <span>Registró: <b>{rq.usuarioNombre || '—'}</b></span>
         </div>
         {rq.notas && <p className="text-xs text-slate-500 whitespace-pre-wrap">{rq.notas}</p>}
+
+        {/* Historial de ediciones (Task 26 — auditoría visible p/ admins) */}
+        {rq.ediciones.length > 0 && (
+          <details className="rounded-lg border border-slate-200 bg-white/60 px-3 py-2">
+            <summary className="text-[11px] font-bold text-slate-600 cursor-pointer flex items-center gap-1.5 select-none">
+              <History className="h-3.5 w-3.5 text-slate-400" />
+              Historial de ediciones ({rq.ediciones.length})
+            </summary>
+            <div className="mt-2 space-y-2">
+              {rq.ediciones.map((e, i) => (
+                <div key={i} className="border-l-2 border-teal-200 pl-2.5">
+                  <p className="text-[11px] font-semibold text-slate-700">
+                    {e.en} · {e.usuarioNombre}
+                    <span className="font-normal text-slate-400"> — {resumenEdicion(e)}</span>
+                  </p>
+                  {e.cambios.length > 0 && (
+                    <ul className="mt-0.5 space-y-0.5">
+                      {e.cambios.slice(0, 8).map((c, j) => (
+                        <li key={j} className="text-[10px] text-slate-500">{textoCambio(c)}</li>
+                      ))}
+                      {e.cambios.length > 8 && (
+                        <li className="text-[10px] text-slate-400">… y {e.cambios.length - 8} más</li>
+                      )}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
 
         {/* Progreso */}
         <div className="space-y-1">
@@ -877,6 +972,28 @@ export function RqDetalle({
             cantidadAtendida: qrWizard?.cantidadAtendida ?? 0,
           }}
           onRegistrado={() => void cargar()}
+        />
+      )}
+
+      {/* ── Edición supervisada de la RQ (Task 26) ── */}
+      {rq && (
+        <RqEditarDialog
+          open={editarAbierto}
+          onOpenChange={setEditarAbierto}
+          rq={rq}
+          items={items}
+          onGuardada={(r: ResultadoEdicionRq) => {
+            // Aplica el resultado inmediato (sin esperar el refresco)
+            setRq(r.rq)
+            setItems(r.items)
+            setCantidades((prev) => {
+              const next = { ...prev }
+              for (const it of r.items) {
+                next[it.id] = String(pendienteDeItem(it) || '')
+              }
+              return next
+            })
+          }}
         />
       )}
     </div>

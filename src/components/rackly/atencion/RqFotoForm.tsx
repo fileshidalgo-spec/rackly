@@ -681,6 +681,8 @@ export function RqFotoForm({
           usuarioId: perfil.id,
           usuarioNombre: perfil.nombre,
           usuarioCorreo: perfil.correo,
+          // RQ recién creada: sin historial de ediciones (Task 26)
+          ediciones: [],
         },
         articulos: itemsValidos.length,
       })

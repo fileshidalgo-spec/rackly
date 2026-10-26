@@ -46,7 +46,51 @@ export type RqAtencion = {
   usuarioId: string
   usuarioNombre: string
   usuarioCorreo: string
+  /** Auditoría de ediciones (Task 26): más reciente primero, máx 20. */
+  ediciones: RqEdicionLog[]
 }
+
+/** Entrada del historial de ediciones (columna rq_atenciones.ediciones). */
+export type RqEdicionLog = {
+  en: string
+  usuarioId: string
+  usuarioNombre: string
+  usuarioCorreo: string
+  resumen: {
+    encabezado: number
+    materialesEditados: number
+    materialesAgregados: number
+    materialesQuitados: number
+  }
+  cambios: Record<string, unknown>[]
+}
+
+/** Material de una edición: CON id = actualizar · SIN id = agregar.
+ *  Los materiales que faltan en la lista se ELIMINAN (solo si no tienen
+ *  atención registrada — la valida la RPC y validarEdicionRq). */
+export type ItemEditarRq = {
+  id?: string
+  orden: number
+  codigo: string
+  descripcion: string
+  unidad: string
+  cantidad: number
+}
+
+/** Campos del encabezado corregibles (parcial: solo los presentes). */
+export type EncabezadoEditarRq = Partial<{
+  numeroRq: string
+  ordenProduccion: string
+  productoCodigo: string
+  productoDescripcion: string
+  linea: string
+  solicitante: string
+  notas: string
+  fecha: string
+  turno: string
+}>
+
+export type ResultadoEdicionRq = { rq: RqAtencion; items: RqItem[]; cambios: number }
 
 export type RqItem = {
   id: string
@@ -115,6 +159,27 @@ function mapRq(r: Record<string, unknown>): RqAtencion {
     usuarioId: str(r.usuario_id),
     usuarioNombre: str(r.usuario_nombre),
     usuarioCorreo: str(r.usuario_correo),
+    ediciones: Array.isArray(r.ediciones)
+      ? (r.ediciones as unknown[]).map(mapEdicion)
+      : [],
+  }
+}
+
+function mapEdicion(v: unknown): RqEdicionLog {
+  const r = (v ?? {}) as Record<string, unknown>
+  const res = (r.resumen ?? {}) as Record<string, unknown>
+  return {
+    en: str(r.en),
+    usuarioId: str(r.usuario_id),
+    usuarioNombre: str(r.usuario_nombre),
+    usuarioCorreo: str(r.usuario_correo),
+    resumen: {
+      encabezado: toNum(res.encabezado),
+      materialesEditados: toNum(res.materiales_editados),
+      materialesAgregados: toNum(res.materiales_agregados),
+      materialesQuitados: toNum(res.materiales_quitados),
+    },
+    cambios: Array.isArray(r.cambios) ? (r.cambios as Record<string, unknown>[]) : [],
   }
 }
 
@@ -142,8 +207,13 @@ async function recalcularEstadoRq(rqId: string): Promise<void> {
   if (eItems) throw eItems
   const filas = (items ?? []) as Record<string, unknown>[]
   const pendientes = filas.filter((f) => toNum(f.cantidad_atendida) < toNum(f.cantidad)).length
+  const algunoAtendido = filas.some((f) => toNum(f.cantidad_atendida) > 0)
+  // v2 (Task 26): regla CANÓNICA unificada con las RPCs (atender/revertir/
+  // editar): Atendido = nada pendiente · En proceso = hay algo atendido ·
+  // Pendiente = nada atendido. Antes 'pendientes === filas.length' dejaba
+  // 'Pendiente' una RQ con atención parcial.
   const estado =
-    filas.length === 0 ? 'Pendiente' : pendientes === 0 ? 'Atendido' : pendientes === filas.length ? 'Pendiente' : 'En proceso'
+    filas.length === 0 ? 'Pendiente' : pendientes === 0 ? 'Atendido' : algunoAtendido ? 'En proceso' : 'Pendiente'
   // FIX auditoría 2026-10-22 (P3): el resultado del UPDATE no se revisaba — un
   // fallo dejaba el encabezado de la RQ con estado viejo y sin rastro.
   const { error: eEstado } = await dataClient.from('rq_atenciones').update({ estado }).eq('id', rqId)
@@ -385,6 +455,158 @@ async function asegurarItemsRq(rqId: string, items: NuevoRqItem[]): Promise<void
     }))
   )
   if (eItems) throw eItems
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// EDICIÓN SUPERVISADA (Task 26 — el supervisor corrige líneas erradas)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Valida la edición de una RQ con las MISMAS reglas que la RPC
+ * rq_editar_rq (una sola fuente de verdad en la BD; esto es el espejo
+ * para feedback inmediato en el diálogo y para el no-op del guardado).
+ * Devuelve la lista de problemas; [] = la edición es válida.
+ */
+export function validarEdicionRq(
+  items: ItemEditarRq[],
+  actuales: RqItem[]
+): string[] {
+  const errores: string[] = []
+  if (items.length === 0) {
+    return ['La RQ debe conservar al menos un material. Si ya no sirve, usa Eliminar RQ.']
+  }
+  const ids = new Set<string>()
+  for (const it of items) {
+    const id = (it.id ?? '').trim()
+    const codigo = it.codigo.trim().toUpperCase()
+    if (id) {
+      if (ids.has(id)) errores.push(`El material ${codigo || id} viene dos veces en la edición.`)
+      ids.add(id)
+    }
+    if (!codigo) errores.push('Hay materiales sin código: completa o elimina esa fila.')
+    else if (!(it.cantidad > 0)) {
+      errores.push(`La cantidad de ${codigo} debe ser mayor que cero.`)
+    }
+    if (!id) continue // material nuevo: no tiene atención registrada
+    const previo = actuales.find((a) => a.id === id)
+    if (!previo) {
+      errores.push(`El material ${codigo} ya no existe en la RQ: recarga la pantalla e inténtalo de nuevo.`)
+      continue
+    }
+    if (it.cantidad < previo.cantidadAtendida) {
+      errores.push(
+        `${previo.codigo}: pides ${fmtNum(it.cantidad)} pero ya se atendieron ${fmtNum(previo.cantidadAtendida)} — primero revierte su atención.`
+      )
+    }
+    if (
+      previo.cantidadAtendida > 0 &&
+      (codigo !== previo.codigo.trim().toUpperCase() || it.unidad.trim() !== previo.unidad.trim())
+    ) {
+      errores.push(
+        `${previo.codigo}: con atención registrada no se puede cambiar el código ni la unidad (revierte primero).`
+      )
+    }
+  }
+  for (const a of actuales) {
+    if (!ids.has(a.id) && a.cantidadAtendida > 0) {
+      errores.push(
+        `${a.codigo}: tiene ${fmtNum(a.cantidadAtendida)} atendidos — revierte su atención antes de quitarlo de la RQ.`
+      )
+    }
+  }
+  return errores
+}
+
+function fmtNum(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('es-PE', { maximumFractionDigits: 3 })
+}
+
+/** Payload PURO de la RPC rq_editar_rq (testeable con esbuild+node). */
+export function payloadRpcEditarRq(
+  rqId: string,
+  encabezado: EncabezadoEditarRq,
+  items: ItemEditarRq[],
+  usuario: UsuarioCtx
+): {
+  p_rq_id: string
+  p_encabezado: Record<string, string>
+  p_items: Record<string, unknown>[]
+  p_usuario_id: string | null
+  p_usuario_nombre: string
+  p_usuario_correo: string
+} {
+  // Encabezado: solo los campos presentes (la RPC compara y aplica).
+  const p_encabezado: Record<string, string> = {}
+  const CAMPOS: Array<[keyof EncabezadoEditarRq, string]> = [
+    ['numeroRq', 'numero_rq'],
+    ['ordenProduccion', 'orden_produccion'],
+    ['productoCodigo', 'producto_codigo'],
+    ['productoDescripcion', 'producto_descripcion'],
+    ['linea', 'linea'],
+    ['solicitante', 'solicitante'],
+    ['notas', 'notas'],
+    ['fecha', 'fecha'],
+    ['turno', 'turno'],
+  ]
+  for (const [k, col] of CAMPOS) {
+    if (encabezado[k] !== undefined) p_encabezado[col] = String(encabezado[k] ?? '')
+  }
+  return {
+    p_rq_id: rqId,
+    p_encabezado,
+    p_items: items.map((it, i) => ({
+      // el orden canónico lo manda el índice del arreglo (el UI muestra en ese orden)
+      orden: Number.isInteger(it.orden) ? it.orden : i,
+      ...(it.id?.trim() ? { id: it.id.trim() } : {}),
+      codigo: it.codigo.trim().toUpperCase(),
+      descripcion: it.descripcion.trim(),
+      unidad: it.unidad.trim(),
+      cantidad: it.cantidad,
+    })),
+    p_usuario_id: usuario.id?.trim() || null,
+    p_usuario_nombre: usuario.nombre || '',
+    p_usuario_correo: usuario.correo || '',
+  }
+}
+
+/**
+ * Edita la RQ (encabezado + diff declarativo de materiales) en UNA
+ * transacción en la BD: RPC rq_editar_rq.
+ *
+ * Integridad física (la RPC rechaza con mensaje claro):
+ *   · cantidad nueva < cantidad_atendida          → CANTIDAD_MENOR_ATENDIDA
+ *   · código/unidad de un material con atención   → ITEM_CON_ATENCION
+ *   · eliminar material con atención registrada   → ITEM_CON_ATENCION
+ *
+ * Sin respaldo cliente A PROPOSITO (diferencia con crearRq): la migración
+ * SQL se aplica a producción ANTES de desplegar este frontend, así que no
+ * existe ventana real sin RPC; simular el diff en el cliente escribiría en
+ * varias peticiones sin transacción (peor que fallar claro). Si la RPC no
+ * estuviera disponible, el mensaje pide actualizar la pestaña.
+ */
+export async function editarRq(
+  rqId: string,
+  encabezado: EncabezadoEditarRq,
+  items: ItemEditarRq[],
+  usuario: UsuarioCtx
+): Promise<ResultadoEdicionRq> {
+  const p = payloadRpcEditarRq(rqId, encabezado, items, usuario)
+  const { data, error } = await dataClient.rpc('rq_editar_rq', p)
+  if (!error && data) {
+    const r = data as Record<string, unknown>
+    return {
+      rq: mapRq((r.rq ?? {}) as Record<string, unknown>),
+      items: ((r.items ?? []) as Record<string, unknown>[]).map(mapItem),
+      cambios: toNum(r.cambios),
+    }
+  }
+  const msg = error?.message ?? ''
+  if (/pgrst20[24]|not found|does not exist|schema cache/i.test(msg)) {
+    throw new Error(
+      'La edición de RQ aún no está disponible en esta conexión: recarga la pestaña (F5) e inténtalo de nuevo.'
+    )
+  }
+  throw error ?? new Error('Error desconocido al editar la RQ')
 }
 
 // ═══════════════════════════════════════════════════════════════════

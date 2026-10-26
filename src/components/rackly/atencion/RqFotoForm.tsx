@@ -44,7 +44,13 @@ import {
   type DatosRq,
 } from '@/lib/rackly/rq-ocr'
 import { calcularTurnoRecepcion } from '@/lib/rackly/turno'
-import { crearRq, subirFotoRq, type RqAtencion } from '@/lib/rackly/rq-atencion'
+import {
+  crearRq,
+  eliminarFotoRq,
+  subirFotoRq,
+  type RqAtencion,
+} from '@/lib/rackly/rq-atencion'
+import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { aNumero } from '@/lib/rackly/formato'
 import {
   RecortarImagenDialog,
@@ -192,6 +198,15 @@ export function RqFotoForm({
   /** Rigor numérico (Task 23): discrepancias entre lecturas que el usuario
    *  debe verificar antes de registrar (Nº RQ / OP / producto / cantidades). */
   const [avisos, setAvisos] = useState<string[]>([])
+
+  /**
+   * ID de idempotencia de la RQ (Task 25): se asigna UNA VEZ por intención de
+   * guardado y se MANTIENE entre reintentos — si la red se cae y el usuario
+   * vuelve a tocar «Registrar», la RPC/backup reconoce el MISMO id y completa
+   * lo que falte en vez de crear una RQ duplicada. Se limpia al registrar con
+   * éxito o al reiniciar el formulario.
+   */
+  const rqIdRef = useRef<string | null>(null)
 
   const inputCamaraRef = useRef<HTMLInputElement>(null)
   const inputGaleriaRef = useRef<HTMLInputElement>(null)
@@ -567,6 +582,7 @@ export function RqFotoForm({
     setForm(formVacio())
     setProgreso(0)
     setAvisos([])
+    rqIdRef.current = null // nueva intención de guardado (Task 25)
     originalRef.current = null
     setPendiente(null)
     setPaso('elegir')
@@ -609,33 +625,47 @@ export function RqFotoForm({
           toast.warning('La RQ se registrará SIN foto', { description: msg })
         }
       }
-      const id = await crearRq(
-        {
-          fecha: form.fecha,
-          numeroRq: form.numeroRq.trim(),
-          ordenProduccion: form.ordenProduccion.trim(),
-          productoCodigo: form.productoCodigo.trim(),
-          productoDescripcion: form.productoDescripcion.trim(),
-          turno: form.turno,
-          linea: form.linea.trim(),
-          solicitante: form.solicitante.trim(),
-          notas: form.notas.trim(),
-          fotoUrl,
-        },
-        itemsValidos.map((it) => ({
-          codigo: it.codigo.trim(),
-          descripcion: it.descripcion.trim(),
-          unidad: it.unidad.trim(),
-          cantidad: aNumero(it.cantidad),
-        })),
-        { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
-      )
+      // ID estable por intención de guardado (Task 25): reintentos del MISMO
+      // registro reusan el id — la RPC/backup completa lo falte en vez de
+      // duplicar la RQ. Solo un registro NUEVO tras éxito/reinicio genera otro.
+      if (!rqIdRef.current) rqIdRef.current = nuevoUuid()
+      try {
+        await crearRq(
+          {
+            fecha: form.fecha,
+            numeroRq: form.numeroRq.trim(),
+            ordenProduccion: form.ordenProduccion.trim(),
+            productoCodigo: form.productoCodigo.trim(),
+            productoDescripcion: form.productoDescripcion.trim(),
+            turno: form.turno,
+            linea: form.linea.trim(),
+            solicitante: form.solicitante.trim(),
+            notas: form.notas.trim(),
+            fotoUrl,
+          },
+          itemsValidos.map((it) => ({
+            codigo: it.codigo.trim(),
+            descripcion: it.descripcion.trim(),
+            unidad: it.unidad.trim(),
+            cantidad: aNumero(it.cantidad),
+          })),
+          { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo },
+          rqIdRef.current
+        )
+      } catch (errRq: unknown) {
+        // La foto ya subió pero la RQ no: limpieza BEST-EFFORT del objeto
+        // huérfano (Task 25) — sin tapar el error real del guardado.
+        if (fotoUrl) void eliminarFotoRq(fotoUrl)
+        throw errRq
+      }
+      const idRegistrada = rqIdRef.current as string
+      rqIdRef.current = null // éxito: la próxima RQ será una nueva intención
       toast.success('RQ registrada — ya puedes atenderla', {
         description: itemsValidos.length > 0 ? `${itemsValidos.length} material(es) por atender.` : undefined,
       })
       onRegistrado({
         rq: {
-          id,
+          id: idRegistrada,
           createdAt: new Date().toISOString(),
           fecha: form.fecha,
           numeroRq: form.numeroRq.trim(),

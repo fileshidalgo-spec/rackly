@@ -238,16 +238,42 @@ export type NuevoRq = {
 }
 
 /**
- * Crea la RQ con sus materiales. El id del ENCABEZADO se genera en el
- * cliente: si la red se cae tras guardar y el usuario reintenta, el INSERT
- * duplicado choca con la PK y se reconoce como YA GUARDADA (idempotencia).
+ * Crea la RQ con sus materiales. ATÓMICA e IDEMPOTENTE (Task 25):
+ *
+ *   · El id lo genera QUIEN LLAMA (el formulario lo mantiene estable entre
+ *     reintentos de la misma intención de guardado) — antes se generaba aquí
+ *     y cada reintento traía un id nuevo: la "idempotencia" jamás chocaba con
+ *     la PK y la RQ se duplicaba tras una respuesta perdida.
+ *   · Camino preferente: RPC rq_crear_completa — header + items en UNA
+ *     transacción en la BD (si una toma falla, no queda nada a medias) y con
+ *     recuperación idempotente de items faltantes en el reintento.
+ *   · Respaldo (RPC no disponible): insert en 2 fases CON recuperación —
+ *     duplicate del header → se completan los items faltantes; si los items
+ *     fallan, se intenta limpiar el header (best-effort) y se propaga el error.
  */
 export async function crearRq(
   datos: NuevoRq,
   items: NuevoRqItem[],
-  usuario: UsuarioCtx
+  usuario: UsuarioCtx,
+  idPreasignado?: string
 ): Promise<string> {
-  const id = nuevoUuid()
+  const id = idPreasignado?.trim() || nuevoUuid()
+  const p = payloadRpcCrearRq(datos, items, usuario, id)
+
+  // ── Camino 1: RPC atómica (transacción completa en la BD) ──
+  const { data, error: eRpc } = await dataClient.rpc('rq_crear_completa', {
+    p_rq: p.p_rq,
+    p_items: p.p_items,
+  })
+  if (!eRpc && data) return typeof data === 'string' ? data : id
+  // RPC ausente (deploy viejo): caemos al respaldo cliente. Cualquier otro
+  // error de la RPC es REAL (validación/BD) y se propaga — no se enmascara.
+  const msgRpc = eRpc?.message ?? ''
+  if (!/pgrst20[24]|not found|does not exist|schema cache/i.test(msgRpc)) {
+    throw eRpc ?? new Error('Error desconocido en rq_crear_completa')
+  }
+
+  // ── Camino 2: respaldo cliente en 2 fases CON recuperación ──
   const { error: eRq } = await dataClient.from('rq_atenciones').insert({
     id,
     fecha: datos.fecha,
@@ -266,9 +292,14 @@ export async function crearRq(
     usuario_correo: usuario.correo,
   })
   if (eRq) {
-    // Reintento tras una red caída: la RQ con ese id YA existe → éxito.
     const msg = (eRq.message ?? '').toLowerCase()
-    if (msg.includes('duplicate') || msg.includes('already exists')) return id
+    if (msg.includes('duplicate') || msg.includes('already exists')) {
+      // Reintento con el MISMO id: el header ya estaba (primera llamada
+      // llegó a medias). Completamos los materiales que falten — devolver
+      // éxito sin materiales era el bug original (Task 25).
+      await asegurarItemsRq(id, items)
+      return id
+    }
     throw eRq
   }
   if (items.length > 0) {
@@ -283,9 +314,77 @@ export async function crearRq(
         cantidad_atendida: 0,
       }))
     )
-    if (eItems) throw eItems
+    if (eItems) {
+      // No dejar una RQ cabeza sin materiales: si el borrador se puede
+      // quitar (permisos de delete), se quita y el reintento parte limpio.
+      // Si los permisos no alcanzan, el reintento con el MISMO id entra por
+      // la rama duplicate y completa los items — el sistema converge igual.
+      await dataClient.from('rq_atenciones').delete().eq('id', id)
+      throw eItems
+    }
   }
   return id
+}
+
+/**
+ * Payload de la RPC rq_crear_completa (PURO — testeable con esbuild+node).
+ * El cliente manda fecha/textos ya recortados; la RPC aplica defaults y
+ * coalesce defensivos.
+ */
+export function payloadRpcCrearRq(
+  datos: NuevoRq,
+  items: NuevoRqItem[],
+  usuario: UsuarioCtx,
+  id: string
+): { p_rq: Record<string, unknown>; p_items: Record<string, unknown>[] } {
+  return {
+    p_rq: {
+      id,
+      fecha: datos.fecha,
+      numero_rq: datos.numeroRq,
+      orden_produccion: datos.ordenProduccion,
+      producto_codigo: datos.productoCodigo,
+      producto_descripcion: datos.productoDescripcion,
+      turno: datos.turno || 'T1',
+      linea: datos.linea ?? '',
+      solicitante: datos.solicitante,
+      foto_url: datos.fotoUrl ?? '',
+      notas: datos.notas ?? '',
+      usuario_id: usuario.id,
+      usuario_nombre: usuario.nombre,
+      usuario_correo: usuario.correo,
+    },
+    p_items: items.map((it, i) => ({
+      orden: i,
+      codigo: it.codigo,
+      descripcion: it.descripcion,
+      unidad: it.unidad,
+      cantidad: it.cantidad,
+    })),
+  }
+}
+
+/** Inserta los materiales que falten de una RQ (recuperación de reintento). */
+async function asegurarItemsRq(rqId: string, items: NuevoRqItem[]): Promise<void> {
+  if (items.length === 0) return
+  const { count, error: eCount } = await dataClient
+    .from('rq_atencion_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('rq_id', rqId)
+  if (eCount) throw eCount
+  if ((count ?? 0) > 0) return // ya tenía materiales: nada por recuperar
+  const { error: eItems } = await dataClient.from('rq_atencion_items').insert(
+    items.map((it, i) => ({
+      rq_id: rqId,
+      orden: i,
+      codigo: it.codigo,
+      descripcion: it.descripcion,
+      unidad: it.unidad,
+      cantidad: it.cantidad,
+      cantidad_atendida: 0,
+    }))
+  )
+  if (eItems) throw eItems
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -550,11 +649,17 @@ export async function listarLotesPuenteDeItem(
 // ═══════════════════════════════════════════════════════════════════
 
 export async function eliminarRq(id: string): Promise<void> {
-  // Los materiales primero (si el cascade fallara por permisos, no queda huérfano)
-  const { error: eItems } = await dataClient.from('rq_atencion_items').delete().eq('rq_id', id)
-  if (eItems) throw eItems
+  // FIX Task 25: el HEADER PRIMERO. La política RLS de DELETE (solo
+  // supervisores) se valida en el primer delete: si ese pasa, el usuario
+  // tiene permiso y el de items pasará igual. Antes se borraban los items
+  // primero — si el delete del header fallaba (red), quedaba una RQ visible
+  // SIN materiales (pérdida parcial). Con este orden el peor caso es lo
+  // contrario: items huérfanos INVISIBLES (basura inofensiva, sin impacto
+  // en la UI ni en los totales).
   const { error: eRq } = await dataClient.from('rq_atenciones').delete().eq('id', id)
   if (eRq) throw eRq
+  const { error: eItems } = await dataClient.from('rq_atencion_items').delete().eq('rq_id', id)
+  if (eItems) throw eItems
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -585,4 +690,29 @@ export async function subirFotoRq(archivo: Blob, usuarioId: string): Promise<str
     throw new Error(`Storage ${res.status}: ${(await res.text().catch(() => '')).slice(0, 140)}`)
   }
   return ruta
+}
+
+/**
+ * BEST-EFFORT: borra la foto que quedó huérfana cuando la subida tuvo éxito
+ * pero crearRq falló (Task 25 — sin esto el bucket privado acumula basura
+ * que nadie referencia). Nunca lanza: el fallo de limpieza no debe tapar el
+ * error real del guardado.
+ */
+export async function eliminarFotoRq(ruta: string): Promise<void> {
+  const r = (ruta ?? '').trim()
+  if (!r) return
+  try {
+    const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/+$/, '')
+    const anon = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim()
+    const { supabase } = await import('@/lib/supabase/client')
+    const { data: sess } = await supabase.auth.getSession()
+    const token = sess.session?.access_token
+    if (!base || !anon || !token) return
+    await fetch(`${base}/storage/v1/object/atencion-rq/${encodeURIComponent(r)}`, {
+      method: 'DELETE',
+      headers: { apikey: anon, authorization: `Bearer ${token}` },
+    })
+  } catch {
+    // Limpieza oportunista: silenciosa por diseño.
+  }
 }

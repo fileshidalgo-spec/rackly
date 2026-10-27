@@ -20,8 +20,10 @@
 --       - ausentes    → DELETE (SOLO si cantidad_atendida = 0)
 --     p_items vacío/NULL = "no tocar materiales" (edición solo de encabezado).
 --   · Guardas de integridad física:
---       - cantidad nueva < cantidad_atendida → RECHAZA (no se puede pedir
---         menos de lo que ya salió del almacén: primero revertir).
+--       - cantidad nueva < cantidad_atendida cruzando el umbral (la cantidad
+--         de origen lo cubría) → RECHAZA: no se puede pedir menos de lo que ya
+--         salió del almacén por una edición (primero revertir). Un excedente
+--         preexistente (atendida > cantidad de origen) NO bloquea (Task 34).
 --       - código/unidad de un item con atención registrada → RECHAZA
 --         (la salida física quedó asociada a ese material).
 --       - eliminar item con atención registrada → RECHAZA (mismo motivo).
@@ -204,7 +206,13 @@ BEGIN
       IF v_cant IS NULL OR v_cant <= 0 THEN
         RAISE EXCEPTION 'CANTIDAD_INVALIDA|La cantidad de % debe ser mayor que cero', v_codigo;
       END IF;
-      IF v_cant < v_item.cantidad_atendida THEN
+      -- FIX Task 34 (regla = espejo exacto de validarEdicionRq): solo rechaza
+      -- cuando la edición CRUZA el umbral hacia abajo (la cantidad de origen
+      -- SÍ cubría lo atendido y la nueva la deja por debajo). Un excedente
+      -- PREEXISTENTE (atendida > cantidad de origen, caso legítimo de atender
+      -- de más) NO bloquea la edición de la RQ: antes, CUALQUIER guardado de
+      -- una RQ con excedente era rechazado aunque no se tocara esa fila.
+      IF v_cant < v_item.cantidad_atendida AND v_item.cantidad >= v_item.cantidad_atendida THEN
         RAISE EXCEPTION 'CANTIDAD_MENOR_ATENDIDA|% pide % pero ya se atendieron %: primero revierte la atención de ese material',
           v_codigo, v_cant, v_item.cantidad_atendida;
       END IF;

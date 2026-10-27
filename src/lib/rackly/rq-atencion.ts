@@ -493,7 +493,14 @@ export function validarEdicionRq(
       errores.push(`El material ${codigo} ya no existe en la RQ: recarga la pantalla e inténtalo de nuevo.`)
       continue
     }
-    if (it.cantidad < previo.cantidadAtendida) {
+    // FIX Task 34: la regla original (cantidad nueva < atendida → rechazar)
+    // bloqueaba COMPLETAMENTE la edición de una RQ atendida CON EXCEDENTE
+    // (atendida > cantidad de origen: p. ej. pedidas 240000, atendidas 255478)
+    // aunque el supervisor no tocara esa fila — ningún guardado era posible.
+    // Regla correcta (espejo de la RPC): solo rechazar cuando la edición CRUZA
+    // el umbral hacia abajo (la cantidad de origen SÍ cubría lo atendido y la
+    // nueva lo deja por debajo). El excedente preexistente no bloquea nada.
+    if (it.cantidad < previo.cantidadAtendida && previo.cantidad >= previo.cantidadAtendida) {
       errores.push(
         `${previo.codigo}: pides ${fmtNum(it.cantidad)} pero ya se atendieron ${fmtNum(previo.cantidadAtendida)} — primero revierte su atención.`
       )
@@ -574,7 +581,10 @@ export function payloadRpcEditarRq(
  * transacción en la BD: RPC rq_editar_rq.
  *
  * Integridad física (la RPC rechaza con mensaje claro):
- *   · cantidad nueva < cantidad_atendida          → CANTIDAD_MENOR_ATENDIDA
+ *   · reducir la cantidad POR DEBAJO de lo ya atendido (cruzando el umbral:
+ *     la cantidad de origen lo cubría)               → CANTIDAD_MENOR_ATENDIDA
+ *     Task 34: un excedente PREEXISTENTE (atendida > cantidad de origen) no
+ *     bloquea la edición ni obliga a revertir nada.
  *   · código/unidad de un material con atención   → ITEM_CON_ATENCION
  *   · eliminar material con atención registrada   → ITEM_CON_ATENCION
  *

@@ -14,7 +14,10 @@
  *   · Materiales: editar código/descripción/unidad/cantidad, AGREGAR y QUITAR.
  *
  * Integridad física (misma regla que la RPC rq_editar_rq — validarEdicionRq):
- *   · cantidad nueva < cantidad_atendida → rechaza (primero revertir).
+ *   · reducir la cantidad POR DEBAJO de lo ya atendido (cruzando el umbral:
+ *     la cantidad de origen lo cubría) → rechaza (primero revertir).
+ *     Task 34: un excedente PREEXISTENTE (atendida > cantidad de origen) no
+ *     bloquea la edición de la RQ.
  *   · código/unidad de un material con atención registrada → congelados.
  *   · quitar un material con atención registrada → rechaza.
  *

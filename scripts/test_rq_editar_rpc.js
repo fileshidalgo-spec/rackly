@@ -88,12 +88,33 @@ check('duplicado por id → error específico', validarEdicionRq([
   { id: 'a-2', orden: 1, codigo: 'MAT-B', descripcion: '', unidad: 'UN', cantidad: 2 },
 ], ACTUALES).some((e) => e.includes('dos veces')) === true)
 
-// Regla 1: cantidad nueva < cantidad_atendida
-check('cantidad < atendida → rechaza', validarEdicionRq([
+// Regla 1 (FIX Task 34): solo rechaza si la edición CRUZA el umbral hacia
+// abajo (la cantidad de origen cubría lo atendido y la nueva la deja debajo).
+check('cantidad < atendida cruzando el umbral → rechaza', validarEdicionRq([
   { id: 'a-1', orden: 0, codigo: 'MAT-A', descripcion: '', unidad: 'KG', cantidad: 3 },
   { id: 'a-2', orden: 1, codigo: 'MAT-B', descripcion: '', unidad: 'UN', cantidad: 20 },
   { id: 'a-3', orden: 2, codigo: 'MAT-C', descripcion: '', unidad: 'KG', cantidad: 30 },
 ], ACTUALES).some((e) => e.includes('MAT-A') && e.includes('revierte')) === true)
+
+// Task 34 (regresión del reporte real): RQ atendida CON EXCEDENTE preexistente
+// (pedidas 240000, atendidas 255478) — la edición de OTRAS filas NO debe
+// bloquearse (antes NINGÚN guardado era posible en esta RQ).
+const EXCEDENTE = [
+  { id: 'x-1', rqId: 'rq-x', orden: 0, codigo: '56685', descripcion: 'ETIQUETA', unidad: 'UN', cantidad: 240000, cantidadAtendida: 255478, usuarioAtencion: '', atendidoEn: '' },
+  { id: 'x-2', rqId: 'rq-x', orden: 1, codigo: '50111', descripcion: 'PREFORMA', unidad: 'UN', cantidad: 240000, cantidadAtendida: 0, usuarioAtencion: '', atendidoEn: '' },
+]
+check('excedente preexistente + editar OTRA fila → 0 errores (Task 34)', validarEdicionRq([
+  { id: 'x-1', orden: 0, codigo: '56685', descripcion: 'ETIQUETA', unidad: 'UN', cantidad: 240000 },
+  { id: 'x-2', orden: 1, codigo: '50111', descripcion: 'PREFORMA', unidad: 'UN', cantidad: 250000 },
+], EXCEDENTE).length === 0)
+check('excedente preexistente + NO tocar la fila → 0 errores (Task 34)', validarEdicionRq([
+  { id: 'x-1', orden: 0, codigo: '56685', descripcion: 'ETIQUETA', unidad: 'UN', cantidad: 240000 },
+  { id: 'x-2', orden: 1, codigo: '50111', descripcion: 'PREFORMA', unidad: 'UN', cantidad: 240000 },
+], EXCEDENTE).length === 0)
+check('excedente preexistente + cambiar la cantidad de esa fila → 0 errores', validarEdicionRq([
+  { id: 'x-1', orden: 0, codigo: '56685', descripcion: 'ETIQUETA', unidad: 'UN', cantidad: 300000 },
+  { id: 'x-2', orden: 1, codigo: '50111', descripcion: 'PREFORMA', unidad: 'UN', cantidad: 240000 },
+], EXCEDENTE).length === 0)
 
 // cantidad IGUAL a la atendida SÍ es válida (cierra el material)
 check('cantidad = atendida → válido', validarEdicionRq([

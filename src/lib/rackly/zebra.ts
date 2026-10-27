@@ -473,10 +473,6 @@ function cajaApaisada(x0: number, y0: number, x1: number, y1: number, grosor = 3
 type OpcionesCampoApaisado = {
   /** Si se define, envuelve el texto en ^FB centrado de ese ancho visual. */
   fbAncho?: number
-  /** Líneas del ^FB (default 1). */
-  fbLineas?: number
-  /** Espaciado entre líneas del ^FB (default 0). */
-  fbEspacio?: number
   /** "Negrita" simulada: 2ª pasada a 2 dots en el flujo del texto. */
   negrita?: boolean
   /**
@@ -511,9 +507,11 @@ function campoApaisado(
   texto: string,
   ops: OpcionesCampoApaisado = {}
 ): string[] {
-  const fb = ops.fbAncho
-    ? `^FB${ops.fbAncho},${ops.fbLineas ?? 1},${ops.fbEspacio ?? 0},C`
-    : ''
+  // ^FB de UNA sola línea: el centrado horizontal del firmware es fiable
+  // (código/lote/fechas lo usan); el MULTILÍNEA en texto rotado NO (Task 30:
+  // apila hacia arriba y cruzaba las líneas del recuadro) — la descripción
+  // nunca debe usarlo: cada renglón es su propio campo (ver layoutDescripcion).
+  const fb = ops.fbAncho ? `^FB${ops.fbAncho},1,0,C` : ''
   const pasadas = ops.negrita ? [0, 2] : [0]
   const porBaseline = ops.baselineVisual != null
   const xFis = porBaseline
@@ -523,6 +521,98 @@ function campoApaisado(
   return pasadas.map(
     (dx) => `^${cmd}${xFis},${x0 + dx}^A0R,${alto},${anchoGlifo}${fb}^FD${texto}^FS`
   )
+}
+
+// ═══ Descripción: motor de layout DETERMINISTA (Task 30) ═══
+// Síntomas que reemplaza (foto del sticker 2026-10-28): descripción en una
+// sola línea diminuta (fuente 38 comprimida a celda 28), pegada al separador
+// del código y — en la impresora real — CRUZADA por la línea del recuadro.
+// Causas: (1) el degradado 48→38 nunca recalculaba el salto de líneas (con
+// celda 28 el texto ya cabía en 1 renglón) y la posición y=271 era la de un
+// bloque de 2; (2) ^FB multilínea + ^A0R apila el bloque hacia ARRIBA desde
+// el ancla (verificado en sondas: la 1ª línea del dato cae en visY 128..240,
+// fuera del recuadro) → colisión con la línea límite.
+// Solución: partir el texto AQUÍ (1 ó 2 líneas balanceadas), emitir un campo
+// por renglón con ^FB de 1 línea y maximizar el tamaño con el modelo de
+// tinta calibrado con render (fuente 0, letras, sin negrita):
+//   cap-top y0+0.017em · baseline y0+0.763em · descendentes y0+0.933em ·
+//   avance 0.504×w medido → 0.55×w de diseño (holgura 9% de firmware).
+const DESC_CENTRO_BANDA = 320 // (240 + 400) / 2 — centro visual de la banda
+const DESC_ZONA_SUP = 249 // línea superior 240..243 + 6 dots de aire
+const DESC_ZONA_INF = 391 // línea inferior 397..400 − 6 dots de aire
+const DESC_MARGEN_X = 12 // aire lateral mínimo dentro del bloque ^FB
+const DESC_AVANCE = 0.55 // dots de avance por char y por dot de celda
+const DESC_RATIO_W = 0.85 // celda ancha = glifo natural legible (no comprimido)
+const DESC_CAP = 0.017
+const DESC_BASE = 0.763
+const DESC_FONDO = 0.933 // con descendentes (µ, minúsculas, Q de cola)
+const DESC_PASO_EM = 1.12 // separación entre renglones (×em)
+const DESC_EM_MIN = 20
+
+/**
+ * Parte `texto` en `n` renglones balanceados por palabras (minimiza el
+ * renglón más largo). Devuelve null si no hay palabras suficientes.
+ */
+function repartirEnLineas(texto: string, n: 1 | 2): string[] | null {
+  const palabras = texto.split(' ').filter(Boolean)
+  if (!palabras.length) return null
+  if (n === 1) return [palabras.join(' ')]
+  if (palabras.length < 2) return null
+  let mejor: { lineas: string[]; maximo: number } | null = null
+  for (let k = 1; k < palabras.length; k++) {
+    const a = palabras.slice(0, k).join(' ')
+    const b = palabras.slice(k).join(' ')
+    const maximo = Math.max(a.length, b.length)
+    if (!mejor || maximo < mejor.maximo) mejor = { lineas: [a, b], maximo }
+  }
+  return mejor ? mejor.lineas : null
+}
+
+/**
+ * Layout de la banda de descripción (Y 240..400): elige 1 ó 2 renglones —
+ * el que permita la fuente MÁS GRANDE — y centra la TINTA del bloque en la
+ * banda con ≥ 6 dots de aire de las líneas ("sin tocar los límites").
+ * Cada renglón se imprime como campo propio centrado por ^FB de 1 línea.
+ * Devuelve null solo si `texto` es vacío.
+ */
+export function layoutDescripcion(
+  texto: string,
+  anchoLinea: number
+): { lineas: string[]; em: number; w: number; paso: number; y1: number } | null {
+  if (!texto.trim()) return null
+  const fondo = /[a-zµ,;Q]/.test(texto) ? DESC_FONDO : DESC_BASE
+  const utilAncho = anchoLinea - 2 * DESC_MARGEN_X
+  const utilAlto = DESC_ZONA_INF - DESC_ZONA_SUP
+  let mejor: { lineas: string[]; em: number; w: number; paso: number; y1: number } | null = null
+  for (const n of [1, 2] as const) {
+    const lineas = repartirEnLineas(texto, n)
+    if (!lineas) continue
+    const maxChars = Math.max(...lineas.map((l) => l.length))
+    const emAncho = Math.floor(utilAncho / (DESC_AVANCE * DESC_RATIO_W * maxChars))
+    const emAlto = Math.floor(utilAlto / ((n - 1) * DESC_PASO_EM + DESC_CAP + fondo))
+    const em = Math.min(emAncho, emAlto)
+    if (em < DESC_EM_MIN) continue
+    let w = Math.round(em * DESC_RATIO_W)
+    if (maxChars * DESC_AVANCE * w > utilAncho) w -= 1 // celda −1 dot antes de descartar
+    if (maxChars * DESC_AVANCE * w > utilAncho) continue
+    const paso = Math.round(em * DESC_PASO_EM)
+    const altoTinta = (n - 1) * paso + (DESC_CAP + fondo) * em
+    const y1 = Math.round(DESC_CENTRO_BANDA - altoTinta / 2)
+    if (!mejor || em > mejor.em) mejor = { lineas, em, w, paso, y1 }
+  }
+  if (mejor) return mejor
+  // Red de seguridad (no ocurre con el catálogo real, máx 63 chars): una
+  // línea chica truncada, siempre dentro del recuadro.
+  const em = DESC_EM_MIN
+  const w = Math.max(10, Math.round(em * DESC_RATIO_W))
+  const maxChars = Math.floor(utilAncho / (DESC_AVANCE * w))
+  return {
+    lineas: [texto.slice(0, maxChars)],
+    em,
+    w,
+    paso: 0,
+    y1: Math.round(DESC_CENTRO_BANDA - ((DESC_CAP + fondo) * em) / 2),
+  }
 }
 
 /**
@@ -544,9 +634,9 @@ function campoApaisado(
  *   ┌───────────────────────────────────────────────┬──────────┐ Y 0
  *   │                    49310                      │ ▓▓ QR ▓▓ │  código 0..240
  *   ├───────────────────────────────────────────────┤ ▓ 4×4 ▓  │
- *   │   LAMINA TERMOCONTRABLE 380 MM X 50 µ           │ ▓ (cm) ▓ │  desc 240..400
+ *   │   LAMINA TERMOCONTRABLE 380 MM X 50 µ         │ ▓ (cm) ▓ │  desc 240..400
  *   ├────────────┬───────────────────────────────────────────────┤
- *   │   LOTE:    │                0869051017                     │  lote 400..545
+ *   │   LOTE:    │              0 8 6 9 0 5 1 0 1 7              │  lote 400..545
  *   ├─────┬──────┴────────┬───────┬────────────────────┬─────────┤ 545
  *   │ F.P │  23/07/2026   │ CANT: │       193320       │   UN    │
  *   │ F.V │  22/07/2027   │       │                    │         │
@@ -568,6 +658,10 @@ function campoApaisado(
  *   · Todas las cajas con borde, textos centrados, "negrita" simulada
  *     (doble pasada a 2 dots en el flujo) en código, lote y cantidad.
  *   · Campos vacíos (lote/fechas) salen en blanco, como en la plantilla.
+ *   · La descripción usa layout DETERMINISTA por renglón (Task 30): el texto
+ *     se parte en 1-2 líneas EN EL CÓDIGO (split balanceado) y cada línea es
+ *     su propio campo centrado — el ^FB multilínea sobre texto rotado apila
+ *     hacia arriba y cruzaba la línea del recuadro ("tachado" en el sticker).
  *
  * DPI: la ZT411 estándar es 203 dpi (8 dots/mm). Si la suya fuera 300 dpi,
  * la etiqueta sale al ~68% del tamaño (avisar para reescalar).
@@ -641,34 +735,22 @@ export function construirZPLRotulo(
     lineas.push(...campoApaisado(xTexto, y, alto, Math.round(alto * 0.6), codigo, { fbAncho: anchoTexto, negrita: true }))
   }
 
-  // ── 2) DESCRIPCIÓN — banda visual Y 240..400 (1-2 líneas, centrada) ──
+  // ── 2) DESCRIPCIÓN — banda visual Y 240..400 (layout determinista, Task 30) ──
+  // Centrada en su recuadro (debajo del código), tipografía natural legible
+  // y LO MÁS GRANDE posible sin tocar las líneas: 1 ó 2 renglones (el que
+  // dé fuente mayor), cada renglón como campo propio con ^FB de UNA línea
+  // (el multilínea rotado apila hacia arriba y cruzaba el recuadro) y la
+  // TINTA centrada con el modelo calibrado de layoutDescripcion.
   lineas.push(cajaApaisada(0, 240, payloadQR ? X_ZONA_QR : 1200, 400, 3))
   if (descripcion) {
-    // Cadena de decisión con avance conservador (0.5 × ancho de glifo,
-    // calibrado con Labelary) sobre el ancho DISPONIBLE (752 con QR,
-    // 1152 sin QR):
-    //   1) fuente 58 si cabe en 1 renglón (≤ ~35/54 chars)
-    //   2) fuente 48 si cabe en 1 renglón (≤ ~42/65 chars)
-    //   3) fuente 48 en 2 renglones (≤ ~85/130 chars)
-    //   4) fuente 38 en 2 renglones (degradación — hasta ~107 chars con
-    //      QR; el ^FB trunca más allá, igual que antes con 130)
     const anchoLinea = payloadQR ? X_ZONA_QR - 48 : 1152
-    const cabe58 = descripcion.length * 0.5 * 42 <= anchoLinea
-    const cabe48 = descripcion.length * 0.5 * 35 <= anchoLinea
-    const cabe2x48 = descripcion.length * 0.5 * 35 * 2 <= anchoLinea
-    const dosLineas = !cabe58 && !cabe48
-    const degrada = dosLineas && !cabe2x48
-    const alto = cabe58 ? 58 : degrada ? 38 : 48
-    const anchoGlifo = cabe58 ? 42 : degrada ? 28 : 35
-    const altoBloque = dosLineas ? 2 * Math.round(alto * 1.15) + 10 : Math.round(alto * 1.15)
-    const y = 240 + Math.floor((160 - altoBloque) / 2)
-    lineas.push(
-      ...campoApaisado(24, y, alto, anchoGlifo, descripcion, {
-        fbAncho: anchoLinea,
-        fbLineas: dosLineas ? 2 : 1,
-        fbEspacio: 10,
+    const layout = layoutDescripcion(descripcion, anchoLinea)
+    if (layout) {
+      layout.lineas.forEach((linea, k) => {
+        const yk = layout.y1 + k * layout.paso
+        lineas.push(...campoApaisado(24, yk, layout.em, layout.w, linea, { fbAncho: anchoLinea }))
       })
-    )
+    }
   }
 
   // ── 3) LOTE — banda visual Y 400..545 ──

@@ -14,12 +14,16 @@
  *   4. Saneo de caracteres peligrosos (^ ~ \ y control) + anti-inyección.
  *   5. Tildes/ñ/º se conservan (^CI28 UTF-8).
  *   6. Campos vacíos → celdas en blanco sin crash.
+ *   7. Descripción: layout DETERMINISTA (Task 30) — centrada en su recuadro,
+ *      1-2 renglones propios (NUNCA ^FB multilínea rotado), fuente máxima
+ *      sin tocar líneas (modelo de tinta calibrado), descendentes protegidos.
  */
 
 const {
   construirZPLRotulo,
   construirZPLRotulos,
   sanearZPL,
+  layoutDescripcion,
 } = require('@/lib/rackly/zebra')
 
 let passed = 0
@@ -108,11 +112,19 @@ check(
   'lote alfanumérico: solo pares de dígitos se espacian (12 → 1 2; AB/CD intactos)',
   zLoteAlfa.includes('^FDAB-1 2-CD^FS')
 )
-check('descripción 63 chars → 2 renglones degradados a fuente 38 con QR 4cm (^FB752,2,10,C)', z1.includes('^FB752,2,10,C') && z1.includes('^A0R,38,28'))
+check(
+  'descripción 64 chars CON QR → 2 renglones propios a fuente 48 (antes 38 comprimida), cada uno centrado',
+  z1.includes('^FO478,24^A0R,48,41^FB752,1,0,C^FDENVASE TETRA PACK PULP DURAZNO^FS') &&
+    z1.includes('^FO424,24^A0R,48,41^FB752,1,0,C^FDFORTI HIERRO 145 ML - DISEÑO 202^FS')
+)
 const zDescLarga = construirZPLRotulo({ ...DATOS, descripcion: DATOS.descripcion + ' EXTRA LARGA' }, ENCABEZADO)
-check('descripción 75 chars → 2 renglones degradados a fuente 38 (^FB752,2,10,C)', zDescLarga.includes('^FB752,2,10,C') && zDescLarga.includes('^A0R,38,28'))
+check('descripción 77 chars → 2 renglones balanceados (36/38) a fuente 40 con celda 34 (antes degradaba a 38/28)', zDescLarga.includes('^A0R,40,34^FB752,1,0,C'))
 const zDescCorta = construirZPLRotulo({ ...DATOS, descripcion: 'SAL INDUSTRIAL' }, ENCABEZADO)
-check('descripción corta (14 chars) mantiene 1 renglón a fuente 58 (^FB752,1,10,C)', zDescCorta.includes('^FB752,1,10,C') && zDescCorta.includes('^A0R,58,42'))
+check('descripción corta (14 chars) → 1 renglón GIGANTE a fuente 111 (antes 58) llenando la banda', zDescCorta.includes('^FO412,24^A0R,111,94^FB752,1,0,C^FDSAL INDUSTRIAL^FS'))
+check(
+  'NUNCA ^FB multilínea (el rotado apila hacia arriba y cruzaba el recuadro — foto del sticker)',
+  !/\^FB\d+,[2-9]/.test(z1) && !/\^FB\d+,[2-9]/.test(zDescLarga) && !/\^FB\d+,[2-9]/.test(zDescCorta)
+)
 check("descripción completa con Ñ", z1.includes('DISEÑO 202'))
 
 console.log('\n── 2b. Bandas y cajas del diseño apaisado (coordenadas físicas) ──')
@@ -293,6 +305,85 @@ check('sin identidad de guía → SIN QR y bandas a ancho completo (1200)', (() 
 })())
 check('separadora del límite X 800 baja hasta Y 400 (cruza código y descripción)', z1.includes('^FO400,800^GB400,3,2'))
 check('límites físicos respetados con QR 4cm', limitesOK(zQr61) && limitesOK(zQrPaleta) && limitesOK(zQr26))
+
+console.log('\n── 11. Descripción centrada y máxima en su recuadro (Task 30 — foto del sticker) ──')
+// Caso EXACTO de la foto: código 55492 · "BASE PARA BEBIDA JARABEADA
+// CARBONATADA FRESA 50496" (50 chars) CON QR de guía (banda 0..800 → ^FB 752).
+const FOTO = 'BASE PARA BEBIDA JARABEADA CARBONATADA FRESA 50496'
+const zFoto = construirZPLRotulo(
+  { ...DATOS, codigo: '55492', descripcion: FOTO, cantidad: '40', lote: '2288609080291', fechaProduccion: '2026-09-08', fechaVencimiento: '2027-09-08' },
+  ENCABEZADO,
+  { qr: { guiaId: GUIA36, numeroDocumento: 'T173-00004090' } }
+)
+check(
+  'foto: 2 renglones balanceados (26/23) a fuente 59 con celda natural 50, cada uno centrado',
+  zFoto.includes('^FO477,24^A0R,59,50^FB752,1,0,C^FDBASE PARA BEBIDA JARABEADA^FS') &&
+    zFoto.includes('^FO411,24^A0R,59,50^FB752,1,0,C^FDCARBONATADA FRESA 50496^FS')
+)
+check(
+  'foto: tinta de ambos renglones DENTRO de 249..391 (≥ 6 dots de aire de las líneas del recuadro)',
+  (() => {
+    // y1=264, paso=66, em=59 · lineas en y 264 y 330
+    const sup1 = 264 + 0.017 * 59
+    const inf1 = 264 + 0.763 * 59
+    const sup2 = 330 + 0.017 * 59
+    const inf2 = 330 + 0.763 * 59
+    return sup1 >= 249 && inf2 <= 391 && inf1 < sup2 && Math.abs((sup1 + inf2) / 2 - 320) <= 2
+  })()
+)
+check('foto: el bloque de descripción queda DEBAJO del código y ENCIMA del lote (banda propia)', zFoto.includes('^FO400,0^GB160,800,3') && zFoto.includes('^FO477,24^A0R,59,50'))
+
+// Descendentes (µ / minúsculas / Q de cola): el modelo de tinta protege el fondo
+const zMicro = construirZPLRotulo({ ...DATOS, descripcion: 'LAMINA TERMOCONTRAIBLE 550 MM X 80 µ' }, ENCABEZADO)
+check(
+  'descendentes (µ): fuente 68 en 2 renglones con fondo de tinta ≤ 391',
+  zMicro.includes('^FO482,24^A0R,68,58^FB752,1,0,C^FDLAMINA TERMOCONTRAIBLE^FS') &&
+    zMicro.includes('^FO406,24^A0R,68,58^FB752,1,0,C^FD550 MM X 80 µ^FS') &&
+    (() => {
+      const l = layoutDescripcion('LAMINA TERMOCONTRAIBLE 550 MM X 80 µ', 752)
+      if (!l) return false
+      const fondo = l.y1 + l.paso + 0.933 * l.em
+      return fondo <= 391 && fondo >= 385 // protegido PERO aprovecha la banda
+    })()
+)
+
+// Red de seguridad: texto absurdo (200 chars, 1 palabra) → truncado chico dentro del recuadro
+const zAbsurdo = construirZPLRotulo({ ...DATOS, descripcion: 'X'.repeat(200) }, ENCABEZADO)
+check(
+  'texto absurdo: red de seguridad trunca a fuente 20 sin tocar líneas ni salir del área',
+  /\^A0R,20,17\^FB752,1,0,C\^FDX{20,}\^FS/.test(zAbsurdo) && limitesOK(zAbsurdo)
+)
+
+// Batería de invariantes sobre longitudes representativas (catálogo 4..63, p95 62)
+function descripcionOK(texto, anchoLinea) {
+  const l = layoutDescripcion(texto, anchoLinea)
+  if (!l) return false
+  const conCola = /[a-zµ,;Q]/.test(texto)
+  const fondoEm = conCola ? 0.933 : 0.763
+  const sup = l.y1 + 0.017 * l.em
+  const inf = l.y1 + (l.lineas.length - 1) * l.paso + fondoEm * l.em
+  const maxChars = Math.max(...l.lineas.map((s) => s.length))
+  return (
+    l.em >= 20 &&
+    sup >= 249 && inf <= 391 && // nunca toca las líneas (240..243 / 397..400)
+    Math.abs((sup + inf) / 2 - 320) <= 2 && // tinta centrada en la banda
+    maxChars * 0.55 * l.w <= anchoLinea - 24 && // margen lateral ≥ 12 por lado
+    l.w >= Math.round(l.em * 0.85) - 1 // celda natural (glifo legible, no comprimido)
+  )
+}
+const LONGITUDES = ['SAL 50', 'SAL INDUSTRIAL', 'ACIDO CITRICO ANHIDRO USP', 'LAMINA TERMOCONTRAIBLE 550 MM X 80 µ', 'ALCOHOL RECTIFICADO AL 75 POR CIENTO (q)', FOTO, 'ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 145 ML - DISEÑO 202', 'X'.repeat(63)]
+check(
+  'invariantes de layout en 8 longitudes × con/sin QR (tinta dentro, centrada, margen lateral)',
+  LONGITUDES.every((t) => descripcionOK(t, 752) && descripcionOK(t, 1152))
+)
+check(
+  'la fuente crece al acortar el texto (máximo tamaño posible en cada caso)',
+  (() => {
+    const l63 = layoutDescripcion('X'.repeat(63).replace(/(.{10})/g, '$1 ').trim(), 752)
+    const l14 = layoutDescripcion('SAL INDUSTRIAL', 752)
+    return l63 && l14 && l14.em > l63.em
+  })()
+)
 
 console.log(`\n═══ RESULTADO: ${passed} pasados, ${failed} fallados ═══`)
 process.exit(failed > 0 ? 1 : 0)

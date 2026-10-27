@@ -298,6 +298,23 @@ function fechaCorta(iso: string): string {
 const ANCHO_FISICO = 800
 
 /**
+ * DESPLAZAMIENTO DE LA VENTANA DE IMPRESIÓN (pedido 2026-10-28 con foto
+ * del sticker real): la tira queda montada ~3 mm corrida respecto al
+ * origen del cabezal (juego de la guía de medios) — el borde inferior del
+ * diseño (marco y base de la cantidad) caía FUERA del sticker mientras el
+ * lado opuesto mostraba ~3 mm de papel en blanco.
+ *
+ * Equivalente exacto a "correr el espacio de impresión 3 mm a la
+ * izquierda": se desplaza el ORIGEN de TODOS los campos (^LH) +24 dots
+ * (3 mm @ 8 dots/mm) en el eje del ancho de tira y ^PW se amplía a
+ * ANCHO_FISICO + 24 para que el marco reubicado (borde derecho en
+ * X 821..823) siga siendo imprimible. El corrimiento es relativo
+ * contenido↔sticker: idéntico resultado a mover el papel 3 mm hacia el
+ * contenido. Si la impresora se recalibra, basta con volver este valor a 0.
+ */
+const DESPLAZ_IMPRESION = 24
+
+/**
  * ZONA QR 4 × 4 cm (Task 28, pedido del usuario: "el QR sale borroso,
  * que sea de 4 cm × 4 cm").
  *
@@ -578,14 +595,17 @@ export function construirZPLRotulo(
   //   lote 400-545 · inferior 545-792 (fechas 2 filas de 123).
   // Columnas visuales del bloque inferior (X): F.P/F.V 0-170 ·
   //   fechas 170-420 · CANT: 420-540 · cantidad 540-1060 · UM 1060-1200.
-  // SIN ^LH: el label home por defecto es (0,0) (un ^LH desplaza TODOS los
-  // ^FO y saca los bordes del área imprimible — verificado con render).
+  // CON ^LH24,0: origen de impresión corrido 3 mm (ver DESPLAZ_IMPRESION).
 
   const lineas: string[] = []
   lineas.push('^XA')
   lineas.push('^CI28') // UTF-8: tildes y ñ (p. ej. "DISEÑO")
-  lineas.push('^PW800')
+  // Ancho imprimible = diseño + corrimiento (el marco queda en X 0+24..800+24)
+  lineas.push(`^PW${ANCHO_FISICO + DESPLAZ_IMPRESION}`)
   lineas.push('^LL1200')
+  // Origen de impresión corrido 3 mm en el ancho de tira (ver DESPLAZ_IMPRESION):
+  // TODO el rótulo (marco, cajas, textos y QR) sale desplazado en bloque.
+  lineas.push(`^LH${DESPLAZ_IMPRESION},0`)
 
   // Marco exterior (físicamente idéntico al formato vertical anterior)
   lineas.push(cajaApaisada(0, 0, 1200, 800, 3))
@@ -659,17 +679,38 @@ export function construirZPLRotulo(
   lineas.push(cajaApaisada(0, 400, 250, 545, 3)) // caja "LOTE:"
   lineas.push(cajaApaisada(250, 400, paleta ? 950 : 1200, 545, 3)) // caja valor
   if (paleta) lineas.push(cajaApaisada(950, 400, 1200, 545, 2)) // caja paleta
-  lineas.push(...campoApaisado(0, 400 + Math.floor((145 - 66) / 2), 66, 50, 'LOTE:', { fbAncho: 250 }))
+  // Etiqueta "LOTE:" un poco más grande (pedido 2026-10-28) sin salir de
+  // su caja de 145 de alto: em 76 → tinta ~59, sobra margen.
+  lineas.push(...campoApaisado(0, 400 + Math.floor((145 - 76) / 2), 76, 58, 'LOTE:', { fbAncho: 250 }))
   if (lote) {
     const anchoValor = paleta ? 700 : 950
-    const alto = altoParaCaja(lote, anchoValor, 92)
+    // Dígitos MÁS SEPARADOS (pedido 2026-10-28: "muy pegados, no se
+    // aprecian"). AGRANDAR LA CELDA NO SEPARA — verificado con sondas
+    // Labelary: el glifo se estira con la celda (tinta ≈ 0.44×w, advance
+    // ≈ 0.53×w → gap clavado en ~9% de w sea cual sea w). La separación
+    // REAL se logra insertando un ESPACIO entre dígitos contiguos:
+    //   "0869051017" → "0 8 6 9 0 5 1 0 1 7"
+    // con celda 0.65×em (tinta ~30 dots) el avance propio del espacio deja
+    // gap ≈ 23 dots (≈ 2.9 mm) — dígitos claramente individuales. El texto
+    // del QR NO cambia (el espaciado es solo el rótulo legible).
+    // Lotes largos (> 14 chars) o sin pares de dígitos: compactos como
+    // siempre (celda 0.6×em, auto-ajuste probado).
+    const espaciado = lote.replace(/(\d)(?=\d)/g, '$1 ')
+    const usarEspacios = espaciado !== lote && lote.length <= 14
+    const texto = usarEspacios ? espaciado : lote
+    const alto = altoParaCaja(lote, anchoValor, 104)
+    // Guard del ancho: span ≈ 0.55×w×celdas (coeficiente conservador medido)
+    const wMax = Math.floor((anchoValor - 24) / (0.55 * texto.length))
+    const w = usarEspacios
+      ? Math.max(24, Math.min(Math.round(alto * 0.65), wMax))
+      : Math.round(alto * 0.6)
     const y = 400 + Math.floor((145 - alto) / 2)
-    lineas.push(...campoApaisado(250, y, alto, Math.round(alto * 0.6), lote, { fbAncho: anchoValor, negrita: true }))
+    lineas.push(...campoApaisado(250, y, alto, w, texto, { fbAncho: anchoValor, negrita: true }))
   }
   if (paleta) {
     const altoP = altoParaCaja(paleta, 250, 56, 28)
     const yP = 400 + Math.floor((145 - altoP) / 2)
-    lineas.push(...campoApaisado(950, yP, altoP, Math.round(altoP * 0.6), paleta, { fbAncho: 250 }))
+    lineas.push(...campoApaisado(950, yP, altoP, Math.round(altoP * 0.8), paleta, { fbAncho: 250 }))
   }
 
   // ── 4) Bloque inferior: F.P / F.V · CANT · UM — banda visual Y 545..792 ──
@@ -679,16 +720,22 @@ export function construirZPLRotulo(
   lineas.push(cajaApaisada(540, 545, 1060, 792, 2)) // cantidad
   lineas.push(cajaApaisada(1060, 545, 1200, 792, 2)) // UM
 
-  // Etiquetas F.P / F.V (sin caja, como la plantilla)
-  lineas.push(...campoApaisado(14, 545 + Math.floor((123 - 56) / 2), 56, 44, 'F.P'))
-  lineas.push(...campoApaisado(14, 668 + Math.floor((124 - 56) / 2), 56, 44, 'F.V'))
+  // Etiquetas F.P / F.V (sin caja, como la plantilla) — más grandes
+  // (pedido 2026-10-28) sin invadir las cajas de fechas (empiezan en X 170)
+  lineas.push(...campoApaisado(14, 545 + Math.floor((123 - 64) / 2), 64, 50, 'F.P'))
+  lineas.push(...campoApaisado(14, 668 + Math.floor((124 - 64) / 2), 64, 50, 'F.V'))
 
-  // Fechas (centradas en su caja; 10 caracteres a ancho 30 ≈ 165 dots < 226)
-  lineas.push(...campoApaisado(170, 545 + Math.floor((123 - 42) / 2), 42, 30, fProd, { fbAncho: 250 }))
-  lineas.push(...campoApaisado(170, 668 + Math.floor((124 - 42) / 2), 42, 30, fVenc, { fbAncho: 250 }))
+  // Fechas MÁS GRANDES dentro de su caja (pedido 2026-10-28: la tinta usaba
+  // 33 de ~117 dots de alto — 28% de la caja, medido en render). em 60 →
+  // tinta ~46 (39% de la caja) y span 10 chars ≈ 0.48×41×9 + 46 ≈ 223 dots,
+  // bajo el umbral de salto de línea del ^FB 250 (~92-97% de 250) y del
+  // interior real (~236).
+  lineas.push(...campoApaisado(170, 545 + Math.floor((123 - 60) / 2), 60, 41, fProd, { fbAncho: 250 }))
+  lineas.push(...campoApaisado(170, 668 + Math.floor((124 - 60) / 2), 60, 41, fVenc, { fbAncho: 250 }))
 
-  // CANT: (centrado vertical del bloque inferior; 5 glifos a ancho 34 ≈ 94 < 120)
-  lineas.push(...campoApaisado(420, 545 + Math.floor((247 - 42) / 2), 42, 34, 'CANT:', { fbAncho: 120 }))
+  // CANT: más grande (pedido 2026-10-28); 5 glifos a celda 38 ≈ 0.48×38×4 +
+  // tinta ≈ 100 dots < 114 — margen ante el salto de línea del ^FB 120.
+  lineas.push(...campoApaisado(420, 545 + Math.floor((247 - 52) / 2), 52, 38, 'CANT:', { fbAncho: 120 }))
 
   // Cantidad — LLENA su caja (pedido 2026-10-17 con la zona pintada en
   // verde sobre la etiqueta: "abarcar todo el espacio sin salirse del
@@ -722,9 +769,9 @@ export function construirZPLRotulo(
     }
   }
 
-  // Unidad de medida (grande, centrada)
+  // Unidad de medida (grande, centrada) — un poco más grande (pedido 2026-10-28)
   if (unidad) {
-    const alto = altoParaCaja(unidad, 140, 80)
+    const alto = altoParaCaja(unidad, 140, 96)
     const y = 545 + Math.floor((247 - alto) / 2)
     lineas.push(...campoApaisado(1060, y, alto, Math.round(alto * 0.6), unidad, { fbAncho: 140 }))
   }

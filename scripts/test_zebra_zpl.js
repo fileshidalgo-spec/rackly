@@ -59,10 +59,13 @@ const z1 = construirZPLRotulo(DATOS, ENCABEZADO, { copias: 2 })
 check('empieza con ^XA', z1.startsWith('^XA'))
 check('termina con ^XZ', z1.trimEnd().endsWith('^XZ'))
 check('UTF-8 (^CI28)', z1.includes('^CI28'))
-check('ancho físico 800 dots (tira 10 cm)', z1.includes('^PW800'))
+check('ancho imprimible 824 = diseño 800 + corrimiento 3 mm (ver ^LH)', z1.includes('^PW824'))
 check('largo físico 1200 dots (tira 15 cm)', z1.includes('^LL1200'))
 check('marco exterior 800×1200 desde (0,0)', z1.includes('^FO0,0^GB800,1200,3'))
-check('SIN ^LH (desplazaba el marco fuera del área: bordes derecho/inferior no salían)', !z1.includes('^LH'))
+check(
+  'origen de impresión corrido 3 mm (^LH24,0): TODO el rótulo sale desplazado en bloque (pedido 2026-10-28: el borde caía fuera del sticker)',
+  z1.includes('^LH24,0')
+)
 check('texto ROTADO 90° horario (todo ^A0R, sin ^A0N)', !z1.includes('^A0N') && z1.includes('^A0R'))
 check('código gigante rotado, agrandado (alto 234, glifo 140) — ancho 752 con QR 4cm', z1.includes('^A0R,234,140'))
 check('código presente como texto', z1.includes('^FD56119^FS'))
@@ -78,9 +81,33 @@ check('etiqueta F.V', z1.includes('^FDF.V^FS'))
 check('etiqueta CANT:', z1.includes('^FDCANT:^FS'))
 check('fecha producción dd/mm/yyyy', z1.includes('^FD23/07/2026^FS'))
 check('fecha vencimiento dd/mm/yyyy', z1.includes('^FD22/07/2027^FS'))
+check(
+  'fechas MÁS GRANDES (em 60, celda 41) centradas en su caja de 250 sin salirse',
+  z1.includes('^A0R,60,41^FB250,1,0,C^FD23/07/2026^FS') &&
+    z1.includes('^A0R,60,41^FB250,1,0,C^FD22/07/2027^FS') &&
+    10 * 0.53 * 41 <= 236
+)
+check(
+  'etiquetas LOTE:/F.P/F.V/CANT: más grandes (76/64/64/52) y UM hasta 96',
+  z1.includes('^A0R,76,58') && z1.includes('^A0R,64,50') && z1.includes('^A0R,52,38') && z1.includes('^A0R,96,58')
+)
 check('cantidad presente', z1.includes('^FD193320^FS'))
 check('unidad presente', z1.includes('^FDUN^FS'))
-check('lote presente', z1.includes('^FD0869051017^FS'))
+check('lote presente', z1.includes('^FD0 8 6 9 0 5 1 0 1 7^FS'))
+check(
+  'lote con dígitos SEPARADOS por espacios (em 104, celda 0.65×em = 68)',
+  z1.includes('^A0R,104,68') && z1.includes('^FD0 8 6 9 0 5 1 0 1 7^FS')
+)
+const zLote15 = construirZPLRotulo({ ...DATOS, lote: '123456789012345' }, ENCABEZADO)
+check(
+  'lote > 14 chars → compacto sin espacios (auto-ajuste probado)',
+  zLote15.includes('^FD1 2 3 4 5 6 7 8 9 0 1 2 3 4 5^FS') === false && /\^A0R,\d+,\d+\^FB950,1,0,C\^FD123456789012345\^FS/.test(zLote15)
+)
+const zLoteAlfa = construirZPLRotulo({ ...DATOS, lote: 'AB-12-CD' }, ENCABEZADO)
+check(
+  'lote alfanumérico: solo pares de dígitos se espacian (12 → 1 2; AB/CD intactos)',
+  zLoteAlfa.includes('^FDAB-1 2-CD^FS')
+)
 check('descripción 63 chars → 2 renglones degradados a fuente 38 con QR 4cm (^FB752,2,10,C)', z1.includes('^FB752,2,10,C') && z1.includes('^A0R,38,28'))
 const zDescLarga = construirZPLRotulo({ ...DATOS, descripcion: DATOS.descripcion + ' EXTRA LARGA' }, ENCABEZADO)
 check('descripción 75 chars → 2 renglones degradados a fuente 38 (^FB752,2,10,C)', zDescLarga.includes('^FB752,2,10,C') && zDescLarga.includes('^A0R,38,28'))

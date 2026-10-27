@@ -16,7 +16,8 @@ import {
   editarLoteVencimientoRacks,
   type TrasladoInput,
 } from '@/lib/rackly/kardex'
-import { puedeEditarLote, construirOpcionesLote } from '@/lib/rackly/lote'
+import { puedeEditarLote, construirOpcionesLote, calcularAjusteCantidad } from '@/lib/rackly/lote'
+import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { leerContextoSalidaRq, detectarRqParaSalida, type ContextoSalidaRq, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
 import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
 import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
@@ -157,6 +158,10 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   // ── Editar lote/fecha de artículos sin esos datos (almacenero/admin) ──
   const puedeEditarDatosLote = puedeEditarLote(perfil?.rol)
   const [editLoteTarget, setEditLoteTarget] = useState<ArticuloAEditar | null>(null)
+  /** uuid_sync del AJUSTE de cantidad de la sesión de edición en curso: se
+   *  genera al abrir el diálogo y vive hasta guardar bien — si el guardado
+   *  se reintenta (red lenta), el ajuste NO se duplica (checkExistingByUuidSync). */
+  const editAjusteUuidRef = useRef('')
   const [editLoteBusy, setEditLoteBusy] = useState(false)
 
   // ── Atención a Línea (RQ): confirmación tras dar salida (contexto efímero) ──
@@ -407,9 +412,23 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
     }
   }, [detail])
 
-  /** Guarda lote/fecha del bucket elegido (RPC v2: completa O corrige — apunta
-   *  al bucket exacto con loteActual/fVencimientoActual; saldo queda intacto). */
-  const doEditarLoteRacks = useCallback(async (lote: string, fecha: string, loteActual: string, fechaActual: string) => {
+  /**
+   * Guarda lote/fecha del bucket elegido (RPC v2: completa O corrige — apunta
+   * al bucket exacto con loteActual/fVencimientoActual) y, si la CANTIDAD fue
+   * corregida (Task 28), registra el movimiento compensatorio INMEDIATAMENTE
+   * después: el kardex (movimientos) es append-only, así que "corregir" =
+   * agregar una salida/ingreso de ajuste con la MISMA identidad de bucket
+   * (código + posición + lote + fecha nueva ya aplicada por la RPC).
+   * Idempotencia: la RPC de lote re-aplicar los mismos valores es inocua
+   * (0 filas en reintento) y el ajuste viaja con uuid_sync fijo de la sesión.
+   */
+  const doEditarLoteRacks = useCallback(async (
+    lote: string,
+    fecha: string,
+    loteActual: string,
+    fechaActual: string,
+    cantidadNueva?: number | null
+  ) => {
     if (!detail || !editLoteTarget?.codigo) return
     setEditLoteBusy(true)
     try {
@@ -426,16 +445,65 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       })
       // La pista de Tránsito solo aplica cuando el bucket ANTES estaba sin datos
       const ganoDatos = !loteActual && !fechaActual
-      toast.success(`Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s).${ganoDatos ? ' El artículo ya puede transferirse por Tránsito.' : ''}`)
+      // ── Ajuste de cantidad (Task 28) ──
+      // Cantidad ACTUAL del bucket editado (opción con ese lote×fecha; fallback
+      // al total de la fila). OJO: cuando la fecha agrega varios lotes físicos,
+      // las opciones comparten la cantidad de la FECHA — el ajuste aterriza en
+      // el lote editado y el total de la fecha siempre queda = lo digitado.
+      let ajusteHecho = false
+      if (typeof cantidadNueva === 'number' && perfil) {
+        const opcion = editLoteTarget.opciones?.find(
+          (o) => o.loteFisico === loteActual && o.fecha === fechaActual
+        )
+        const cantidadActual = opcion?.cantidad ?? editLoteTarget.stock ?? 0
+        const ajuste = calcularAjusteCantidad(cantidadActual, cantidadNueva)
+        if (ajuste.tipo) {
+          await addMovimiento(
+            {
+              tipo: ajuste.tipo,
+              bloque: detail.bloque,
+              torre: detail.torre,
+              piso: detail.piso,
+              posicion: detail.posicion,
+              codigo: editLoteTarget.codigo,
+              descripcion: editLoteTarget.descripcion || '',
+              un: editLoteTarget.un || '',
+              cantidad: ajuste.cantidad,
+              fVencimiento: fecha,
+              turno: calcularTurno(),
+              usuarioId: perfil.id,
+              usuarioNombre: perfil.nombre,
+              usuarioCorreo: perfil.correo,
+              // El ingreso conserva el proveedor del bucket; la salida no lo
+              // registra (convención del kardex: el proveedor vive en ingresos).
+              proveedor: ajuste.tipo === 'ingreso' ? (opcion?.proveedor || undefined) : undefined,
+              // Lote físico de la opción editada (trazabilidad exacta del ajuste).
+              lote: lote || undefined,
+            },
+            editAjusteUuidRef.current || nuevoUuid(),
+            { refetch: false }
+          )
+          ajusteHecho = true
+        }
+      }
+      toast.success(
+        ajusteHecho
+          ? `Datos y cantidad guardados — ${res.filasActualizadas} fila(s) de lote + ajuste de stock en el kardex.${ganoDatos ? ' El artículo ya puede transferirse por Tránsito.' : ''}`
+          : `Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s).${ganoDatos ? ' El artículo ya puede transferirse por Tránsito.' : ''}`
+      )
+      editAjusteUuidRef.current = ''
       setEditLoteTarget(null)
       await refreshDetail()
       refreshData()
     } catch (err: unknown) {
+      // Si el lote/fecha SÍ se guardó y falló el ajuste, el reintento es seguro:
+      // la RPC re-aplica los mismos valores (0 filas) y el ajuste conserva su
+      // uuid_sync (no se duplica). El diálogo permanece abierto.
       toast.error('No se pudo guardar', { description: extractError(err) })
     } finally {
       if (mountedRef.current) setEditLoteBusy(false)
     }
-  }, [detail, editLoteTarget, refreshDetail, refreshData])
+  }, [detail, editLoteTarget, perfil, refreshDetail, refreshData])
 
   useEffect(() => { mountedRef.current = true; setLoading(true); refreshData().finally(() => { if (mountedRef.current) setLoading(false) }); return () => { mountedRef.current = false } }, [refreshData])
   useEffect(() => { const i = setInterval(() => refreshData(), 10000); return () => clearInterval(i) }, [refreshData])
@@ -1323,22 +1391,30 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                                   <button onClick={() => openHistorial()} className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-colors text-[10px] font-medium border border-violet-500/15"><Clock className="w-3 h-3" /> Historial</button>
                                   {puedeEditarDatosLote && (
                                     <button
-                                      onClick={() => setEditLoteTarget({
-                                        codigo: s.codigo,
-                                        descripcion: s.descripcion || undefined,
-                                        stock: s.stock,
-                                        un: s.un || undefined,
-                                        ubicacion: `Bloque ${detail.bloque} · Torre ${detail.torre} · Piso ${detail.piso} · Pos ${detail.posicion}`,
-                                        // Buckets exactos (lote físico × fecha): 1 → prefill
-                                        // directo; varios → selector dentro del diálogo.
-                                        opciones: construirOpcionesLote({
+                                      onClick={() => {
+                                        // uuid del ajuste FIJO por sesión de edición:
+                                        // reintentos del guardado no duplican el ajuste.
+                                        editAjusteUuidRef.current = nuevoUuid()
+                                        setEditLoteTarget({
+                                          codigo: s.codigo,
+                                          descripcion: s.descripcion || undefined,
                                           stock: s.stock,
-                                          fecha: s.fVencimiento,
-                                          loteFisico: s.loteFisico,
-                                          lotes: s.lotes,
-                                        }),
-                                      })}
-                                      title={!s.fVencimiento && !s.loteFisico ? 'Completar lote y/o fecha de vencimiento del producto' : 'Corregir lote y/o fecha de vencimiento del producto'}
+                                          un: s.un || undefined,
+                                          ubicacion: `Bloque ${detail.bloque} · Torre ${detail.torre} · Piso ${detail.piso} · Pos ${detail.posicion}`,
+                                          // Buckets exactos (lote físico × fecha): 1 → prefill
+                                          // directo; varios → selector dentro del diálogo.
+                                          opciones: construirOpcionesLote({
+                                            stock: s.stock,
+                                            fecha: s.fVencimiento,
+                                            loteFisico: s.loteFisico,
+                                            lotes: s.lotes,
+                                            // Proveedor para el AJUSTE de cantidad (Task 28):
+                                            // el ingreso compensatorio conserva el proveedor real.
+                                            proveedor: s.proveedor,
+                                          }),
+                                        })
+                                      }}
+                                      title={!s.fVencimiento && !s.loteFisico ? 'Completar lote, fecha de vencimiento y/o cantidad del producto' : 'Corregir lote, fecha de vencimiento y/o cantidad del producto'}
                                       className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 hover:text-cyan-300 transition-colors text-[10px] font-medium"
                                     ><Pencil className="w-3 h-3" /> Editar</button>
                                   )}
@@ -2296,11 +2372,12 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         onCerrar={() => setRqConfirmer(null)}
       />
 
-      {/* ── Editar lote / fecha de vencimiento (almacenero/admin) ── */}
+      {/* ── Editar lote / fecha / cantidad (almacenero/admin, Task 28) ── */}
       <EditarLoteVencimientoDialog
         open={!!editLoteTarget}
         articulo={editLoteTarget}
         busy={editLoteBusy}
+        permitirCantidad
         onOpenChange={(o) => { if (!o) setEditLoteTarget(null) }}
         onGuardar={doEditarLoteRacks}
       />

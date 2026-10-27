@@ -298,20 +298,36 @@ function fechaCorta(iso: string): string {
 const ANCHO_FISICO = 800
 
 /**
- * Ancho VISUAL de la zona QR en la banda del código (ESQUINA DERECHA):
- * 300 dots (3.73 cm) — proporción de la foto del usuario (límite al ~75%
- * del ancho, "AQUÍ VA QR" en el rincón). El QR va centrado dentro con su
- * zona de silencio (quiet zone ≥ 4 módulos) holgada, separado del texto
- * por la línea límite.
+ * ZONA QR 4 × 4 cm (Task 28, pedido del usuario: "el QR sale borroso,
+ * que sea de 4 cm × 4 cm").
+ *
+ * El QR necesita un CUADRADO de ~320 dots (4 cm @203dpi) + su quiet zone;
+ * la banda vieja de 300×240 no alcanza ni de cerca (el símbolo máximo era
+ * mag 6 → 2.6 cm). La zona pasa a ser el CUADRANTE superior derecho del
+ * lienzo apaisado: X 800..1200 × Y 0..400 (400×400 dots = 5×5 cm), que
+ * abarca la banda del código Y la banda de descripción:
+ *
+ *   ┌───────────────────────────────┬─────────┐ Y 0
+ *   │         49310                 │ ▓▓▓▓▓▓▓ │  código 0..240 (texto 0..800)
+ *   │                               │ ▓ QR ▓  │
+ *   ├───────────────────────────────┤ ▓▓▓▓▓▓▓ │
+ *   │  LAMINA TERMOCONTRABLE…       │ ▓ 4cm ▓ │  desc 240..400 (texto 0..800)
+ *   └───────────────────────────────┴─────────┘ Y 400 ← lote/fechas IGUAL
+ *
+ * Consecuencias aceptadas (todo lo demás del rótulo NO cambia):
+ *   · La banda del código se acorta a 0..800 → el código gigante baja de
+ *     em 286 a em 234 para 5 dígitos (sigue siendo la fuente dominante).
+ *   · La descripción se centra en 0..800: hasta ~42 chars en 1 renglón y
+ *     ~85 en 2 (antes 65/130) — con degradación a fuente 38 si excede.
+ *   · Lote, paleta, F.P/F.V, CANT y UM no se tocan (empiezan en Y ≥ 400).
  */
-const ZONA_QR_ANCHO = 300
+const ZONA_QR_LADO = 400
 
 /**
- * X visual donde EMPIEZA la zona QR (= línea límite / separadora).
- * 1200 − 300 = 900: la banda del código queda 0..900 para el artículo y
- * 900..1200 para el QR.
+ * X visual del LÍMITE (= línea separadora). El código y la descripción
+ * quedan 0..800 y el QR 800..1200.
  */
-const X_ZONA_QR = 1200 - ZONA_QR_ANCHO
+const X_ZONA_QR = 1200 - ZONA_QR_LADO
 
 /** Contexto de guía para el QR del rótulo (identidad de la guía impresa). */
 export type ContextoQR = { guiaId?: string | null; numeroDocumento?: string }
@@ -362,42 +378,43 @@ function modulosQR(len: number): number {
 }
 
 /**
- * ZPL del QR centrado en la ESQUINA DERECHA de la banda del código
- * (zona X_ZONA_QR..1200 visual, según la foto del usuario).
+ * Interior utilizable de la zona QR: la caja exterior de 400 se come 3
+ * dots de línea por lado (marco del rótulo y separadora).
+ */
+const INTERIOR_QR = ZONA_QR_LADO - 2 * 3
+
+/**
+ * ZPL del QR 4 × 4 cm centrado en el CUADRANTE superior derecho
+ * (X_ZONA_QR..1200 × Y 0..400 visual).
  * EC 'Q' (25% de recuperación): rótulos que pasan por manos y polvo.
  * `^FDQA,` = EC Q + modo A (automático): el dato va codificado tal cual.
  *
- * POSICIÓN (lección calibrada con render — bug 2026-10-17): el tamaño del
- * símbolo se dimensiona contra el cuadrado de diseño de 240 (alto de la
- * banda — la restricción MÁS APRETADA; la zona de 300 solo da más aire
- * horizontal). Como el campo NO rota (el QR es simétrico), la caja visual
- * del QR ((x..x+lado) × (m..m+lado), con m = margen vertical) mapea a
- * FÍSICO así:
- *   · y físico  = X_vis izquierdo            = X_ZONA_QR + margenX
- *   · x físico  = 800 − Y_vis superior       = 800 − (margenY + lado)
- * (usar `800 − ZONA + m` dejaba el símbolo pegado a la línea inferior de
- * la banda en el espacio físico — quiet zone destruida, QR ilegible).
+ * TAMAÑO (Task 28): la magnificación apunta a un SÍMBOLO de ~320 dots
+ * (4 cm @203 dpi) — mag = ⌊394/(mods+6)⌋, recortada a 3..10. La cota
+ * garantiza quiet zone ≥ 3 módulos por lado dentro del interior:
+ *   margen = (394 − mods×mag)/2 ≥ 3×mag  ⟺  mag ≤ 394/(mods+6)
+ * Resultado por versión (lado del símbolo en cm):
+ *   v3 29→mag10 (3.6) · v4 33→mag10 (4.1) · v5 37→mag9 (4.1 — DOMINANTE:
+ *   uuid+guía+código) · v6 41→mag8 (4.0) · v7 45→mag7 (3.9) · v8 49→mag7
+ *   (4.2). Todos ≥ 3.5 cm y el dominante clava el "4 × 4 cm" pedido.
+ *
+ * POSICIÓN (mapeo apaisado — el campo NO rota, el QR es simétrico):
+ *   · y físico = X_vis izquierdo     = X_ZONA_QR + 3 + margen
+ *   · x físico = 800 − Y_vis superior = 800 − (3 + margen + lado)
+ * (lección 2026-10-17: usar `800 − ZONA + m` pegaba el símbolo a la línea
+ * y destruía la quiet zone — mantener siempre el mapeo por esquinas).
  */
 function campoQR(payload: string): string {
   const mods = modulosQR(payload.length)
-  // Quiet zone de ESPEC (≥ 4 módulos por lado) dentro de la banda: las
-  // líneas de borde comen 3 dots por lado → interior útil 234. La cota
-  // mag×(mods+8) = lado + 2×4×mag garantiza el margen EXACTO de la ISO a
-  // la vez en el peor caso; la zona de 300 da además aire horizontal extra.
-  // (Antes reservaba 48 dots fijos + 4 módulos de peor caso: con payload
-  // 61 chars el QR salía a mag 4, lado 148 — solo 62% de la banda. Ahora
-  // mag 5, lado 185 — +25%, verificado decodificable en render E2E.)
-  const mag = Math.max(3, Math.min(6, Math.floor(234 / (mods + 8))))
+  const mag = Math.max(3, Math.min(10, Math.floor(INTERIOR_QR / (mods + 6))))
   const ladoEsp = mods * mag
-  const margenY = Math.floor((ZONA_QR_ALTO_BANDA - ladoEsp) / 2)
-  const margenX = Math.floor((ZONA_QR_ANCHO - ladoEsp) / 2)
-  const xFis = ANCHO_FISICO - margenY - ladoEsp
-  const yFis = X_ZONA_QR + margenX
+  const margen = Math.floor((INTERIOR_QR - ladoEsp) / 2)
+  const yVisSup = 3 + margen // desde el borde superior visual (Y 0)
+  const xVisIzq = X_ZONA_QR + 3 + margen // desde el límite (línea en X_ZONA_QR)
+  const xFis = ANCHO_FISICO - yVisSup - ladoEsp
+  const yFis = xVisIzq
   return `^FO${xFis},${yFis}^BQN,2,${mag}^FDQA,${payload}^FS`
 }
-
-/** Alto visual de la banda del código (el QR se centra en él). */
-const ZONA_QR_ALTO_BANDA = 240
 
 /** Centro visual de la banda del código (Y 0..240). */
 const CENTRO_BANDA_CODIGO = 120
@@ -509,8 +526,8 @@ function campoApaisado(
  *
  *   ┌───────────────────────────────────────────────┬──────────┐ Y 0
  *   │                    49310                      │ ▓▓ QR ▓▓ │  código 0..240
- *   ├───────────────────────────────────────────────┴──────────┤
- *   │   LAMINA TERMOCONTRABLE 380 MM X 50 µ  (1-2 líneas)        │  desc 240..400
+ *   ├───────────────────────────────────────────────┤ ▓ 4×4 ▓  │
+ *   │   LAMINA TERMOCONTRABLE 380 MM X 50 µ           │ ▓ (cm) ▓ │  desc 240..400
  *   ├────────────┬───────────────────────────────────────────────┤
  *   │   LOTE:    │                0869051017                     │  lote 400..545
  *   ├─────┬──────┴────────┬───────┬────────────────────┬─────────┤ 545
@@ -518,6 +535,11 @@ function campoApaisado(
  *   │ F.V │  22/07/2027   │       │                    │         │
  *   └─────┴───────────────┴───────┴────────────────────┴─────────┘ 792
  *     X: 0  170            420     540                1060    1200
+ *
+ * (Task 28: con QR de guía el símbolo ocupa el cuadrante 800..1200 ×
+ * 0..400 — 4 × 4 cm — y las bandas de código/descripción se acortan a
+ * 0..800; el diagrama muestra el caso CON QR. Sin QR todo vuelve a los
+ * 1200 de ancho.)
  *
  * FIDELIDAD al formato de la empresa:
  *   · SIN código de barras (el original es solo texto) — PERO con QR de
@@ -569,29 +591,29 @@ export function construirZPLRotulo(
   lineas.push(cajaApaisada(0, 0, 1200, 800, 3))
 
   // ── 1) BANDA CÓDIGO (Y 0..240): código a la IZQUIERDA + QR de guía a la DERECHA ──
-  // Cuando hay identidad de guía el QR ocupa la esquina derecha (zona
-  // 900..1200, cerrada por la línea límite en X 900 — el "límite" de la
-  // foto del usuario) y el código OCUPA EL RESTO (0..900) con la fuente
-  // MÁS GRANDE que quepa (tinta centrada en la banda, sin pisar líneas —
-  // pedido 2026-10-17 con la zona pintada en verde sobre la etiqueta).
-  // Sin identidad (rótulo sin QR) el código usa el ancho completo.
+  // Con identidad de guía el QR ocupa el cuadrante 800..1200 (Task 28,
+  // 4 × 4 cm) cerrado por la línea límite en X 800 — el "límite" de la
+  // foto del usuario — y el código usa 0..800 con la fuente MÁS GRANDE
+  // que quepa (tinta centrada en la banda, sin pisar líneas). Sin
+  // identidad (rótulo sin QR) el código usa el ancho completo y la
+  // descripción también (bandas a 1200 como el formato original).
   // El alto se AUTO-AJUSTA a la longitud: códigos largos se reducen para
   // no invadir el límite (holgura 0.62 ≥ avance real 0.6 × alto + negrita).
   const payloadQR = payloadQRRotulo(datos, {
     guiaId: opciones?.qr?.guiaId ?? encabezado.guiaId,
     numeroDocumento: opciones?.qr?.numeroDocumento ?? encabezado.numeroDocumento,
   })
-  lineas.push(cajaApaisada(0, 0, 1200, 240, 3))
+  lineas.push(cajaApaisada(0, 0, payloadQR ? X_ZONA_QR : 1200, 240, 3))
   if (payloadQR) {
-    // Línea separadora: límite IZQUIERDO de la zona QR (el lápiz azul de
-    // la foto — "AQUÍ VA QR" a su derecha).
-    lineas.push(cajaApaisada(X_ZONA_QR, 0, X_ZONA_QR + 3, 240, 2))
+    // Línea separadora: límite IZQUIERDO de la zona QR, de arriba (Y 0)
+    // hasta el fin de la zona (Y 400) — cruza código Y descripción.
+    lineas.push(cajaApaisada(X_ZONA_QR, 0, X_ZONA_QR + 3, ZONA_QR_LADO, 2))
     lineas.push(campoQR(payloadQR))
   }
   if (codigo) {
     // Campo centrado SIMÉTRICO en su zona: márgenes 24 a cada lado
-    // (24..876 dentro de 0..900 con QR; 24..1176 sin QR).
-    const anchoTexto = payloadQR ? 852 : 1152
+    // (24..776 dentro de 0..800 con QR; 24..1176 sin QR).
+    const anchoTexto = payloadQR ? X_ZONA_QR - 48 : 1152
     const xTexto = 24
     const alto = altoParaCaja(codigo, anchoTexto, TOPE_ALTO_CODIGO, 90, 0.62)
     // Centrado de la TINTA (no de la caja): ver TINTA_CENTRO_EM.
@@ -600,19 +622,24 @@ export function construirZPLRotulo(
   }
 
   // ── 2) DESCRIPCIÓN — banda visual Y 240..400 (1-2 líneas, centrada) ──
-  lineas.push(cajaApaisada(0, 240, 1200, 400, 3))
+  lineas.push(cajaApaisada(0, 240, payloadQR ? X_ZONA_QR : 1200, 400, 3))
   if (descripcion) {
-    // En apaisado el renglón es ancho (1152 dots). Cadena de decisión con
-    // avance conservador (0.5 × ancho de glifo, calibrado con Labelary):
-    //   1) fuente 58 si cabe en 1 renglón (≤ ~54 chars)
-    //   2) fuente 48 si cabe en 1 renglón (≤ ~65 chars)
-    //   3) fuente 48 en 2 renglones (el ^FB trunca si > ~130 chars)
-    const anchoLinea = 1152
+    // Cadena de decisión con avance conservador (0.5 × ancho de glifo,
+    // calibrado con Labelary) sobre el ancho DISPONIBLE (752 con QR,
+    // 1152 sin QR):
+    //   1) fuente 58 si cabe en 1 renglón (≤ ~35/54 chars)
+    //   2) fuente 48 si cabe en 1 renglón (≤ ~42/65 chars)
+    //   3) fuente 48 en 2 renglones (≤ ~85/130 chars)
+    //   4) fuente 38 en 2 renglones (degradación — hasta ~107 chars con
+    //      QR; el ^FB trunca más allá, igual que antes con 130)
+    const anchoLinea = payloadQR ? X_ZONA_QR - 48 : 1152
     const cabe58 = descripcion.length * 0.5 * 42 <= anchoLinea
     const cabe48 = descripcion.length * 0.5 * 35 <= anchoLinea
+    const cabe2x48 = descripcion.length * 0.5 * 35 * 2 <= anchoLinea
     const dosLineas = !cabe58 && !cabe48
-    const alto = cabe58 ? 58 : 48
-    const anchoGlifo = cabe58 ? 42 : 35
+    const degrada = dosLineas && !cabe2x48
+    const alto = cabe58 ? 58 : degrada ? 38 : 48
+    const anchoGlifo = cabe58 ? 42 : degrada ? 28 : 35
     const altoBloque = dosLineas ? 2 * Math.round(alto * 1.15) + 10 : Math.round(alto * 1.15)
     const y = 240 + Math.floor((160 - altoBloque) / 2)
     lineas.push(

@@ -481,12 +481,12 @@ export function ImprimirRotulosDialog({
               <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
                 <span className="text-xs text-slate-500">Tamaño de etiqueta</span>
                 <span className="text-xs font-bold text-slate-700">
-                  15 × 10 cm · PERECIBLE + QR de guía
+                  15 × 10 cm · PERECIBLE + QR de guía 4 × 4 cm
                 </span>
               </div>
 
               <p className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[11px] font-medium text-sky-800">
-                Cada rótulo lleva un <b>código QR</b> (esquina izquierda) y el código del
+                Cada rótulo lleva un <b>código QR de 4 × 4 cm</b> (esquina superior derecha) y el código del
                 artículo <b>más grande</b>: escanéalo en <b>Tránsito</b> para transferir la
                 mercadería a Rack o Piso.
               </p>

@@ -33,7 +33,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
-import { Loader2, Save, CalendarOff, CircleSlash, Check, ListChecks } from 'lucide-react'
+import { Loader2, Save, CalendarOff, CircleSlash, Check, ListChecks, Package } from 'lucide-react'
 import { validarDatosLote, etiquetaOpcionLote, type OpcionLote } from '@/lib/rackly/lote'
 
 export type ArticuloAEditar = {
@@ -56,17 +56,41 @@ type Props = {
   /** Fila objetivo; `null` cierra el diálogo. */
   articulo: ArticuloAEditar | null
   busy: boolean
+  /**
+   * Task 28 (Racks): habilita la corrección de CANTIDAD del bucket —
+   * además del lote/fecha. Al guardar, el llamador registra el movimiento
+   * compensatorio (ingreso/salida de ajuste) con uuid_sync idempotente.
+   * Default false: Piso mantiene el diálogo de lote/fecha puro.
+   */
+  permitirCantidad?: boolean
   onOpenChange: (open: boolean) => void
   /**
    * Guardar validado: valores NUEVOS (lote, fecha) y valores ACTUALES del
    * bucket (loteActual, fechaActual) para que la RPC apunte con precisión.
+   * `cantidadNueva` (solo con permitirCantidad): la cantidad corregida del
+   * bucket, o null si no cambió / no aplica.
    */
-  onGuardar: (lote: string, fecha: string, loteActual: string, fechaActual: string) => Promise<void>
+  onGuardar: (
+    lote: string,
+    fecha: string,
+    loteActual: string,
+    fechaActual: string,
+    cantidadNueva?: number | null
+  ) => Promise<void>
 }
 
-export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange, onGuardar }: Props) {
+export function EditarLoteVencimientoDialog({
+  open,
+  articulo,
+  busy,
+  permitirCantidad = false,
+  onOpenChange,
+  onGuardar,
+}: Props) {
   const [lote, setLote] = useState('')
   const [fecha, setFecha] = useState('')
+  /** Cantidad digitada del bucket (solo con permitirCantidad). '' = sin tocar. */
+  const [cantidad, setCantidad] = useState('')
   // Bucket actualmente elegido (índice dentro de articulo.opciones)
   const [idxOpcion, setIdxOpcion] = useState(0)
 
@@ -95,6 +119,7 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
       const primera = articulo?.opciones?.[0]
       setLote(primera?.loteFisico ?? '')
       setFecha(primera?.fecha ?? '')
+      setCantidad(permitirCantidad && primera ? String(primera.cantidad) : '')
     }
   }
 
@@ -104,6 +129,20 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
     setIdxOpcion(i)
     setLote(opciones[i]?.loteFisico ?? '')
     setFecha(opciones[i]?.fecha ?? '')
+    if (permitirCantidad) setCantidad(String(opciones[i]?.cantidad ?? ''))
+  }
+
+  /** Cantidad corregida a pasar al llamador: null = sin cambio / no aplica. */
+  function cantidadNuevaO(): number | null {
+    if (!permitirCantidad) return null
+    const txt = cantidad.trim()
+    if (txt === '') return null
+    const n = Number(txt)
+    if (!Number.isFinite(n) || n < 0) {
+      toast.error('Cantidad inválida — usa un número ≥ 0')
+      return NaN // centinela: doGuardar aborta
+    }
+    return Math.round(n * 1000) / 1000
   }
 
   async function doGuardar() {
@@ -113,7 +152,16 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
       toast.error(val.error)
       return
     }
-    await onGuardar(val.lote ?? '', val.fecha ?? '', opcionActual.loteFisico, opcionActual.fecha)
+    const nueva = cantidadNuevaO()
+    if (Number.isNaN(nueva)) return // validación de cantidad falló
+    const sinCambio = nueva == null || Math.abs(nueva - opcionActual.cantidad) < 1e-9
+    await onGuardar(
+      val.lote ?? '',
+      val.fecha ?? '',
+      opcionActual.loteFisico,
+      opcionActual.fecha,
+      sinCambio ? null : nueva
+    )
   }
 
   return (
@@ -127,9 +175,11 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
             {esCorreccion ? 'Corregir lote y fecha de vencimiento' : 'Editar lote y fecha de vencimiento'}
           </AlertDialogTitle>
           <AlertDialogDescription className="text-xs">
-            {esCorreccion
-              ? 'Reemplaza los datos actuales por los correctos. El stock y las cantidades NO se modifican.'
-              : 'Completa los datos físicos del producto registrados sin lote/fechas. El stock y los lotes ya existentes NO se modifican.'}
+            {permitirCantidad
+              ? 'Reemplaza los datos actuales por los correctos. Si cambias la CANTIDAD, se registra un ajuste (ingreso o salida) que queda en el kardex.'
+              : esCorreccion
+                ? 'Reemplaza los datos actuales por los correctos. El stock y las cantidades NO se modifican.'
+                : 'Completa los datos físicos del producto registrados sin lote/fechas. El stock y los lotes ya existentes NO se modifican.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -234,6 +284,31 @@ export function EditarLoteVencimientoDialog({ open, articulo, busy, onOpenChange
                   : 'Deja vacío lo que el producto realmente no tenga (al menos un dato es obligatorio).'}
               </p>
             </div>
+
+            {/* Cantidad del bucket (Task 28 — Racks): corregir lo digitado mal.
+                El guardado registra el movimiento compensatorio (kardex). */}
+            {permitirCantidad && (
+              <div className="space-y-1">
+                <Label className="text-xs flex items-center gap-1.5">
+                  <Package className="w-3.5 h-3.5 text-emerald-500" /> Cantidad registrada
+                </Label>
+                <Input
+                  type="number"
+                  step="any"
+                  min="0"
+                  value={cantidad}
+                  onChange={(e) => setCantidad(e.target.value)}
+                  disabled={busy}
+                  inputMode="decimal"
+                  autoComplete="off"
+                  className="h-9"
+                />
+                <p className="text-[10px] text-muted-foreground italic">
+                  Actual: {opcionActual.cantidad} {articulo.un || ''}. Al guardar se registra el ajuste
+                  (salida si sobra, ingreso si falta) — el kardex queda trazado, nada se borra.
+                </p>
+              </div>
+            )}
           </div>
         )}
 

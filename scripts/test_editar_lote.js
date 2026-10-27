@@ -32,7 +32,7 @@ process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'dummy'
 process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY = 'dummy'
 
 const supabaseStub = require('@/lib/supabase/client')
-const { puedeEditarLote, validarDatosLote, construirOpcionesLote, etiquetaOpcionLote } = require('@/lib/rackly/lote.ts')
+const { puedeEditarLote, validarDatosLote, construirOpcionesLote, etiquetaOpcionLote, calcularAjusteCantidad } = require('@/lib/rackly/lote.ts')
 const { editarLoteVencimientoRacks } = require('@/lib/rackly/kardex.ts')
 const { editarLoteVencimientoPiso } = require('@/lib/piso/api.ts')
 
@@ -186,6 +186,39 @@ async function main() {
     check('error SIN_DATOS se propaga', /SIN_DATOS/.test(e.message))
   }
   rpcHandler = null
+
+  // ── 6. calcularAjusteCantidad (Task 28 — corrección de cantidad en Racks) ──
+  console.log('— 6. calcularAjusteCantidad (ajuste compensatorio del kardex) —')
+  const a1 = calcularAjusteCantidad(100, 90)
+  check('nueva < actual → SALIDA de 10', a1.tipo === 'salida' && a1.cantidad === 10)
+  const a2 = calcularAjusteCantidad(100, 125)
+  check('nueva > actual → INGRESO de 25', a2.tipo === 'ingreso' && a2.cantidad === 25)
+  const a3 = calcularAjusteCantidad(100, 100)
+  check('igual → sin ajuste', a3.tipo === null && a3.cantidad === 0)
+  const a4 = calcularAjusteCantidad(100.0000001, 100)
+  check('tolerancia (delta se redondea a 0 a 3 decimales) → sin ajuste', a4.tipo === null)
+  const a5 = calcularAjusteCantidad(100.5, 100.25)
+  check('decimales → salida de 0.25 (3 decimales)', a5.tipo === 'salida' && Math.abs(a5.cantidad - 0.25) < 1e-9)
+  const a6 = calcularAjusteCantidad(100, 0)
+  check('nueva 0 → salida total del bucket', a6.tipo === 'salida' && a6.cantidad === 100)
+  const a7 = calcularAjusteCantidad(100, NaN)
+  check('NaN → sin ajuste (defensivo, la UI valida antes)', a7.tipo === null)
+  const a8 = calcularAjusteCantidad(50, 50.0004)
+  check('delta < 0.001 se redondea a sin ajuste', a8.tipo === null)
+
+  // proveedor hereda a las opciones (para el ajuste tipo ingreso)
+  const opsProv = construirOpcionesLote({ stock: 10, fecha: '2027-01-31', loteFisico: 'L1', proveedor: 'PROV-A' })
+  check('opción hereda el proveedor de la fila (ajuste ingreso conserva identidad)', opsProv[0]?.proveedor === 'PROV-A')
+  const opsProvLote = construirOpcionesLote({
+    stock: 10,
+    lotes: [
+      { fVencimiento: '2027-01-31', cantidad: 6, lotesFisicos: ['L1'], proveedor: 'PROV-L1' },
+      { fVencimiento: '2027-06-30', cantidad: 4 },
+    ],
+    proveedor: 'PROV-FILA',
+  })
+  check('proveedor del LOTE manda sobre el de la fila', opsProvLote[0]?.proveedor === 'PROV-L1')
+  check('lote sin proveedor hereda el de la fila', opsProvLote[1]?.proveedor === 'PROV-FILA')
 
   console.log('────────────────────────────')
   console.log(`editar_lote: ${passed} OK · ${failed} FAIL`)

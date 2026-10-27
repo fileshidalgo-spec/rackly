@@ -64,7 +64,7 @@ check('largo físico 1200 dots (tira 15 cm)', z1.includes('^LL1200'))
 check('marco exterior 800×1200 desde (0,0)', z1.includes('^FO0,0^GB800,1200,3'))
 check('SIN ^LH (desplazaba el marco fuera del área: bordes derecho/inferior no salían)', !z1.includes('^LH'))
 check('texto ROTADO 90° horario (todo ^A0R, sin ^A0N)', !z1.includes('^A0N') && z1.includes('^A0R'))
-check('código gigante rotado, agrandado (alto 267, glifo 160)', z1.includes('^A0R,267,160'))
+check('código gigante rotado, agrandado (alto 234, glifo 140) — ancho 752 con QR 4cm', z1.includes('^A0R,234,140'))
 check('código presente como texto', z1.includes('^FD56119^FS'))
 
 console.log('\n── 2. Fidelidad a la plantilla PERECIBLE ──')
@@ -81,14 +81,16 @@ check('fecha vencimiento dd/mm/yyyy', z1.includes('^FD22/07/2027^FS'))
 check('cantidad presente', z1.includes('^FD193320^FS'))
 check('unidad presente', z1.includes('^FDUN^FS'))
 check('lote presente', z1.includes('^FD0869051017^FS'))
-check('descripción 63 chars → 1 renglón a fuente 48 (^FB1152,1,10,C)', z1.includes('^FB1152,1,10,C'))
+check('descripción 63 chars → 2 renglones degradados a fuente 38 con QR 4cm (^FB752,2,10,C)', z1.includes('^FB752,2,10,C') && z1.includes('^A0R,38,28'))
 const zDescLarga = construirZPLRotulo({ ...DATOS, descripcion: DATOS.descripcion + ' EXTRA LARGA' }, ENCABEZADO)
-check('descripción 75 chars → 2 renglones (^FB1152,2,10,C)', zDescLarga.includes('^FB1152,2,10,C'))
+check('descripción 75 chars → 2 renglones degradados a fuente 38 (^FB752,2,10,C)', zDescLarga.includes('^FB752,2,10,C') && zDescLarga.includes('^A0R,38,28'))
+const zDescCorta = construirZPLRotulo({ ...DATOS, descripcion: 'SAL INDUSTRIAL' }, ENCABEZADO)
+check('descripción corta (14 chars) mantiene 1 renglón a fuente 58 (^FB752,1,10,C)', zDescCorta.includes('^FB752,1,10,C') && zDescCorta.includes('^A0R,58,42'))
 check("descripción completa con Ñ", z1.includes('DISEÑO 202'))
 
 console.log('\n── 2b. Bandas y cajas del diseño apaisado (coordenadas físicas) ──')
-check('banda código (visual Y 0..240)', z1.includes('^FO560,0^GB240,1200,3'))
-check('banda descripción (visual Y 240..400)', z1.includes('^FO400,0^GB160,1200,3'))
+check('banda código con QR 4cm (visual Y 0..240, X 0..800)', z1.includes('^FO560,0^GB240,800,3'))
+check('banda descripción con QR (visual Y 240..400, X 0..800)', z1.includes('^FO400,0^GB160,800,3'))
 check('caja LOTE: (visual X 0..250)', z1.includes('^FO255,0^GB145,250,3'))
 check('caja valor lote (visual X 250..1200)', z1.includes('^FO255,250^GB145,950,3'))
 check('caja fecha F.P (fila superior)', z1.includes('^FO132,170^GB123,250,2'))
@@ -176,9 +178,9 @@ function codigoFisico(z) {
 const aCorto = codigoFisico(zCorto)
 const aLargo = codigoFisico(zLargo)
 const aLargo12 = codigoFisico(zLargo12)
-check('código 5 dígitos usa el alto máximo nuevo (267)', aCorto && aCorto.alto === 267)
-check('código 7 dígitos cabe en el ancho con QR (7 × 0.6 × 190 = 798 < 828)', aLargo && aLargo.alto === 190 && 7 * 0.6 * 190 < 828)
-check('código 12 dígitos se reduce (alto 111 < 267) y cabe (799 < 828)', aLargo12 && aLargo12.alto === 111 && 12 * 0.6 * 111 < 828)
+check('código 5 dígitos usa el alto máximo con QR 4cm (234)', aCorto && aCorto.alto === 234)
+check('código 7 dígitos cabe en el ancho con QR (7 × 0.6 × 167 = 701 < 776)', aLargo && aLargo.alto === 167 && 7 * 0.6 * 167 < 776)
+check('código 12 dígitos se reduce (alto 97 < 234) y cabe (698 < 776)', aLargo12 && aLargo12.alto === 97 && 12 * 0.6 * 97 < 776)
 check(
   'tinta del código CENTRADA en la banda y sin tocar líneas (calibrado)',
   aCorto && (() => {
@@ -215,6 +217,55 @@ check('límites físicos respetados con paleta', limitesOK(zConPaleta))
 const zPaletaLoteLargo = construirZPLRotulo({ ...DATOS, lote: 'LOTE-DE-40-CARACTERES-XXXXXXX', paleta: 'Paleta 1/5' }, ENCABEZADO)
 check('lote largo + paleta: el lote se auto-ajusta a su caja acortada', limitesOK(zPaletaLoteLargo) && /LOTE-DE-40/.test(zPaletaLoteLargo))
 check('sanearZPL también limpia la marca de paleta', construirZPLRotulo({ ...DATOS, paleta: 'Pa^leta 1/2' }, ENCABEZADO).includes('Pa leta 1/2'))
+
+console.log('\n── 10. QR de guía 4 × 4 cm (Task 28 — salía borroso a mag máx 6 ≈ 2.6 cm) ──')
+// Casos: 24 chars (sin guia_id) → v3 mag10 · 61 chars (uuid36+guía 13+código 5
+// — el payload DOMINANTE de producción) → v5 mag9 = 333 dots = 4.16 cm ·
+// 64 chars (con paleta P2) → v6 mag8 = 328 dots = 4.10 cm.
+const ENC_SIN_DOC = { fecha: '2026-10-09' }
+const GUIA36 = '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0'
+function qrDe(z) {
+  const m = z.match(/\^FO(\d+),(\d+)\^BQN,2,(\d+)\^FDQA,([^^]+)\^FS/)
+  return m ? { xFis: Number(m[1]), yFis: Number(m[2]), mag: Number(m[3]), payload: m[4] } : null
+}
+const MODS = [31, 45, 61, 75, 87, 999] // fronteras de modulosQR
+function modsDe(len) { return len <= 31 ? 29 : len <= 45 ? 33 : len <= 61 ? 37 : len <= 75 ? 41 : len <= 87 ? 45 : 49 }
+function assertQR4cm(nombre, z, lenEsperado) {
+  const q = qrDe(z)
+  if (!q) { check(nombre + ' — QR presente', false); return }
+  const mods = modsDe(q.payload.length)
+  const lado = mods * q.mag
+  const margen = (394 - lado) / 2 // margen real al borde interior (centrado)
+  const yVisSup = 800 - q.xFis - lado // margen superior visual (quiet zone del lado superior)
+  const cm = (lado / 203.2 * 2.54).toFixed(2)
+  check(
+    `${nombre} — símbolo ${lado} dots ≈ ${cm} cm (mag ${q.mag}, mods ${mods}) con quiet ≥ 3 módulos y dentro del cuadrante`,
+    q.payload.length === lenEsperado &&
+      q.mag >= 3 && q.mag <= 10 &&
+      lado >= 280 && lado <= 350 && // 3.5..4.3 cm — el rango 4×4 con quiet honesta
+      margen >= 3 * q.mag - 1 && // quiet zone ≥ 3 módulos (floor del diseño)
+      q.xFis >= 0 && q.xFis + lado <= 800 &&
+      q.yFis >= 800 && q.yFis + lado <= 1200 &&
+      yVisSup - 3 >= 3 * q.mag - 1 // quiet zone del lado superior (después de la línea de 3 dots)
+  )
+  return q
+}
+const zQr26 = construirZPLRotulo(DATOS, ENC_SIN_DOC, { qr: { guiaId: null, numeroDocumento: 'T173-0000409' } }) // 4+1+13+1+5=24? → 24 chars
+assertQR4cm('payload 24 chars (v3)', zQr26, 24)
+const zQr61 = construirZPLRotulo(DATOS, ENC_SIN_DOC, { qr: { guiaId: GUIA36, numeroDocumento: 'T173-00004090' } }) // 4+1+36+1+13+1+5 = 61 (v5 — DOMINANTE)
+const q61 = assertQR4cm('payload 61 chars (v5, uuid+guía+código real)', zQr61, 61)
+check('payload dominante v5 a mag 9 = 333 dots = 4.16 cm (clava el 4×4 pedido)', q61 && q61.mag === 9 && 37 * 9 === 333)
+const zQrPaleta = construirZPLRotulo({ ...DATOS, paleta: 'Paleta 2/4' }, ENC_SIN_DOC, { qr: { guiaId: GUIA36, numeroDocumento: 'T173-00004090' } }) // 61+3 = 64 (v6)
+const qPaleta = assertQR4cm('payload con paleta (v6 + P2)', zQrPaleta, 64)
+check('payload v6 a mag 8 = 328 dots = 4.10 cm', qPaleta && qPaleta.mag === 8 && 41 * 8 === 328)
+check('EC level Q (FDQA) en todos los QR', [zQr26, zQr61, zQrPaleta].every((z) => /\^FDQA,/.test(z)))
+check('paleta viaja en el QR (P2)', /RKLY\|[^|]*\|T173-00004090\|56119\|P2\^FS/.test(zQrPaleta))
+check('sin identidad de guía → SIN QR y bandas a ancho completo (1200)', (() => {
+  const z = construirZPLRotulo(DATOS, ENC_SIN_DOC)
+  return !z.includes('^BQN') && z.includes('^FO560,0^GB240,1200,3') && z.includes('^FO400,0^GB160,1200,3') && z.includes('^A0R,286,')
+})())
+check('separadora del límite X 800 baja hasta Y 400 (cruza código y descripción)', z1.includes('^FO400,800^GB400,3,2'))
+check('límites físicos respetados con QR 4cm', limitesOK(zQr61) && limitesOK(zQrPaleta) && limitesOK(zQr26))
 
 console.log(`\n═══ RESULTADO: ${passed} pasados, ${failed} fallados ═══`)
 process.exit(failed > 0 ? 1 : 0)

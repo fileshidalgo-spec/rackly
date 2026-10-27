@@ -84,8 +84,14 @@ export type OpcionLote = {
   loteFisico: string
   /** Fecha de vencimiento ISO del bucket; '' cuando no tiene. */
   fecha: string
-  /** Cantidad del bucket (solo contexto para elegir; la RPC no la usa). */
+  /** Cantidad del bucket (contexto para elegir/editar; la RPC de lote no la usa). */
   cantidad: number
+  /**
+   * Proveedor del bucket (el del ingreso más reciente de esa fecha) — viaja
+   * en el AJUSTE de cantidad (Task 28) para que el lote conserve su
+   * proveedor real; las salidas no lo registran por convención del kardex.
+   */
+  proveedor?: string
 }
 
 /** Forma mínima que las vistas de stock ya proveen (Racks y Piso). */
@@ -95,8 +101,10 @@ export type BucketDeStock = {
   fecha?: string
   /** Códigos de lote físico JOINED por ', ' (formato de las vistas de stock). */
   loteFisico?: string
+  /** Proveedor de la fila (hereda a las opciones si el lote no trae uno propio). */
+  proveedor?: string
   /** Desglose multi-fecha (cuando el artículo tiene más de un lote). */
-  lotes?: { fVencimiento: string; cantidad: number; lotesFisicos?: string[] }[]
+  lotes?: { fVencimiento: string; cantidad: number; lotesFisicos?: string[]; proveedor?: string }[]
 }
 
 /**
@@ -119,9 +127,10 @@ export function construirOpcionesLote(fila: BucketDeStock): OpcionLote[] {
       const fecha = (l.fVencimiento ?? '').trim()
       const fisicos = (l.lotesFisicos ?? []).map((f) => f.trim()).filter(Boolean)
       if (fisicos.length === 0) {
-        opciones.push({ loteFisico: '', fecha, cantidad: l.cantidad })
+        opciones.push({ loteFisico: '', fecha, cantidad: l.cantidad, proveedor: l.proveedor ?? fila.proveedor })
       } else {
-        for (const f of fisicos) opciones.push({ loteFisico: f, fecha, cantidad: l.cantidad })
+        for (const f of fisicos)
+          opciones.push({ loteFisico: f, fecha, cantidad: l.cantidad, proveedor: l.proveedor ?? fila.proveedor })
       }
     }
     return opciones
@@ -133,9 +142,9 @@ export function construirOpcionesLote(fila: BucketDeStock): OpcionLote[] {
     .map((f) => f.trim())
     .filter(Boolean)
   if (fisicos.length === 0) {
-    opciones.push({ loteFisico: '', fecha, cantidad: fila.stock })
+    opciones.push({ loteFisico: '', fecha, cantidad: fila.stock, proveedor: fila.proveedor })
   } else {
-    for (const f of fisicos) opciones.push({ loteFisico: f, fecha, cantidad: fila.stock })
+    for (const f of fisicos) opciones.push({ loteFisico: f, fecha, cantidad: fila.stock, proveedor: fila.proveedor })
   }
   return opciones
 }
@@ -145,4 +154,30 @@ export function etiquetaOpcionLote(o: OpcionLote): string {
   const lote = o.loteFisico ? `Lote: ${o.loteFisico}` : 'Sin lote'
   const fecha = o.fecha ? `Venc: ${o.fecha}` : 'Sin fecha'
   return `${lote} · ${fecha}`
+}
+
+// ═════════════════════════════════════════════════════════════════
+// CORRECCIÓN DE CANTIDAD (Task 28 — Racks)
+// ═════════════════════════════════════════════════════════════════
+
+export type AjusteCantidad =
+  | { tipo: 'ingreso' | 'salida'; cantidad: number }
+  | { tipo: null; cantidad: 0 }
+
+/**
+ * Compensación PURA entre la cantidad registrada del bucket y la correcta:
+ * el kardex (movimientos) es append-only, así que corregir la cantidad =
+ * registrar un movimiento compensatorio con la MISMA identidad de bucket:
+ *   · nueva < actual → SALIDA de (actual − nueva) — lo que "sobra".
+ *   · nueva > actual → INGRESO de (nueva − actual) — lo que "falta".
+ *   · igual (±1e-9)  → sin ajuste.
+ * La cantidad viaja redondeada a 3 decimales (mismo criterio del stock).
+ * El guardado de la UI llama addMovimiento con uuid_sync propio: si el
+ * guardado se repite tras un fallo de red, el ajuste NO se duplica.
+ */
+export function calcularAjusteCantidad(cantidadActual: number, cantidadNueva: number): AjusteCantidad {
+  const delta = Math.round((cantidadNueva - cantidadActual) * 1000) / 1000
+  if (!Number.isFinite(delta) || Math.abs(delta) < 1e-9) return { tipo: null, cantidad: 0 }
+  if (delta < 0) return { tipo: 'salida', cantidad: Math.round(-delta * 1000) / 1000 }
+  return { tipo: 'ingreso', cantidad: delta }
 }

@@ -121,64 +121,64 @@ t('payloadQRRotulo: sanearZPL limpia ^ ~ \\ del código', () => {
   assert.ok(!/[\^~\\]/.test(p), `payload con caracteres ZPL peligrosos: ${p}`)
 })
 
-t('ZPL con guía: ^BQ nativo + payload QA + separador + código a 215', () => {
+t('ZPL con guía: ^BQ nativo + payload QA + separador + código a 234 (Task 28)', () => {
   const zpl = construirZPLRotulo(DATOS, ENC, { qr: { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento } })
   assert.ok(zpl.includes('^BQN,2,'), 'falta ^BQ')
   const payload = `${PREFIJO_QR}|${GUIA}|${ENC.numeroDocumento}|49310`
   assert.ok(zpl.includes(`^FDQA,${payload}^FS`), 'falta ^FDQA,<payload>')
-  assert.ok(zpl.includes('^A0R,267,'), `código debía salir a 267 dots: ${zpl.match(/\^A0R,\d+/)?.[0]}`)
-  // El código se centra a la IZQUIERDA del separador: su ^FB es 852 (no 1152)
-  assert.ok(zpl.includes('^FB852,'), `falta ^FB852 del área de texto con QR: ${zpl.match(/\^FB\d+/)?.[0]}`)
-  // El QR va en la ESQUINA DERECHA (foto del usuario "AQUÍ VA QR"):
-  // su ^FO físico tiene Y ≥ 900 (zona 900..1200 visual)
+  assert.ok(zpl.includes('^A0R,234,'), `código debía salir a 234 dots: ${zpl.match(/\^A0R,\d+/)?.[0]}`)
+  // El código se centra a la IZQUIERDA del separador: su ^FB es 752 (no 1152)
+  assert.ok(zpl.includes('^FB752,'), `falta ^FB752 del área de texto con QR: ${zpl.match(/\^FB\d+/)?.[0]}`)
+  // El QR va en la ESQUINA DERECHA (cuadrante 800..1200 visual, Task 28):
+  // su ^FO físico tiene Y ≥ 800 (zona QR nueva)
   const foQr = /\^FO(\d+),(\d+)\^BQN/.exec(zpl)
-  assert.ok(foQr && Number(foQr[2]) >= 900, `QR debía anclarse en la zona derecha (Y fís ≥ 900): ${foQr?.[0]}`)
-  // Línea límite en X visual 900 (borde izquierdo de la zona QR)
-  assert.ok(zpl.includes('^FO560,900^GB240,3,2'), 'falta la línea límite en X visual 900')
+  assert.ok(foQr && Number(foQr[2]) >= 800, `QR debía anclarse en la zona derecha (Y fís ≥ 800): ${foQr?.[0]}`)
+  // Línea límite en X visual 800, desde Y 0 hasta Y 400 (borde de la zona QR 4×4)
+  assert.ok(zpl.includes('^FO400,800^GB400,3,2'), 'falta la línea límite en X visual 800')
   // Se mantiene el resto del formato: cantidad, lote, fechas, PQ
   assert.ok(zpl.includes('LOTE:'), 'falta LOTE')
   assert.ok(zpl.includes('CANT:'), 'falta CANT')
   assert.ok(zpl.includes('^PQ1,0,0,N'), 'falta ^PQ')
 })
 
-t('QR calibrado: payload con uuid (52+ chars) → mag 5 (tabla ISO exacta + quiet 4)', () => {
+t('QR 4×4 cm: payload con uuid (52+ chars) → mag 9 (dominante Task 28)', () => {
   const zpl = construirZPLRotulo({ ...DATOS, codigo: '126' }, { ...ENC, numeroDocumento: 'T173-1' }, { qr: { guiaId: GUIA, numeroDocumento: 'T173-1' } })
   const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
-  // RKLY|uuid|T173-1|126 = 52 bytes → v5 (37 módulos) → mag ⌊234/45⌋ = 5
-  assert.strictEqual(mag, 5, `magnificación para payload 52: ${mag}`)
+  // RKLY|uuid|T173-1|126 = 52 bytes → v5 (37 módulos) → mag ⌊394/43⌋ = 9
+  assert.strictEqual(mag, 9, `magnificación para payload 52: ${mag}`)
 })
 
-t('QR rótulo real (61 bytes: uuid + doc 13 + código 5): mag 5, lado 185', () => {
+t('QR rótulo real (61 bytes: uuid + doc 13 + código 5): mag 9, lado 333 = 4.16 cm', () => {
   const zpl = construirZPLRotulo(DATOS, ENC, { qr: { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento } })
   const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
-  assert.strictEqual(mag, 5, `mag para payload 61 (v5): ${mag}`)
+  assert.strictEqual(mag, 9, `mag para payload 61 (v5): ${mag}`)
   const fo = /\^FO(\d+),(\d+)\^BQN/.exec(zpl)
-  // margenY (240−185)/2 = 27 → xFis = 800−27−185 = 588; margenX 57 → yFis 957
-  assert.ok(fo && fo[1] === '588' && fo[2] === '957', `posición QR v5: ${fo?.[0]}`)
+  // margen (394−333)/2 = 30 → yVisSup 33 → xFis = 800−33−333 = 434; yFis = 800+3+30 = 833
+  assert.ok(fo && fo[1] === '434' && fo[2] === '833', `posición QR v5: ${fo?.[0]}`)
 })
 
-t('QR frontera conservadora: 62 bytes (código 3 + paleta) asume v6 → mag 4', () => {
+t('QR frontera conservadora: 62 bytes (código 3 + paleta) asume v6 → mag 8 = 328 dots (4.10 cm)', () => {
   // La ISO declara v5-Q = 62 pero el encoder real manda 62 → v6 (verificado
   // en render): la tabla debe asumir MÁS módulos que el encoder para que el
   // símbolo real jamás desborde la quiet zone.
   const zpl = construirZPLRotulo({ ...DATOS, codigo: '126', paleta: 'Paleta 2/4' }, ENC, { qr: { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento } })
   const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
-  assert.strictEqual(mag, 4, `mag para payload 62 (asume v6): ${mag}`)
+  assert.strictEqual(mag, 8, `mag para payload 62 (asume v6): ${mag}`)
 })
 
-t('QR paleta 5 dígitos (64 bytes → v6): mag 4 (quiet 8 módulos, sin cambio)', () => {
+t('QR paleta 5 dígitos (64 bytes → v6): mag 8 = 328 dots (4.10 cm)', () => {
   const zpl = construirZPLRotulo({ ...DATOS, paleta: 'Paleta 2/3' }, ENC, { qr: { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento } })
   const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
-  assert.strictEqual(mag, 4, `mag para payload 64 (v6): ${mag}`)
+  assert.strictEqual(mag, 8, `mag para payload 64 (v6): ${mag}`)
 })
 
 t('ZPL con guía corta SIN uuid (solo Nº doc) y código de 3 dígitos: QR mag ≥ 5', () => {
   const zpl = construirZPLRotulo({ ...DATOS, codigo: '126' }, { ...ENC, guiaId: null, numeroDocumento: 'T173-1' }, { qr: { guiaId: '', numeroDocumento: 'T173-1' } })
   const mag = Number(/\^BQN,2,(\d+)/.exec(zpl)[1])
   assert.ok(mag >= 5, `magnificación baja para payload corto: ${mag}`)
-  // y sigue anclado en la zona derecha
+  // y sigue anclado en la zona derecha (cuadrante 800..1200 visual)
   const foQr = /\^FO(\d+),(\d+)\^BQN/.exec(zpl)
-  assert.ok(foQr && Number(foQr[2]) >= 900, `QR debía anclarse a la derecha: ${foQr?.[0]}`)
+  assert.ok(foQr && Number(foQr[2]) >= 800, `QR debía anclarse a la derecha: ${foQr?.[0]}`)
 })
 
 t('ZPL sin identidad (sin guiaId y sin Nº): SIN ^BQ y código a ancho completo', () => {

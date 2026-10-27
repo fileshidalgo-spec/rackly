@@ -113,14 +113,15 @@ check(
   zLoteAlfa.includes('^FDAB-1 2-CD^FS')
 )
 check(
-  'descripción 64 chars CON QR → 2 renglones propios a fuente 48 (antes 38 comprimida), cada uno centrado',
-  z1.includes('^FO478,24^A0R,48,41^FB752,1,0,C^FDENVASE TETRA PACK PULP DURAZNO^FS') &&
-    z1.includes('^FO424,24^A0R,48,41^FB752,1,0,C^FDFORTI HIERRO 145 ML - DISEÑO 202^FS')
+  'descripción 63 chars CON QR → 3 renglones a fuente 47 LLENANDO el recuadro (Task 31: antes 2×48 al 64%)',
+  z1.includes('^FO503,24^A0R,47,40^FB752,1,0,C^FDENVASE TETRA PACK PULP^FS') &&
+    z1.includes('^FO451,24^A0R,47,40^FB752,1,0,C^FDDURAZNO FORTI HIERRO^FS') &&
+    z1.includes('^FO399,24^A0R,47,40^FB752,1,0,C^FD145 ML - DISEÑO 202^FS')
 )
 const zDescLarga = construirZPLRotulo({ ...DATOS, descripcion: DATOS.descripcion + ' EXTRA LARGA' }, ENCABEZADO)
-check('descripción 77 chars → 2 renglones balanceados (36/38) a fuente 40 con celda 34 (antes degradaba a 38/28)', zDescLarga.includes('^A0R,40,34^FB752,1,0,C'))
+check('descripción 77 chars → 3 renglones balanceados a fuente 47 llenando el recuadro', zDescLarga.includes('^A0R,47,40^FB752,1,0,C^FDML - DISEÑO 202 EXTRA LARGA^FS'))
 const zDescCorta = construirZPLRotulo({ ...DATOS, descripcion: 'SAL INDUSTRIAL' }, ENCABEZADO)
-check('descripción corta (14 chars) → 1 renglón GIGANTE a fuente 111 (antes 58) llenando la banda', zDescCorta.includes('^FO412,24^A0R,111,94^FB752,1,0,C^FDSAL INDUSTRIAL^FS'))
+check('descripción corta (14 chars) → 2 renglones a fuente 74 llenando el recuadro (Task 31: antes 1×111 al 61%)', zDescCorta.includes('^FO476,24^A0R,74,63^FB752,1,0,C^FDSAL^FS') && zDescCorta.includes('^FO393,24^A0R,74,63^FB752,1,0,C^FDINDUSTRIAL^FS'))
 check(
   'NUNCA ^FB multilínea (el rotado apila hacia arriba y cruzaba el recuadro — foto del sticker)',
   !/\^FB\d+,[2-9]/.test(z1) && !/\^FB\d+,[2-9]/.test(zDescLarga) && !/\^FB\d+,[2-9]/.test(zDescCorta)
@@ -316,22 +317,21 @@ const zFoto = construirZPLRotulo(
   { qr: { guiaId: GUIA36, numeroDocumento: 'T173-00004090' } }
 )
 check(
-  'foto: 2 renglones balanceados (26/23) a fuente 59 con celda natural 50, cada uno centrado',
-  zFoto.includes('^FO477,24^A0R,59,50^FB752,1,0,C^FDBASE PARA BEBIDA JARABEADA^FS') &&
-    zFoto.includes('^FO411,24^A0R,59,50^FB752,1,0,C^FDCARBONATADA FRESA 50496^FS')
+  'foto: 3 renglones balanceados (16/21/11) a fuente 47 — el bloque LLENA el recuadro (99%) y llega abajo',
+  zFoto.includes('^FO503,24^A0R,47,40^FB752,1,0,C^FDBASE PARA BEBIDA^FS') &&
+    zFoto.includes('^FO451,24^A0R,47,40^FB752,1,0,C^FDJARABEADA CARBONATADA^FS') &&
+    zFoto.includes('^FO399,24^A0R,47,40^FB752,1,0,C^FDFRESA 50496^FS')
 )
 check(
-  'foto: tinta de ambos renglones DENTRO de 249..391 (≥ 6 dots de aire de las líneas del recuadro)',
+  'foto: tinta de los 3 renglones DENTRO de 249..391, centrada y LLENANDO ≥85% (más abajo, ajustada al rectángulo)',
   (() => {
-    // y1=264, paso=66, em=59 · lineas en y 264 y 330
-    const sup1 = 264 + 0.017 * 59
-    const inf1 = 264 + 0.763 * 59
-    const sup2 = 330 + 0.017 * 59
-    const inf2 = 330 + 0.763 * 59
-    return sup1 >= 249 && inf2 <= 391 && inf1 < sup2 && Math.abs((sup1 + inf2) / 2 - 320) <= 2
+    // y1=250, paso=52, em=47 · renglones en y 250/302/354
+    const sup = 250 + 0.017 * 47
+    const inf = 354 + 0.763 * 47
+    return sup >= 249 && inf <= 391 && Math.abs((sup + inf) / 2 - 320) <= 2 && (inf - sup) / 142 >= 0.85
   })()
 )
-check('foto: el bloque de descripción queda DEBAJO del código y ENCIMA del lote (banda propia)', zFoto.includes('^FO400,0^GB160,800,3') && zFoto.includes('^FO477,24^A0R,59,50'))
+check('foto: el bloque de descripción queda DEBAJO del código y ENCIMA del lote (banda propia)', zFoto.includes('^FO400,0^GB160,800,3') && zFoto.includes('^FO503,24^A0R,47,40'))
 
 // Descendentes (µ / minúsculas / Q de cola): el modelo de tinta protege el fondo
 const zMicro = construirZPLRotulo({ ...DATOS, descripcion: 'LAMINA TERMOCONTRAIBLE 550 MM X 80 µ' }, ENCABEZADO)
@@ -365,13 +365,15 @@ function descripcionOK(texto, anchoLinea) {
   const maxChars = Math.max(...l.lineas.map((s) => s.length))
   return (
     l.em >= 20 &&
+    l.lineas.length <= 3 && // 4+ renglones darían glifos más chicos que el viejo 38
     sup >= 249 && inf <= 391 && // nunca toca las líneas (240..243 / 397..400)
     Math.abs((sup + inf) / 2 - 320) <= 2 && // tinta centrada en la banda
+    l.llenado >= 0.85 && // Task 31: el bloque LLENA el recuadro (≥85% de la zona)
     maxChars * 0.55 * l.w <= anchoLinea - 24 && // margen lateral ≥ 12 por lado
     l.w >= Math.round(l.em * 0.85) - 1 // celda natural (glifo legible, no comprimido)
   )
 }
-const LONGITUDES = ['SAL 50', 'SAL INDUSTRIAL', 'ACIDO CITRICO ANHIDRO USP', 'LAMINA TERMOCONTRAIBLE 550 MM X 80 µ', 'ALCOHOL RECTIFICADO AL 75 POR CIENTO (q)', FOTO, 'ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 145 ML - DISEÑO 202', 'X'.repeat(63)]
+const LONGITUDES = ['SAL 50', 'SAL INDUSTRIAL', 'ACIDO CITRICO ANHIDRO USP', 'LAMINA TERMOCONTRAIBLE 550 MM X 80 µ', 'ALCOHOL RECTIFICADO AL 75 POR CIENTO (q)', FOTO, 'ENVASE TETRA PACK PULP DURAZNO FORTI HIERRO 145 ML - DISEÑO 202', 'X'.repeat(63).replace(/(.{10})/g, '$1 ').trim()]
 check(
   'invariantes de layout en 8 longitudes × con/sin QR (tinta dentro, centrada, margen lateral)',
   LONGITUDES.every((t) => descripcionOK(t, 752) && descripcionOK(t, 1152))

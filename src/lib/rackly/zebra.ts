@@ -523,18 +523,24 @@ function campoApaisado(
   )
 }
 
-// ═══ Descripción: motor de layout DETERMINISTA (Task 30) ═══
-// Síntomas que reemplaza (foto del sticker 2026-10-28): descripción en una
-// sola línea diminuta (fuente 38 comprimida a celda 28), pegada al separador
-// del código y — en la impresora real — CRUZADA por la línea del recuadro.
-// Causas: (1) el degradado 48→38 nunca recalculaba el salto de líneas (con
-// celda 28 el texto ya cabía en 1 renglón) y la posición y=271 era la de un
-// bloque de 2; (2) ^FB multilínea + ^A0R apila el bloque hacia ARRIBA desde
-// el ancla (verificado en sondas: la 1ª línea del dato cae en visY 128..240,
-// fuera del recuadro) → colisión con la línea límite.
-// Solución: partir el texto AQUÍ (1 ó 2 líneas balanceadas), emitir un campo
-// por renglón con ^FB de 1 línea y maximizar el tamaño con el modelo de
-// tinta calibrado con render (fuente 0, letras, sin negrita):
+// ═══ Descripción: motor de layout DETERMINISTA (Tasks 30-31) ═══
+// Task 30 (foto del sticker 2026-10-28): la descripción salía en UNA línea
+// diminuta (fuente 38 comprimida a celda 28), pegada al separador del código
+// y — en la impresora real — CRUZADA por la línea del recuadro. Causas:
+// (1) el degradado 48→38 nunca recalculaba el salto de líneas (con celda 28
+// el texto ya cabía en 1 renglón) y la posición y=271 era la de un bloque de
+// 2; (2) ^FB multilínea + ^A0R apila el bloque hacia ARRIBA desde el ancla
+// (verificado en sondas: la 1ª línea del dato cae en visY 128..240, fuera
+// del recuadro) → colisión con la línea límite.
+// Task 31 ("más abajo, centrada, que el tamaño se ajuste al rectángulo"):
+// maximizar el glifo dejaba el bloque corto por abajo (llenado 61-79% con
+// QR en textos medianos/largos) — flotaba alto dentro del recuadro. Ahora
+// se permiten 1-3 renglones (4+ darían glifos más chicos que el viejo 38) y se
+// elige el layout que LLENE la zona de tinta
+// (≥ DESC_LLENADO) y, entre los que llenan, el de mayor fuente: el bloque
+// baja hasta el fondo del recuadro, queda centrado por llenado y el tamaño
+// se ajusta al rectángulo.
+// Modelo de tinta calibrado con render (fuente 0, letras, sin negrita):
 //   cap-top y0+0.017em · baseline y0+0.763em · descendentes y0+0.933em ·
 //   avance 0.504×w medido → 0.55×w de diseño (holgura 9% de firmware).
 const DESC_CENTRO_BANDA = 320 // (240 + 400) / 2 — centro visual de la banda
@@ -548,43 +554,65 @@ const DESC_BASE = 0.763
 const DESC_FONDO = 0.933 // con descendentes (µ, minúsculas, Q de cola)
 const DESC_PASO_EM = 1.12 // separación entre renglones (×em)
 const DESC_EM_MIN = 20
+const DESC_LLENADO = 0.85 // fracción mínima de la zona de tinta que debe ocupar el bloque
 
 /**
  * Parte `texto` en `n` renglones balanceados por palabras (minimiza el
  * renglón más largo). Devuelve null si no hay palabras suficientes.
  */
-function repartirEnLineas(texto: string, n: 1 | 2): string[] | null {
+function repartirEnLineas(texto: string, n: 1 | 2 | 3): string[] | null {
   const palabras = texto.split(' ').filter(Boolean)
-  if (!palabras.length) return null
+  if (!palabras.length || palabras.length < n) return null
   if (n === 1) return [palabras.join(' ')]
-  if (palabras.length < 2) return null
-  let mejor: { lineas: string[]; maximo: number } | null = null
-  for (let k = 1; k < palabras.length; k++) {
-    const a = palabras.slice(0, k).join(' ')
-    const b = palabras.slice(k).join(' ')
-    const maximo = Math.max(a.length, b.length)
-    if (!mejor || maximo < mejor.maximo) mejor = { lineas: [a, b], maximo }
+  // acum[i] = ancho de las primeras i palabras + espacios separadores
+  const acum: number[] = [0]
+  for (const p of palabras) acum.push(acum[acum.length - 1] + p.length + 1)
+  const segLen = (i: number, j: number) => acum[j] - acum[i] - 1 // palabras [i, j)
+  const fin = palabras.length
+  let mejor: { cortes: number[]; maximo: number } | null = null
+  const considerar = (...cortes: number[]) => {
+    const limites = [0, ...cortes, fin]
+    const maximo = Math.max(...limites.slice(0, -1).map((l, k) => segLen(l, limites[k + 1])))
+    if (!mejor || maximo < mejor.maximo) mejor = { cortes, maximo }
   }
-  return mejor ? mejor.lineas : null
+  if (n === 2) {
+    for (let k = 1; k < fin; k++) considerar(k)
+  } else {
+    for (let i = 1; i < fin - 1; i++) for (let j = i + 1; j < fin; j++) considerar(i, j)
+  }
+  if (!mejor) return null
+  const { cortes } = mejor as { cortes: number[]; maximo: number }
+  const limites = [0, ...cortes, fin]
+  return limites.slice(0, -1).map((l, k) => palabras.slice(l, limites[k + 1]).join(' '))
+}
+
+type LayoutDescripcion = {
+  lineas: string[]
+  em: number
+  w: number
+  paso: number
+  y1: number
+  /** fracción de la zona de tinta que ocupa el bloque (Task 31) */
+  llenado: number
 }
 
 /**
- * Layout de la banda de descripción (Y 240..400): elige 1 ó 2 renglones —
- * el que permita la fuente MÁS GRANDE — y centra la TINTA del bloque en la
- * banda con ≥ 6 dots de aire de las líneas ("sin tocar los límites").
- * Cada renglón se imprime como campo propio centrado por ^FB de 1 línea.
+ * Layout de la banda de descripción (Y 240..400): prueba 1-3 renglones
+ * balanceados, elige el que LLENE la zona de tinta (llenado ≥ DESC_LLENADO)
+ * y entre los que llenan, el de MAYOR fuente; si ninguno llena, el de mayor
+ * fuente a secas. La TINTA del bloque queda centrada en la banda con ≥ 6
+ * dots de aire de las líneas ("sin tocar los límites"). Cada renglón se
+ * imprime como campo propio centrado por ^FB de 1 línea.
  * Devuelve null solo si `texto` es vacío.
  */
-export function layoutDescripcion(
-  texto: string,
-  anchoLinea: number
-): { lineas: string[]; em: number; w: number; paso: number; y1: number } | null {
+export function layoutDescripcion(texto: string, anchoLinea: number): LayoutDescripcion | null {
   if (!texto.trim()) return null
   const fondo = /[a-zµ,;Q]/.test(texto) ? DESC_FONDO : DESC_BASE
   const utilAncho = anchoLinea - 2 * DESC_MARGEN_X
   const utilAlto = DESC_ZONA_INF - DESC_ZONA_SUP
-  let mejor: { lineas: string[]; em: number; w: number; paso: number; y1: number } | null = null
-  for (const n of [1, 2] as const) {
+  let mejor: LayoutDescripcion | null = null
+  let respaldo: LayoutDescripcion | null = null
+  for (const n of [1, 2, 3] as const) {
     const lineas = repartirEnLineas(texto, n)
     if (!lineas) continue
     const maxChars = Math.max(...lineas.map((l) => l.length))
@@ -595,12 +623,23 @@ export function layoutDescripcion(
     let w = Math.round(em * DESC_RATIO_W)
     if (maxChars * DESC_AVANCE * w > utilAncho) w -= 1 // celda −1 dot antes de descartar
     if (maxChars * DESC_AVANCE * w > utilAncho) continue
-    const paso = Math.round(em * DESC_PASO_EM)
+    // paso con tope: el fondo de tinta del último renglón no pasa de la zona
+    const pasoMax = n > 1 ? Math.floor((utilAlto - (DESC_CAP + fondo) * em) / (n - 1)) : 0
+    const paso = n > 1 ? Math.min(Math.round(em * DESC_PASO_EM), pasoMax) : 0
     const altoTinta = (n - 1) * paso + (DESC_CAP + fondo) * em
-    const y1 = Math.round(DESC_CENTRO_BANDA - altoTinta / 2)
-    if (!mejor || em > mejor.em) mejor = { lineas, em, w, paso, y1 }
+    const cand: LayoutDescripcion = {
+      lineas,
+      em,
+      w,
+      paso,
+      y1: Math.round(DESC_CENTRO_BANDA - altoTinta / 2),
+      llenado: altoTinta / utilAlto,
+    }
+    if (!respaldo || cand.em > respaldo.em) respaldo = cand
+    if (cand.llenado >= DESC_LLENADO && (!mejor || cand.em > mejor.em)) mejor = cand
   }
   if (mejor) return mejor
+  if (respaldo) return respaldo
   // Red de seguridad (no ocurre con el catálogo real, máx 63 chars): una
   // línea chica truncada, siempre dentro del recuadro.
   const em = DESC_EM_MIN
@@ -612,6 +651,7 @@ export function layoutDescripcion(
     w,
     paso: 0,
     y1: Math.round(DESC_CENTRO_BANDA - ((DESC_CAP + fondo) * em) / 2),
+    llenado: ((DESC_CAP + fondo) * em) / utilAlto,
   }
 }
 
@@ -737,10 +777,11 @@ export function construirZPLRotulo(
 
   // ── 2) DESCRIPCIÓN — banda visual Y 240..400 (layout determinista, Task 30) ──
   // Centrada en su recuadro (debajo del código), tipografía natural legible
-  // y LO MÁS GRANDE posible sin tocar las líneas: 1 ó 2 renglones (el que
-  // dé fuente mayor), cada renglón como campo propio con ^FB de UNA línea
+  // y LO MÁS GRANDE posible sin tocar las líneas: 1-3 renglones (el layout
+  // que llene el recuadro con la mayor fuente), cada renglón como campo
+  // propio con ^FB de UNA línea
   // (el multilínea rotado apila hacia arriba y cruzaba el recuadro) y la
-  // TINTA centrada con el modelo calibrado de layoutDescripcion.
+  // TINTA centrada y LLENANDO el recuadro (regla de llenado Task 31).
   lineas.push(cajaApaisada(0, 240, payloadQR ? X_ZONA_QR : 1200, 400, 3))
   if (descripcion) {
     const anchoLinea = payloadQR ? X_ZONA_QR - 48 : 1152

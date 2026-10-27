@@ -1,0 +1,68 @@
+name: Diag Task 34 — roles reales + RPC rq_editar_rq (solo lectura + no-op)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - diag/task34-guardar
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Diagnóstico BD (roles, RQ 0000192533, no-op de rq_editar_rq)
+        env:
+          SB_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SB_SERVICE: ${{ secrets.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          cat > diag.mjs << 'EOF'
+          import { createClient } from '@supabase/supabase-js'
+          const url = process.env.SB_URL
+          const sb = createClient(url, process.env.SB_SERVICE, { auth: { persistSession: false } })
+
+          const p = (t, v) => console.log(`\n=== ${t} ===\n` + JSON.stringify(v, null, 1))
+
+          // 1) Roles REALES de todos los usuarios (service_role bypasea RLS)
+          const { data: roles, error: e1 } = await sb.from('user_roles').select('user_id, role').order('user_id')
+          p('user_roles (valores reales)', e1 ? { ERROR: e1.message } : roles)
+          const distintos = [...new Set((roles ?? []).map(r => r.role))]
+          p('VALORES DISTINTOS de role', distintos)
+
+          // 2) Perfiles (quién es quién)
+          const { data: perfiles, error: e2 } = await sb.from('profiles').select('id, nombre, correo, aprobado').order('nombre')
+          p('profiles', e2 ? { ERROR: e2.message } : perfiles)
+
+          // 3) La RQ del reporte
+          const { data: rqs, error: e3 } = await sb.from('rq_atenciones')
+            .select('*').eq('numero_rq', '0000192533')
+          p('rq_atenciones 0000192533', e3 ? { ERROR: e3.message } : rqs)
+          const rq = (rqs ?? [])[0]
+          if (rq) {
+            const { data: items, error: e4 } = await sb.from('rq_atencion_items')
+              .select('*').eq('rq_id', rq.id).order('orden')
+            p('items de la RQ', e4 ? { ERROR: e4.message } : items)
+          }
+
+          // 4) ¿Existe la RPC y responde? Prueba NO-OP (cambios=0, no escribe)
+          if (rq) {
+            const enc = {
+              numero_rq: rq.numero_rq ?? '', orden_produccion: rq.orden_produccion ?? '',
+              producto_codigo: rq.producto_codigo ?? '', producto_descripcion: rq.producto_descripcion ?? '',
+              linea: rq.linea ?? '', solicitante: rq.solicitante ?? '',
+              notas: rq.notas ?? '', fecha: rq.fecha ?? '', turno: rq.turno ?? '',
+            }
+            const { data: noop, error: e5 } = await sb.rpc('rq_editar_rq', {
+              p_rq_id: rq.id, p_encabezado: enc, p_items: [],
+              p_usuario_id: null, p_usuario_nombre: 'diag-task34', p_usuario_correo: '',
+            })
+            p('RPC rq_editar_rq NO-OP (service_role)', e5 ? { ERROR: e5.message, CODE: e5.code, DETAILS: e5.details } : { cambios: noop?.cambios, items: noop?.items?.length })
+          }
+          EOF
+          npm i --no-save @supabase/supabase-js --silent
+          node diag.mjs 2>&1

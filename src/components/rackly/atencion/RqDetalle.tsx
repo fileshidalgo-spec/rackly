@@ -506,7 +506,8 @@ export function RqDetalle({
               <th className="px-3 py-2 w-[100px] text-right" title="TOTAL real que salió = pedido + excedente">Atendido</th>
               <th className="px-3 py-2 w-[100px] text-right" title="Cantidad − atendido (nunca negativo)">Pendiente</th>
               <th className="px-3 py-2 w-[190px]">Atender</th>
-              <th className="px-3 py-2 w-[120px]">Ubicación / QR</th>
+              {/* Task 33: 150px (antes 120) — "Atender con QR" cabe en una línea sin cortarse */}
+              <th className="px-3 py-2 w-[150px]">Ubicación / QR</th>
             </tr>
           </thead>
           <tbody>
@@ -784,11 +785,15 @@ export function RqDetalle({
                 </div>
               )}
 
-              {/* VER UBICACIÓN + ATENDER CON QR + REVISAR (puente con Tránsito) */}
-              <div className="grid grid-cols-3 gap-1.5">
+              {/* VER UBICACIÓN + ATENDER CON QR + REVISAR (puente con Tránsito)
+                  Task 33: en móvil los 3 botones apretados en una fila (grid-cols-3
+                  ≈110px/botón) eran inutilizables. Jerarquía 2+1: las 2 acciones de
+                  trabajo arriba con espacio real (~164px/botón) y "Revisar" (consulta
+                  secundaria) a todo el ancho abajo. h-10 = área táctil cómoda. */}
+              <div className="grid grid-cols-2 gap-2">
                 <Button
                   variant="outline"
-                  className="h-9 gap-1 w-full border-violet-200 text-violet-700 hover:bg-violet-50 px-1"
+                  className="h-10 gap-1.5 w-full border-violet-200 text-violet-700 hover:bg-violet-50 px-2"
                   onClick={() =>
                     setUbicaciones({
                       codigo: it.codigo,
@@ -800,11 +805,11 @@ export function RqDetalle({
                     })
                   }
                 >
-                  <MapPin className="h-4 w-4" /> Ver ubicación
+                  <MapPin className="h-4 w-4 shrink-0" /> Ver ubicación
                 </Button>
                 <Button
                   variant="outline"
-                  className="h-9 gap-1 w-full border-teal-200 text-teal-700 hover:bg-teal-50 px-1"
+                  className="h-10 gap-1.5 w-full border-teal-200 text-teal-700 hover:bg-teal-50 px-2"
                   onClick={() =>
                     setQrWizard({
                       codigo: it.codigo,
@@ -816,15 +821,15 @@ export function RqDetalle({
                     })
                   }
                 >
-                  <ScanLine className="h-4 w-4" /> Atender QR
+                  <ScanLine className="h-4 w-4 shrink-0" /> Atender con QR
                 </Button>
                 <Button
                   variant="outline"
-                  className="h-9 gap-1 w-full border-slate-200 text-slate-600 hover:bg-slate-50 px-1"
+                  className="col-span-2 h-10 gap-1.5 w-full border-slate-200 text-slate-600 hover:bg-slate-50 px-2"
                   title="Desde qué posiciones se atendió y qué saldo quedó en cada una"
                   onClick={() => setRevisar(it)}
                 >
-                  <ClipboardCheck className="h-4 w-4" /> Revisar
+                  <ClipboardCheck className="h-4 w-4 shrink-0" /> Revisar
                 </Button>
               </div>
             </div>

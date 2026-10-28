@@ -437,7 +437,14 @@ export function RqDetalle({
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600 min-[430px]:grid-cols-3">
           {rq.ordenProduccion && <span>OP: <b>{rq.ordenProduccion}</b></span>}
           <span>Fecha: <b>{rq.fecha}</b></span>
-          <span>Turno: <b>{rq.turno}</b></span>
+          {/* Task 35: muestra el TURNO DEL RQ (hoja) si existe; si difiere
+              del turno del sistema se indica entre paréntesis. */}
+          <span>
+            Turno: <b>{rq.turnoRq || rq.turno}</b>
+            {rq.turnoRq && rq.turnoRq !== rq.turno ? (
+              <span className="text-slate-400"> (sist. {rq.turno})</span>
+            ) : null}
+          </span>
           {rq.linea && (
             <span className="min-w-0 truncate col-span-2 min-[430px]:col-span-1" title={rq.linea}>
               Línea: <b>{rq.linea}</b>

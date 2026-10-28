@@ -34,8 +34,12 @@ export type RqAtencion = {
   ordenProduccion: string
   productoCodigo: string
   productoDescripcion: string
-  /** T1/T2 — calculado por la app con la regla del almacén (turno.ts). */
+  /** T1/T2 — calculado por la app con la regla del almacén (turno.ts).
+   *  Es el TURNO DEL SISTEMA (hora de registro), no el de la hoja. */
   turno: string
+  /** Task 35: turno de la HOJA FÍSICA de la RQ (004=T1 · 005=T2).
+   *  '' o NULL = histórico sin dato: el filtro usa el turno del sistema. */
+  turnoRq: string
   /** Línea/área que pide la RQ (campo "Línea:" del documento físico). */
   linea: string
   solicitante: string
@@ -88,6 +92,8 @@ export type EncabezadoEditarRq = Partial<{
   notas: string
   fecha: string
   turno: string
+  /** Task 35: turno de la hoja física (004=T1 · 005=T2); '' = sin indicar. */
+  turnoRq: string
 }>
 
 export type ResultadoEdicionRq = { rq: RqAtencion; items: RqItem[]; cambios: number }
@@ -151,6 +157,7 @@ function mapRq(r: Record<string, unknown>): RqAtencion {
     productoCodigo: str(r.producto_codigo),
     productoDescripcion: str(r.producto_descripcion),
     turno: str(r.turno) || 'T1',
+    turnoRq: str(r.turno_rq),
     linea: str(r.linea),
     solicitante: str(r.solicitante),
     estado: str(r.estado) || 'Pendiente',
@@ -227,6 +234,11 @@ async function recalcularEstadoRq(rqId: string): Promise<void> {
 export type FiltrosRq = {
   busqueda?: string
   estado?: string
+  /** Task 35: fecha exacta (YYYY-MM-DD) de la columna fecha. */
+  fecha?: string
+  /** Task 35: turno del RQ (T1/T2). Historicos sin turno_rq caen al turno
+   *  del sistema: or=(turno_rq.eq.X,and(turno_rq.is.null,turno.eq.X)). */
+  turno?: string
   limit?: number
   offset?: number
 }
@@ -260,6 +272,18 @@ export async function listarRqs(
   }
   const estado = (filtros.estado ?? '').trim()
   if (estado && estado !== 'todos') q = q.eq('estado', estado)
+
+  // Task 35: filtro por FECHA exacta (la columna de la lista).
+  const fecha = (filtros.fecha ?? '').trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fecha)) q = q.eq('fecha', fecha)
+
+  // Task 35: filtro por TURNO DEL RQ (hoja 004/005). Las filas históricas
+  // sin turno_rq se filtran por su turno del sistema (fallback COALESCE):
+  // el filtro siempre coincide con lo que muestra la columna Turno.
+  const turnoF = (filtros.turno ?? '').trim()
+  if (turnoF === 'T1' || turnoF === 'T2') {
+    q = q.or(`turno_rq.eq.${turnoF},and(turno_rq.is.null,turno.eq.${turnoF})`)
+  }
 
   const { data, error, count } = await q
   if (error) throw error
@@ -300,6 +324,9 @@ export type NuevoRq = {
   productoCodigo: string
   productoDescripcion: string
   turno: string
+  /** Task 35: turno de la hoja física (004=T1 · 005=T2). Opcional:
+   *  '' = sin indicar (históricos) — la BD guarda NULL. */
+  turnoRq?: string
   /** Línea/área de producción (L1, L2, JARABES…). Vacío = no indicada. */
   linea: string
   solicitante: string
@@ -352,6 +379,7 @@ export async function crearRq(
     producto_codigo: datos.productoCodigo,
     producto_descripcion: datos.productoDescripcion,
     turno: datos.turno || 'T1',
+    turno_rq: datos.turnoRq || null,
     linea: datos.linea ?? '',
     solicitante: datos.solicitante,
     estado: 'Pendiente',
@@ -416,6 +444,7 @@ export function payloadRpcCrearRq(
       producto_codigo: datos.productoCodigo,
       producto_descripcion: datos.productoDescripcion,
       turno: datos.turno || 'T1',
+      turno_rq: datos.turnoRq || '',
       linea: datos.linea ?? '',
       solicitante: datos.solicitante,
       foto_url: datos.fotoUrl ?? '',
@@ -552,6 +581,7 @@ export function payloadRpcEditarRq(
     ['notas', 'notas'],
     ['fecha', 'fecha'],
     ['turno', 'turno'],
+    ['turnoRq', 'turno_rq'],
   ]
   for (const [k, col] of CAMPOS) {
     if (encabezado[k] !== undefined) p_encabezado[col] = String(encabezado[k] ?? '')

@@ -177,6 +177,22 @@ BEGIN
       v_n_enc := v_n_enc + 1;
     END IF;
   END IF;
+  -- Task 35: turno del RQ según la hoja física (004=T1, 005=T2). Nullable:
+  -- '' (vacío) = sin indicar → guarda NULL; histórico NULL + valor T1/T2 =
+  -- backfill. La comparación usa COALESCE para tratar NULL y '' como iguales.
+  IF p_encabezado ? 'turno_rq' THEN
+    v_txt := TRIM(COALESCE(p_encabezado ->> 'turno_rq', ''));
+    IF v_txt <> '' AND v_txt NOT IN ('T1','T2') THEN
+      RAISE EXCEPTION 'TURNO_RQ_INVALIDO|El turno del RQ debe ser T1, T2 o vacío (recibido: "%")', v_txt;
+    END IF;
+    IF v_txt IS DISTINCT FROM COALESCE(v_rq_json ->> 'turno_rq', '') THEN
+      v_diff := v_diff || jsonb_build_object('tipo','encabezado','campo','turnoRq',
+        'antes', COALESCE(v_rq_json ->> 'turno_rq', ''), 'despues', v_txt);
+      UPDATE rq_atenciones SET turno_rq = NULLIF(v_txt, '') WHERE id = p_rq_id;
+      v_rq_json := v_rq_json || jsonb_build_object('turno_rq', v_txt);
+      v_n_enc := v_n_enc + 1;
+    END IF;
+  END IF;
 
   -- ── 4) Items: estado deseado COMPLETO (diff declarativo) ─────────────
   IF p_items IS NOT NULL AND jsonb_typeof(p_items) = 'array' AND jsonb_array_length(p_items) > 0 THEN

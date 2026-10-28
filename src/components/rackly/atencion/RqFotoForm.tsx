@@ -118,6 +118,9 @@ type FormRq = {
   productoDescripcion: string
   fecha: string
   turno: string
+  /** Task 35: turno de la HOJA física (004=T1 · 005=T2). Por defecto
+   *  igual al turno del sistema; el OCR lo llena si la hoja lo trae. */
+  turnoRq: string
   linea: string
   solicitante: string
   notas: string
@@ -147,6 +150,7 @@ function formVacio(): FormRq {
     productoDescripcion: '',
     fecha: hoyISO(),
     turno: calcularTurnoRecepcion(new Date()),
+    turnoRq: calcularTurnoRecepcion(new Date()),
     linea: '',
     solicitante: '',
     notas: '',
@@ -332,13 +336,17 @@ export function RqFotoForm({
   function procesarExtraccion(datos: DatosRq, avisosExtra: string[] = []) {
     const itemsOcr = itemsDesdeOcr(datos)
     setAvisos(avisosExtra)
+    const base = formVacio()
     setForm({
-      ...formVacio(),
+      ...base,
       numeroRq: datos.numeroRq,
       ordenProduccion: datos.ordenProduccion,
       productoCodigo: datos.productoCodigo,
       productoDescripcion: datos.productoDescripcion,
       fecha: datos.fecha || hoyISO(),
+      // Task 35: el turno de la hoja (004/005) manda si el OCR lo leyó;
+      // si no, queda el turno del sistema como punto de partida.
+      turnoRq: datos.turnoRq || base.turnoRq,
       linea: datos.linea,
       solicitante: datos.solicitante,
       items: itemsOcr.length > 0 ? itemsOcr : [itemVacio()],
@@ -638,6 +646,7 @@ export function RqFotoForm({
             productoCodigo: form.productoCodigo.trim(),
             productoDescripcion: form.productoDescripcion.trim(),
             turno: form.turno,
+            turnoRq: form.turnoRq,
             linea: form.linea.trim(),
             solicitante: form.solicitante.trim(),
             notas: form.notas.trim(),
@@ -673,6 +682,7 @@ export function RqFotoForm({
           productoCodigo: form.productoCodigo.trim(),
           productoDescripcion: form.productoDescripcion.trim(),
           turno: form.turno,
+          turnoRq: form.turnoRq,
           linea: form.linea.trim(),
           solicitante: form.solicitante.trim(),
           estado: 'Pendiente',
@@ -916,6 +926,22 @@ export function RqFotoForm({
               <SelectItem value="T2">T2 (19:21 – 07:19)</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Turno del RQ (hoja)</Label>
+          <Select value={form.turnoRq} onValueChange={(v) => set('turnoRq', v)}>
+            <SelectTrigger className="h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="T1">T1 — hoja 004</SelectItem>
+              <SelectItem value="T2">T2 — hoja 005</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-[10px] text-slate-400 leading-tight">
+            El impreso en la hoja: 004 = turno 1 · 005 = turno 2. Úsalo cuando la RQ
+            llega de madrugada/tarde para OTRO turno.
+          </p>
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Línea de producción</Label>

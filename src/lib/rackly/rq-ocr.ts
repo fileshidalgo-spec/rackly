@@ -64,6 +64,10 @@ export type DatosRq = {
   fecha: string
   /** Campo «Línea:» del documento (L1, L2, JARABES…) o '' si no se leyó. */
   linea: string
+  /** Task 35: turno de la hoja física («Turno: 004»=T1 · «005»=T2) o ''.
+   *  Difiere del turno del sistema: una RQ entregada en la madrugada
+   *  pertenece al turno siguiente — la hoja manda. */
+  turnoRq: string
   solicitante: string
   items: ItemRq[]
   /**
@@ -123,6 +127,24 @@ const RE_PRODUCTO =
 
 /** Cantidad con separador de miles y/o decimales: 24 · 322 · 50,400.0000 · 1,065.5 */
 const RE_CANTIDAD = /\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,4})?\b|\b\d+(?:[.,]\d{1,4})?\b/
+
+/**
+ * Task 35 — TURNO DE LA HOJA FÍSICA: el documento real trae
+ * «TURNO Y FECH : 004  21/10/2026» donde 004 = turno 1 y 005 = turno 2.
+ * Solo se aceptan EXACTAMENTE 004/005 (o 4/5 sueltos tras la etiqueta
+ * TURNO): cualquier otro número no es turno — evitar falsos positivos con
+ * cantidades/DNI. Variante B: el OCR parte el renglón y deja
+ * «004  21/10/2026» solo (mismo artefacto que el fantasma de fecha).
+ */
+const RE_TURNO_HOJA_ETIQUETA = /TURNO[^\d]{0,40}?\b0{0,2}([45])(?!\d)/
+const RE_TURNO_HOJA_FECHA = /\b00([45])\s+\d{1,2}[/.\-]\d{1,2}/
+
+/** 004 → 'T1' · 005 → 'T2' · otro → '' (no es turno de la hoja). */
+function turnoDeHoja(digito: string): string {
+  if (digito === '4') return 'T1'
+  if (digito === '5') return 'T2'
+  return ''
+}
 
 /** Unidades habituales (misma familia que la guía + lecturas OCR). */
 const UNIDADES = new Set([
@@ -370,6 +392,7 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
     productoDescripcion: '',
     fecha: '',
     linea: '',
+    turnoRq: '',
     solicitante: '',
     items: [],
   }
@@ -402,6 +425,11 @@ export function extraerDatosRqDeTexto(texto: string, catalogo: CatalogoItem[]): 
           if (iso) res.fecha = iso
         }
       }
+    }
+    if (!res.turnoRq) {
+      // Task 35: «TURNO Y FECH : 004 …» o la variante partida «004 21/10…».
+      const mTurno = linea.match(RE_TURNO_HOJA_ETIQUETA) ?? linea.match(RE_TURNO_HOJA_FECHA)
+      if (mTurno) res.turnoRq = turnoDeHoja(mTurno[1])
     }
     if (!res.linea) {
       const mLinea = linea.match(RE_LINEA)
@@ -675,6 +703,7 @@ export function fusionarDatosRq(a: DatosRq, b: DatosRq): DatosRq {
     productoDescripcion: a.productoDescripcion || b.productoDescripcion,
     fecha: a.fecha || b.fecha,
     linea: a.linea || b.linea,
+    turnoRq: a.turnoRq || b.turnoRq,
     solicitante: a.solicitante || b.solicitante,
     items,
     ...(avisos.length > 0 ? { avisos } : {}),

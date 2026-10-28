@@ -63,6 +63,7 @@ import {
   PackageOpen,
   Eye,
   Pencil,
+  X,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
@@ -99,6 +100,9 @@ export function RqAtencionPanel({
   const [loading, setLoading] = useState(false)
   const [busqueda, setBusqueda] = useState('')
   const [estadoFiltro, setEstadoFiltro] = useState('todos')
+  /** Task 35: filtro por fecha exacta (YYYY-MM-DD) y turno del RQ (hoja). */
+  const [fechaFiltro, setFechaFiltro] = useState('')
+  const [turnoFiltro, setTurnoFiltro] = useState('todos')
   const [offset, setOffset] = useState(0)
   const [deleteTarget, setDeleteTarget] = useState<RqAtencion | null>(null)
   /** Edición supervisada (Task 26): RQ + materiales cargados al abrir. */
@@ -108,7 +112,7 @@ export function RqAtencionPanel({
 
   const cargaGenRef = useRef(0)
   const offsetRef = useRef(0)
-  const filtrosActivosRef = useRef({ busqueda: '', estado: '' })
+  const filtrosActivosRef = useRef({ busqueda: '', estado: '', fecha: '', turno: '' })
 
   const [enVivoHora, setEnVivoHora] = useState('')
   const [nuevosPendientes, setNuevosPendientes] = useState(false)
@@ -127,17 +131,23 @@ export function RqAtencionPanel({
     async (
       nuevoOffset: number,
       reemplazar: boolean,
-      filtros?: { busqueda: string; estado: string }
+      filtros?: { busqueda: string; estado: string; fecha: string; turno: string }
     ) => {
       const gen = ++cargaGenRef.current
       setLoading(true)
       try {
         const fBusqueda = filtros?.busqueda ?? busqueda
         const fEstado = filtros ? filtros.estado : estadoFiltro === 'todos' ? '' : estadoFiltro
-        if (!filtros) filtrosActivosRef.current = { busqueda: fBusqueda, estado: fEstado }
+        // Task 35: fecha exacta + turno del RQ (hoja 004/005).
+        const fFecha = filtros?.fecha ?? fechaFiltro
+        const fTurno = filtros ? filtros.turno : turnoFiltro === 'todos' ? '' : turnoFiltro
+        if (!filtros)
+          filtrosActivosRef.current = { busqueda: fBusqueda, estado: fEstado, fecha: fFecha, turno: fTurno }
         const { filas: filasNuevas, total: totalNuevo } = await listarRqs({
           busqueda: fBusqueda,
           estado: fEstado,
+          fecha: fFecha,
+          turno: fTurno,
           limit: PAGE_SIZE,
           offset: nuevoOffset,
         })
@@ -164,7 +174,7 @@ export function RqAtencionPanel({
         if (gen === cargaGenRef.current) setLoading(false)
       }
     },
-    [busqueda, estadoFiltro]
+    [busqueda, estadoFiltro, fechaFiltro, turnoFiltro]
   )
 
   const recargarLista = useCallback(
@@ -173,10 +183,7 @@ export function RqAtencionPanel({
         if (motivo !== 'poll') setNuevosPendientes(true)
         return
       }
-      void cargar(0, true, {
-        busqueda: filtrosActivosRef.current.busqueda,
-        estado: filtrosActivosRef.current.estado,
-      })
+      void cargar(0, true, filtrosActivosRef.current)
     },
     [cargar]
   )
@@ -292,8 +299,8 @@ export function RqAtencionPanel({
       </div>
 
       {/* ── Filtros ── */}
-      <div className="flex flex-col sm:flex-row gap-2">
-        <div className="relative flex-1">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+        <div className="relative flex-1 sm:min-w-[220px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             className="pl-9"
@@ -312,6 +319,38 @@ export function RqAtencionPanel({
             <SelectItem value="Pendiente">Pendiente</SelectItem>
             <SelectItem value="En proceso">En proceso</SelectItem>
             <SelectItem value="Atendido">Atendido</SelectItem>
+          </SelectContent>
+        </Select>
+        {/* Task 35: filtro por FECHA (columna Fecha de la lista). */}
+        <div className="relative w-full sm:w-[150px]">
+          <Input
+            type="date"
+            className="pr-8"
+            title="Filtrar por fecha de la RQ"
+            value={fechaFiltro}
+            onChange={(e) => setFechaFiltro(e.target.value)}
+          />
+          {fechaFiltro && (
+            <button
+              type="button"
+              aria-label="Quitar filtro de fecha"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              onClick={() => setFechaFiltro('')}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        {/* Task 35: filtro por TURNO del RQ (hoja 004=T1 · 005=T2).
+            Históricos sin turno de hoja se filtran por su turno del sistema. */}
+        <Select value={turnoFiltro} onValueChange={setTurnoFiltro}>
+          <SelectTrigger className="w-full sm:w-[150px]">
+            <SelectValue placeholder="Turno" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos los turnos</SelectItem>
+            <SelectItem value="T1">Turno 1 (T1 · 004)</SelectItem>
+            <SelectItem value="T2">Turno 2 (T2 · 005)</SelectItem>
           </SelectContent>
         </Select>
         <Button variant="outline" onClick={buscar} disabled={loading} className="gap-2">
@@ -339,10 +378,7 @@ export function RqAtencionPanel({
             className="h-6 gap-1 px-2 text-[10px] border-amber-300 text-amber-800 hover:bg-amber-50"
             onClick={() => {
               setNuevosPendientes(false)
-              cargar(0, true, {
-                busqueda: filtrosActivosRef.current.busqueda,
-                estado: filtrosActivosRef.current.estado,
-              })
+              cargar(0, true, filtrosActivosRef.current)
             }}
           >
             <RefreshCw className="h-2.5 w-2.5" /> Hay RQ nuevas — Ver actualizado
@@ -390,9 +426,21 @@ export function RqAtencionPanel({
                 </td>
                 <td className="px-3 py-2 text-xs text-slate-500">{r.fecha}</td>
                 <td className="px-3 py-2">
-                  <Badge variant="outline" className="text-[10px]">
-                    {r.turno}
-                  </Badge>
+                  {(() => {
+                    // Task 35: la columna muestra el TURNO DEL RQ (hoja)
+                    // y avisa cuando difiere del turno del sistema.
+                    const mostrado = r.turnoRq || r.turno
+                    const difiere = r.turnoRq && r.turnoRq !== r.turno
+                    return (
+                      <Badge
+                        variant="outline"
+                        title={difiere ? `Turno del RQ (hoja): ${r.turnoRq} · Turno del sistema: ${r.turno}` : undefined}
+                        className={`text-[10px] ${difiere ? 'border-amber-300 bg-amber-50 text-amber-800' : ''}`}
+                      >
+                        {mostrado}
+                      </Badge>
+                    )
+                  })()}
                 </td>
                 <td className="px-3 py-2 max-w-[150px]">
                   {r.linea ? (
@@ -489,7 +537,10 @@ export function RqAtencionPanel({
             </div>
             <div className="grid grid-cols-2 gap-1 text-xs text-slate-500">
               <span>Fecha: {r.fecha}</span>
-              <span>Turno: {r.turno}</span>
+              <span>
+                Turno: {r.turnoRq || r.turno}
+                {r.turnoRq && r.turnoRq !== r.turno ? ` (sist. ${r.turno})` : ''}
+              </span>
               {r.linea && (
                 <span className="min-w-0 truncate col-span-2" title={r.linea}>
                   Línea: {r.linea}
@@ -588,20 +639,14 @@ export function RqAtencionPanel({
           rq={editarTarget}
           items={editarItems}
           onGuardada={() => {
-            cargar(0, true, {
-              busqueda: filtrosActivosRef.current.busqueda,
-              estado: filtrosActivosRef.current.estado,
-            })
+            cargar(0, true, filtrosActivosRef.current)
           }}
           onSincronizada={(rqNueva, itemsNuevos) => {
             // Reversa guiada dentro del editor: mantiene rq+items frescos
             // (el estado de la RQ puede cambiar de Atendido a En proceso).
             setEditarTarget(rqNueva)
             setEditarItems(itemsNuevos)
-            cargar(0, true, {
-              busqueda: filtrosActivosRef.current.busqueda,
-              estado: filtrosActivosRef.current.estado,
-            })
+            cargar(0, true, filtrosActivosRef.current)
           }}
         />
       )}

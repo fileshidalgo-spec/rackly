@@ -315,6 +315,26 @@ const RE_NUM_DEC = /^(?:\d{1,3}(?:[.,]\d{3})+|\d+)[.,]\d{1,4}$/
 /** Entero tipo cantidad ("2000", "2,000" — respaldo si el OCR pierde el punto). */
 const RE_NUM_INT = /^(?:\d{1,3}(?:,\d{3})+|\d{1,6})$/
 
+/**
+ * UNIDAD PEGADA a la última palabra de la descripción ("INDUSTRIALKG",
+ * "SALKGM"): el OCR fusiona la columna UND con la de ARTÍCULO y la búsqueda
+ * por token COMPLETO no matchea. Devuelve el prefijo (palabra sin la unidad)
+ * y la unidad del sufijo — SOLO si el prefijo conserva ≥3 letras (evita
+ * partir palabras cortas) y el sufijo es una unidad de ≥2 letras ("U"/"L" de
+ * 1 letra son demasiado ambiguas para el pegado).
+ */
+function unidadPegada(tok: string): { prefijo: string; unidad: string } | null {
+  const limpio = tok.replace(/[^A-ZÁÉÍÓÚÑÜ]/g, '')
+  if (limpio.length < 5) return null
+  const unidades = [...UNIDADES].filter((u) => u.length >= 2).sort((a, b) => b.length - a.length)
+  for (const u of unidades) {
+    if (!limpio.endsWith(u)) continue
+    const prefijo = limpio.slice(0, limpio.length - u.length)
+    if (prefijo.length >= 3) return { prefijo, unidad: u }
+  }
+  return null
+}
+
 /** Centro de costos: puro dígitos sin separadores (14040101). */
 const RE_CENTRO = /^\d{5,12}$/
 
@@ -601,13 +621,21 @@ export function extraerDatosRalDeTexto(texto: string, catalogo: CatalogoItem[]):
     // (c) Cedis / Lin. Man (enteros cortos a la izquierda del centro).
     for (let n = 0; n < 3 && toks.length > 0 && esJunkCorto(toks[toks.length - 1]); n++) toks.pop()
     // (d) UNIDAD: buscada desde la DERECHA en todo el rabo (entre ella y
-    //     la cifra ahora viven CEDIS y el CENTRO DE COSTOS).
+    //     la cifra ahora viven CEDIS y el CENTRO DE COSTOS). Token completo
+    //     primero; si el OCR PEGÓ la unidad a la palabra ("INDUSTRIALKG"),
+    //     el sufijo la rescata y la palabra queda limpia.
     let unidad = ''
     for (let i = toks.length - 1; i >= Math.max(0, toks.length - 8); i--) {
       const t = toks[i].replace(/[^A-ZÁÉÍÓÚÑÜ]/g, '')
       if (t && UNIDADES.has(t)) {
         unidad = t
         toks.splice(i, 1)
+        break
+      }
+      const pegada = unidadPegada(toks[i])
+      if (pegada) {
+        unidad = pegada.unidad
+        toks[i] = pegada.prefijo
         break
       }
     }
@@ -649,6 +677,12 @@ export function extraerDatosRalDeTexto(texto: string, catalogo: CatalogoItem[]):
         if (t && UNIDADES.has(t)) {
           unidad = t
           dtoks.splice(i, 1)
+          break
+        }
+        const pegada = unidadPegada(dtoks[i])
+        if (pegada) {
+          unidad = pegada.unidad
+          dtoks[i] = pegada.prefijo
           break
         }
       }

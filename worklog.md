@@ -190,3 +190,22 @@ Stage Summary:
   PAT vigente. Reconstruido scripts/sb_config.py (Management API, ref
   owjryvcrhpmgtkkdcrkm) — el entorno reset lo había borrado.
 - 29/29 suites · tsc OK · eslint OK · build OK.
+
+---
+## 2026-10-29 · Auditoría integral módulo por módulo — 6 defectos cerrados
+- 1.1 Batería: 29/29 suites · tsc OK · eslint src/ 0/0 · build OK.
+- 1.2 BD (scripts/auditoria_integral_db.py, nuevo): RLS 20/20 tablas ON con políticas;
+  DELETEs sensibles restringidos por rol; 44 RPCs, cross-check de los 25 rpc() que la
+  app llama → todos existen; 0 huérfanos RQ/RAL; 0 stock negativo; realtime OK (rals
+  incluida). Dato a corregir en captura: 50891 (Base bebida) venc=2017-04-09 typo.
+- 1.3 Módulos: QR (resolverToma legado estricto + fila exacta), FefoTab (cálculo FEFO),
+  tab-state, RqSalidaConfirmador, TransitoModule = limpios. 6 hallazgos verificados:
+  · MEDIO realtime: headSnapshot avanzado antes del refetch → cambio congelado si
+    fallaba; ahora avanza solo en éxito (reintento por tic).
+  · MEDIO salida masiva INC: type=number + badInput es-PE → '' → 'vacío=todo'
+    registraba el STOCK COMPLETO en vez del parcial; espejo P2 (text+inputMode).
+  · parseFloat('1,5')=1 en salida parcial INC y resumen → aNumero.
+  · salidaBusy colisión normal/INC → clave codigo|codigoInc|venc|lote (espejo P3).
+  · piso MovimientosTab sin guard generacional → espejo TransitoModule.
+  · TrasladoTab click sin feedback si origen drenado + badge 'en 0' falsa por lote.
+- Fix 611f75a desplegado → rackly.pages.dev. Scripts: auditoria_integral_db.py.

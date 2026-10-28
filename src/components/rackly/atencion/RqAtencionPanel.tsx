@@ -4,9 +4,13 @@
  * RACKLY — Atención a Línea (RQ) · Panel principal del módulo Atención.
  *
  * Vistas:
- *   · lista    → resumen + búsqueda + RQs registradas (tiempo real).
- *   · nueva    → registro con foto/OCR (RqFotoForm) con confirmación.
- *   · detalle  → atender materiales (RqDetalle) + ver ubicaciones.
+ *   · lista      → resumen + búsqueda + RQs registradas (tiempo real).
+ *   · nueva      → registro con foto/OCR (RqFotoForm) con confirmación.
+ *   · nueva-ral  → registro del formato RAL (RalFotoForm, Task 36).
+ *   · detalle    → atender materiales (RqDetalle) + ver ubicaciones.
+ *   · sección RAL → listado independiente de Requerimientos al Almacén
+ *     (RalLista) — formato distinto, tablas propias (rals/ral_items),
+ *     sin mezclarse jamás con el listado de RQ.
  *
  * La RQ ABIERTA se recuerda en sessionStorage: al saltar a Racks/Piso para
  * darle salida al producto y volver con «Retornar a Atención», el detalle
@@ -30,6 +34,8 @@ import {
 } from '@/lib/rackly/rq-atencion'
 import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { RqFotoForm, type RqRegistradaInfo } from '@/components/rackly/atencion/RqFotoForm'
+import { RalFotoForm } from '@/components/rackly/atencion/RalFotoForm'
+import { RalLista } from '@/components/rackly/atencion/RalLista'
 import { RqDetalle } from '@/components/rackly/atencion/RqDetalle'
 import { RqEditarDialog } from '@/components/rackly/atencion/RqEditarDialog'
 import { Badge } from '@/components/ui/badge'
@@ -64,6 +70,7 @@ import {
   Eye,
   Pencil,
   X,
+  FilePlus2,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
@@ -77,7 +84,7 @@ const ESTADO_CLASE: Record<string, string> = {
   Atendido: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 }
 
-type Vista = 'lista' | 'nueva' | 'detalle'
+type Vista = 'lista' | 'nueva' | 'nueva-ral' | 'detalle'
 
 export function RqAtencionPanel({
   onIrARacks,
@@ -214,6 +221,12 @@ export function RqAtencionPanel({
     abrirDetalle(info.rq.id)
   }
 
+  /** Task 36: tras registrar un RAL se vuelve a la lista — la sección RAL
+   *  (RalLista) remonta y lo muestra con su realtime propio. */
+  function alRegistradoRal() {
+    volverALista()
+  }
+
   async function handleDelete() {
     if (!deleteTarget) return
     const target = deleteTarget
@@ -261,6 +274,11 @@ export function RqAtencionPanel({
     return <RqFotoForm onRegistrado={alRegistrada} onCancelar={volverALista} />
   }
 
+  // ── NUEVA RAL (Task 36) ──
+  if (vista === 'nueva-ral') {
+    return <RalFotoForm onRegistrado={alRegistradoRal} onCancelar={volverALista} />
+  }
+
   // ── LISTA ──
   const pendientes = filas.filter((r) => r.estado === 'Pendiente').length
   const enProceso = filas.filter((r) => r.estado === 'En proceso').length
@@ -271,12 +289,21 @@ export function RqAtencionPanel({
     <div className="space-y-4">
       {/* ── Acción principal ── */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-        <Button
-          onClick={() => setVista('nueva')}
-          className="w-full sm:w-auto gap-2 h-10 bg-gradient-to-r from-teal-500 to-cyan-600 text-white hover:from-teal-600 hover:to-cyan-700"
-        >
-          <Plus className="h-4 w-4" /> Nueva RQ (con foto)
-        </Button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button
+            onClick={() => setVista('nueva')}
+            className="w-full sm:w-auto gap-2 h-10 bg-gradient-to-r from-teal-500 to-cyan-600 text-white hover:from-teal-600 hover:to-cyan-700"
+          >
+            <Plus className="h-4 w-4" /> Nueva RQ (con foto)
+          </Button>
+          {/* Task 36: formato RAL (Requerimiento al Almacén) — distinto al RQ. */}
+          <Button
+            onClick={() => setVista('nueva-ral')}
+            className="w-full sm:w-auto gap-2 h-10 bg-gradient-to-r from-violet-500 to-purple-600 text-white hover:from-violet-600 hover:to-purple-700"
+          >
+            <FilePlus2 className="h-4 w-4" /> Nuevo RAL
+          </Button>
+        </div>
         <p className="text-xs text-slate-500 sm:ml-1">
           Registra la Requisición de Despacho y atiende sus materiales desde aquí.
         </p>
@@ -612,6 +639,11 @@ export function RqAtencionPanel({
           </Button>
         </div>
       )}
+
+      {/* ── RALs registrados (Task 36 — formato aparte, tablas propias) ── */}
+      <div className="rounded-xl border border-violet-100 bg-violet-50/30 p-3 sm:p-4">
+        <RalLista puedeEliminar={puedeEliminar} />
+      </div>
 
       {/* ── Confirmar eliminación ── */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>

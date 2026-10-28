@@ -49,6 +49,7 @@ export type TablaRealtime =
   | 'atencion_registros'
   | 'movimientos'
   | 'rq_atenciones'
+  | 'rals'
 
 /** Por qué se pide el refresco (ver documentación del hook). */
 export type MotivoRealtime = 'evento' | 'poll' | 'visible'
@@ -58,6 +59,7 @@ const CANAL_POR_TABLA: Record<TablaRealtime, string> = {
   atencion_registros: 'atencion-realtime-sync',
   movimientos: 'movs-realtime-sync',
   rq_atenciones: 'rq-atencion-realtime-sync',
+  rals: 'rals-realtime-sync',
 }
 
 type EstadoTabla = {

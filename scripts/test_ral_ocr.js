@@ -180,5 +180,62 @@ check('suficiente: sin documento no', !extraccionSuficienteRal({ ...d1, document
 const d10 = extraerDatosRalDeTexto('', [])
 check('vacío: estructura vacía sin items', d10.documento === '' && d10.items.length === 0)
 
+// 11. PANTALLA ERP REAL (cajillas SIN dos puntos) — reporte del usuario:
+//     el solicitante quedaba DENTRO del área solicitante y la fila
+//     "126 SAL INDUSTRIAL KG 65 44040101 …" no se jalaba (columna CEDIS
+//     + Parcial/Item al final rompían la corrida decimal).
+const PANTALLA_ERP = `
+AXS Consulta Requerimiento al Almacen - Sucursal : 65 AJE CARAL
+Transaccion RAL REQUERIMIENTO AL ALMACEN Documento 8378 Fecha 27/10/2026
+Area Solicitante CADENA DE SUMINISTRO Solicitante 138712 ENRIQUEZ MOGOLLON, IHONNIE JHONEL
+Linea 04 MATERIA PRIMA E INSUMOS Aprobado por ALFARO CHAHUD, JUSSEF ALFREDO
+Atendido No Compras Fecha Atencion 00/00/0000 Almacen 05 MATERIAS PRIMAS E IN Transaccion SPP SALIDA DE MATERI
+Trab. en Curso 0 Mejora 0
+Tipo Mantenimiento
+Codigo Articulo Und Cedis Lin. Man Equipo Mant. Centro Costo Cant. Pedida Cant. Aprobada Cant Cancelada Saldo Parcial Item Nota
+126 SAL INDUSTRIAL KG 65 44040101 2000.0000 2000.0000 0.0000 2000.0000 0 0
+`
+const d11 = extraerDatosRalDeTexto(PANTALLA_ERP, [])
+check('pantalla ERP: documento 8378', d11.documento === '8378')
+check('pantalla ERP: fecha 2026-10-27', d11.fecha === '2026-10-27')
+check('pantalla ERP: transacción completa sin contaminar', d11.transaccion === 'RAL REQUERIMIENTO AL ALMACEN')
+check('pantalla ERP: área solicitante LIMPIA (sin el solicitante dentro)', d11.areaSolicitante === 'CADENA DE SUMINISTRO')
+check('pantalla ERP: solicitante con nombre (no vacío)', d11.solicitante === 'ENRIQUEZ MOGOLLON, IHONNIE JHONEL')
+check('pantalla ERP: aprobado por', d11.aprobadoPor === 'ALFARO CHAHUD, JUSSEF ALFREDO')
+check('pantalla ERP: almacén SIN ":" (cajilla)', d11.almacen === '05 MATERIAS PRIMAS E IN')
+check('pantalla ERP: línea sin contaminar del "Aprobado por"', d11.linea === '04 MATERIA PRIMA E INSUMOS')
+check('pantalla ERP: 1 artículo jalado', d11.items.length === 1)
+const p11 = d11.items[0]
+if (p11) {
+  check('pantalla ERP: código 126', p11.codigo === '126')
+  check('pantalla ERP: artículo SAL INDUSTRIAL (sin KG/CEDIS/basura)', p11.descripcion === 'SAL INDUSTRIAL')
+  check('pantalla ERP: und KG (ya no está pegada a la cifra)', p11.unidad === 'KG')
+  check('pantalla ERP: centro de costos 44040101', p11.centroCostos === '44040101')
+  check('pantalla ERP: cantidad pedida 2000 (no aprobada/saldo/parcial)', p11.cantidad === 2000)
+}
+
+// 12. FILA PARTIDA por el OCR (código y descripción en renglones propios)
+const d12 = extraerDatosRalDeTexto(
+  `Documento 8378
+126
+SAL INDUSTRIAL KG
+44040101 2000.0000 2000.0000 0.0000 2000.0000 0 0
+`,
+  []
+)
+check('fila partida: 1 artículo fusionado', d12.items.length === 1)
+const p12 = d12.items[0]
+if (p12) {
+  check('fila partida: código 126 (venía en su renglón)', p12.codigo === '126')
+  check('fila partida: descripción desde el fragmento', p12.descripcion === 'SAL INDUSTRIAL')
+  check('fila partida: und KG del fragmento', p12.unidad === 'KG')
+  check('fila partida: centro 44040101 (era el líder de las cifras)', p12.centroCostos === '44040101')
+  check('fila partida: cantidad 2000', p12.cantidad === 2000)
+}
+
+// 13. "JEFE DE COMPRAS" como solicitante: la palabra COMPRAS ya no corta
+const d13 = extraerDatosRalDeTexto('SOLICITANTE : JEFE DE COMPRAS\nDocumento: 8378', [])
+check('solicitante "JEFE DE COMPRAS" completo', d13.solicitante === 'JEFE DE COMPRAS')
+
 console.log(`\nSuite ral-ocr: ${ok} checks OK`)
 if (process.exitCode) console.error('HUBO FALLOS ✗')

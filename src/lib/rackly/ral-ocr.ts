@@ -1,14 +1,21 @@
 /**
  * RACKLY — Atención a Línea · OCR del formato RAL (Requerimiento al Almacén).
  *
- * Parser HERMANO de rq-ocr.ts, calibrado al formato ERP «Consulta
- * Requerimiento al Almacén» (RAL). Mismas convenciones de rigor:
- *   · Texto en MAYÚSCULAS, línea por línea, anclas por ETIQUETA del
- *     encabezado (Documento / Fecha / Área Solicitante / Solicitante /
- *     Aprobado Por / Almacén / Transacción / Línea).
- *   · Filas de material: [código] [descripción] [UND] [centro de costos]
- *     [cantidad pedida] … (la cantidad con decimales manda; los números
- *     extra de las columnas «Aprobada»/«Saldo» se ignoran).
+ * Parser HERMANO de rq-ocr.ts, calibrado a la PANTALLA ERP «Consulta
+ * Requerimiento al Almacén» (RAL) — un FORMULARIO DE CAJILLAS SIN dos
+ * puntos en el que el OCR fusiona columnas en un solo renglón:
+ *   "AREA SOLICITANTE CADENA DE SUMINISTRO SOLICITANTE 138712 ENRIQUEZ…"
+ * Encabezado: TOKENIZADOR DE ETIQUETAS — el renglón se parte en cada
+ * etiqueta (con o sin ":") y cada campo toma el tramo hasta la siguiente
+ * etiqueta REAL, con validadores en cascada (un falso positivo dentro de
+ * un valor —p. ej. «…AL ALMACEN»— se descarta y NO corta).
+ *   · Filas de material: [código] [descripción] [UND] [CEDIS] [CENTRO DE
+ *     COSTOS] [pedida] [aprobada] [cancelada] [saldo] [parcial] [item].
+ *     La PEDIDA es la PRIMERA cifra decimal de la corrida; CEDIS/Parcial/
+ *     Item (enteros cortos) y la casilla ☑ (leída como V/X) son basura que
+ *     se retira; la UNIDAD se busca desde la derecha (ya no está pegada a
+ *     la cifra). Filas PARTIDAS por el OCR (código y descripción en
+ *     renglones propios) se FUSIONAN con el fragmento pendiente.
  *   · ANTI-RUIDO: sin cifra la fila no es material; sin palabra real
  *     (≥3 letras) tampoco; fragmentos de fecha jamás.
  *   · Catálogo: match exacto por código; si el código falla, la
@@ -58,44 +65,242 @@ export type DatosRal = {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// ANCLAS DEL ENCABEZADO
+// ANCLAS DEL ENCABEZADO — TOKENIZADOR DE ETIQUETAS
 // ═══════════════════════════════════════════════════════════════════
-
-/** Documento: etiqueta + 1-10 dígitos ("Documento : 8378"). */
-const RE_DOCUMENTO = /DOCUMENTO\s*[.:º°-]?\s*(\d{1,10})\b/
 
 /** Fecha estilo ERP (2026/10/27) y estilo clásico (27/10/2026). */
 const RE_FECHA_YMD = /\b(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})\b/
 const RE_FECHA_DMY = /\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b/
-
-/** Transacción ("RAL Requerimiento al Almacén") — tolera OCR sin acentos
- *  o con acentos en la I u en la O (TransacciÓN). */
-const RE_TRANSACCION = /TRANSACC[IÍ1]?[OÓ]N\s*[:\-]?\s*(.*)$/
-
-/** Área Solicitante ANTES de Solicitante: comparte la palabra SOLICITANTE. */
-const RE_AREA = /[AÁ]REA\s+SOLICITANTE\s*[:\-]?\s*(.*)$/
-const RE_SOLICITANTE = /SOLICITANTE\s*[:\-]?\s*(.*)$/
-
-/** "Aprobado Por: …" / "Aprobada Por: …" (género OCR). */
-const RE_APROBADO = /APROBAD[OA]S?\s*(?:POR\s*)?[:\-]?\s*(.*)$/
-
-/**
- * Almacén con DOS PUNTOS obligatorio: el título del ERP («Consulta
- * Requerimiento al Almacén 65 …») contiene la palabra ALMACÉN sin ser
- * etiqueta — sin este requisito el título contaminaba el campo.
- */
-const RE_ALMACEN = /ALMAC[EÉ]N\s*[:]\s*(.*)$/
-const RE_LINEA = /\bL[IÍ]NEA\b\s*[:\-]?\s*(.*)$/
 
 /**
  * Etiquetas que cortan el VALOR capturado cuando el OCR fusiona dos
  * renglones ("… CADENA DE SUMINISTRO SOLICITANTE : 7126 …"). EXIGE los dos
  * puntos: valores legítimos como «RAL Requerimiento al Almacén» o
  * «05 Almacén de Materia Prima» contienen palabras de etiqueta SIN serlo.
- * Tolerante a tildes del OCR en las propias etiquetas.
+ * Tolerante a tildes del OCR en las propias etiquetas. (Respaldo del
+ * tokenizador: los valores que él reparte ya no traen etiquetas con ":").
  */
 const RE_CORTE_VALOR =
   /\s+(?:DOCUMENTO|FECHA|TRANSACC[IÍ1]?[OÓ]N|[AÁ]REA|SOLICITANTE|APROBAD\w*|ALMAC[EÉ]N|L[IÍ]NEA|MONEDA|OBSERVACI\w*|CONSULTA|CENTRO|CODIGO|ARTICULO|CANTIDAD|PEDIDA|APROBADA|SALDO)\s*[:：].*$/
+
+/** Primera fecha válida dentro de un valor ('' si no hay). */
+function fechaDeValor(valor: string): string {
+  const mY = valor.match(RE_FECHA_YMD)
+  if (mY) return normalizarFechaYMD(mY[1], mY[2], mY[3])
+  const mD = valor.match(RE_FECHA_DMY)
+  if (mD) return normalizarFechaDMY(mD[1], mD[2], mD[3])
+  return ''
+}
+
+/**
+ * Campo destino de cada etiqueta; null = etiqueta SOLO DE CORTE (su valor
+ * se descarta, pero delimita al anterior: «FECHA ATENCION 00/00/0000»).
+ */
+type CampoRal =
+  | 'documento'
+  | 'fecha'
+  | 'transaccion'
+  | 'areaSolicitante'
+  | 'solicitante'
+  | 'aprobadoPor'
+  | 'almacen'
+  | 'linea'
+  | null
+
+type EtiquetaRal = {
+  /** STICKY (/y): se prueba anclada en cada posición del renglón. */
+  re: RegExp
+  campo: CampoRal
+  /** ¿Es una etiqueta REAL aquí? (valor + si traía ":") — en cascada. */
+  valida: (valor: string, sep: boolean) => boolean
+}
+
+const ETIQUETAS: EtiquetaRal[] = [
+  // ── Compuestas PRIMERO (comparten palabras con las simples) ──
+  {
+    re: /[AÁ]REA\s+SOLICITANT[EÉ]?\b\s*([:\-])?\s*/y,
+    campo: 'areaSolicitante',
+    valida: (v) => v.trim().length >= 2 && tienePalabraReal(v),
+  },
+  {
+    re: /FECHA\s+(?:DE\s+)?ATENC[IÍ1][OÓ]N\b\s*([:\-])?\s*/y,
+    campo: null,
+    valida: () => true,
+  },
+  {
+    re: /APROBAD[OA]S?\s+POR\b\s*([:\-])?\s*/y,
+    campo: 'aprobadoPor',
+    valida: (v) => limpiarPersona(v).length >= 4,
+  },
+  // Aprobado sin POR: solo se acepta con dos puntos (evita la columna
+  // «Cant. Aprobada» de la tabla).
+  {
+    re: /APROBAD[OA]S?\b\s*([:])\s*/y,
+    campo: 'aprobadoPor',
+    valida: (v) => limpiarPersona(v).length >= 4,
+  },
+  {
+    re: /FECHA\b\s*([:\-])?\s*/y,
+    campo: 'fecha',
+    valida: (v) => fechaDeValor(v) !== '',
+  },
+  {
+    re: /TRANSACC[IÍ1]?[OÓ]N\b\s*([:\-])?\s*/y,
+    campo: 'transaccion',
+    valida: (v) => v.trim().length >= 2 && tienePalabraReal(v),
+  },
+  {
+    re: /DOCUMENTO\b\s*([.:º°\-])?\s*/y,
+    campo: 'documento',
+    valida: (v) => /^\d{1,10}\b/.test(v.trim()),
+  },
+  {
+    re: /ALMAC[EÉ]N\b\s*([:\-])?\s*/y,
+    campo: 'almacen',
+    // SIN ":" exige dígito inicial («05 MATERIAS…») — así la palabra
+    // ALMACÉN dentro de «…AL ALMACEN DOCUMENTO…» o del título NO corta.
+    valida: (v, sep) => (sep ? v.trim().length >= 1 : /^\d/.test(v.trim())),
+  },
+  {
+    re: /L[IÍ]NEA\b\s*([:\-])?\s*/y,
+    campo: 'linea',
+    valida: (v) => v.trim().length >= 2,
+  },
+  {
+    re: /SOLICITANT[EÉ]\b\s*([:\-])?\s*/y,
+    campo: 'solicitante',
+    valida: (v) => limpiarPersona(v).length >= 4,
+  },
+  // ── Etiquetas de CORTE (valor descartado) ──
+  { re: /MONEDA\b\s*([:\-])?\s*/y, campo: null, valida: () => true },
+  { re: /ESTADO\b\s*([:\-])?\s*/y, campo: null, valida: () => true },
+  { re: /OBSERVAC\w*\b\s*([:\-])?\s*/y, campo: null, valida: () => true },
+  { re: /SUCURSAL\b\s*([:]?)\s*/y, campo: null, valida: () => true },
+]
+
+/** Prueba todas las etiquetas ancladas en `pos` (orden = prioridad). */
+function etiquetaEn(
+  linea: string,
+  pos: number
+): { etq: EtiquetaRal; start: number; end: number; sep: boolean } | null {
+  for (const etq of ETIQUETAS) {
+    etq.re.lastIndex = pos
+    const m = etq.re.exec(linea)
+    if (m && m.index === pos) {
+      return { etq, start: m.index, end: m.index + m[0].length, sep: Boolean(m[1]) }
+    }
+  }
+  return null
+}
+
+type CandidatoEtiqueta = {
+  campo: CampoRal
+  valor: string
+  sep: boolean
+  end: number
+  valida: (valor: string, sep: boolean) => boolean
+}
+
+/**
+ * Parte el renglón en etiquetas y reparte los tramos. Cada etiqueta toma
+ * como valor el texto hasta la SIGUIENTE etiqueta; en CASCADA, si el tramo
+ * no pasa el validador, la etiqueta se descarta y su tramo se suma al
+ * candidato anterior (falso positivo dentro de un valor). Asigna cada
+ * campo la PRIMERA vez que aparece. Devuelve ¿hay etiqueta de campo real?
+ */
+function tokenizarEncabezado(linea: string, res: DatosRal): boolean {
+  const hits: { etq: EtiquetaRal; start: number; end: number; sep: boolean }[] = []
+  let i = 0
+  while (i < linea.length) {
+    const hit = etiquetaEn(linea, i)
+    if (hit) {
+      hits.push(hit)
+      i = hit.end
+    } else {
+      i++
+    }
+  }
+  if (hits.length === 0) return false
+
+  const out: CandidatoEtiqueta[] = []
+  for (let j = 0; j < hits.length; j++) {
+    // CASCADA: el tramo del previo corre hasta DONDE EMPIEZA esta etiqueta;
+    // si su validador falla, el previo era falso positivo y se descarta.
+    while (out.length > 0) {
+      const prev = out[out.length - 1]
+      const tramo = linea.slice(prev.end, hits[j].start)
+      if (prev.valida(tramo, prev.sep)) {
+        prev.valor = tramo
+        break
+      }
+      out.pop()
+    }
+    const h = hits[j]
+    out.push({ campo: h.etq.campo, valor: '', sep: h.sep, end: h.end, valida: h.etq.valida })
+  }
+  // Último candidato: su tramo corre hasta el fin del renglón (misma cascada).
+  while (out.length > 0) {
+    const prev = out[out.length - 1]
+    const tramo = linea.slice(prev.end)
+    if (prev.valida(tramo, prev.sep)) {
+      prev.valor = tramo
+      break
+    }
+    out.pop()
+  }
+
+  let conCampoReal = false
+  for (const c of out) {
+    if (!c.campo) continue
+    conCampoReal = true
+    const v = c.valor
+    switch (c.campo) {
+      case 'documento':
+        if (!res.documento) res.documento = v.trim().match(/^\d{1,10}\b/)?.[0] ?? ''
+        break
+      case 'fecha':
+        if (!res.fecha) res.fecha = fechaDeValor(v)
+        break
+      case 'transaccion':
+        if (!res.transaccion) {
+          const limpio = limpiarValor(v)
+          if (limpio.length >= 2 && tienePalabraReal(limpio)) res.transaccion = limpio
+        }
+        break
+      case 'areaSolicitante':
+        if (!res.areaSolicitante) {
+          const limpio = limpiarValor(v)
+          if (limpio.length >= 2) res.areaSolicitante = limpio
+        }
+        break
+      case 'solicitante':
+        if (!res.solicitante) {
+          const limpio = limpiarPersona(limpiarValor(v, 120))
+          if (limpio.length >= 4) res.solicitante = limpio
+        }
+        break
+      case 'aprobadoPor':
+        if (!res.aprobadoPor) {
+          const limpio = limpiarPersona(limpiarValor(v, 120))
+          if (limpio.length >= 4) res.aprobadoPor = limpio
+        }
+        break
+      case 'almacen':
+        if (!res.almacen) {
+          const limpio = limpiarValor(v)
+          if (limpio.length >= 1) res.almacen = limpio
+        }
+        break
+      case 'linea':
+        if (!res.linea) {
+          const limpio = limpiarValor(v)
+          if (limpio.length >= 2) res.linea = limpio
+        }
+        break
+    }
+  }
+  return conCampoReal
+}
 
 /** Unidades habituales del ERP (misma familia que rq-ocr). */
 const UNIDADES = new Set([
@@ -115,6 +320,9 @@ const RE_CENTRO = /^\d{5,12}$/
 
 /** Filas de material reconocidas como máximo por RAL. */
 const MAX_ITEMS = 40
+
+/** Tope de tokens acumulables en un FRAGMENTO de fila partida por el OCR. */
+const LIM_TOKS_FRAGMENTO = 14
 
 /** Longitud mínima de descripción aceptable. */
 const DESC_MIN = 2
@@ -242,12 +450,25 @@ function buscarPorDescripcion(
 // EXTRACCIÓN PRINCIPAL
 // ═══════════════════════════════════════════════════════════════════
 
+/** Basura corta del lado derecho de la fila: enteros ≤3 dígitos (CEDIS,
+ *  Parcial, Item, Lin. Man) o restos de 1-2 letras (la casilla ☑ de NOTA
+ *  leída como "V"/"X"/"SI"). Las UNIDADES jamás son basura (KG, UN…). */
+function esJunkCorto(tok: string): boolean {
+  if (/^\d{1,3}$/.test(tok)) return true
+  return /^[A-ZÁÉÍÓÚÑÜ]{1,2}$/.test(tok) && !UNIDADES.has(tok)
+}
+
 /** Renglones que SON cabecera de tabla / títulos, nunca materiales. */
 function esCabeceraDeTabla(linea: string): boolean {
   return (
-    /^(CODIGO|ARTICULO|DESCRIPCI|CENTRO|CANTIDAD|UM|UND)\b/.test(linea) ||
+    /^(CODIGO|ARTICULO|DESCRIPCI|CENTRO|CANTIDAD|CANT\b|UM|UND|CEDIS|SALDO|PARCIAL|ITEM|NOTA|EQUIPO|LIN\b|LIN\.)\b/.test(
+      linea
+    ) ||
     (linea.includes('CODIGO') && linea.includes('ARTICULO')) ||
     linea.includes('CANTIDAD PEDIDA') ||
+    linea.includes('CANT. PEDIDA') ||
+    linea.includes('CANT. APROBADA') ||
+    linea.includes('CENTRO COSTO') ||
     linea.includes('CONSULTA REQUERIMIENTO')
   )
 }
@@ -274,81 +495,41 @@ export function extraerDatosRalDeTexto(texto: string, catalogo: CatalogoItem[]):
   const res: DatosRal = { ...vacio, items: [] }
   const codigosVistos = new Set<string>()
 
+  /**
+   * Fila PARTIDA por el OCR (código y/o descripción en renglones propios):
+   * "126" / "SAL INDUSTRIAL KG" / "44040101 2000.0000 …". Se acumula el
+   * fragmento y se FUSIONA cuando aparece el renglón con las cantidades.
+   */
+  let pendiente: { codigo: string; toks: string[] } | null = null
+
   for (const linea of lineas) {
     // Cabecera de tabla / títulos del ERP: JAMÁS encabezado ni material.
     // Va PRIMERO — «Consulta Requerimiento al Almacén 65 …» contiene la
     // palabra ALMACÉN y el título no debe alimentar ninguna etiqueta.
     if (esCabeceraDeTabla(linea)) continue
 
-    // ── Encabezado ──
-    if (!res.documento) {
-      const mDoc = linea.match(RE_DOCUMENTO)
-      if (mDoc) res.documento = mDoc[1]
-    }
-    if (!res.fecha && /FECHA/.test(linea)) {
-      // ERP moderno primero (2026/10/27); clásico después (27/10/2026).
-      const mY = linea.match(RE_FECHA_YMD)
-      if (mY) res.fecha = normalizarFechaYMD(mY[1], mY[2], mY[3])
-      if (!res.fecha) {
-        const mD = linea.match(RE_FECHA_DMY)
-        if (mD) res.fecha = normalizarFechaDMY(mD[1], mD[2], mD[3])
-      }
-    }
-    if (!res.transaccion) {
-      const mTr = linea.match(RE_TRANSACCION)
-      if (mTr) {
-        const limpio = limpiarValor(mTr[1])
-        if (limpio.length >= 2) res.transaccion = limpio
-      }
-    }
-    // Área Solicitante ANTES que Solicitante (comparten la palabra).
-    const mArea = linea.match(RE_AREA)
-    if (mArea) {
-      const limpio = limpiarValor(mArea[1])
-      if (limpio.length >= 2 && !res.areaSolicitante) res.areaSolicitante = limpio
-    } else if (!res.solicitante) {
-      const mSol = linea.match(RE_SOLICITANTE)
-      if (mSol) {
-        const limpio = limpiarPersona(limpiarValor(mSol[1], 120))
-        if (limpio.length >= 4) res.solicitante = limpio
-      }
-    }
-    if (!res.aprobadoPor) {
-      const mAp = linea.match(RE_APROBADO)
-      if (mAp) {
-        const limpio = limpiarPersona(limpiarValor(mAp[1], 120))
-        if (limpio.length >= 4) res.aprobadoPor = limpio
-      }
-    }
-    if (!res.almacen) {
-      const mAl = linea.match(RE_ALMACEN)
-      if (mAl) {
-        const limpio = limpiarValor(mAl[1])
-        if (limpio.length >= 1) res.almacen = limpio
-      }
-    }
-    if (!res.linea) {
-      const mLi = linea.match(RE_LINEA)
-      if (mLi) {
-        const limpio = limpiarValor(mLi[1])
-        if (limpio.length >= 2) res.linea = limpio
-      }
-    }
+    // ── Encabezado: tokenizador de etiquetas (con o sin ":") ──
+    // La pantalla ERP es un formulario de cajillas SIN dos puntos y el OCR
+    // fusiona sus columnas: "AREA SOLICITANTE CADENA DE SUMINISTRO
+    // SOLICITANTE 138712 ENRIQUEZ…". Cada etiqueta toma el tramo hasta la
+    // siguiente etiqueta REAL — el solicitante ya NO se queda dentro del
+    // área solicitante (reporte del usuario).
+    const conEtiquetaReal = tokenizarEncabezado(linea, res)
 
     // ── Filas de la tabla de materiales ──
     // El guion separador de la tabla pegado al inicio de la fila se retira.
-    const mFila = linea.replace(/^[-—–_=|\s]+/, '').match(/^([A-Z0-9][A-Z0-9./-]{0,15})\s+(.{2,})$/)
+    // El resto puede venir VACÍO: "126" solo en su renglón es un fragmento.
+    const mFila = linea.replace(/^[-—–_=|\s]+/, '').match(/^([A-Z0-9][A-Z0-9./-]{0,15})\s*(.*)$/)
     if (!mFila) continue
     const codigoBruto = mFila[1]
-    // Un código de material SIEMPRE lleva al menos un dígito (12E, M25, 118).
-    // Sin dígito es una palabra suelta del encabezado ("RAL", "CONSULTA").
-    if (!/\d/.test(codigoBruto)) continue
+    // Un código de material SIEMPRE lleva al menos un dígito (12E, M25, 126).
+    const conDigito = /\d/.test(codigoBruto)
     let codigo = codigoBruto
-    let resto = mFila[2]
+    let resto = mFila[2].trim()
 
     // COLUMNA DE SECUENCIA ("001 12E SAL …"): nº de fila con ceros o ≤2
     // dígitos puros → el código va después. Espejo de rq-ocr.
-    if (/^0\d+$/.test(codigo) || /^\d{1,2}$/.test(codigo)) {
+    if (conDigito && (/^0\d+$/.test(codigo) || /^\d{1,2}$/.test(codigo))) {
       const mSeq = resto.match(/^([A-Z0-9][A-Z0-9./-]{1,15})\s+(.+)$/)
       if (mSeq && /\d/.test(mSeq[1])) {
         codigo = mSeq[1]
@@ -356,37 +537,73 @@ export function extraerDatosRalDeTexto(texto: string, catalogo: CatalogoItem[]):
       }
     }
 
+    const toks = resto ? resto.split(/\s+/) : []
+
     // ── CANTIDAD PEDIDA: la cifra con DECIMALES manda ────────────────
-    // El ERP imprime «… 14040101 2000.0000 2000.0000 2000.0000»
-    // (centro de costos + pedida + aprobada + saldo). Se toman desde el
-    // final los tokens numéricos con decimal (la corrida de cantidades)
-    // y la PEDIDA es la PRIMERA de esa corrida (columna izquierda).
-    const toks = resto.split(/\s+/)
+    // El ERP imprime «… 44040101 2000.0000 2000.0000 0.0000 2000.0000 0 0»
+    // (centro + pedida + aprobada + cancelada + saldo + parcial + item).
+    // La PEDIDA es la PRIMERA cifra de la corrida (columna izquierda).
+    // Las columnas Parcial/Item (enteros "0 0") van DESPUÉS del SALDO: si
+    // hay una cifra DECIMAL más adentro, todo lo posterior es basura — sin
+    // este corte la corrida decimal no arranca y la fila se pierde.
+    let ultDecimal = -1
+    for (let i = toks.length - 1; i >= 0 && toks.length - i <= 8; i--) {
+      if (RE_NUM_DEC.test(toks[i])) {
+        ultDecimal = i
+        break
+      }
+    }
+    if (ultDecimal >= 0 && ultDecimal < toks.length - 1) toks.splice(ultDecimal + 1)
     const cantidades: string[] = []
     while (toks.length > 0 && RE_NUM_DEC.test(toks[toks.length - 1])) {
       cantidades.unshift(toks.pop() as string)
-    }
-    // Centro de costos: puro dígitos pegado a la corrida de cantidades.
-    let centroCostos = ''
-    if (cantidades.length > 0 && toks.length > 0 && RE_CENTRO.test(toks[toks.length - 1])) {
-      centroCostos = toks.pop() as string
     }
     // Respaldo SIN decimales (el OCR perdió el punto): enteros al final.
     if (cantidades.length === 0) {
       while (toks.length > 0 && RE_NUM_INT.test(toks[toks.length - 1])) {
         cantidades.unshift(toks.pop() as string)
       }
-      if (cantidades.length > 0 && !centroCostos && toks.length > 0 && RE_CENTRO.test(toks[toks.length - 1])) {
-        centroCostos = toks.pop() as string
-      }
     }
-    if (cantidades.length === 0) continue // sin cifra NO hay material
+
+    // ── SIN cifras → FRAGMENTO de una fila partida (o ruido) ──────────
+    if (cantidades.length === 0) {
+      if (conEtiquetaReal) continue // renglón de encabezado: nunca es material
+      if (conDigito) {
+        // código solo en su renglón ("126"): REINICIA el fragmento previo
+        pendiente = { codigo, toks: toks.slice(0, LIM_TOKS_FRAGMENTO) }
+      } else {
+        const fragToks = [codigoBruto, ...toks]
+        const textoFrag = fragToks.join(' ')
+        if (!tienePalabraReal(textoFrag) || esFragmentoFecha(textoFrag)) continue
+        pendiente = pendiente
+          ? {
+              codigo: pendiente.codigo,
+              toks: [...pendiente.toks, ...fragToks].slice(0, LIM_TOKS_FRAGMENTO),
+            }
+          : { codigo: '', toks: fragToks.slice(0, LIM_TOKS_FRAGMENTO) }
+      }
+      continue
+    }
+
     const cantidad = aNumero(cantidades[0])
     if (cantidad <= 0) continue
 
-    // ── UNIDAD: junto a las cantidades (últimos 3 tokens) ────────────
+    // ── DERECHA ESTRUCTURAL de la fila ───────────────────────────────
+    // Columnas REALES del ERP: Artículo | Und | Cedis | Lin.Man | Centro
+    // Costo | Cant. Pedida | … — la UND ya NO está pegada a las cifras.
+    // (a) Parcial / Item / enteros sueltos tras la corrida de cantidades.
+    for (let n = 0; n < 5 && toks.length > 0 && esJunkCorto(toks[toks.length - 1]); n++) toks.pop()
+    // (b) Centro de costos: puro dígitos (5-12) junto a las cantidades.
+    let centroCostos = ''
+    if (toks.length > 0 && RE_CENTRO.test(toks[toks.length - 1])) {
+      centroCostos = toks.pop() as string
+    }
+    // (c) Cedis / Lin. Man (enteros cortos a la izquierda del centro).
+    for (let n = 0; n < 3 && toks.length > 0 && esJunkCorto(toks[toks.length - 1]); n++) toks.pop()
+    // (d) UNIDAD: buscada desde la DERECHA en todo el rabo (entre ella y
+    //     la cifra ahora viven CEDIS y el CENTRO DE COSTOS).
     let unidad = ''
-    for (let i = toks.length - 1; i >= Math.max(0, toks.length - 3); i--) {
+    for (let i = toks.length - 1; i >= Math.max(0, toks.length - 8); i--) {
       const t = toks[i].replace(/[^A-ZÁÉÍÓÚÑÜ]/g, '')
       if (t && UNIDADES.has(t)) {
         unidad = t
@@ -394,23 +611,53 @@ export function extraerDatosRalDeTexto(texto: string, catalogo: CatalogoItem[]):
         break
       }
     }
-    // Centro de costos alternativo: si sigue vacío, en los últimos tokens.
-    if (!centroCostos) {
-      for (let i = toks.length - 1; i >= Math.max(0, toks.length - 3); i--) {
-        if (RE_CENTRO.test(toks[i])) {
-          centroCostos = toks[i]
-          toks.splice(i, 1)
-          break
-        }
-      }
-    }
 
     // ── Descripción = lo que queda ───────────────────────────────────
     let descripcion = toks.join(' ').replace(/[\s.:;—–\-]+$/, '').trim()
     if (esFragmentoFecha(descripcion)) continue
 
+    // ── FUSIÓN con el fragmento pendiente (fila partida por el OCR) ──
+    // "44040101 2000.0000 …" tras "126" + "SAL INDUSTRIAL KG": el token
+    // líder ERA el centro de costos y la descripción vive en el fragmento.
+    const descTienePalabra = tienePalabraReal(descripcion)
+    if (!descTienePalabra && pendiente) {
+      if (!conDigito) {
+        // el líder no era código: la descripción viene del fragmento
+        codigo = pendiente.codigo
+        if (!descripcion) descripcion = pendiente.toks.join(' ').trim()
+        pendiente = null
+      } else if (!centroCostos && (RE_CENTRO.test(codigo) || RE_NUM_DEC.test(codigo))) {
+        // el líder era el CENTRO (o una cifra) de la fila partida
+        if (RE_CENTRO.test(codigo)) centroCostos = codigo
+        codigo = pendiente.codigo
+        if (!descripcion) descripcion = pendiente.toks.join(' ').trim()
+        pendiente = null
+      }
+    } else if (descTienePalabra && !conDigito && pendiente?.codigo) {
+      // el código vino en su propio renglón ("126" + "SAL INDUSTRIAL …")
+      codigo = pendiente.codigo
+      pendiente = null
+    } else if (descTienePalabra && conDigito) {
+      pendiente = null // fila completa: el fragmento viejo caduca
+    }
+
+    // (d2) segunda pasada de UNIDAD tras la fusión del fragmento
+    if (!unidad && descripcion) {
+      const dtoks = descripcion.split(/\s+/)
+      for (let i = dtoks.length - 1; i >= Math.max(0, dtoks.length - 4); i--) {
+        const t = dtoks[i].replace(/[^A-ZÁÉÍÓÚÑÜ]/g, '')
+        if (t && UNIDADES.has(t)) {
+          unidad = t
+          dtoks.splice(i, 1)
+          break
+        }
+      }
+      while (dtoks.length > 1 && /^\d{1,3}$/.test(dtoks[dtoks.length - 1])) dtoks.pop()
+      descripcion = dtoks.join(' ').replace(/[\s.:;—–\-]+$/, '').trim()
+    }
+
     // Catálogo: match exacto; si falla, la descripción puede adoptar.
-    let cat = enCatalogoPorCodigo(codigo, catalogo)
+    let cat = codigo ? enCatalogoPorCodigo(codigo, catalogo) : null
     let porDescripcion = false
     if (!cat && descripcion.length >= DESC_MIN && catalogo.length > 0) {
       const alt = buscarPorDescripcion(descripcion, catalogo)
@@ -421,11 +668,11 @@ export function extraerDatosRalDeTexto(texto: string, catalogo: CatalogoItem[]):
     }
     if (cat) {
       if (descripcion.length < DESC_MIN) descripcion = cat.descripcion
-    } else if (descripcion.length < DESC_MIN || !tienePalabraReal(descripcion)) {
-      continue // anti-ruido: solo cifras/símbolos no es un material
+    } else if (descripcion.length < DESC_MIN || !tienePalabraReal(descripcion) || !codigo) {
+      continue // anti-ruido: solo cifras/símbolos, o sin código ni catálogo
     }
 
-    const codigoFinal = cat ? cat.codigo : codigo
+    const codigoFinal = cat ? cat.codigo : (codigo as string)
     if (codigosVistos.has(codigoFinal)) continue
     codigosVistos.add(codigoFinal)
     if (res.items.length >= MAX_ITEMS) break

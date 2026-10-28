@@ -330,6 +330,7 @@ export function RalFotoForm({
     const faltantes: string[] = []
     if (!datos.documento) faltantes.push('documento')
     if (!datos.fecha) faltantes.push('fecha')
+    if (itemsOcr.length === 0) faltantes.push('artículos de la tabla')
     const enCat = itemsOcr.filter((i) => i.enCatalogo).length
     const rev = itemsOcr.filter((i) => i.revision).length
     if (avisosExtra.length > 0) {

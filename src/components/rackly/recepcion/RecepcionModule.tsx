@@ -32,6 +32,7 @@ import {
 import {
   ImprimirRotulosDialog,
   filasARotulos,
+  rotulosDesdeFilas,
   type RotuloAImprimir,
 } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
 import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
@@ -262,21 +263,9 @@ export function RecepcionModule() {
         })
         return
       }
-      const rotulos: RotuloAImprimir[] = vistas
-        .filter((f) => f.codigo.trim())
-        .map((f) => ({
-          codigo: f.codigo.trim(),
-          descripcion: f.descripcion.trim(),
-          cantidad: String(f.cantidad),
-          unidad: f.unidadMedida.trim(),
-          lote: f.lote.trim(),
-          fechaProduccion: f.fechaProduccion,
-          fechaVencimiento: f.fechaVencimiento,
-          // Marca "Paleta i/N" de las filas de artículos divididos: llega
-          // al modal (badge) y al ZPL (caja propia en la banda LOTE).
-          paleta: f.observaciones?.match(/Paleta \d+\/\d+/)?.[0] || undefined,
-          copias: 1,
-        }))
+      // QR ÚNICO POR RÓTULO: cada rótulo sale con el recepcionId de SU fila
+      // (el QR identifica la paleta exacta al escanear).
+      const rotulos = rotulosDesdeFilas(vistas)
       if (rotulos.length === 0) {
         toast.info('Esa guía no tiene artículos con código', {
           description: 'El código de barras es el identificador del rótulo; completa el código del artículo en el registro para poder imprimirlo.',
@@ -716,7 +705,22 @@ export function RecepcionModule() {
         // Misma regla que al registrar: el modal de rótulos se abre con la
         // instantánea recién guardada (ahora incluye las paletas) para
         // configurar copias e imprimir de una vez.
-        const rotulos = filasARotulos(validos)
+        // QR ÚNICO POR RÓTULO: re-lee la guía guardada para que cada rótulo
+        // lleve el recepcionId de SU fila; respaldo = instantánea del editor.
+        let rotulos: RotuloAImprimir[] = []
+        try {
+          const filasGuardadas = await listarRecepcionesPorDocumento({
+            guiaId: editando.guiaId,
+            tipoDocumento: fDoc,
+            numeroDocumento: fNumero,
+            fecha,
+            proveedor: fEmpresaOrigen,
+          })
+          rotulos = rotulosDesdeFilas(filasGuardadas)
+        } catch {
+          // Sin re-lectura el modal sigue funcionando con identidad de guía.
+        }
+        if (rotulos.length === 0) rotulos = filasARotulos(validos)
         if (rotulos.length > 0) {
           setGuardados({
             rotulos,
@@ -793,7 +797,23 @@ export function RecepcionModule() {
       // impresión solo existe DESPUÉS de registrar (carga ya validada).
       // Si lo guardado no trae ningún código no hay rótulos que imprimir:
       // se avisa en vez de abrir un modal vacío.
-      const rotulos = filasARotulos(validos)
+      // QR ÚNICO POR RÓTULO: re-lee la guía recién insertada para que cada
+      // rótulo lleve el recepcionId de SU fila (QR = paleta exacta);
+      // respaldo = instantánea del editor (identidad de guía legada).
+      let rotulos: RotuloAImprimir[] = []
+      try {
+        const filasGuardadas = await listarRecepcionesPorDocumento({
+          guiaId,
+          tipoDocumento: fDoc,
+          numeroDocumento: fNumero,
+          fecha,
+          proveedor: fEmpresaOrigen,
+        })
+        rotulos = rotulosDesdeFilas(filasGuardadas)
+      } catch {
+        // Sin re-lectura el modal sigue funcionando con identidad de guía.
+      }
+      if (rotulos.length === 0) rotulos = filasARotulos(validos)
       if (rotulos.length > 0) {
         setGuardados({
           rotulos,

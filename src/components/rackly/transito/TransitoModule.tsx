@@ -55,6 +55,7 @@ import {
   MAX_FILAS_TRANSITO,
   listarArticulosTransito,
   listarArticulosPorGuiaId,
+  listarArticuloPorRecepcionId,
   agruparEnGuias,
   contarPendientes,
   filtrarArticulos,
@@ -197,11 +198,13 @@ export function TransitoModule() {
 
   // ═══ LECTOR DE QR (rótulos de Recepción → transferencia directa) ═══
 
-  /** Artículos de la guía del payload dentro de `base` (guiaId exacto;
-   *  si el rótulo es de una guía residual sin guia_id, por Nº documento). */
+  /** Artículos de la guía del payload dentro de `base` (identidad exacta;
+   *  si el rótulo es de una guía residual sin identidad, por Nº documento).
+   *  La identidad del rótulo es el uuid de SU FILA (rótulos nuevos) o de la
+   *  GUÍA (rótulos legados): esta función cubre solo el caso legado. */
   function articulosDelPayload(base: ArticuloTransito[], p: PayloadQRRotulo): ArticuloTransito[] {
-    if (p.guiaId) {
-      const g = p.guiaId.toLowerCase()
+    if (p.identidad) {
+      const g = p.identidad.toLowerCase()
       const porGuia = base.filter((a) => a.guiaId.toLowerCase() === g)
       if (porGuia.length > 0) return porGuia
     }
@@ -236,8 +239,39 @@ export function TransitoModule() {
   }
 
   /**
+   * Ruta EXACTA del QR único por rótulo (2026-10): la fila ya ES la paleta
+   * escaneada — abre SU tarjeta de guía y el diálogo de transferencia de ESA
+   * fila. Sin avisos de ambigüedad (no hay: la identidad es 1:1), solo el
+   * aviso de datos faltantes y el de "ya transferido" si correspondiera.
+   */
+  const abrirTransferenciaDeFila = async (fila: ArticuloTransito) => {
+    const guia = agruparEnGuias([fila])[0]
+    if (guia) setGuiasAbiertas((prev) => new Set(prev).add(guia.key))
+    const etiquetaGuia = fila.numeroDocumento || `guía del ${formatearFecha(fila.fecha)}`
+    if (!fila.pendiente || fila.pendiente <= EPS) {
+      toast.info(`${fila.codigo}: ya está transferido completo`, {
+        description: `Guía ${etiquetaGuia}${fila.nPaleta != null ? ` · Paleta ${fila.nPaleta}` : ''} — revisa su historial si necesitas moverlo.`,
+      })
+      return
+    }
+    const faltan = datosFaltantes(fila)
+    if (faltan.length > 0) {
+      toast.warning(`${fila.codigo}: sin ${faltan.join(', ')}`, {
+        description: `Guía ${etiquetaGuia} — al confirmar se pedirá confirmación; completa los datos después con Editar (Racks/Piso).`,
+      })
+    }
+    toast.success(`Guía ${etiquetaGuia} · ${fila.codigo}${fila.nPaleta != null ? ` (Paleta ${fila.nPaleta})` : ''}`, {
+      description: 'Rótulo con QR único: la transferencia es de ESTA paleta exacta. Elige destino (Rack o Piso) y posición.',
+    })
+    abrirDialogo([fila])
+  }
+
+  /**
    * Resuelve el texto escaneado y abre la transferencia "ahí mismo":
-   *   1. busca la guía en el listado cargado;
+   *   0. QR ÚNICO POR RÓTULO (2026-10): si la identidad del QR es el uuid de
+   *      una FILA (rótulos nuevos), usa ESA fila exacta — sin búsqueda por
+   *      guía, sin elección FEFO, jamás datos de otro palet;
+   *   1. busca la guía en el listado cargado (rótulos legados);
    *   2. si no está (guía vieja fuera del tope), la TRAE de la BD y la
    *      suma al listado — un escaneo válido jamás se pierde;
    *   3. abre la tarjeta de la guía y, si el artículo es inequívoco,
@@ -252,10 +286,21 @@ export function TransitoModule() {
     }
     escaneandoRef.current = true
     try {
+      // ── Ruta EXACTA (rótulo con uuid de fila): identidad 1:1 con la paleta.
+      if (p.identidad) {
+        const fila = await listarArticuloPorRecepcionId(p.identidad)
+        if (fila) {
+          await abrirTransferenciaDeFila(fila)
+          return
+        }
+        // No existe una fila con ese uuid → rótulo LEGADO (uuid de guía):
+        // cae a la búsqueda por guía de abajo.
+      }
+
       let base = articulos
       let arts = articulosDelPayload(base, p)
-      if (arts.length === 0 && p.guiaId) {
-        const extra = await listarArticulosPorGuiaId(p.guiaId)
+      if (arts.length === 0 && p.identidad) {
+        const extra = await listarArticulosPorGuiaId(p.identidad)
         if (extra.length > 0) {
           base = [...extra, ...base]
           setArticulos((prev) => {

@@ -58,7 +58,11 @@ import { stockPisoBuscar } from '@/lib/piso/api'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { claveCeldaRack, EPS_TRANSITO, type ArticuloTransito } from '@/lib/rackly/transito-core'
-import { listarArticulosPorGuiaId, listarArticulosPorCodigo } from '@/lib/rackly/transito'
+import {
+  listarArticulosPorGuiaId,
+  listarArticulosPorCodigo,
+  listarArticuloPorRecepcionId,
+} from '@/lib/rackly/transito'
 import {
   agregarFilaManual,
   ordenarFEFO,
@@ -66,6 +70,7 @@ import {
   totalesCarrito,
   ubicacionesDeFila,
   payloadDeTexto,
+  type ResultadoResolucion,
   type TomaQR,
 } from '@/lib/rackly/atencion-qr-lote'
 import { atenderLotePuente, type TomaPuentePayload } from '@/lib/rackly/rq-atencion'
@@ -227,7 +232,47 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
     [vibrarError]
   )
 
-  /** Resuelve un texto ya desencolado y AGREGA la toma (efectos fuera del updater). */
+  /** Efectos de una resolución (rechazo o toma agregada) — compartido por la
+   *  ruta EXACTA y la legada; los efectos van FUERA del updater de setTomas
+   *  (FIX Task 20 B4: StrictMode ejecutaba los updaters 2 veces). */
+  const procesarResultado = useCallback(
+    (res: ResultadoResolucion, codigoQr: string) => {
+      if (res.estado === 'rechazada') {
+        if (res.razon === 'CODIGO_AJENO') {
+          avisoProductoAjeno(codigoQr)
+          return
+        }
+        toast.error('Toma rechazada', { description: res.mensaje })
+        return
+      }
+      const t = res.toma
+      // Dedupe defensivo (la cola serializa, pero el botón manual no).
+      if (tomasRef.current.some((x) => x.uuid === t.uuid)) return
+      tomasRef.current = [...tomasRef.current, t]
+      setTomas(tomasRef.current)
+      toast.success(
+        `Toma ${t.cantidad === t.cantidadOriginal ? `${fmt(t.cantidad)} ${t.unidad}` : `${fmt(t.cantidad)} ${t.unidad} (ajustable)`}`,
+        {
+          description: `Guía ${t.numeroDocumento || t.fecha}${t.paleta != null ? ` · Paleta ${t.paleta}` : ''}${
+            t.lote ? ` · Lote ${t.lote}` : ''
+          } · ${t.ruta === 'transito' ? 'se descuenta de la guía' : `salida de ${t.origen?.etiqueta ?? 'posición'}`}`,
+        }
+      )
+      // RIGOR QR (Task 23): paleta ambigua (guía registrada 2 veces) — la
+      // toma entra igual, pero el operario verifica la cantidad del físico.
+      if (res.aviso) toast.warning(res.aviso)
+      if (t.ruta === 'posicion') void asegurarSaldos()
+    },
+    [asegurarSaldos, avisoProductoAjeno]
+  )
+
+  /** Resuelve un texto ya desencolado y AGREGA la toma (efectos fuera del updater).
+   *
+   * QR ÚNICO POR RÓTULO (2026-10): si la identidad del QR es el uuid de una
+   * FILA (rótulos nuevos), la toma sale de ESA fila — lote/cantidad correctos
+   * aunque la guía tenga filas gemelas — y re-escanear el mismo rótulo
+   * rechaza en vez de sumar otra paleta. Rótulos legados (uuid de guía) y
+   * residuales (sin identidad) conservan su ruta FEFO de siempre. */
   const resolverTexto = useCallback(
     async (texto: string) => {
       try {
@@ -242,11 +287,29 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
           avisoProductoAjeno(payload.codigo)
           return
         }
+
+        // ── Ruta EXACTA (rótulo con uuid de fila): identidad 1:1 con la paleta.
+        if (payload.identidad) {
+          const filaExacta = await listarArticuloPorRecepcionId(payload.identidad)
+          if (filaExacta) {
+            const resExacta = resolverToma({
+              texto,
+              codigoRq: item.codigo,
+              filaExacta,
+              carrito: tomasRef.current,
+              nuevoUuid,
+            })
+            procesarResultado(resExacta, payload.codigo)
+            return
+          }
+          // El uuid no es una fila → rótulo LEGADO (uuid de guía): sigue abajo.
+        }
+
         let filas: ArticuloTransito[]
-        if (payload.guiaId) {
-          filas = await obtenerFilas(payload.guiaId, payload.numeroDocumento)
+        if (payload.identidad) {
+          filas = await obtenerFilas(payload.identidad, payload.numeroDocumento)
         } else {
-          // Rótulo sin guia_id: resuelve por código (todas las guías del material)
+          // Rótulo sin identidad: resuelve por código (todas las guías del material)
           const clave = `codigo:${item.codigo.toUpperCase()}`
           const enCache = cacheRef.current.get(clave)
           if (enCache) filas = enCache
@@ -275,36 +338,12 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
           carrito: tomasRef.current,
           nuevoUuid,
         })
-        if (res.estado === 'rechazada') {
-          if (res.razon === 'CODIGO_AJENO') {
-            avisoProductoAjeno(payload.codigo)
-            return
-          }
-          toast.error('Toma rechazada', { description: res.mensaje })
-          return
-        }
-        const t = res.toma
-        // Dedupe defensivo (la cola serializa, pero el botón manual no).
-        if (tomasRef.current.some((x) => x.uuid === t.uuid)) return
-        tomasRef.current = [...tomasRef.current, t]
-        setTomas(tomasRef.current)
-        toast.success(
-          `Toma ${t.cantidad === t.cantidadOriginal ? `${fmt(t.cantidad)} ${t.unidad}` : `${fmt(t.cantidad)} ${t.unidad} (ajustable)`}`,
-          {
-            description: `Guía ${t.numeroDocumento || t.fecha}${t.paleta != null ? ` · Paleta ${t.paleta}` : ''}${
-              t.lote ? ` · Lote ${t.lote}` : ''
-            } · ${t.ruta === 'transito' ? 'se descuenta de la guía' : `salida de ${t.origen?.etiqueta ?? 'posición'}`}`,
-          }
-        )
-        // RIGOR QR (Task 23): paleta ambigua (guía registrada 2 veces) — la
-        // toma entra igual, pero el operario verifica la cantidad del físico.
-        if (res.aviso) toast.warning(res.aviso)
-        if (t.ruta === 'posicion') void asegurarSaldos()
+        procesarResultado(res, payload.codigo)
       } finally {
         // nada: la cola la drena procesarTexto
       }
     },
-    [item.codigo, obtenerFilas, asegurarSaldos, avisoProductoAjeno]
+    [item.codigo, obtenerFilas, asegurarSaldos, avisoProductoAjeno, procesarResultado]
   )
 
   /** Puerta única de tomas: cámara o pistola. Nunca interrumpe la sesión.

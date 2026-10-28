@@ -43,7 +43,7 @@ import {
   type DatosGuia,
 } from '@/lib/rackly/guia-ocr'
 import { avisosDePaletas, expandirEnFilas, faltanProveedor } from '@/lib/rackly/recepcion-filas'
-import { crearRecepciones, marcarGuiaRecepcionada, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
+import { crearRecepciones, listarRecepcionesPorDocumento, marcarGuiaRecepcionada, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
 import { useLoteUuidSync } from '@/lib/rackly/recepcion-idempotencia'
 import {
   RecepcionItemsEditor,
@@ -54,6 +54,7 @@ import {
 import {
   ImprimirRotulosDialog,
   filasARotulos,
+  rotulosDesdeFilas,
   type RotuloAImprimir,
 } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
 import {
@@ -586,7 +587,23 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
       // La impresión solo existe DESPUÉS de registrar (carga ya validada).
       // Si lo guardado no trae ningún código no hay rótulos que imprimir:
       // se avisa en vez de abrir un modal vacío.
-      const rotulos = filasARotulos(validos)
+      // QR ÚNICO POR RÓTULO: re-lee la guía recién insertada para que cada
+      // rótulo lleve el recepcionId de SU fila (QR = paleta exacta);
+      // respaldo = instantánea del editor (identidad de guía legada).
+      let rotulos: RotuloAImprimir[] = []
+      try {
+        const filasGuardadas = await listarRecepcionesPorDocumento({
+          guiaId,
+          tipoDocumento: form.tipoDocumento,
+          numeroDocumento: form.numeroGuia,
+          fecha,
+          proveedor: form.empresaOrigen,
+        })
+        rotulos = rotulosDesdeFilas(filasGuardadas)
+      } catch {
+        // Sin re-lectura el modal sigue funcionando con identidad de guía.
+      }
+      if (rotulos.length === 0) rotulos = filasARotulos(validos)
       if (rotulos.length > 0) {
         setGuardados({
           rotulos,

@@ -17,6 +17,9 @@ const {
   construirZPLRotulos,
   sanearZPL,
 } = require('@/lib/rackly/zebra')
+const {
+  resolverToma,
+} = require('@/lib/rackly/atencion-qr-lote')
 
 let ok = 0
 function t(nombre, fn) {
@@ -50,25 +53,25 @@ const ENC = {
 
 console.log('— qr-rotulo (formato compartido) —')
 
-t('construir: RKLY|guia|doc|codigo sin paleta', () => {
-  const p = construirPayloadQR({ guiaId: GUIA, numeroDocumento: 'T173-1', codigo: '49310' })
+t('construir: RKLY|identidad|doc|codigo sin paleta', () => {
+  const p = construirPayloadQR({ identidad: GUIA, numeroDocumento: 'T173-1', codigo: '49310' })
   assert.strictEqual(p, `${PREFIJO_QR}|${GUIA}|T173-1|49310`)
 })
 
 t('construir: con paleta P2', () => {
-  const p = construirPayloadQR({ guiaId: GUIA, numeroDocumento: 'T173-1', codigo: '49310', paleta: 2 })
+  const p = construirPayloadQR({ identidad: GUIA, numeroDocumento: 'T173-1', codigo: '49310', paleta: 2 })
   assert.strictEqual(p, `${PREFIJO_QR}|${GUIA}|T173-1|49310|P2`)
 })
 
 t('construir: paleta 0/negativa/NaN se ignora', () => {
   for (const paleta of [0, -1, NaN, null]) {
-    const p = construirPayloadQR({ guiaId: 'g', numeroDocumento: 'd', codigo: 'c', paleta })
+    const p = construirPayloadQR({ identidad: 'g', numeroDocumento: 'd', codigo: 'c', paleta })
     assert.ok(!/\|P/.test(p), `paleta ${paleta} no debía salir: ${p}`)
   }
 })
 
 t('construir: '|' en los datos no rompe el formato', () => {
-  const p = construirPayloadQR({ guiaId: 'g|1', numeroDocumento: 'd|2', codigo: 'c|3' })
+  const p = construirPayloadQR({ identidad: 'g|1', numeroDocumento: 'd|2', codigo: 'c|3' })
   assert.strictEqual(p, 'RKLY|g 1|d 2|c 3')
   const q = parsearPayloadQR(p)
   assert.strictEqual(q.numeroDocumento, 'd 2')
@@ -76,7 +79,7 @@ t('construir: '|' en los datos no rompe el formato', () => {
 
 t('parsear: payload completo con paleta', () => {
   const q = parsearPayloadQR(`  ${PREFIJO_QR}|${GUIA}|T173-1|49310|P3\r\n`)
-  assert.deepStrictEqual(q, { guiaId: GUIA, numeroDocumento: 'T173-1', codigo: '49310', paleta: 3 })
+  assert.deepStrictEqual(q, { identidad: GUIA, numeroDocumento: 'T173-1', codigo: '49310', paleta: 3 })
 })
 
 t('parsear: sin paleta → null (no 0)', () => {
@@ -86,13 +89,13 @@ t('parsear: sin paleta → null (no 0)', () => {
 
 t('parsear: prefijo case-insensitive, caso original conservado', () => {
   const q = parsearPayloadQR('rkly|G-UUID|x|AbC')
-  assert.strictEqual(q.guiaId, 'G-UUID')
+  assert.strictEqual(q.identidad, 'G-UUID')
   assert.strictEqual(q.codigo, 'AbC')
 })
 
-t('parsear: guiaId vacío + numeroDocumento presente → válido (guías residuales)', () => {
+t('parsear: identidad vacía + numeroDocumento presente → válido (guías residuales)', () => {
   const q = parsearPayloadQR(`${PREFIJO_QR}||T173-1|49310`)
-  assert.strictEqual(q.guiaId, '')
+  assert.strictEqual(q.identidad, '')
   assert.strictEqual(q.numeroDocumento, 'T173-1')
 })
 
@@ -208,6 +211,117 @@ t('construirZPLRotulos: copias 0 se omiten, el resto lleva QR', () => {
 
 t('sanearZPL: control y separadores fuera (→ espacio)', () => {
   assert.strictEqual(sanearZPL('A^B~C\\D\x01E '), 'A B C D E')
+})
+
+console.log('— QR ÚNICO POR RÓTULO (recepcionId) —')
+
+const FILA = 'a1b2c3d4-e5f6-4789-8a9b-c0d1e2f3a4b5' // uuid de la fila del palet
+
+t('payloadQRRotulo: recepcionId de la fila TIENE prioridad sobre guiaId', () => {
+  const p = payloadQRRotulo(
+    { ...DATOS, recepcionId: FILA },
+    { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento }
+  )
+  assert.strictEqual(p, `${PREFIJO_QR}|${FILA}|${ENC.numeroDocumento}|49310`)
+})
+
+t('payloadQRRotulo: sin recepcionId → identidad de guía (rótulos legados)', () => {
+  const p = payloadQRRotulo(DATOS, { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento })
+  assert.strictEqual(p, `${PREFIJO_QR}|${GUIA}|${ENC.numeroDocumento}|49310`)
+})
+
+t('payloadQRRotulo: recepcionId + paleta → RKLY|fila|doc|codigo|Pn (mismo largo que legado)', () => {
+  const p = payloadQRRotulo(
+    { ...DATOS, recepcionId: FILA, paleta: 'Paleta 3/8' },
+    { guiaId: null, numeroDocumento: ENC.numeroDocumento }
+  )
+  assert.strictEqual(p, `${PREFIJO_QR}|${FILA}|${ENC.numeroDocumento}|49310|P3`)
+})
+
+t('payloadQRRotulo: recepcionId vacío cae a guiaId; sin nada → null', () => {
+  const p = payloadQRRotulo({ ...DATOS, recepcionId: '  ' }, { guiaId: GUIA, numeroDocumento: 'd' })
+  assert.ok(p.startsWith(`${PREFIJO_QR}|${GUIA}|`))
+  assert.strictEqual(payloadQRRotulo({ ...DATOS, recepcionId: '' }, { guiaId: null, numeroDocumento: '' }), null)
+})
+
+t('ZPL: rótulo con recepcionId lleva el QR de la fila y mismo tamaño (uuid↔uuid)', () => {
+  const zplConFila = construirZPLRotulo({ ...DATOS, recepcionId: FILA }, ENC, { qr: { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento } })
+  assert.ok(zplConFila.includes(`^FDQA,${PREFIJO_QR}|${FILA}|${ENC.numeroDocumento}|49310^FS`), 'QR con la fila exacta')
+  const zplLegado = construirZPLRotulo(DATOS, ENC, { qr: { guiaId: GUIA, numeroDocumento: ENC.numeroDocumento } })
+  const magFila = Number(/\^BQN,2,(\d+)/.exec(zplConFila)[1])
+  const magLegado = Number(/\^BQN,2,(\d+)/.exec(zplLegado)[1])
+  assert.strictEqual(magFila, magLegado, 'mismo largo de payload → misma magnificación')
+})
+
+console.log('— resolverToma: ruta EXACTA (fila del QR) —')
+
+function filaDe(overrides) {
+  return {
+    id: FILA,
+    guiaId: GUIA,
+    createdAt: '2026-10-27T10:00:00Z',
+    fecha: '2026-10-27',
+    tipoDocumento: 'Guia',
+    numeroDocumento: 'T173-00005000',
+    empresaOrigen: 'AJEPER',
+    proveedor: 'PROV',
+    codigo: '43684',
+    descripcion: 'ARTICULO PRUEBA',
+    cantidad: 100,
+    unidadMedida: 'KG',
+    lote: 'LOTE-A',
+    fechaProduccion: '',
+    fechaVencimiento: '2027-01-01',
+    placa: '',
+    nPaleta: null,
+    usuarioNombre: 'op',
+    observaciones: '',
+    envios: [],
+    enviados: 0,
+    pendiente: 100,
+    estado: 'ROJO',
+    datosFaltantes: [],
+    ...overrides,
+  }
+}
+const TOMA_ARGS = { texto: `${PREFIJO_QR}|${FILA}|T173-00005000|43684`, codigoRq: '43684', carrito: [], nuevoUuid: () => 'u1' }
+
+t('ruta exacta: la toma sale de LA FILA del QR (no FEFO)', () => {
+  const otra = filaDe({ id: '11111111-1111-4111-8111-111111111111', lote: 'LOTE-OTRO', cantidad: 55, pendiente: 55 })
+  const res = resolverToma({ ...TOMA_ARGS, filaExacta: filaDe({}), filas: [otra] })
+  assert.strictEqual(res.estado, 'ok')
+  assert.strictEqual(res.toma.recepcionId, FILA)
+  assert.strictEqual(res.toma.lote, 'LOTE-A')
+  assert.strictEqual(res.toma.cantidad, 100)
+})
+
+t('ruta exacta: re-escanear el mismo rótulo → PALETA_YA_EN_CARRITO (no consume otra fila)', () => {
+  const enCarrito = [{ uuid: 'x', recepcionId: FILA }]
+  const res = resolverToma({ ...TOMA_ARGS, filaExacta: filaDe({}), carrito: enCarrito })
+  assert.strictEqual(res.estado, 'rechazada')
+  assert.strictEqual(res.razon, 'PALETA_YA_EN_CARRITO')
+})
+
+t('ruta exacta: código ajeno a la RQ → CODIGO_AJENO', () => {
+  const res = resolverToma({ ...TOMA_ARGS, codigoRq: '99999', filaExacta: filaDe({}) })
+  assert.strictEqual(res.estado, 'rechazada')
+  assert.strictEqual(res.razon, 'CODIGO_AJENO')
+})
+
+t('ruta exacta: paleta de la fila va a la toma', () => {
+  const res = resolverToma({ ...TOMA_ARGS, filaExacta: filaDe({ nPaleta: 3 }) })
+  assert.strictEqual(res.estado, 'ok')
+  assert.strictEqual(res.toma.paleta, 3)
+})
+
+t('ruta legada: uuid de guía en el QR sigue resolviendo por FEFO entre candidatas', () => {
+  const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222', fechaVencimiento: '2027-06-01' })
+  const f2 = filaDe({ id: '33333333-3333-4333-8333-333333333333', fechaVencimiento: '2027-01-01' })
+  const textoLegado = `${PREFIJO_QR}|${GUIA}|T173-00005000|43684`
+  const res = resolverToma({ texto: textoLegado, codigoRq: '43684', filas: [f1, f2], carrito: [], nuevoUuid: () => 'u2' })
+  assert.strictEqual(res.estado, 'ok')
+  // FEFO: menor vencimiento primero → f2
+  assert.strictEqual(res.toma.recepcionId, f2.id)
 })
 
 console.log(`\n${ok} tests OK`)

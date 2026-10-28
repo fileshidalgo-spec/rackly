@@ -45,6 +45,7 @@ import {
   type MotivoFallaZebra,
 } from '@/lib/rackly/zebra'
 import { expandirEnFilas } from '@/lib/rackly/recepcion-filas'
+import type { RegistroRecepcion } from '@/lib/rackly/modulos'
 import type { ItemRecepcion } from '@/components/rackly/recepcion/RecepcionItemsEditor'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -91,6 +92,39 @@ export function filasARotulos(items: ItemRecepcion[]): RotuloAImprimir[] {
       fechaProduccion: f.fechaProduccion,
       fechaVencimiento: f.fechaVencimiento,
       paleta: f.paleta || undefined,
+      copias: 1,
+    }))
+}
+
+/**
+ * Rótulos desde filas YA REGISTRADAS en la BD — con `recepcionId` de cada
+ * fila (QR ÚNICO POR RÓTULO, 2026-10): el QR porta el uuid de SU fila y el
+ * escaneo resuelve a ESA paleta exacta, aunque la guía tenga muchas filas
+ * del mismo código (con o sin nº de paleta) o esté registrada 2 veces.
+ *
+ * Es la vía CANÓNICA de impresión post-guardado: alta, edición, vía foto y
+ * reimpresión desde la lista llaman aquí con `listarRecepcionesPorDocumento`.
+ * `filasARotulos` queda como respaldo si la re-lectura falla (rótulos con
+ * identidad de guía legada — mismo comportamiento de siempre).
+ */
+export function rotulosDesdeFilas(filas: RegistroRecepcion[]): RotuloAImprimir[] {
+  return filas
+    .filter((f) => f.codigo.trim())
+    .map((f) => ({
+      codigo: f.codigo.trim(),
+      descripcion: f.descripcion.trim(),
+      cantidad: String(f.cantidad),
+      unidad: f.unidadMedida.trim(),
+      lote: f.lote.trim(),
+      fechaProduccion: f.fechaProduccion,
+      fechaVencimiento: f.fechaVencimiento,
+      // Marca "Paleta i/N" de las filas de artículos divididos: llega al
+      // modal (badge) y al ZPL (caja propia en la banda LOTE). Respaldo:
+      // n_paleta persistido (M-1) si la observación no la trae.
+      paleta:
+        f.observaciones?.match(/Paleta \d+\/\d+/)?.[0] ||
+        (f.nPaleta != null ? `Paleta ${f.nPaleta}` : undefined),
+      recepcionId: f.id,
       copias: 1,
     }))
 }

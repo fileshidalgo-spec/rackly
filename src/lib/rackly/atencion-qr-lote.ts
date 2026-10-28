@@ -196,12 +196,21 @@ function construirToma(
  * Resuelve UN escaneo contra las filas de la guía y el carrito actual.
  * Nunca lanza: devuelve {estado:'rechazada'} con razón estable para que el
  * wizard muestre el toast y la sesión de escaneo continúe.
+ *
+ * QR ÚNICO POR RÓTULO (2026-10): si el llamador trae `filaExacta` (la fila
+ * resuelta por el uuid del QR — rótulos nuevos), la toma sale de ESA fila y
+ * de nadie más: sin FEFO, sin gemelas, y re-escanear el mismo rótulo (o
+ * otra copia de su etiqueta) rechaza con PALETA_YA_EN_CARRITO en vez de
+ * consumir otra paleta. Los rótulos legados (uuid de guía) siguen la ruta
+ * FEFO de siempre.
  */
 export function resolverToma(args: {
   texto: string
   codigoRq: string
   /** Filas disponibles (de la guía del QR o del código del material). */
-  filas: ArticuloTransito[]
+  filas?: ArticuloTransito[]
+  /** Fila EXACTA resuelta por el uuid del QR (rótulos nuevos). */
+  filaExacta?: ArticuloTransito | null
   carrito: TomaQR[]
   nuevoUuid: () => string
 }): ResultadoResolucion {
@@ -213,18 +222,32 @@ export function resolverToma(args: {
     return rechazo('CODIGO_AJENO', `QR=${payload.codigo} ≠ RQ=${args.codigoRq}`)
   }
 
+  // ── Ruta EXACTA (rótulo con uuid de fila): identidad 1:1 con la paleta.
+  if (args.filaExacta) {
+    const fila = args.filaExacta
+    if (args.carrito.some((t) => t.recepcionId === fila.id)) {
+      return rechazo(
+        'PALETA_YA_EN_CARRITO',
+        `ese rótulo (${fila.numeroDocumento || fila.fecha}${fila.nPaleta != null ? ` · paleta ${fila.nPaleta}` : ''}) ya fue escaneado`
+      )
+    }
+    return construirToma(fila, fila.nPaleta, args.nuevoUuid)
+  }
+
+  // ── Ruta legada (uuid de guía o rótulo residual): FEFO entre candidatas.
+  const identidad = payload.identidad.trim()
   const codigo = payload.codigo.trim().toUpperCase()
-  const candidatas = args.filas.filter(
+  const candidatas = (args.filas ?? []).filter(
     (f) =>
       f.codigo.trim().toUpperCase() === codigo &&
-      (!payload.guiaId || f.guiaId === payload.guiaId)
+      (!identidad || f.guiaId === identidad)
   )
   if (candidatas.length === 0) {
     return rechazo(
       'GUIA_NO_RESUELTA',
-      payload.guiaId
-        ? `el rótulo es de la guía ${payload.numeroDocumento || payload.guiaId.slice(0, 8)} y el código ${codigo} no está en ella — si la guía fue registrada 2 veces, usa el rótulo del otro registro o agrégalo desde la lista manual`
-        : 'rótulo sin guia_id'
+      identidad
+        ? `el rótulo es de la guía ${payload.numeroDocumento || identidad.slice(0, 8)} y el código ${codigo} no está en ella — si la guía fue registrada 2 veces, usa el rótulo del otro registro o agrégalo desde la lista manual`
+        : 'rótulo sin identidad de guía'
     )
   }
 

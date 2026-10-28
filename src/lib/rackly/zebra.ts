@@ -101,6 +101,12 @@ export type DatosRotulo = {
   fechaVencimiento: string
   /** Marca "Paleta i/N" cuando el artículo se DIVIDIÓ (opcional). */
   paleta?: string
+  /** QR ÚNICO POR RÓTULO (2026-10): uuid de la FILA del palet en
+   *  recepcion_registros. Presente en TODO rótulo impreso desde la BD
+   *  (guardado, reimpresión, edición, vía foto); el escaneo resuelve a
+   *  ESA fila exacta — jamás jala datos de otro palet. Si falta (rótulo
+   *  de emergencia sin fila), el QR cae a la identidad de guía legada. */
+  recepcionId?: string
 }
 
 /** Encabezado compartido por los rótulos de una recepción.
@@ -350,20 +356,25 @@ const X_ZONA_QR = 1200 - ZONA_QR_LADO
 export type ContextoQR = { guiaId?: string | null; numeroDocumento?: string }
 
 /**
- * Payload del QR del rótulo. Null si la guía no tiene NINGUNA identidad
- * (sin guia_id y sin Nº de documento): el rótulo sale SIN QR (degradación
- * graceful — un QR que no resuelve a nada no debe imprimirse jamás).
+ * Payload del QR del rótulo. Null si el rótulo no tiene NINGUNA identidad
+ * (sin recepcionId, sin guia_id y sin Nº de documento): el rótulo sale SIN
+ * QR (degradación graceful — un QR que no resuelve a nada no debe
+ * imprimirse jamás).
+ *
+ * PRIORIDAD DE LA IDENTIDAD (QR único por rótulo): `datos.recepcionId`
+ * (fila exacta del palet) > `ctx.guiaId` (guía legada). Mismo largo (uuid
+ * 36) → las magnificaciones del QR no cambian.
  */
 export function payloadQRRotulo(datos: DatosRotulo, ctx: ContextoQR): string | null {
-  const guiaId = (ctx.guiaId ?? '').trim()
+  const identidad = (datos.recepcionId ?? '').trim() || (ctx.guiaId ?? '').trim()
   const numeroDocumento = (ctx.numeroDocumento ?? '').trim()
-  if (!guiaId && !numeroDocumento) return null
-  // "Paleta i/N" → nº de paleta para el QR (P<i>): Tránsito preselecciona
+  if (!identidad && !numeroDocumento) return null
+  // "Paleta i/N" → nº de paleta para el QR (P<i): Tránsito preselecciona
   // la paleta exacta al escanear.
   const mPaleta = datos.paleta ? /Paleta\s+(\d+)/i.exec(datos.paleta) : null
   const nPaleta = mPaleta ? Number(mPaleta[1]) : null
   return construirPayloadQR({
-    guiaId,
+    identidad,
     numeroDocumento,
     codigo: sanearZPL(datos.codigo),
     paleta: nPaleta != null && Number.isFinite(nPaleta) ? nPaleta : null,

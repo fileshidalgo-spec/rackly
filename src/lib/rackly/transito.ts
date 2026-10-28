@@ -115,6 +115,29 @@ export async function listarArticulosPorGuiaId(guiaId: string): Promise<Articulo
 }
 
 /**
+ * La FILA EXACTA de un rótulo por su id (QR único por rótulo, 2026-10).
+ * El QR nuevo porta el uuid de la fila de recepcion_registros: con él el
+ * escaneo resuelve a ESA paleta (lote/cantidad correctos) aunque la guía
+ * tenga muchas filas del mismo código — con o sin nº de paleta — o esté
+ * registrada 2 veces. Null si el uuid no es una fila (rótulos legados:
+ * el llamador cae al listado por guia_id).
+ */
+export async function listarArticuloPorRecepcionId(
+  recepcionId: string
+): Promise<ArticuloTransito | null> {
+  const id = recepcionId.trim()
+  if (!id) return null
+  const { data, error } = await dataClient
+    .from('recepcion_registros')
+    .select('*')
+    .eq('id', id)
+    .limit(1)
+  if (error) throw error
+  const fila = (data ?? [])[0] as Record<string, unknown> | undefined
+  return fila ? mapArticuloTransito(fila) : null
+}
+
+/**
  * Filas de TODAS las guías de UN código (desde la fecha de implementación de
  * Tránsito), más antigua primero. Lo usa el wizard del puente Atención↔Tránsito
  * para la ruta MANUAL (sin QR): muestra guías con pendiente/posicionado y el

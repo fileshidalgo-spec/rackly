@@ -9,10 +9,14 @@
  *   · Ruta por línea determinística: fila con pendiente → TRÁNSITO (descuenta
  *     la guía); fila ya transferida → POSICIÓN (salida de la ubicación que
  *     registran sus envíos).
- *   · FEFO en TODA ambigüedad (decisión del usuario 2026-10-23): sin QR,
- *     paleta con varios lotes y filas sin nº de paleta.
+ *   · FEFO SOLO para ORDENAR la lista manual (antes ambiguaba escaneos).
+ *     RIGOR 2026-10-28 (reporte «escaneé un QR y jaló datos de otros
+ *     palets»): un rótulo legado compartido por N paletas jamás se
+ *     auto-resuelve — rechaza ROTULO_COMPARTIDO y el operario elige SU
+ *     paleta en la lista; solo se toma sola cuando queda UNA candidata.
+ *     (Sustituye la auto-elección FEFO del 2026-10-23.)
  *   · Deduplicación estricta: la misma paleta (fila) jamás se suma dos veces;
- *     rótulos sin paleta consumen la siguiente fila disponible en orden FEFO.
+ *     re-escanear un rótulo ya atendido avisa en vez de consumir otra fila.
  */
 
 import { parsearPayloadQR, type PayloadQRRotulo } from './qr-rotulo'
@@ -74,6 +78,7 @@ export type RechazoToma =
   | 'PALETA_YA_EN_CARRITO'
   | 'SIN_FILAS_DISPONIBLES'
   | 'FILA_SIN_ORIGEN'
+  | 'ROTULO_COMPARTIDO'
 
 export type ResultadoResolucion =
   | { estado: 'ok'; toma: TomaQR; /** Aviso no bloqueante (paleta ambigua, etc.). */ aviso?: string }
@@ -86,6 +91,8 @@ export const MENSAJE_RECHAZO: Record<RechazoToma, string> = {
   PALETA_YA_EN_CARRITO: 'Esa paleta ya está en la lista',
   SIN_FILAS_DISPONIBLES: 'No quedan paletas de esa guía por atender',
   FILA_SIN_ORIGEN: 'La fila ya no tiene pendiente ni ubicaciones registradas',
+  ROTULO_COMPARTIDO:
+    'Este rótulo viejo lo comparten varias paletas — elige TU paleta en la lista (pestaña Carrito) o reimprime rótulos con QR único en Recepción',
 }
 
 /** Payload decodificado — expuesto para las validaciones previas del wizard. */
@@ -201,8 +208,18 @@ function construirToma(
  * resuelta por el uuid del QR — rótulos nuevos), la toma sale de ESA fila y
  * de nadie más: sin FEFO, sin gemelas, y re-escanear el mismo rótulo (o
  * otra copia de su etiqueta) rechaza con PALETA_YA_EN_CARRITO en vez de
- * consumir otra paleta. Los rótulos legados (uuid de guía) siguen la ruta
- * FEFO de siempre.
+ * consumir otra paleta.
+ *
+ * RUTA LEGADA ESTRICTA (2026-10-28, reporte «escaneé un QR y jaló datos de
+ * otros palets»): los rótulos legados (uuid de guía o solo Nº de documento)
+ * NO identifican una paleta física — varios palets comparten el mismo QR.
+ * Elegir «la siguiente» por FEFO era adivinar: sumaba tomas fantasma (RQ de
+ * 2 artículos → 4) con lote/cantidad de OTRO palet. Ahora un rótulo legado
+ * SOLO se auto-resuelve cuando queda UNA candidata libre; con varias
+ * rechaza ROTULO_COMPARTIDO y el operario elige SU paleta en la lista
+ * manual — o reimprime rótulos con QR único (uuid de fila) en Recepción.
+ * La claridad es progresiva: al llenarse el carrito, la última libre pasa
+ * a resolverse sola.
  */
 export function resolverToma(args: {
   texto: string
@@ -234,7 +251,7 @@ export function resolverToma(args: {
     return construirToma(fila, fila.nPaleta, args.nuevoUuid)
   }
 
-  // ── Ruta legada (uuid de guía o rótulo residual): FEFO entre candidatas.
+  // ── Ruta legada ESTRICTA (uuid de guía o rótulo residual): jamás adivinar.
   const identidad = payload.identidad.trim()
   const codigo = payload.codigo.trim().toUpperCase()
   const candidatas = (args.filas ?? []).filter(
@@ -251,43 +268,52 @@ export function resolverToma(args: {
     )
   }
 
+  const enCarrito = (f: ArticuloTransito) =>
+    args.carrito.some((t) => t.recepcionId === f.id)
+
   if (payload.paleta != null) {
-    // Rótulo con paleta: elige la fila de esa paleta (FEFO si hay varios lotes).
+    // Rótulo con nº de paleta: candidatas = filas de ESA paleta.
     const dePaleta = ordenarFEFO(candidatas.filter((f) => f.nPaleta === payload.paleta))
     if (dePaleta.length === 0) {
       return rechazo('GUIA_NO_RESUELTA', `paleta ${payload.paleta} no existe en la guía`)
     }
-    const elegida = dePaleta[0]
-    if (args.carrito.some((t) => t.recepcionId === elegida.id)) {
-      return rechazo('PALETA_YA_EN_CARRITO', `paleta ${payload.paleta} · guía ${elegida.numeroDocumento}`)
+    const libres = dePaleta.filter((f) => !enCarrito(f))
+    if (libres.length === 0) {
+      return rechazo(
+        'PALETA_YA_EN_CARRITO',
+        `paleta ${payload.paleta} · guía ${dePaleta[0].numeroDocumento}`
+      )
     }
-    // PALETA AMBIGUA (Task 23): el mismo nº de paleta en varias filas de la
-    // guía (guía registrada 2 veces / re-registrada por paleta) — la fila
-    // elegida por FEFO puede no ser la paleta física: el operario lo sabe.
-    const res = construirToma(elegida, payload.paleta, args.nuevoUuid)
-    if (res.estado !== 'ok') return res
-    return {
-      estado: 'ok',
-      toma: res.toma,
-      aviso:
-        dePaleta.length > 1
-          ? `Paleta ${payload.paleta} aparece ${dePaleta.length} veces en la guía — verifica que la cantidad sea la de la paleta física`
-          : undefined,
+    // PALETA AMBIGUA (reemplaza el aviso del Task 23): el mismo nº de paleta
+    // en varias filas (guía registrada 2 veces / re-registrada por paleta) —
+    // elegir por FEFO tomaba el lote del registro gemelo equivocado.
+    if (libres.length > 1) {
+      return rechazo(
+        'ROTULO_COMPARTIDO',
+        `la paleta ${payload.paleta} aparece ${libres.length} veces en la guía ${
+          dePaleta[0].numeroDocumento || dePaleta[0].fecha
+        }`
+      )
     }
+    return construirToma(libres[0], payload.paleta, args.nuevoUuid)
   }
 
-  // Rótulo SIN paleta: cada toma consume la siguiente fila con pendiente (FEFO).
-  const libres = ordenarFEFO(candidatas).filter(
-    (f) => !args.carrito.some((t) => t.recepcionId === f.id)
-  )
-  const conPendiente = libres.filter((f) => f.pendiente > EPS_TRANSITO)
-  if (conPendiente.length > 0) return construirToma(conPendiente[0], null, args.nuevoUuid)
-
-  // Sin pendiente: siguiente fila YA posicionada disponible (ruta posición).
-  const posicionadas = libres.filter((f) => f.envios.length > 0)
-  if (posicionadas.length > 0) return construirToma(posicionadas[0], null, args.nuevoUuid)
-
-  return rechazo('SIN_FILAS_DISPONIBLES', `guía ${payload.numeroDocumento || ''}`)
+  // Rótulo SIN nº de paleta: solo se toma sola si queda UNA candidata libre.
+  const libres = ordenarFEFO(candidatas).filter((f) => !enCarrito(f))
+  if (libres.length === 0) {
+    return rechazo('SIN_FILAS_DISPONIBLES', `guía ${payload.numeroDocumento || ''}`)
+  }
+  if (libres.length > 1) {
+    const nGuias = new Set(libres.map((f) => f.guiaId)).size
+    return rechazo(
+      'ROTULO_COMPARTIDO',
+      identidad
+        ? `la guía ${payload.numeroDocumento || identidad.slice(0, 8)} tiene ${libres.length} paletas de ${codigo}`
+        : `rótulo sin identidad: ${libres.length} paletas de ${codigo} en ${nGuias} guía(s)`
+    )
+  }
+  // Única libre: la ruta (tránsito/posición) la decide construirToma.
+  return construirToma(libres[0], null, args.nuevoUuid)
 }
 
 /**

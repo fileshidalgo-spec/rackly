@@ -242,6 +242,17 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
           avisoProductoAjeno(codigoQr)
           return
         }
+        if (res.razon === 'ROTULO_COMPARTIDO') {
+          // RIGOR 2026-10-28: rótulo legado compartido por N paletas — jamás
+          // se adivina cuál es la física: el operario ELIGE en la lista
+          // (pestaña Carrito, que carga el listado FEFO del código).
+          vibrarError()
+          toast.error('Rótulo compartido por varias paletas', {
+            description: `${res.mensaje}. Ábrelo con «Carrito» y toca la fila con el lote y la cantidad de tu paleta física.`,
+            duration: 9000,
+          })
+          return
+        }
         toast.error('Toma rechazada', { description: res.mensaje })
         return
       }
@@ -258,12 +269,12 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
           } · ${t.ruta === 'transito' ? 'se descuenta de la guía' : `salida de ${t.origen?.etiqueta ?? 'posición'}`}`,
         }
       )
-      // RIGOR QR (Task 23): paleta ambigua (guía registrada 2 veces) — la
-      // toma entra igual, pero el operario verifica la cantidad del físico.
+      // Aviso no bloqueante (reservado; la ambigüedad de paleta hoy rechaza
+      // con ROTULO_COMPARTIDO en vez de entrar con aviso).
       if (res.aviso) toast.warning(res.aviso)
       if (t.ruta === 'posicion') void asegurarSaldos()
     },
-    [asegurarSaldos, avisoProductoAjeno]
+    [asegurarSaldos, avisoProductoAjeno, vibrarError]
   )
 
   /** Resuelve un texto ya desencolado y AGREGA la toma (efectos fuera del updater).
@@ -272,7 +283,9 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
    * FILA (rótulos nuevos), la toma sale de ESA fila — lote/cantidad correctos
    * aunque la guía tenga filas gemelas — y re-escanear el mismo rótulo
    * rechaza en vez de sumar otra paleta. Rótulos legados (uuid de guía) y
-   * residuales (sin identidad) conservan su ruta FEFO de siempre. */
+   * residuales (sin identidad) resuelven ESTRICTO: solo se toman solos si
+   * queda UNA candidata; con varias rechazan ROTULO_COMPARTIDO (jamás
+   * adivinar por FEFO la paleta física). */
   const resolverTexto = useCallback(
     async (texto: string) => {
       try {

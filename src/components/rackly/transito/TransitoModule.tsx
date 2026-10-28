@@ -340,19 +340,9 @@ export function TransitoModule() {
           })
         }
       }
-      // b) PALETA AMBIGUA: el mismo Nº de paleta aparece en varias filas de
-      //    la guía (registro repetido por paleta) — la fila elegida puede no
-      //    ser la paleta física escaneada.
-      if (p.paleta != null) {
-        const gemelas = arts.filter(
-          (a) => a.codigo.toLowerCase() === p.codigo.toLowerCase() && a.nPaleta === p.paleta
-        ).length
-        if (gemelas > 1) {
-          toast.warning(`Paleta ${p.paleta} aparece ${gemelas} veces en la guía ${etiquetaGuia}`, {
-            description: 'Se tomó la fila con pendiente — confirma que la cantidad coincida con la paleta física.',
-          })
-        }
-      }
+      // b) PALETA AMBIGUA: cubierta por el RIGOR QR LEGADO de abajo — con
+      //    varias filas con pendiente se bloquea el diálogo directo, y con
+      //    una sola, el toast de éxito nombra a las demás filas.
 
       if (!objetivo) {
         toast.info(`Guía ${etiquetaGuia}: ${arts.length} artículo(s)`, {
@@ -360,29 +350,51 @@ export function TransitoModule() {
         })
         return
       }
-      if (!objetivo.pendiente || objetivo.pendiente <= EPS) {
+
+      // ── RIGOR QR LEGADO (2026-10-28, reporte «escaneé un QR y jaló datos
+      // de otros palets»): con rótulos legados (uuid de guía compartido),
+      // VARIAS filas del código pueden tener pendiente y el QR no identifica
+      // cuál es la paleta física. Elegir "la primera con pendiente" era
+      // adivinar → ahora: si hay varias, se abre SOLO la tarjeta de la guía
+      // (ya abierta arriba) y el operario pulsa Transferir en SU fila. El
+      // diálogo directo solo sale con UNA fila con pendiente.
+      const porCodigo = arts.filter((a) => a.codigo.toLowerCase() === p.codigo.toLowerCase())
+      const dePaleta = p.paleta != null ? porCodigo.filter((a) => a.nPaleta === p.paleta) : []
+      const candidatas = dePaleta.length > 0 ? dePaleta : porCodigo
+      const conPendiente = candidatas.filter((a) => a.pendiente > EPS)
+      if (conPendiente.length === 0) {
         toast.info(`${objetivo.codigo}: ya está transferido completo`, {
           description: `Guía ${etiquetaGuia} — revisa su historial si necesitas moverlo.`,
         })
         return
       }
+      if (conPendiente.length > 1) {
+        toast.warning(
+          `Guía ${etiquetaGuia}: ${conPendiente.length} filas de ${objetivo.codigo} tienen pendiente y este rótulo viejo no identifica cuál es tu paleta`,
+          {
+            description:
+              'Abre la fila correcta en la tarjeta de la guía y pulsa Transferir. Para escaneo 1:1, reimprime los rótulos en Recepción (QR único por paleta).',
+            duration: 9000,
+          }
+        )
+        return
+      }
+      const objetivoFinal = conPendiente[0]
       // v2: sin lote/fechas SÍ se transfiere — aviso NO bloqueante; el diálogo
       // pedirá la confirmación explícita antes de mover la mercadería.
-      const faltan = datosFaltantes(objetivo)
+      const faltan = datosFaltantes(objetivoFinal)
       if (faltan.length > 0) {
-        toast.warning(`${objetivo.codigo}: sin ${faltan.join(', ')}`, {
+        toast.warning(`${objetivoFinal.codigo}: sin ${faltan.join(', ')}`, {
           description: `Guía ${etiquetaGuia} — al confirmar se pedirá confirmación; completa los datos después con Editar (Racks/Piso).`,
         })
       }
-      const mismos = arts.filter(
-        (a) => a.codigo.toLowerCase() === objetivo.codigo.toLowerCase() && a.id !== objetivo.id
-      )
-      toast.success(`Guía ${etiquetaGuia} · ${objetivo.codigo}${objetivo.nPaleta != null ? ` (Paleta ${objetivo.nPaleta})` : ''}`, {
-        description: mismos.length > 0
-          ? `Hay ${mismos.length + 1} filas con ese código — se transfiere la fila con pendiente; revisa la tarjeta si no es la correcta.`
+      const otros = candidatas.filter((a) => a.id !== objetivoFinal.id)
+      toast.success(`Guía ${etiquetaGuia} · ${objetivoFinal.codigo}${objetivoFinal.nPaleta != null ? ` (Paleta ${objetivoFinal.nPaleta})` : ''}`, {
+        description: otros.length > 0
+          ? `Hay ${candidatas.length} filas de este código — se transfiere la ÚNICA con pendiente; verifica que sea tu paleta.`
           : 'Elige destino (Rack o Piso) y posición.',
       })
-      abrirDialogo([objetivo])
+      abrirDialogo([objetivoFinal])
     } catch (err) {
       console.error('[Transito] Error resolviendo QR:', err)
       toast.error('Error al resolver el QR del rótulo')

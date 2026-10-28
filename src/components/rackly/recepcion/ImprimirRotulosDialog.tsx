@@ -259,6 +259,10 @@ export function ImprimirRotulosDialog({
   const totalEtiquetas = rotulos.reduce((s, _r, i) => s + (copias[i] ?? 1), 0)
   /** Artículos quedaron en 0 (reimpresión parcial: esos NO salen). */
   const enCero = rotulos.reduce((s, _r, i) => s + ((copias[i] ?? 1) === 0 ? 1 : 0), 0)
+  /** Rótulos SIN identidad de fila: llevan el QR de la GUÍA (o solo el Nº) —
+   *  compartido por todas las paletas del artículo. Al escanearlos, Atención/
+   *  Tránsito piden elegir la paleta en la lista (RIGOR 2026-10-28). */
+  const sinQrUnico = rotulos.filter((r) => !r.recepcionId).length
 
   function zplActual(): string {
     // copias ya viene normalizada (0..999, sin NaN): el 0 queda tal cual y
@@ -350,6 +354,15 @@ export function ImprimirRotulosDialog({
           {nota && (
             <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-800">
               {nota}
+            </p>
+          )}
+
+          {sinQrUnico > 0 && (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium leading-relaxed text-amber-800">
+              <b>{sinQrUnico} rótulo(s) saldrán con el QR de la GUÍA</b> (compartido por todas las
+              paletas del artículo): al escanearlos, el sistema pedirá elegir la paleta correcta en
+              la lista. Para que cada rótulo tenga su <b>QR único por paleta</b>, guarda la recepción
+              y reimprime desde la lista de recepciones.
             </p>
           )}
 

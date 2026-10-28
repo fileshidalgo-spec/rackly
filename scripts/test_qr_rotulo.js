@@ -314,14 +314,86 @@ t('ruta exacta: paleta de la fila va a la toma', () => {
   assert.strictEqual(res.toma.paleta, 3)
 })
 
-t('ruta legada: uuid de guía en el QR sigue resolviendo por FEFO entre candidatas', () => {
+console.log('— resolverToma: ruta LEGADA ESTRICTA (rótulos viejos compartidos) —')
+
+const TEXTO_LEGADO = `${PREFIJO_QR}|${GUIA}|T173-00005000|43684`
+
+t('ruta legada: guía con VARIAS paletas del código → ROTULO_COMPARTIDO (jamás adivina)', () => {
   const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222', fechaVencimiento: '2027-06-01' })
   const f2 = filaDe({ id: '33333333-3333-4333-8333-333333333333', fechaVencimiento: '2027-01-01' })
-  const textoLegado = `${PREFIJO_QR}|${GUIA}|T173-00005000|43684`
-  const res = resolverToma({ texto: textoLegado, codigoRq: '43684', filas: [f1, f2], carrito: [], nuevoUuid: () => 'u2' })
+  const res = resolverToma({ texto: TEXTO_LEGADO, codigoRq: '43684', filas: [f1, f2], carrito: [], nuevoUuid: () => 'u2' })
+  assert.strictEqual(res.estado, 'rechazada')
+  assert.strictEqual(res.razon, 'ROTULO_COMPARTIDO')
+})
+
+t('ruta legada: UNA sola candidata → se toma sola', () => {
+  const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222' })
+  const res = resolverToma({ texto: TEXTO_LEGADO, codigoRq: '43684', filas: [f1], carrito: [], nuevoUuid: () => 'u2' })
   assert.strictEqual(res.estado, 'ok')
-  // FEFO: menor vencimiento primero → f2
+  assert.strictEqual(res.toma.recepcionId, f1.id)
+})
+
+t('ruta legada: 2 candidatas, 1 ya en carrito → se toma la LIBRE (claridad progresiva)', () => {
+  const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222' })
+  const f2 = filaDe({ id: '33333333-3333-4333-8333-333333333333' })
+  const res = resolverToma({
+    texto: TEXTO_LEGADO, codigoRq: '43684', filas: [f1, f2],
+    carrito: [{ uuid: 'x', recepcionId: f1.id }], nuevoUuid: () => 'u2',
+  })
+  assert.strictEqual(res.estado, 'ok')
   assert.strictEqual(res.toma.recepcionId, f2.id)
+})
+
+t('ruta legada: TODAS ya en carrito → SIN_FILAS_DISPONIBLES (no tomas fantasma)', () => {
+  const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222' })
+  const res = resolverToma({
+    texto: TEXTO_LEGADO, codigoRq: '43684', filas: [f1],
+    carrito: [{ uuid: 'x', recepcionId: f1.id }], nuevoUuid: () => 'u2',
+  })
+  assert.strictEqual(res.estado, 'rechazada')
+  assert.strictEqual(res.razon, 'SIN_FILAS_DISPONIBLES')
+})
+
+t('ruta legada: paleta repetida en la guía (registro gemelo) → ROTULO_COMPARTIDO', () => {
+  const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222', nPaleta: 2, lote: 'LOTE-A' })
+  const f2 = filaDe({ id: '33333333-3333-4333-8333-333333333333', nPaleta: 2, lote: 'LOTE-B' })
+  const res = resolverToma({ texto: `${TEXTO_LEGADO}|P2`, codigoRq: '43684', filas: [f1, f2], carrito: [], nuevoUuid: () => 'u2' })
+  assert.strictEqual(res.estado, 'rechazada')
+  assert.strictEqual(res.razon, 'ROTULO_COMPARTIDO')
+})
+
+t('ruta legada: paleta ÚNICA (P2) → se toma', () => {
+  const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222', nPaleta: 2 })
+  const res = resolverToma({ texto: `${TEXTO_LEGADO}|P2`, codigoRq: '43684', filas: [f1], carrito: [], nuevoUuid: () => 'u2' })
+  assert.strictEqual(res.estado, 'ok')
+  assert.strictEqual(res.toma.recepcionId, f1.id)
+  assert.strictEqual(res.toma.paleta, 2)
+})
+
+t('ruta legada: paleta repetida con UNA libre (la otra en carrito) → se toma la libre', () => {
+  const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222', nPaleta: 2 })
+  const f2 = filaDe({ id: '33333333-3333-4333-8333-333333333333', nPaleta: 2 })
+  const res = resolverToma({
+    texto: `${TEXTO_LEGADO}|P2`, codigoRq: '43684', filas: [f1, f2],
+    carrito: [{ uuid: 'x', recepcionId: f1.id }], nuevoUuid: () => 'u2',
+  })
+  assert.strictEqual(res.estado, 'ok')
+  assert.strictEqual(res.toma.recepcionId, f2.id)
+})
+
+t('ruta legada sin identidad: el código vive en VARIAS guías → ROTULO_COMPARTIDO', () => {
+  const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222', guiaId: 'aaaa1111-2222-4333-8444-555566667777', numeroDocumento: 'G-1' })
+  const f2 = filaDe({ id: '33333333-3333-4333-8333-333333333333', guiaId: 'bbbb1111-2222-4333-8444-555566667777', numeroDocumento: 'G-2' })
+  const res = resolverToma({ texto: `${PREFIJO_QR}||T173-00005000|43684`, codigoRq: '43684', filas: [f1, f2], carrito: [], nuevoUuid: () => 'u2' })
+  assert.strictEqual(res.estado, 'rechazada')
+  assert.strictEqual(res.razon, 'ROTULO_COMPARTIDO')
+})
+
+t('ruta legada sin identidad: UNA sola fila del código → se toma', () => {
+  const f1 = filaDe({ id: '22222222-2222-4222-8222-222222222222', guiaId: 'aaaa1111-2222-4333-8444-555566667777' })
+  const res = resolverToma({ texto: `${PREFIJO_QR}||T173-00005000|43684`, codigoRq: '43684', filas: [f1], carrito: [], nuevoUuid: () => 'u2' })
+  assert.strictEqual(res.estado, 'ok')
+  assert.strictEqual(res.toma.recepcionId, f1.id)
 })
 
 console.log(`\n${ok} tests OK`)

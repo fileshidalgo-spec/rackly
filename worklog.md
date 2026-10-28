@@ -166,3 +166,27 @@ Stage Summary:
   download/backup_negativos_19oct.json. Resultado: 0 artefactos; solo queda el déficit
   real 57630 @ 1/1/2/12 (-221,202, decisión de negocio ya documentada).
 - Scripts: scripts/{auditoria_bd,clasifica_negativos,rebalanceo_lotes,traza_negativos}.py
+
+---
+## 2026-10-28 · Registrar RAL (Atención) — verificación E2E del autollenado + UND pegada
+- Verificación integral del fix 1206e64 (pantalla ERP sin dos puntos): parser auditado
+  línea por línea; 59 checks de test_ral_ocr en verde; entorno reconstruido
+  (npm install — 28 suites afectadas por node_modules vacío, ya sanado).
+- DB en producción verificada: rals/ral_items + RPC ral_crear_completa (atómica,
+  idempotente) + RLS espejo de rq_* (DELETE solo admin/supervisores). Tabla rals
+  vacía: el usuario reportó desde la pantalla de confirmación, nunca llegó a guardar.
+- E2E real de la RPC vía Management API (scripts/test_ral_rpc_e2e.py, 16 checks):
+  cada campo en SU columna (area_solicitante ≠ solicitante), item completo
+  (código/desc/und/centro/cantidad), idempotencia ante reintento, limpieza total.
+- Robustez ante NUEVA foto: suite test_ral_ocr_ruido (26 checks) con variantes
+  adversarias del ERP (espacios dobles, gluing, decimales perdidos, encabezado
+  partido, fusión de pases). Halló 1 gap residual: UND pegada a la última palabra
+  del artículo ("SAL INDUSTRIALKG") quedaba vacía.
+- Fix 782bf0e: helper unidadPegada() en ral-ocr.ts — separa sufijo unidad (≥2
+  letras) si el prefijo conserva ≥3; aplicado en búsqueda derecha (d) y segunda
+  pasada (d2). rq-ocr NO tocado (formato distinto, rigor 26/26 intacto).
+- Deploy: GitHub Actions success → rackly.pages.dev v=202610281955-782bf0e.
+- Remote git tenía token viejo (ghp_CqrC…AJ7N, rechazado en push): actualizado al
+  PAT vigente. Reconstruido scripts/sb_config.py (Management API, ref
+  owjryvcrhpmgtkkdcrkm) — el entorno reset lo había borrado.
+- 29/29 suites · tsc OK · eslint OK · build OK.

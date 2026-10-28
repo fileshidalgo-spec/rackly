@@ -493,7 +493,12 @@ export function validarEdicionRq(
       errores.push(`El material ${codigo} ya no existe en la RQ: recarga la pantalla e inténtalo de nuevo.`)
       continue
     }
-    if (it.cantidad < previo.cantidadAtendida) {
+    // Task 34: la regla solo aplica cuando la edición CAMBIA la cantidad.
+    // Un item SOBREATENDIDO (la atención admite "atender más de lo pedido" y
+    // estadoDeItem ya reconoce el excedente) llega con cantidad < cantidadAtendida
+    // SIN que el usuario lo toque: marcarlo como error dejaba TODA la RQ
+    // ineditable (Guardar deshabilitado siempre → "no me deja guardar").
+    if (it.cantidad !== previo.cantidad && it.cantidad < previo.cantidadAtendida) {
       errores.push(
         `${previo.codigo}: pides ${fmtNum(it.cantidad)} pero ya se atendieron ${fmtNum(previo.cantidadAtendida)} — primero revierte su atención.`
       )
@@ -574,7 +579,9 @@ export function payloadRpcEditarRq(
  * transacción en la BD: RPC rq_editar_rq.
  *
  * Integridad física (la RPC rechaza con mensaje claro):
- *   · cantidad nueva < cantidad_atendida          → CANTIDAD_MENOR_ATENDIDA
+ *   · cantidad CAMBIADA a < cantidad_atendida     → CANTIDAD_MENOR_ATENDIDA
+ *     (Task 34: un item sobreatendido SIN modificar no rechaza — antes la
+ *      regla manta dejaba ineditables las RQ con "atender más de lo pedido")
  *   · código/unidad de un material con atención   → ITEM_CON_ATENCION
  *   · eliminar material con atención registrada   → ITEM_CON_ATENCION
  *

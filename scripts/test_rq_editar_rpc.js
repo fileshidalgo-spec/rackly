@@ -138,6 +138,44 @@ check('id inexistente → pide recargar', validarEdicionRq([
 ], ACTUALES).some((e) => e.includes('recarga')) === true)
 
 // ═══════════════════════════════════════════════════════════════════
+// 2.b) SOBREATENCIÓN (Task 34): items con atendida > cantidad eran legítimos
+// (la atención admite "atender más de lo pedido") pero la regla manta de
+// cantidad < atendida los marcaba SIEMPRE como error → RQ ineditable.
+// ═══════════════════════════════════════════════════════════════════
+
+// RQ con un material SOBREATENDIDO (se pidieron 6, se atendieron 20) + uno normal
+const SOBRE = [
+  { id: 'b-1', rqId: 'rq-2', orden: 0, codigo: 'MAT-S', descripcion: 'Sobreatendido', unidad: 'UN', cantidad: 6, cantidadAtendida: 20, usuarioAtencion: '', atendidoEn: '' },
+  { id: 'b-2', rqId: 'rq-2', orden: 1, codigo: 'MAT-T', descripcion: 'Pendiente', unidad: 'KG', cantidad: 50, cantidadAtendida: 0, usuarioAtencion: '', atendidoEn: '' },
+]
+
+// FIX: el item sobreatendido SIN modificar NO produce error (el corazón del bug)
+const edSobreSinTocar = [
+  { id: 'b-1', orden: 0, codigo: 'MAT-S', descripcion: 'Sobreatendido', unidad: 'UN', cantidad: 6 },
+  { id: 'b-2', orden: 1, codigo: 'MAT-T', descripcion: '', unidad: 'KG', cantidad: 50 },
+]
+check('sobreatendido sin modificar = 0 errores (Task 34)', validarEdicionRq(edSobreSinTocar, SOBRE).length === 0)
+
+// Corregir la cantidad del sobreatendido HACIA ARRIBA (≥ atendida) es válido
+check('sobreatendido corregido a ≥ atendida = 0 errores', validarEdicionRq([
+  { id: 'b-1', orden: 0, codigo: 'MAT-S', descripcion: '', unidad: 'UN', cantidad: 20 },
+  { id: 'b-2', orden: 1, codigo: 'MAT-T', descripcion: '', unidad: 'KG', cantidad: 50 },
+], SOBRE).length === 0)
+
+// Cambiar la cantidad a algo menor que la atendida SIGUE rechazándose
+check('sobreatendido cambiado a < atendida → rechaza', validarEdicionRq([
+  { id: 'b-1', orden: 0, codigo: 'MAT-S', descripcion: '', unidad: 'UN', cantidad: 10 },
+  { id: 'b-2', orden: 1, codigo: 'MAT-T', descripcion: '', unidad: 'KG', cantidad: 50 },
+], SOBRE).some((e) => e.includes('MAT-S') && e.includes('revierte')) === true)
+
+// Regla de reducción intacta en item normal atendido (no sobreatendido)
+check('reducir cantidad bajo lo atendido sigue rechazando (regla Task 26)', validarEdicionRq([
+  { id: 'a-1', orden: 0, codigo: 'MAT-A', descripcion: '', unidad: 'KG', cantidad: 3 },
+  { id: 'a-2', orden: 1, codigo: 'MAT-B', descripcion: '', unidad: 'UN', cantidad: 20 },
+  { id: 'a-3', orden: 2, codigo: 'MAT-C', descripcion: '', unidad: 'KG', cantidad: 30 },
+], ACTUALES).some((e) => e.includes('MAT-A') && e.includes('revierte')) === true)
+
+// ═══════════════════════════════════════════════════════════════════
 // 3) Regresión: helpers intactos tras ampliar RqAtencion (ediciones)
 // ═══════════════════════════════════════════════════════════════════
 

@@ -20,8 +20,11 @@
 --       - ausentes    → DELETE (SOLO si cantidad_atendida = 0)
 --     p_items vacío/NULL = "no tocar materiales" (edición solo de encabezado).
 --   · Guardas de integridad física:
---       - cantidad nueva < cantidad_atendida → RECHAZA (no se puede pedir
---         menos de lo que ya salió del almacén: primero revertir).
+--       - cantidad CAMBIADA a < cantidad_atendida → RECHAZA (no se puede
+--         pedir menos de lo que ya salió del almacén: primero revertir).
+--         Task 34: un item SOBREATENDIDO sin modificar (atendió más de lo
+--         pedido — permitido por rq_atender_item) pasa tal cual; antes la
+--         regla manta dejaba ineditables TODAS las RQ con sobreatención.
 --       - código/unidad de un item con atención registrada → RECHAZA
 --         (la salida física quedó asociada a ese material).
 --       - eliminar item con atención registrada → RECHAZA (mismo motivo).
@@ -204,7 +207,11 @@ BEGIN
       IF v_cant IS NULL OR v_cant <= 0 THEN
         RAISE EXCEPTION 'CANTIDAD_INVALIDA|La cantidad de % debe ser mayor que cero', v_codigo;
       END IF;
-      IF v_cant < v_item.cantidad_atendida THEN
+      -- Task 34: solo rechaza si la edición CAMBIA la cantidad a algo menor
+      -- que lo atendido. Un item SOBREATENDIDO sin modificar (atendió más de
+      -- lo pedido — permitido por rq_atender_item) debe pasar tal cual: antes
+      -- la regla manta dejaba ineditables TODAS las RQ con sobreatención.
+      IF v_cant <> v_item.cantidad AND v_cant < v_item.cantidad_atendida THEN
         RAISE EXCEPTION 'CANTIDAD_MENOR_ATENDIDA|% pide % pero ya se atendieron %: primero revierte la atención de ese material',
           v_codigo, v_cant, v_item.cantidad_atendida;
       END IF;

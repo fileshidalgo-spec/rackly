@@ -365,7 +365,14 @@ export function TrasladoTab() {
   }
 
   async function doTraslado() {
-    if (!origin || !perfil) return
+    // FIX auditoría 2026-10-29: si el origen se drenó mientras el diálogo de
+    // confirmación estaba abierto (refresco realtime), antes el click no hacía
+    // NADA — sin toast, con el diálogo abierto y el usuario sin saber por qué.
+    if (!origin || !perfil) {
+      toast.error('El lote origen ya no tiene stock; actualiza la lista y reintenta')
+      setConfirm(false)
+      return
+    }
     setBusy(true)
     try {
       // ══ FIX auditoría 2026-10-21 (P1): TRASLADO LOTE-POR-LOTE ══
@@ -868,15 +875,29 @@ export function TrasladoTab() {
               : 'border-sky-200 bg-sky-50/70 dark:border-sky-800 dark:bg-sky-950/20'
           }`}>
             {trasladoTotal ? (
-              <>
-                <div className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
-                  <Package className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                </div>
-                <p className="text-xs text-emerald-700 dark:text-emerald-300">
-                  <strong>Traslado Total:</strong> Se moverán <strong>todas las {originTotal} {origin.un}</strong> (todos los lotes de la posición) al destino.
-                  La ubicación de origen quedará con <strong>stock 0</strong>.
-                </p>
-              </>
+              // FIX auditoría 2026-10-29: en modo Total POR LOTE (qty = stock del
+              // lote < originTotal), la posición NO queda en 0 — mismo predicado
+              // que los textos del diálogo (líneas ~975/~1112).
+              qtyNum === 0 || qtyNum >= originTotal ? (
+                <>
+                  <div className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
+                    <Package className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                    <strong>Traslado Total:</strong> Se moverán <strong>todas las {originTotal} {origin.un}</strong> (todos los lotes de la posición) al destino.
+                    La ubicación de origen quedará con <strong>stock 0</strong>.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
+                    <Package className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                    <strong>Traslado Total (por lote):</strong> Se moverá el lote completo ({qtyNum} {origin.un}). Quedará un saldo de <strong>{saldoRestante} {origin.un}</strong> en la ubicación.
+                  </p>
+                </>
+              )
             ) : (
               <>
                 <div className="w-7 h-7 rounded-full bg-sky-100 dark:bg-sky-900/40 flex items-center justify-center shrink-0">
@@ -1190,7 +1211,9 @@ export function TrasladoTab() {
                     Saldo en origen: {saldoRestante} {origin?.un}
                   </Badge>
                 )}
-                {(trasladoTotal || corregirDiferencia || excedeStock) && (
+                {(corregirDiferencia ||
+                  excedeStock ||
+                  (trasladoTotal && (qtyNum === 0 || qtyNum >= originTotal))) && (
                   <Badge variant="outline" className="border-emerald-300 text-emerald-700 dark:text-emerald-300 text-xs font-semibold">
                     Origen quedará en 0
                   </Badge>

@@ -107,15 +107,21 @@ export function MovimientosTab() {
   const [deleteBusy, setDeleteBusy] = useState(false)
 
   // Refresh function for realtime + polling
+  const cargaGenRef = useRef(0)
   const refreshMovimientos = useCallback(async () => {
     // Pestaña oculta (otro módulo/tab visible): saltar el refresco pesado (hasta
     // 5.000 cabeceras + detalles + resolución de ubicaciones). Ya hay datos en
     // pantalla; el próximo evento realtime o poll con la pestaña visible los
     // actualiza. Si aún no hay datos se carga igualmente para no dejar spinner eterno.
     if (typeof document !== 'undefined' && document.hidden && movimientosRef.current.length > 0) return
+    // FIX auditoría 2026-10-29: guard generacional (espejo de TransitoModule)
+    // — el realtime dispara un refresh por evento sin coalescer y el polling
+    // va cada 8 s; dos listarMovimientos concurrentes podían resolver fuera de
+    // orden y el VIEJO pisaba al nuevo (lista sin el último movimiento).
+    const gen = ++cargaGenRef.current
     try {
       const data = await listarMovimientos()
-      if (mountedRef.current) {
+      if (mountedRef.current && gen === cargaGenRef.current) {
         setMovimientos(data)
         setLoadError(false)
       }

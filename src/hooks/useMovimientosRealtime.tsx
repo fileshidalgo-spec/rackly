@@ -154,8 +154,12 @@ async function pollCheck() {
   const head = await leerHead()
   if (!head) return
   if (head.count === headSnapshot.count && head.last === headSnapshot.last) return
-  headSnapshot = head
-  // La head SÍ cambió (verificado barato): forzar aunque esté dentro del TTL
+  // La head SÍ cambió (verificado barato): forzar aunque esté dentro del TTL.
+  // FIX auditoría 2026-10-29: el snapshot NO se avanza aquí — solo cuando el
+  // refetch tiene ÉXITO (sincronización en refreshAndBroadcast). Si se avanza
+  // antes y el refetch falla (blip de red con WebSocket caído), el próximo tic
+  // ve head === snapshot y el cambio queda congelado sin datos frescos ni
+  // reintentos; ahora cada tic re-detecta y reintenta hasta lograrlo.
   refreshAndBroadcast({ fuerza: true })
 }
 

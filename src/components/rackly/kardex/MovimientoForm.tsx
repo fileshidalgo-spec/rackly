@@ -230,7 +230,11 @@ function IngresoForm({
 
   // Dar salida a un producto desde el alerta de ubicación ocupada
   async function handleSalidaDesdeAlerta(stockItem: StockEnUbicacion) {
-    setSalidaBusy(stockItem.codigo)
+    // FIX auditoría 2026-10-29 (P3 espejo de TrasladoTab): la clave de
+    // salidaBusy distingue código normal vs INC y lotes — antes una posición
+    // con "ABC" normal y "ABC" INC deshabilitaba ambos botones a la vez.
+    const claveSalida = `${stockItem.codigo}|${stockItem.codigoInc ?? ''}|${stockItem.fVencimiento ?? ''}|${stockItem.loteFisico ?? ''}`
+    setSalidaBusy(claveSalida)
     try {
       const movs = await addMovimiento({
         tipo: 'salida',
@@ -548,10 +552,10 @@ function IngresoForm({
                           size="sm"
                           variant="outline"
                           onClick={() => handleSalidaDesdeAlerta(s)}
-                          disabled={salidaBusy === s.codigo}
+                          disabled={salidaBusy === `${s.codigo}|${s.codigoInc ?? ''}|${s.fVencimiento ?? ''}|${s.loteFisico ?? ''}`}
                           className="h-9 px-3 text-xs font-semibold border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 hover:border-red-300 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/50 dark:hover:text-red-300 dark:hover:border-red-700 flex-shrink-0 gap-1.5 self-center"
                         >
-                          {salidaBusy === s.codigo ? (
+                          {salidaBusy === `${s.codigo}|${s.codigoInc ?? ''}|${s.fVencimiento ?? ''}|${s.loteFisico ?? ''}` ? (
                             <><Loader2 className="h-3 w-3 animate-spin" /> Procesando...</>
                           ) : (
                             <><ArrowUpFromLine className="h-3 w-3" /> Dar Salida</>
@@ -1741,7 +1745,9 @@ function SalidaIncForm({
     const loc = locations.find((l) => makeKey(l) === locKey)
     if (!loc) return
     const qtyVal = qtyMap[locKey] || ''
-    const qtyNum = parseFloat(qtyVal)
+    // FIX auditoría 2026-10-29 (P2 espejo de SalidaForm): aNumero soporta coma
+    // decimal (es-PE). parseFloat('1,5') = 1 — registraba 1 en vez de 1.5.
+    const qtyNum = aNumero(qtyVal)
     if (isNaN(qtyNum) || qtyNum <= 0) {
       toast.error('Ingresa una cantidad válida para la salida parcial')
       return
@@ -2005,9 +2011,8 @@ function SalidaIncForm({
                   )}
                   <div className="flex gap-2 pt-1" onClick={(e) => e.stopPropagation()}>
                     <Input
-                      type="number"
-                      step="any"
-                      min="0.001"
+                      type="text"
+                      inputMode="decimal"
                       value={qtyMap[key] || ''}
                       onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
                       placeholder="Parcial (puede exceder stock)"
@@ -2098,9 +2103,8 @@ function SalidaIncForm({
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <Input
-                          type="number"
-                          step="any"
-                          min="0.001"
+                          type="text"
+                          inputMode="decimal"
                           value={qtyMap[key] || ''}
                           onChange={(e) => setQtyMap((prev) => ({ ...prev, [key]: e.target.value }))}
                           placeholder="Parcial (puede exceder)"
@@ -2265,7 +2269,8 @@ function SalidaIncForm({
               {locations.filter((l) => selected.has(makeKey(l))).map((loc) => {
                 const key = makeKey(loc)
                 const qtyVal = qtyMap[key] || ''
-                const qtyNum = qtyVal ? parseFloat(qtyVal) : loc.stock
+                // aNumero (coma decimal es-PE), espejo de doMassSalida.
+                const qtyNum = qtyVal ? aNumero(qtyVal) : loc.stock
                 return (
                   <div key={key} className="rounded-xl border border-rose-200 dark:border-rose-800 bg-white dark:bg-slate-950 p-3">
                     <div className="flex items-start gap-3">

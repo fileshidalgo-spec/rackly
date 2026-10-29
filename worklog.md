@@ -274,3 +274,47 @@ Stage Summary:
   131 tomas (129 salidas/2 reversas) · 156/210 materiales completados ·
   lotes legados 'BACKFILL-27' sin vencimiento degradan a columna vacía
   (limitación de dato, no bug; lotes reales p.ej. 1810-26 sí resuelven).
+## 2026-10-30 · Atención: RAL unificado con RQ — una sola lista y mismo modelo de atención
+- 1.1/1.2 Reporte: «la atención de RAL debe ser el mismo modelo que la de RQ
+  y todo debe aparecer en UNA sola lista — quizás con una distinción que diga
+  RAL — para filtrar y buscar más rápido». Hallazgo en BD: rals SIN columna
+  estado y ral_items SIN cantidad_atendida/usuario_atencion/atendido_en — el
+  RAL era un documento de solo lectura (ver/eliminar), imposible de atender.
+- 2 Causa: Task 36 diseñó el RAL como registro de documentos con aislamiento
+  total, sin espejar el modelo de atención de la RQ (estado canónico v9 +
+  items atendibles + RPC atómica).
+- 3 Sin repetición: rals/ral_items solo los toca el módulo Atención (ral.ts,
+  RalLista, panel). Dashboard/Excel (atencion-reporte.ts) leen SOLO rq_* —
+  intactos. Volumen en producción al migrar: 0 filas (riesgo ≈ 0).
+- 4 Vía elegida: espejo EXACTO del patrón RQ probado. Migración aditiva
+  (supabase/migrations/20261030_ral_modelo_atencion.sql): rals.estado,
+  ral_items.cantidad_atendida/usuario_atencion/atendido_en, índice
+  idx_ral_items_ral_id, RPCs ral_atender_item/ral_revertir_item (guard de
+  rol, incremento/decremento atómico, sobreatención permitida, regla
+  canónica de estado), RLS UPDATE en rals.
+- 5 CONFLICTO EVITADO (hallado por E2E 19/19 en producción con JWT real,
+  scripts/test_ral_atencion_e2e.py): crear la política solo con
+  `with check(true)` deja qual=NULL y el UPDATE afecta 0 FILAS en silencio
+  (el estado nunca cambiaba). rq_update_auth tiene using(true) EXPLÍCITO —
+  rals_update_auth replicada tal cual. ral_crear_completa no se toca
+  (defaults aplican: Pendiente / 0).
+- 6/7 Implementación: atencion-unificada.ts NUEVO (puro: FilaUnificada,
+  textoBusquedaRal, coincideFiltroRal, conteosEstado, unirFilasAtencion —
+  fecha DESC + created_at de desempate; turno excluye RAL: no tiene);
+  ral.ts +atenderItemRal/revertirItemRal (RPC-first + respaldo optimista con
+  guard por igualdad, espejo rq-atencion.ts) + estado mapeado con default
+  Pendiente + listarRals limit 300; RqAtencionPanel: lista unificada
+  (tabla FilaRqTabla/FilaRalTabla + tarjetas móviles) con badge violeta
+  "RAL", realtime 'rals' adicional, eliminación RAL integrada, vista
+  'detalle-ral'; RalDetalle NUEVO (ATENDIDO/PENDIENTE/ATENDER + confirmación
+  + excedente + reversa + progreso — sin ubicaciones/QR/lotes: el RAL no
+  tiene modelo lote/posición); RalLista.tsx eliminada (absorbida).
+- Tests: scripts/test_ral_unificado.js (31 checks: unión/orden/filtros/
+  conteos + RPC-first + respaldos + recálculo); stub +__updateCalls/
+  __setUpdateResult/pendingUpdate (aditivo, no rompe suites previos).
+  32/32 suites · tsc OK · eslint OK · build OK.
+- Deploy a4142d3 → rackly.pages.dev v=202610291658-a4142d3. Post-deploy:
+  listarRals con estado 200, RPCs en schema cache (error de negocio, no 404),
+  ral_items expone columnas de atención.
+
+---

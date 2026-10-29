@@ -36,6 +36,7 @@ import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { RqFotoForm, type RqRegistradaInfo } from '@/components/rackly/atencion/RqFotoForm'
 import { RalFotoForm } from '@/components/rackly/atencion/RalFotoForm'
 import { RalLista } from '@/components/rackly/atencion/RalLista'
+import { RqDashboard } from '@/components/rackly/atencion/RqDashboard'
 import { RqDetalle } from '@/components/rackly/atencion/RqDetalle'
 import { RqEditarDialog } from '@/components/rackly/atencion/RqEditarDialog'
 import { Badge } from '@/components/ui/badge'
@@ -71,6 +72,7 @@ import {
   Pencil,
   X,
   FilePlus2,
+  BarChart3,
 } from 'lucide-react'
 
 const PAGE_SIZE = 50
@@ -84,7 +86,7 @@ const ESTADO_CLASE: Record<string, string> = {
   Atendido: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 }
 
-type Vista = 'lista' | 'nueva' | 'nueva-ral' | 'detalle'
+type Vista = 'lista' | 'nueva' | 'nueva-ral' | 'detalle' | 'dashboard'
 
 export function RqAtencionPanel({
   onIrARacks,
@@ -257,6 +259,11 @@ export function RqAtencionPanel({
     }
   }
 
+  // ── DASHBOARD (reporte de atención a líneas) ──
+  if (vista === 'dashboard') {
+    return <RqDashboard />
+  }
+
   // ── DETALLE ──
   if (vista === 'detalle' && rqAbiertaId) {
     return (
@@ -302,6 +309,16 @@ export function RqAtencionPanel({
             className="w-full sm:w-auto gap-2 h-10 bg-gradient-to-r from-violet-500 to-purple-600 text-white hover:from-violet-600 hover:to-purple-700"
           >
             <FilePlus2 className="h-4 w-4" /> Nuevo RAL
+          </Button>
+        </div>
+        {/* Reporte de atención a líneas: dashboard + Excel descargable. */}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setVista('dashboard')}
+            className="w-full sm:w-auto gap-2 h-10"
+          >
+            <BarChart3 className="h-4 w-4" /> Dashboard
           </Button>
         </div>
         <p className="text-xs text-slate-500 sm:ml-1">

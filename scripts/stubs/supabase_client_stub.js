@@ -3,11 +3,24 @@
  * dataClient.from(tabla) devuelve un builder encadenable THENABLE que resuelve
  * con las filas enlatadas de __setTable(tabla, rows). Las mutaciones resuelven
  * vacío. Permite probar la lógica de consulta de api.ts sin red.
+ *
+ * Aditivos 2026-10-30 (atención RAL unificada — no rompen suites previos):
+ *   · __updateCalls()      → captura {table, payload} de cada update().
+ *   · __setUpdateResult(r) → el PRÓXIMO update().select().maybeSingle()
+ *     resuelve r una vez (camino respaldo optimista de atender/revertir).
+ *   · maybeSingle() resuelve la PRIMERA fila enlatada de la tabla cuando no
+ *     hay updateResult pendiente (lectura única en respaldos).
  */
 const tables = {}
 /** Captura de llamadas or() por tabla — para tests de composición de filtros.
  *  Aditivo (2026-10-29): los suites existentes no leen esto. */
 const orCalls = []
+/** Captura de updates {table, payload} — aditivo 2026-10-30. */
+const updateCalls = []
+/** Resultado pendiente para update().select().maybeSingle() (un uso). */
+let updateResult = null
+/** El próximo maybeSingle pertenece a un update (sirve updateResult, no tabla). */
+let pendingUpdate = false
 
 function builder(table) {
   const p = {
@@ -22,11 +35,24 @@ function builder(table) {
     not() { return p },
     textSearch() { return p },
     contains() { return p },
-    maybeSingle() { return Promise.resolve({ data: null, error: null }) },
+    maybeSingle() {
+      if (pendingUpdate) {
+        pendingUpdate = false
+        const r = updateResult ?? { data: null, error: null }
+        updateResult = null
+        return Promise.resolve(r)
+      }
+      const rows = tables[table] ?? []
+      return Promise.resolve({ data: rows[0] ?? null, error: null })
+    },
     single() { return Promise.resolve({ data: null, error: null }) },
     upsert() { return Promise.resolve({ data: null, error: null }) },
     insert() { return Promise.resolve({ data: null, error: null }) },
-    update() { return Promise.resolve({ data: null, error: null }) },
+    update(payload) {
+      updateCalls.push({ table, payload })
+      pendingUpdate = true
+      return p
+    },
     delete() { return Promise.resolve({ data: null, error: null }) },
     then(resolve, reject) {
       return Promise.resolve({ data: tables[table] ?? [], error: null }).then(resolve, reject)
@@ -48,8 +74,13 @@ module.exports = {
   },
   __setTable(t, rows) { tables[t] = rows },
   __orCalls() { return orCalls.slice() },
+  __updateCalls() { return updateCalls.slice() },
+  __setUpdateResult(r) { updateResult = r },
   __clear() {
     for (const k of Object.keys(tables)) delete tables[k]
     orCalls.length = 0
+    updateCalls.length = 0
+    updateResult = null
+    pendingUpdate = false
   },
 }

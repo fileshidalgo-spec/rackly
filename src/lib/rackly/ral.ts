@@ -38,6 +38,12 @@ export type RalRegistro = {
   usuarioId: string
   usuarioNombre: string
   usuarioCorreo: string
+  /** Modelo de atención UNIFICADO con la RQ (2026-10-30): 'Pendiente' |
+   *  'En proceso' | 'Atendido' — lo mantienen las RPC ral_atender_item /
+   *  ral_revertir_item con la MISMA regla canónica de la RQ (Task 26):
+   *  Atendido = nada pendiente · En proceso = hay algo atendido ·
+   *  Pendiente = nada atendido. */
+  estado: string
   /** Cantidad de materiales (rellenada por listarRals con los items). */
   articulos: number
   /** «codigo descripcion» de cada material concatenado — lo rellena
@@ -57,6 +63,10 @@ export type RalItem = {
   unidad: string
   centroCostos: string
   cantidad: number
+  /** Atención (misma forma que rq_atencion_items — lista unificada). */
+  cantidadAtendida: number
+  usuarioAtencion: string
+  atendidoEn: string
 }
 
 export type RalCompleta = { ral: RalRegistro; items: RalItem[] }
@@ -107,6 +117,7 @@ function filaARal(f: FilaRal): RalRegistro {
     usuarioId: String(f.usuario_id ?? ''),
     usuarioNombre: String(f.usuario_nombre ?? ''),
     usuarioCorreo: String(f.usuario_correo ?? ''),
+    estado: String(f.estado ?? '') || 'Pendiente',
     articulos: 0, // lo rellena listarRals con los items reales
     textoItems: '', // ídem (código+descripción de los items, para búsqueda)
   }
@@ -122,6 +133,9 @@ function filaARalItem(f: FilaRal): RalItem {
     unidad: String(f.unidad ?? ''),
     centroCostos: String(f.centro_costos ?? ''),
     cantidad: Number(f.cantidad ?? 0),
+    cantidadAtendida: Number(f.cantidad_atendida ?? 0),
+    usuarioAtencion: String(f.usuario_atencion ?? ''),
+    atendidoEn: String(f.atendido_en ?? ''),
   }
 }
 
@@ -130,12 +144,40 @@ function filaARalItem(f: FilaRal): RalItem {
 // ═══════════════════════════════════════════════════════════════════
 
 /**
+ * Recalcula el estado del encabezado según sus materiales (respaldo RPC).
+ * Misma regla canónica v9 de recalcularEstadoRq (rq-atencion.ts).
+ */
+async function recalcularEstadoRal(ralId: string): Promise<void> {
+  const { data: items, error: eItems } = await dataClient
+    .from('ral_items')
+    .select('cantidad, cantidad_atendida')
+    .eq('ral_id', ralId)
+  if (eItems) throw eItems
+  const filas = (items ?? []) as Record<string, unknown>[]
+  const pendientes = filas.filter(
+    (f) => Number(f.cantidad_atendida ?? 0) < Number(f.cantidad ?? 0)
+  ).length
+  const algunoAtendido = filas.some((f) => Number(f.cantidad_atendida ?? 0) > 0)
+  const estado =
+    filas.length === 0
+      ? 'Pendiente'
+      : pendientes === 0
+        ? 'Atendido'
+        : algunoAtendido
+          ? 'En proceso'
+          : 'Pendiente'
+  const { error: eEstado } = await dataClient.from('rals').update({ estado }).eq('id', ralId)
+  if (eEstado) throw eEstado
+}
+
+/**
  * Lista los RALs más recientes con su conteo de materiales y el TEXTO de
  * búsqueda por materiales. Dos lecturas (headers + items) y agrupado en el
  * cliente: volumen pequeño (documentos registrados por jornada), evita una
- * vista SQL extra en la BD.
+ * vista SQL extra en la BD. La lista unificada RQ+RAL carga TODOS los RAL
+ * (300) para filtrarlos en cliente — sin paginación ni huecos de búsqueda.
  */
-export async function listarRals(limite = 100): Promise<RalRegistro[]> {
+export async function listarRals(limite = 300): Promise<RalRegistro[]> {
   const { data: headers, error: eH } = await dataClient
     .from('rals')
     .select('*')
@@ -343,4 +385,98 @@ export async function crearRal(
 export async function eliminarRal(id: string): Promise<void> {
   const { error } = await dataClient.from('rals').delete().eq('id', id)
   if (error) throw error
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ATENCIÓN (modelo unificado con la RQ — espejo de rq-atencion.ts)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Registra cantidad atendida de un material del RAL. RPC atómica
+ * ral_atender_item (espejo rq_atender_item v8): suma, sella atendido_en al
+ * completar y recalcula el estado del encabezado en UNA transacción — dos
+ * celulares atendiendo a la vez nunca corrompen el estado.
+ *
+ * Sin tomas/ledger: el RAL no tiene modelo lote/posición (materiales
+ * generales de almacén), a diferencia de la RQ.
+ *
+ * Sobreatención permitida (igual que la RQ v2): puede ser más, nunca menos.
+ */
+export async function atenderItemRal(
+  itemId: string,
+  cantidad: number,
+  usuarioNombre: string
+): Promise<RalItem> {
+  const { data, error } = await dataClient.rpc('ral_atender_item', {
+    p_item_id: itemId,
+    p_cantidad: cantidad,
+    p_usuario: usuarioNombre,
+  })
+  if (!error && data) return filaARalItem(data as FilaRal)
+
+  // Respaldo (RPC no disponible): lectura → suma con guard optimista
+  const razon = error?.message ?? ''
+  if (/excede|mayor que cero|no encontrado|NO_AUTORIZADO/i.test(razon)) throw new Error(razon)
+  const { data: previo, error: ePrevio } = await dataClient
+    .from('ral_items')
+    .select('*')
+    .eq('id', itemId)
+    .maybeSingle()
+  if (ePrevio) throw ePrevio
+  if (!previo) throw new Error('Artículo no encontrado')
+  const itemPrevio = filaARalItem(previo as FilaRal)
+  if (cantidad <= 0) throw new Error('La cantidad a atender debe ser mayor que cero')
+  const nuevo = itemPrevio.cantidadAtendida + cantidad
+  const { data: upd, error: eUpd } = await dataClient
+    .from('ral_items')
+    .update({
+      cantidad_atendida: nuevo,
+      usuario_atencion: usuarioNombre || itemPrevio.usuarioAtencion,
+      atendido_en: nuevo >= itemPrevio.cantidad ? new Date().toISOString() : null,
+    })
+    .eq('id', itemId)
+    .eq('cantidad_atendida', itemPrevio.cantidadAtendida) // guard optimista
+    .select()
+    .maybeSingle()
+  if (eUpd) throw eUpd
+  if (!upd)
+    throw new Error('Otro usuario atendió este artículo al mismo tiempo. Recarga e intenta de nuevo.')
+  await recalcularEstadoRal(itemPrevio.ralId)
+  return filaARalItem(upd as FilaRal)
+}
+
+/** Revierte una atención equivocada del RAL (devuelve la cantidad al pendiente). */
+export async function revertirItemRal(itemId: string, cantidad: number): Promise<RalItem> {
+  const { data, error } = await dataClient.rpc('ral_revertir_item', {
+    p_item_id: itemId,
+    p_cantidad: cantidad,
+  })
+  if (!error && data) return filaARalItem(data as FilaRal)
+
+  const razon = error?.message ?? ''
+  if (/mayor que cero|no encontrado|NO_AUTORIZADO/i.test(razon)) throw new Error(razon)
+  const { data: previo, error: ePrevio } = await dataClient
+    .from('ral_items')
+    .select('*')
+    .eq('id', itemId)
+    .maybeSingle()
+  if (ePrevio) throw ePrevio
+  if (!previo) throw new Error('Artículo no encontrado')
+  const itemPrevio = filaARalItem(previo as FilaRal)
+  const nuevo = Math.max(itemPrevio.cantidadAtendida - cantidad, 0)
+  const { data: upd, error: eUpd } = await dataClient
+    .from('ral_items')
+    .update({
+      cantidad_atendida: nuevo,
+      atendido_en: nuevo >= itemPrevio.cantidad ? itemPrevio.atendidoEn : null,
+    })
+    .eq('id', itemId)
+    .eq('cantidad_atendida', itemPrevio.cantidadAtendida)
+    .select()
+    .maybeSingle()
+  if (eUpd) throw eUpd
+  if (!upd)
+    throw new Error('Otro usuario modificó este artículo al mismo tiempo. Recarga e intenta de nuevo.')
+  await recalcularEstadoRal(itemPrevio.ralId)
+  return filaARalItem(upd as FilaRal)
 }

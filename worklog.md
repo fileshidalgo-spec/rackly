@@ -246,3 +246,31 @@ Stage Summary:
   del usuario en producción devuelve la RQ 0000192737.
 - Nota: remote git tenía de nuevo el PAT viejo (ghp_CqrC…) tras el reset del
   entorno; actualizado al vigente. sb_config.py reconstruido (2ª vez).
+
+---
+## 2026-10-29 · Atención: reporte de atención a líneas — Excel (5 hojas) + Dashboard
+- Solicitud: descargar la información de TODOS los RQ para el reporte de
+  atención a líneas, resumen por artículo en otra hoja y dashboard para
+  presentar. Desplegado 49abc6c → rackly.pages.dev v=202610291506-49abc6c.
+- Modelo de datos verificado en producción: rq_atenciones (18 cols) ·
+  rq_atencion_items (pedido/atendido/atendido_en) · ledger rq_atencion_tomas
+  (Task 27: 131 filas, origen racks/piso/transito/manual/reversa) — el ledger
+  NO guarda f_vencimiento; el vencimiento es intrínseco al lote y se RESUELVE
+  desde movimientos (codigo+lote → mayor f_vencimiento; patrón paginado
+  .in('lote', lotes), 1000/batch, tope 20 batches).
+- atencion-reporte.ts: cargarReporteAtencion() (1 tirada, Promise.all) +
+  agregaciones puras: kpisAtencion · resumenPorArticulo (88 códigos reales,
+  sobreatención no penaliza pendiente) · serieRqsPorDia · serieRqsPorLinea ·
+  topArticulosAtendidos.
+- atencion-excel.ts (patrón guia-excel, xlsx-js-style): 5 hojas — RQs ·
+  Materiales (pedido vs atendido + estado Completo/Parcial/Pendiente) ·
+  Salidas (tomas) con ubicación/lote/F. VENCIMIENTO/saldo/usuario ·
+  Resumen artículo · Dashboard (KPIs + por día + por línea + top).
+- RqDashboard.tsx: vista presentable (gráficos CSS, sin deps nuevas) +
+  Exportar Excel; RqAtencionPanel: botón Dashboard.
+- QA: test_atencion_reporte.js 40 checks (stub con captura __orCalls
+  intacta) → 31/31 suites · tsc OK · eslint OK · build OK.
+- E2E producción (test_reporte_atencion_e2e.py): 67 RQs · 210 items ·
+  131 tomas (129 salidas/2 reversas) · 156/210 materiales completados ·
+  lotes legados 'BACKFILL-27' sin vencimiento degradan a columna vacía
+  (limitación de dato, no bug; lotes reales p.ej. 1810-26 sí resuelven).

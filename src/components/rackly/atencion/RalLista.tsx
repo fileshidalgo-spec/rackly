@@ -143,7 +143,7 @@ export function RalLista({ puedeEliminar }: { puedeEliminar: boolean }) {
   const q = busqueda.trim().toLowerCase()
   const filtrados = q
     ? rals.filter((r) =>
-        [r.documento, r.transaccion, r.areaSolicitante, r.solicitante, r.aprobadoPor, r.almacen, r.linea]
+        [r.documento, r.transaccion, r.areaSolicitante, r.solicitante, r.aprobadoPor, r.almacen, r.linea, r.textoItems]
           .join(' ')
           .toLowerCase()
           .includes(q)
@@ -165,7 +165,7 @@ export function RalLista({ puedeEliminar }: { puedeEliminar: boolean }) {
           <div className="relative flex-1 sm:w-56">
             <Input
               className="h-8 text-xs"
-              placeholder="Buscar por documento, área, solicitante…"
+              placeholder="Buscar por documento, área, material o solicitante…"
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
             />

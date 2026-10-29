@@ -331,7 +331,7 @@ export function RqAtencionPanel({
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
             className="pl-9"
-            placeholder="Buscar por Nº RQ, OP, producto o solicitante…"
+            placeholder="Buscar por Nº RQ, OP, producto, material o solicitante…"
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && buscar()}

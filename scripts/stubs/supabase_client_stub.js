@@ -5,11 +5,14 @@
  * vacío. Permite probar la lógica de consulta de api.ts sin red.
  */
 const tables = {}
+/** Captura de llamadas or() por tabla — para tests de composición de filtros.
+ *  Aditivo (2026-10-29): los suites existentes no leen esto. */
+const orCalls = []
 
 function builder(table) {
   const p = {
     select() { return p },
-    or() { return p },
+    or(value) { orCalls.push({ table, value }); return p },
     eq() { return p },
     in() { return p },
     order() { return p },
@@ -44,5 +47,9 @@ module.exports = {
     removeChannel() {},
   },
   __setTable(t, rows) { tables[t] = rows },
-  __clear() { for (const k of Object.keys(tables)) delete tables[k] },
+  __orCalls() { return orCalls.slice() },
+  __clear() {
+    for (const k of Object.keys(tables)) delete tables[k]
+    orCalls.length = 0
+  },
 }

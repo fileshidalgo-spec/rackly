@@ -40,6 +40,12 @@ export type RalRegistro = {
   usuarioCorreo: string
   /** Cantidad de materiales (rellenada por listarRals con los items). */
   articulos: number
+  /** «codigo descripcion» de cada material concatenado — lo rellena
+   *  listarRals para que la búsqueda de la lista incluya MATERIALES
+   *  (bug 2026-10-29: buscar por código de material daba 0 resultados
+   *  porque solo se buscaba en columnas del encabezado). Vacío fuera de
+   *  listarRals; el filtro compara en minúsculas. */
+  textoItems: string
 }
 
 export type RalItem = {
@@ -102,6 +108,7 @@ function filaARal(f: FilaRal): RalRegistro {
     usuarioNombre: String(f.usuario_nombre ?? ''),
     usuarioCorreo: String(f.usuario_correo ?? ''),
     articulos: 0, // lo rellena listarRals con los items reales
+    textoItems: '', // ídem (código+descripción de los items, para búsqueda)
   }
 }
 
@@ -123,9 +130,10 @@ function filaARalItem(f: FilaRal): RalItem {
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * Lista los RALs más recientes con su conteo de materiales. Dos lecturas
- * (headers + items) y agrupado en el cliente: volumen pequeño (documentos
- * registrados por jornada), evita una vista SQL extra en la BD.
+ * Lista los RALs más recientes con su conteo de materiales y el TEXTO de
+ * búsqueda por materiales. Dos lecturas (headers + items) y agrupado en el
+ * cliente: volumen pequeño (documentos registrados por jornada), evita una
+ * vista SQL extra en la BD.
  */
 export async function listarRals(limite = 100): Promise<RalRegistro[]> {
   const { data: headers, error: eH } = await dataClient
@@ -140,15 +148,26 @@ export async function listarRals(limite = 100): Promise<RalRegistro[]> {
   const ids = rals.map((r) => r.id)
   const { data: items, error: eI } = await dataClient
     .from('ral_items')
-    .select('ral_id')
+    .select('ral_id, codigo, descripcion')
     .in('ral_id', ids)
   if (eI) throw eI
   const conteo = new Map<string, number>()
+  const textos = new Map<string, string[]>()
   for (const it of items ?? []) {
     const k = String((it as FilaRal).ral_id ?? '')
     conteo.set(k, (conteo.get(k) ?? 0) + 1)
+    const codigo = String((it as FilaRal).codigo ?? '').trim()
+    const descripcion = String((it as FilaRal).descripcion ?? '').trim()
+    if (codigo || descripcion) {
+      const arr = textos.get(k) ?? []
+      arr.push(`${codigo} ${descripcion}`.trim())
+      textos.set(k, arr)
+    }
   }
-  for (const r of rals) r.articulos = conteo.get(r.id) ?? 0
+  for (const r of rals) {
+    r.articulos = conteo.get(r.id) ?? 0
+    r.textoItems = (textos.get(r.id) ?? []).join(' ')
+  }
   return rals
 }
 

@@ -19,6 +19,8 @@
 import { dataClient } from '@/lib/supabase/client'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { FECHA_INICIO_TRANSITO } from '@/lib/rackly/transito-core'
+import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
+import { construirOrBusquedaRq, MAX_IDS_MATERIALES } from '@/lib/rackly/busqueda-rq'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS
@@ -243,6 +245,25 @@ export type FiltrosRq = {
   offset?: number
 }
 
+/**
+ * Ids de RQ cuyo MATERIAL (items: codigo/descripcion) coincide con el
+ * término. Los materiales viven SOLO en rq_atencion_items — el encabezado
+ * trae el producto de la OP, no lo pedido — y el usuario busca por código
+ * de material (p.ej. "118" = ÁCIDO CÍTRICO). Capado a MAX_IDS_MATERIALES
+ * para mantener la URL del or() dentro de límites seguros.
+ */
+async function buscarIdsPorMateriales(seguro: string): Promise<string[]> {
+  const { data, error } = await dataClient
+    .from('rq_atencion_items')
+    .select('rq_id')
+    .or(`codigo.ilike.%${seguro}%,descripcion.ilike.%${seguro}%`)
+    .limit(MAX_IDS_MATERIALES)
+  if (error) throw error
+  return Array.from(
+    new Set(((data ?? []) as Record<string, unknown>[]).map((f) => String(f.rq_id ?? '')))
+  )
+}
+
 export async function listarRqs(
   filtros: FiltrosRq = {}
 ): Promise<{ filas: RqAtencion[]; total: number }> {
@@ -255,20 +276,19 @@ export async function listarRqs(
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
-  const busqueda = (filtros.busqueda ?? '').trim()
+  // Búsqueda en encabezado Y materiales: el id.in.(…) va DENTRO del MISMO
+  // or() (semántica «coincide encabezado O material», paginación intacta).
+  // Si la lectura de items falla, se degrada a la búsqueda de encabezado
+  // (comportamiento previo — nunca peor). Ver busqueda-rq.ts.
+  const busqueda = terminoBusquedaSeguro(filtros.busqueda ?? '')
   if (busqueda) {
-    const seguro = busqueda.replace(/[%,()]/g, ' ').trim()
-    if (seguro) {
-      q = q.or(
-        [
-          `numero_rq.ilike.%${seguro}%`,
-          `orden_produccion.ilike.%${seguro}%`,
-          `producto_codigo.ilike.%${seguro}%`,
-          `producto_descripcion.ilike.%${seguro}%`,
-          `solicitante.ilike.%${seguro}%`,
-        ].join(',')
-      )
+    let idsMateriales: string[] = []
+    try {
+      idsMateriales = await buscarIdsPorMateriales(busqueda)
+    } catch (err: unknown) {
+      console.warn('[listarRqs] búsqueda por materiales no disponible:', err)
     }
+    q = q.or(construirOrBusquedaRq(busqueda, idsMateriales))
   }
   const estado = (filtros.estado ?? '').trim()
   if (estado && estado !== 'todos') q = q.eq('estado', estado)

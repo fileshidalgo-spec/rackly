@@ -5,7 +5,7 @@ set -u
 cd "$(dirname "$0")/.."
 mkdir -p scripts/.testbuild
 # Suites que requieren el STUB de Supabase (no tocan red) — ver cabecera de cada test.
-CON_STUB="test_piso_fefo test_piso_navegacion test_piso_rpc_escritura test_recepcion_chunk test_editar_lote test_piso_catalogo_unico test_catalogo_masivo test_rq_crear_rpc test_rq_editar_rpc test_rq_tomas_revisar test_rq_turno_hoja"
+CON_STUB="test_piso_fefo test_piso_navegacion test_piso_rpc_escritura test_recepcion_chunk test_editar_lote test_piso_catalogo_unico test_catalogo_masivo test_rq_crear_rpc test_rq_editar_rpc test_rq_tomas_revisar test_rq_turno_hoja test_rq_busqueda_or"
 PASS=0; FAIL=0; FAILED=""
 for t in scripts/test_*.js scripts/test_*.mjs; do
   name=$(basename "$t"); name="${name%.*}"

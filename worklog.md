@@ -209,3 +209,40 @@ Stage Summary:
   · piso MovimientosTab sin guard generacional → espejo TransitoModule.
   · TrasladoTab click sin feedback si origen drenado + badge 'en 0' falsa por lote.
 - Fix 611f75a desplegado → rackly.pages.dev. Scripts: auditoria_integral_db.py.
+
+---
+## 2026-10-29 · Atención: búsqueda RQ/RAL por código de MATERIAL (items)
+- 1.1/1.2 Reporte: buscar por código de producto o RQ no devolvía datos
+  (captura: "118" + fecha hoy + T1 → 0 filas). Reproducido E2E con JWT real
+  (scripts/test_rq_busqueda_e2e.py): la API respondía bien con códigos del
+  ENCABEZADO (424689, 192811) — pero "118" no existe en ningún campo del
+  encabezado: es el código de ÁCIDO CÍTRICO en rq_atencion_items.
+- 2 Causa raíz: listarRqs buscaba solo en 5 columnas del encabezado
+  (numero_rq/orden_produccion/producto_codigo/producto_descripcion/solicitante);
+  los MATERIALES pedidos viven en rq_atencion_items y no participaban.
+  Evidencia: RQ 0000192737 (hoy, T1) pide material 118 — debía salir y no salía.
+- 3 Mismo defecto detectado en la pestaña RAL (RalLista filtra solo
+  encabezado). Barrido sin más casos: Kardex (eq codigo), Piso (codigo+
+  descripcion), Recepción (modulos.ts), Tickets y Tránsito buscan columnas
+  directas — limpios.
+- 4 Vías evaluadas contra producción PostgREST (test_rq_busqueda_embed.py):
+  or embebido → PGRST100; filtro embebido sin select → PGRST108;
+  referencedTable .or() → AND (semántica equivocada). ELEGIDO: prelookup de
+  rq_id en items + id.in.(…) DENTRO del mismo or() del encabezado — validado
+  HTTP 200 y devuelve la RQ esperada (test_rq_busqueda_planC.py).
+- 5 Sin conflictos: firmas sin cambios (llamadores únicos RqAtencionPanel/
+  RalLista); paginación/total/orden intactos; degradación a búsqueda de
+  encabezado si el prelookup falla (nunca peor); RLS SELECT de items = true
+  autenticados; realtime/Task 35 (fecha+turno) sin tocar.
+- 6/7 Implementación: busqueda-rq.ts (nuevo, puro: construirOrBusquedaRq +
+  MAX_IDS_MATERIALES=200 con higiene uuid); rq-atencion.ts
+  (buscarIdsPorMateriales capado + integración + sanitización unificada con
+  terminoBusquedaSeguro de formato.ts, antes duplicada); ral.ts adjunta
+  textoItems en listarRals; RalLista/RqAtencionPanel incluyen material y
+  placeholders actualizados.
+- Tests: scripts/test_rq_busqueda_or.js (33 checks, stub con captura aditiva
+  __orCalls) → 30/30 suites · tsc OK · eslint OK · build OK.
+- Deploy d15d909 → rackly.pages.dev v=202610291443-d15d909; E2E del escenario
+  del usuario en producción devuelve la RQ 0000192737.
+- Nota: remote git tenía de nuevo el PAT viejo (ghp_CqrC…) tras el reset del
+  entorno; actualizado al vigente. sb_config.py reconstruido (2ª vez).

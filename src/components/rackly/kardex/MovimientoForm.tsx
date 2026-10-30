@@ -59,6 +59,7 @@ import {
 } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
+import { puede } from '@/lib/rackly/permisos'
 import { Loader2, PackageSearch, ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, TriangleAlert, MapPin, Package, X } from 'lucide-react'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
@@ -78,6 +79,17 @@ export function MovimientoForm({ tipo, onCreated }: Props) {
 
   if (!perfil) {
     return <div className='p-4 text-muted-foreground animate-pulse'>Cargando usuario...</div>
+  }
+  // Cuadro de permisos: un solo gate para TODOS los formularios de movimiento
+  // (ingreso/salida/devolución/traslado/INC) de racks — la BD lo refuerza con
+  // la política RESTRICTIVE de INSERT en movimientos.
+  if (!puede(perfil, 'movimientos.crear')) {
+    return (
+      <div className='p-4 text-sm text-muted-foreground border border-dashed border-slate-300 rounded-lg'>
+        No tienes permiso para registrar movimientos. Pídeselo al administrador
+        (permiso «Crear movimientos» del módulo Racks).
+      </div>
+    )
   }
   if (tipo === 'salida') {
     return <SalidaForm turno={turno} onCreated={onCreated} perfil={perfil} />

@@ -1,19 +1,20 @@
 'use client'
 
 /**
- * RACKLY — Diálogo de PERMISOS GRANULARES por usuario (módulo Usuarios).
+ * RACKLY — CUADRO DE PERMISOS PERSONALIZADOS por usuario (módulo Usuarios).
  *
- * Permite al gestor (admin o quien tenga usuarios.gestionar_roles) marcar,
- * por cada usuario e INDEPENDIENTEMENTE de su cargo/rol, qué puede y qué no
- * puede hacer dentro de la app:
+ * Matriz Módulo × Acción (Ver/Crear/Editar/Eliminar/Aprobar), como el modelo
+ * del usuario. Tres estados visuales por celda:
  *
- *   · Checkbox marcado   → el usuario PUEDE (por rol o por excepción).
- *   · Checkbox desmarcado → el usuario NO PUEDE (por rol o por revoca).
+ *   · ✓ verde            → permitido (por defecto del rol).
+ *   · ✗ rojo             → restringido (por defecto del rol).
+ *   · ✓/✗ con borde azul → EXCEPCIÓN personalizada (override guardado en BD).
  *
- * Solo se guardan EXCEPCIONES (overrides) en BD (tabla user_permisos vía la
- * RPC establecer_permiso_usuario): volver el checkbox al valor natural del rol
- * BORRA la excepción. Badge "Rol" = valor por defecto del cargo · Badge
- * "Personalizado" = excepción guardada.
+ * Un clic alterna permitido ↔ restringido. Solo se guardan en BD las
+ * EXCEPCIONES al rol (tabla user_permisos vía la RPC
+ * establecer_permiso_usuario): volver la celda al valor natural del rol BORRA
+ * la excepción. La BD aplica la MISMA regla (políticas AS RESTRICTIVE + guards
+ * en las RPCs SECURITY DEFINER): marcar ✗ bloquea de verdad, no solo oculta.
  *
  * Los ADMIN no admiten excepciones (ya lo tienen todo — la RPC lo bloquea).
  */
@@ -24,10 +25,10 @@ import {
   type Perfil,
 } from '@/lib/rackly/auth'
 import {
-  PERMISOS,
+  COLUMNAS_MATRIZ,
+  MATRIZ,
   rolConcedePermiso,
-  type GrupoPermiso,
-  type Permiso,
+  type AccionPermiso,
 } from '@/lib/rackly/permisos'
 import { ROL_LABEL } from '@/lib/rackly/roles-label'
 import {
@@ -39,44 +40,35 @@ import {
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { toast } from 'sonner'
 import {
+  BookOpen,
+  Check,
   HeartHandshake,
   Info,
-  BookOpen,
   Layers3,
   Loader2,
   PackageCheck,
   RotateCcw,
   ShieldCheck,
-  Sparkles,
+  Truck,
+  Upload,
   Users,
   Warehouse,
+  X,
 } from 'lucide-react'
 import { mensajeError } from '@/lib/rackly/errores'
 
-const GRUPO_ORDEN: { grupo: GrupoPermiso; etiqueta: string; Icono: typeof Warehouse }[] = [
-  { grupo: 'racks', etiqueta: 'Racks (Kardex)', Icono: Warehouse },
-  { grupo: 'piso', etiqueta: 'Piso', Icono: Layers3 },
-  { grupo: 'recepcion', etiqueta: 'Recepción', Icono: PackageCheck },
-  { grupo: 'atencion', etiqueta: 'Atención', Icono: HeartHandshake },
-  { grupo: 'catalogo', etiqueta: 'Catálogo', Icono: BookOpen },
-  { grupo: 'usuarios', etiqueta: 'Usuarios', Icono: Users },
-  { grupo: 'otros', etiqueta: 'Otros', Icono: Sparkles },
-]
-
-const COLOR_GRUPO: Record<string, string> = {
-  racks: 'bg-violet-100 text-violet-700',
-  piso: 'bg-sky-100 text-sky-700',
-  recepcion: 'bg-amber-100 text-amber-700',
-  atencion: 'bg-teal-100 text-teal-700',
-  catalogo: 'bg-indigo-100 text-indigo-700',
-  usuarios: 'bg-slate-200 text-slate-700',
-  otros: 'bg-emerald-100 text-emerald-700',
-}
+const ICONOS_FILA = {
+  warehouse: Warehouse,
+  book: BookOpen,
+  upload: Upload,
+  layers: Layers3,
+  package: PackageCheck,
+  heart: HeartHandshake,
+  truck: Truck,
+  users: Users,
+} as const
 
 type Props = {
   perfil: Perfil | null
@@ -103,37 +95,34 @@ export function DialogoPermisos({ perfil, open, onOpenChange, onChanged }: Props
 
   const esAdmin = perfil?.rol === 'admin'
 
-  const grupos = useMemo(() => {
-    return GRUPO_ORDEN.map(({ grupo, etiqueta, Icono }) => ({
-      grupo,
-      etiqueta,
-      Icono,
-      permisos: PERMISOS.filter((p) => p.grupo === grupo),
-    })).filter((g) => g.permisos.length > 0)
-  }, [])
-
-  function efectivo(permiso: Permiso): boolean {
-    const o = overrides[permiso]
+  function efectivo(codigo: string): boolean {
+    const o = overrides[codigo]
     if (typeof o === 'boolean') return o
-    return rolConcedePermiso(perfil?.rol, permiso)
+    return rolConcedePermiso(perfil?.rol, codigo)
   }
 
-  async function toggle(permiso: Permiso) {
+  async function toggle(codigo: string) {
     if (!perfil || busy || esAdmin) return
-    const nuevo = !efectivo(permiso)
-    const vuelveAlRol = nuevo === rolConcedePermiso(perfil.rol, permiso)
-    setBusy(permiso)
+    const nuevo = !efectivo(codigo)
+    const vuelveAlRol = nuevo === rolConcedePermiso(perfil.rol, codigo)
+    setBusy(codigo)
     try {
-      await establecerPermisoUsuario(perfil.id, permiso, vuelveAlRol ? null : nuevo)
+      await establecerPermisoUsuario(perfil.id, codigo, vuelveAlRol ? null : nuevo)
       setOverrides((prev) => {
         const copia = { ...prev }
-        if (vuelveAlRol) delete copia[permiso]
-        else copia[permiso] = nuevo
+        if (vuelveAlRol) delete copia[codigo]
+        else copia[codigo] = nuevo
         return copia
       })
-      toast.success(nuevo ? 'Permiso concedido' : 'Permiso restringido', {
-        description: `${perfil.nombre}: ${permiso}${vuelveAlRol ? ' (de vuelta al valor del rol)' : ''}`,
-      })
+      if (vuelveAlRol) {
+        toast.info('Excepción quitada', {
+          description: `${perfil.nombre} vuelve al valor de su rol para este permiso.`,
+        })
+      } else {
+        toast.success(nuevo ? 'Permiso concedido' : 'Permiso restringido', {
+          description: `${perfil.nombre}: la app y la base de datos aplican el cambio de inmediato.`,
+        })
+      }
       onChanged?.()
     } catch (err: unknown) {
       toast.error('No se pudo guardar el permiso', { description: mensajeError(err) })
@@ -171,113 +160,170 @@ export function DialogoPermisos({ perfil, open, onOpenChange, onChanged }: Props
     }
   }
 
-  const totalExcepciones = Object.keys(overrides).length
+  const totalExcepciones = useMemo(() => Object.keys(overrides).length, [overrides])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-lg max-h-[88vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-xl md:max-w-2xl max-h-[90vh] flex flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="px-4 sm:px-5 pt-4 pb-3">
           <DialogTitle className="flex items-center gap-2 text-base">
-            <ShieldCheck className="h-5 w-5 text-slate-600" />
-            Permisos de {perfil?.nombre ?? '—'}
+            <ShieldCheck className="h-5 w-5 text-slate-600 shrink-0" />
+            <span className="min-w-0 truncate">
+              Permisos personalizados{perfil?.nombre ? `: ${perfil.nombre}` : ''}
+            </span>
           </DialogTitle>
-          <DialogDescription className="text-xs">
-            {perfil?.correo}
+          <DialogDescription className="text-xs flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate">{perfil?.correo}</span>
             {perfil && (
-              <Badge variant="secondary" className="ml-2 text-[10px]">
+              <Badge variant="secondary" className="text-[10px]">
                 {ROL_LABEL[perfil.rol] ?? perfil.rol}
               </Badge>
             )}
+            <Badge
+              variant="outline"
+              className={`text-[10px] px-1.5 ${
+                totalExcepciones > 0
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 bg-white text-slate-400'
+              }`}
+            >
+              {totalExcepciones === 0
+                ? 'Sin excepciones: usa su rol'
+                : `${totalExcepciones} excepción${totalExcepciones === 1 ? '' : 'es'} personalizada${totalExcepciones === 1 ? '' : 's'}`}
+            </Badge>
           </DialogDescription>
         </DialogHeader>
 
         {esAdmin ? (
-          <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800">
-            <Info className="h-4 w-4 shrink-0 mt-0.5" />
-            <p>
-              Los <strong>administradores</strong> ya tienen todos los permisos del
-              sistema y no admiten excepciones. Para personalizar, asigna primero
-              otro rol a este usuario.
-            </p>
+          <div className="px-4 sm:px-5 pb-5">
+            <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800">
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <p>
+                Los <strong>administradores</strong> ya tienen todos los permisos del
+                sistema y no admiten excepciones. Para personalizar, asigna primero
+                otro rol a este usuario.
+              </p>
+            </div>
           </div>
         ) : (
           <>
-            <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-              <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <p>
-                Marca lo que <strong>puede hacer</strong> este usuario aunque su cargo
-                no lo permita, o desmarca lo que <strong>no debe hacer</strong> aunque
-                su cargo lo permita. Solo se guardan las excepciones al rol.
-              </p>
+            {/* Leyenda (como el modelo) */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 sm:px-5 pb-2 text-[11px] text-slate-500">
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded border border-emerald-300 bg-emerald-50 text-emerald-600">
+                  <Check className="h-3 w-3" />
+                </span>
+                Permitido
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded border border-rose-200 bg-rose-50 text-rose-500">
+                  <X className="h-3 w-3" />
+                </span>
+                Restringido
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded border-2 border-blue-500 bg-blue-50 text-blue-600">
+                  <Check className="h-3 w-3" />
+                </span>
+                Excepción personalizada
+              </span>
             </div>
 
-            <ScrollArea className="flex-1 min-h-0 -mx-1 px-1">
-              <div className="space-y-3 pb-1">
-                {grupos.map(({ grupo, etiqueta, Icono, permisos }) => (
-                  <div key={grupo} className="rounded-lg border border-slate-200 overflow-hidden">
-                    <div className="flex items-center gap-2 bg-slate-50 px-3 py-2">
-                      <span className={`flex h-6 w-6 items-center justify-center rounded-md ${COLOR_GRUPO[grupo] ?? 'bg-slate-100 text-slate-600'}`}>
-                        <Icono className="h-3.5 w-3.5" />
-                      </span>
-                      <p className="text-xs font-bold text-slate-700">{etiqueta}</p>
-                    </div>
-                    <div className="divide-y divide-slate-100">
-                      {permisos.map((p) => {
-                        const valor = efectivo(p.codigo)
-                        const personalizado = typeof overrides[p.codigo] === 'boolean'
-                        return (
-                          <label
-                            key={p.codigo}
-                            className="flex items-start gap-3 px-3 py-2.5 hover:bg-slate-50 cursor-pointer select-none"
-                          >
-                            <Checkbox
-                              checked={valor}
-                              disabled={busy !== null || resetBusy}
-                              onCheckedChange={() => toggle(p.codigo)}
-                              className="mt-0.5"
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="flex flex-wrap items-center gap-1.5">
-                                <span className="text-sm font-semibold text-slate-800">{p.etiqueta}</span>
-                                {personalizado ? (
-                                  <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-300 bg-amber-50 text-amber-700">
-                                    Personalizado
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="text-[9px] px-1 py-0 border-slate-200 bg-white text-slate-400">
-                                    Rol
-                                  </Badge>
-                                )}
-                                {busy === p.codigo && (
-                                  <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
-                                )}
-                              </span>
-                              <span className="block text-[11px] leading-snug text-slate-500 mt-0.5">
-                                {p.descripcion}
-                              </span>
+            {/* CUADRO: matriz módulo × acción (scroll horizontal en móvil,
+                columna de módulo pegajosa; el pie NUNCA se superpone) */}
+            <div className="min-h-0 flex-1 overflow-auto border-y border-slate-200">
+              <table className="w-full min-w-[560px] border-collapse text-sm">
+                <thead className="sticky top-0 z-10 bg-slate-50 shadow-[0_1px_0_0_rgb(226_232_240)]">
+                  <tr>
+                    <th className="sticky left-0 z-20 bg-slate-50 px-3 py-2 text-left text-xs font-bold text-slate-600 min-w-[150px]">
+                      Módulo
+                    </th>
+                    {COLUMNAS_MATRIZ.map(({ accion, etiqueta }) => (
+                      <th
+                        key={accion}
+                        className="px-2 py-2 text-center text-xs font-bold text-slate-600 w-[84px]"
+                      >
+                        {etiqueta}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {MATRIZ.map((fila) => {
+                    const Icono = ICONOS_FILA[fila.icono]
+                    return (
+                      <tr key={fila.modulo} className="hover:bg-slate-50/60">
+                        <td className="sticky left-0 z-10 bg-white px-3 py-2 group-hover:bg-slate-50/60">
+                          <span className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600">
+                              <Icono className="h-3.5 w-3.5" />
                             </span>
-                          </label>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
+                            <span className="text-xs font-semibold text-slate-700 leading-tight">
+                              {fila.etiqueta}
+                            </span>
+                          </span>
+                        </td>
+                        {COLUMNAS_MATRIZ.map(({ accion }) => {
+                          const codigo = fila.celdas[accion as AccionPermiso]
+                          if (!codigo) {
+                            return (
+                              <td key={accion} className="px-2 py-2 text-center">
+                                <span className="text-slate-300 select-none">—</span>
+                              </td>
+                            )
+                          }
+                          const valor = efectivo(codigo)
+                          const personalizado = typeof overrides[codigo] === 'boolean'
+                          const ocupado = busy === codigo || resetBusy
+                          return (
+                            <td key={accion} className="px-2 py-2 text-center">
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={valor}
+                                aria-label={`${fila.etiqueta} — ${accion}: ${valor ? 'permitido' : 'restringido'}${personalizado ? ' (excepción personalizada)' : ''}`}
+                                title={
+                                  (valor ? 'Permitido' : 'Restringido') +
+                                  (personalizado ? ' · excepción personalizada (clic para quitar)' : ' · valor del rol (clic para cambiar)')
+                                }
+                                disabled={ocupado}
+                                onClick={() => toggle(codigo)}
+                                className={`mx-auto inline-flex h-8 w-8 items-center justify-center rounded-md border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:cursor-wait ${
+                                  valor
+                                    ? 'border-emerald-300 bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                                    : 'border-rose-200 bg-rose-50 text-rose-500 hover:bg-rose-100'
+                                } ${personalizado ? 'ring-2 ring-blue-500 border-blue-500' : ''}`}
+                              >
+                                {busy === codigo ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                                ) : valor ? (
+                                  <Check className="h-4 w-4" />
+                                ) : (
+                                  <X className="h-4 w-4" />
+                                )}
+                              </button>
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-            <Separator className="my-1" />
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] text-slate-400">
-                {totalExcepciones === 0
-                  ? 'Sin excepciones: usa los valores de su rol.'
-                  : `${totalExcepciones} excepción${totalExcepciones === 1 ? '' : 'es'} guardada${totalExcepciones === 1 ? '' : 's'}.`}
+            {/* Pie FIJO en el flujo (nunca tapa el cuadro) */}
+            <div className="flex items-center justify-between gap-2 px-4 sm:px-5 py-3">
+              <p className="text-[11px] text-slate-400 min-w-0 truncate">
+                Toca una casilla para alternar permitido/restringido. Los cambios
+                aplican al instante en la app y en la base de datos.
               </p>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={restablecerTodo}
                 disabled={resetBusy || busy !== null || totalExcepciones === 0}
-                className="gap-1.5"
+                className="gap-1.5 shrink-0"
               >
                 {resetBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                 Restablecer rol

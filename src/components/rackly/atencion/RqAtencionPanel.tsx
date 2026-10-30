@@ -427,19 +427,24 @@ export function RqAtencionPanel({
       {/* ── Acción principal ── */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          <Button
-            onClick={() => setVista('nueva')}
-            className="w-full sm:w-auto gap-2 h-10 bg-gradient-to-r from-teal-500 to-cyan-600 text-white hover:from-teal-600 hover:to-cyan-700"
-          >
-            <Plus className="h-4 w-4" /> Nueva RQ (con foto)
-          </Button>
+          {/* Cuadro de permisos: crear RQ/RAL es la acción «Crear» de Atención */}
+          {puede(perfil, 'atencion.crear') && (
+            <Button
+              onClick={() => setVista('nueva')}
+              className="w-full sm:w-auto gap-2 h-10 bg-gradient-to-r from-teal-500 to-cyan-600 text-white hover:from-teal-600 hover:to-cyan-700"
+            >
+              <Plus className="h-4 w-4" /> Nueva RQ (con foto)
+            </Button>
+          )}
           {/* Task 36: formato RAL (Requerimiento al Almacén) — distinto al RQ. */}
-          <Button
-            onClick={() => setVista('nueva-ral')}
-            className="w-full sm:w-auto gap-2 h-10 bg-gradient-to-r from-violet-500 to-purple-600 text-white hover:from-violet-600 hover:to-purple-700"
-          >
-            <FilePlus2 className="h-4 w-4" /> Nuevo RAL
-          </Button>
+          {puede(perfil, 'atencion.crear') && (
+            <Button
+              onClick={() => setVista('nueva-ral')}
+              className="w-full sm:w-auto gap-2 h-10 bg-gradient-to-r from-violet-500 to-purple-600 text-white hover:from-violet-600 hover:to-purple-700"
+            >
+              <FilePlus2 className="h-4 w-4" /> Nuevo RAL
+            </Button>
+          )}
         </div>
         {/* Reporte de atención a líneas: dashboard + Excel descargable. */}
         <div className="flex gap-2">

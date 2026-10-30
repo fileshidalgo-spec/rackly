@@ -28,6 +28,7 @@ import {
 import { resolverPosicionTarget, firmaTarget, type PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { hoyISO } from '@/lib/rackly/formato'
+import { puede } from '@/lib/rackly/permisos'
 import { dataClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/useAuth'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
@@ -171,6 +172,8 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   onTargetConsumido?: () => void
 }) {
   const { perfil } = useAuth()
+  // Cuadro de permisos: crear movimientos de piso (ingreso/salida/traslado)
+  const puedeCrearMovs = puede(perfil, 'piso_movimientos.crear')
 
   // ── Atención a Línea (RQ): confirmación tras dar salida (contexto efímero) ──
   // Solo si se llegó DESDE la RQ (sessionStorage): la salida puede registrarse
@@ -877,6 +880,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   }
 
   async function doIngresoINC() {
+    if (!puedeCrearMovs) { toast.error('No tienes permiso para registrar movimientos de piso'); return }
     if (busy) return
     if (!detail || !perfil) return
     if (!incCodigo.trim() || !incCantidad || !incCodigoInc.trim()) {
@@ -1222,6 +1226,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   }
 
   async function doIngreso() {
+    if (!puedeCrearMovs) { toast.error('No tienes permiso para registrar movimientos de piso'); return }
     if (busy) return
     if (!detail || !perfil) return
     if (!selectedNivelId) { toast.error('No hay nivel seleccionado'); return }
@@ -1296,6 +1301,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   }
 
   async function doSalida() {
+    if (!puedeCrearMovs) { toast.error('No tienes permiso para registrar movimientos de piso'); return }
     if (busy) return
     if (!detail || !perfil) return
     // Filtrar items por nivel seleccionado
@@ -1418,6 +1424,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
 
   // Ejecutar traslado (se llama desde la alerta o desde confirmación normal)
   async function ejecutarTrasladoPiso() {
+    if (!puedeCrearMovs) { toast.error('No tienes permiso para registrar movimientos de piso'); return }
     if (busy) return
     if (!detail || !perfil || !trDestPos) return
     const validRows = trItems.filter((r) => r.selected && r.bloque_id && r.cantidad && parseFloat(r.cantidad) > 0)
@@ -1666,6 +1673,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   }
 
   async function doMassSalida() {
+    if (!puedeCrearMovs) { toast.error('No tienes permiso para registrar movimientos de piso'); return }
     if (!perfil || massData.size === 0) return
     setMassBusy(true)
     let successCount = 0

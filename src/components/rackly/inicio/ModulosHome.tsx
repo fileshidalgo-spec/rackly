@@ -12,6 +12,7 @@
 
 import { useAuth } from '@/hooks/useAuth'
 import { ROL_LABEL } from '@/lib/rackly/roles-label'
+import { puede, PERMISO_VER_MODULO } from '@/lib/rackly/permisos'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -146,9 +147,9 @@ export function ModulosHome({ onEntrar }: { onEntrar: (vista: VistaModulo) => vo
         </div>
       </div>
 
-      {/* ── Grid de módulos (exactamente las 5 puertas de entrada) ── */}
+      {/* ── Grid de módulos (solo los que el usuario puede VER, cuadro de permisos) ── */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {MODULOS.map((m) => (
+        {MODULOS.filter((m) => puede(perfil, PERMISO_VER_MODULO[m.vista] ?? '')).map((m) => (
           <Card
             key={m.vista}
             className="group border border-white/60 bg-white/90 backdrop-blur-sm shadow-md shadow-slate-200/50 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200"

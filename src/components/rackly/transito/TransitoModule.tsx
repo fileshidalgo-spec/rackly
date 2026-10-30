@@ -47,6 +47,7 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { puede } from '@/lib/rackly/permisos'
 import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
 import { calcularTurno } from '@/lib/rackly/turno'
@@ -74,6 +75,9 @@ type EstadoCarga = 'cargando' | 'listo' | 'error'
 
 export function TransitoModule() {
   const { perfil } = useAuth()
+  // Cuadro de permisos: transferir = acción «Crear» de Tránsito (la RPC
+  // transito_registrar_envio también la aplica en BD)
+  const puedeTransferir = puede(perfil, 'transito.crear')
   const [estado, setEstado] = useState<EstadoCarga>('cargando')
   const [articulos, setArticulos] = useState<ArticuloTransito[]>([])
   /** Hora del último refresco (prueba VISIBLE del auto-refresco en vivo). */
@@ -187,6 +191,10 @@ export function TransitoModule() {
 
   const abrirDialogo = (items: ArticuloTransito[]) => {
     if (items.length === 0) return
+    if (!puedeTransferir) {
+      toast.error('No tienes permiso para registrar envíos de tránsito')
+      return
+    }
     setDialogoItems(items)
   }
 
@@ -499,7 +507,7 @@ export function TransitoModule() {
             <Button
               size="sm"
               onClick={() => abrirDialogo(pendientesDeSeleccion())}
-              disabled={pendientesDeSeleccion().length === 0}
+              disabled={!puedeTransferir || pendientesDeSeleccion().length === 0}
               className="gap-1.5 bg-fuchsia-600 hover:bg-fuchsia-700 font-semibold"
             >
               <ArrowRightLeft className="h-4 w-4" />

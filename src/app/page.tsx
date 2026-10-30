@@ -60,7 +60,7 @@ import {
 } from '@/components/ui/select'
 import { toast } from 'sonner'
 import { TIPOS_MOVIMIENTO } from '@/lib/rackly/constants'
-import { puede } from '@/lib/rackly/permisos'
+import { puede, PERMISO_VER_MODULO } from '@/lib/rackly/permisos'
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -299,6 +299,12 @@ function RacklyApp() {
 
       <div className="mx-auto max-w-7xl p-4 md:p-6 relative z-10">
         {/* ═══ PANTALLA DE INGRESO DE MÓDULOS ═══ */}
+        {/* Cuadro de permisos: si el usuario perdió el permiso «Ver» del módulo
+            mientras estaba dentro, la BD ya le bloquearía los datos; aquí lo
+            devolvemos al inicio en lugar de dejarlo en una pantalla muerta. */}
+        {view !== 'inicio' && !puede(perfil, PERMISO_VER_MODULO[view] ?? '') && (
+          <ModulosHome onEntrar={setView} />
+        )}
         {view === 'inicio' && <ModulosHome onEntrar={(v) => setView(v)} />}
 
         {/* ═══ MÓDULO USUARIOS (TRANSVERSAL) ═══ */}

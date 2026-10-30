@@ -127,8 +127,11 @@ function hoyISO(): string {
 
 export function RecepcionModule() {
   const { perfil } = useAuth()
-  // Permiso granular (rol + overrides por usuario, espejo de la política BD)
+  // Permisos granulares del CUADRO (rol + overrides, espejo de la BD:
+  // políticas RESTRICTIVE + guard de edición)
   const puedeEliminar = puede(perfil, 'recepcion.eliminar')
+  const puedeCrearRecepcion = puede(perfil, 'recepcion.crear')
+  const puedeEditarRecepcion = puede(perfil, 'recepcion.editar')
   const puedeCambiarEstado = useCallback(
     (reg: RegistroRecepcion) => puedeEliminar || reg.usuarioId === perfil?.id,
     [puedeEliminar, perfil?.id]
@@ -611,6 +614,12 @@ export function RecepcionModule() {
   }
 
   async function handleRegistrar() {
+    // Cuadro de permisos: registrar (crear) y editar guías son acciones
+    // distintas; la BD también lo aplica (política RESTRICTIVE recepcion).
+    if (editando ? !puedeEditarRecepcion : !puedeCrearRecepcion) {
+      toast.error('No tienes permiso para ' + (editando ? 'editar guías' : 'registrar guías'))
+      return
+    }
     const validos = itemsValidos(items)
     if (validos.length === 0) {
       toast.error('Agrega al menos un artículo con código y cantidad mayor a 0')
@@ -1080,7 +1089,7 @@ export function RecepcionModule() {
         <div className="flex flex-col sm:flex-row gap-2">
           <Button
             onClick={handleRegistrar}
-            disabled={saving}
+            disabled={saving || (editando ? !puedeEditarRecepcion : !puedeCrearRecepcion)}
             className={`flex-1 gap-2 text-white ${
               editando
                 ? 'bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700'
@@ -1358,7 +1367,7 @@ export function RecepcionModule() {
                         variant="ghost"
                         className="h-8 w-8 text-sky-600 hover:text-sky-700 hover:bg-sky-50"
                         onClick={() => void abrirEdicion(g)}
-                        disabled={cargandoEdicion}
+                        disabled={cargandoEdicion || !puedeEditarRecepcion}
                         title="Revisar / EDITAR la guía completa: cantidades, paletas, lote y fechas — al guardar se actualizan las filas registradas"
                       >
                         {cargandoEdicion ? <Loader2 className="h-4 w-4 animate-spin" /> : <PencilLine className="h-4 w-4" />}
@@ -1538,7 +1547,7 @@ export function RecepcionModule() {
                 variant="outline"
                 className="w-full gap-1 text-sky-700 hover:bg-sky-50"
                 onClick={() => void abrirEdicion(g)}
-                disabled={cargandoEdicion}
+                disabled={cargandoEdicion || !puedeEditarRecepcion}
               >
                 {cargandoEdicion ? <Loader2 className="h-3 w-3 animate-spin" /> : <PencilLine className="h-3 w-3" />}
                 Revisar / editar la guía

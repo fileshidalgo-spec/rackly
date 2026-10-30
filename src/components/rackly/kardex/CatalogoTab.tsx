@@ -46,9 +46,11 @@ import { mensajeError } from '@/lib/rackly/errores'
 
 export function CatalogoTab() {
   const { perfil } = useAuth()
-  // Permiso granular (rol + overrides por usuario, espejo de la política BD):
-  // agregar/editar/eliminar e importar del catálogo — un solo permiso.
+  // Permisos granulares del CUADRO (rol + overrides por usuario, espejo BD):
+  // crear (agregar/importar), editar (modificar) y eliminar, por separado.
+  const puedeCrearCatalogo = puede(perfil, 'catalogo.crear')
   const puedeEditarCatalogo = puede(perfil, 'catalogo.editar')
+  const puedeEliminarCatalogo = puede(perfil, 'catalogo.eliminar')
   const [text, setText] = useState('')
   const [catalogo, setCatalogo] = useState<CatalogoItem[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -259,7 +261,7 @@ export function CatalogoTab() {
   }
 
   async function doDelete() {
-    if (!puedeEditarCatalogo) { toast.error('No tienes permisos para eliminar del catálogo'); return }
+    if (!puedeEliminarCatalogo) { toast.error('No tienes permisos para eliminar del catálogo'); return }
     if (!deleteTarget) return
     setFormBusy(true)
     try {
@@ -316,7 +318,7 @@ export function CatalogoTab() {
           />
         </div>
         <div className="flex gap-2">
-          {puedeEditarCatalogo && (
+          {puedeCrearCatalogo && (
             <Button onClick={openAdd} size="sm" className="gap-1.5 bg-green-600 hover:bg-green-700 text-white">
               <Plus className="h-4 w-4" /> Agregar
             </Button>
@@ -349,7 +351,7 @@ export function CatalogoTab() {
             onClick={() => fileInputRef.current?.click()}
             size="sm"
             variant="outline"
-            disabled={excelBusy || !puedeEditarCatalogo}
+            disabled={excelBusy || !puedeCrearCatalogo}
             className="gap-1.5 border-dashed"
           >
             {excelBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
@@ -375,7 +377,7 @@ export function CatalogoTab() {
             rows={3}
             className="text-xs"
           />
-          <Button onClick={handleImport} size="sm" variant="outline" className="gap-1.5" disabled={!puedeEditarCatalogo || excelBusy}>
+          <Button onClick={handleImport} size="sm" variant="outline" className="gap-1.5" disabled={!puedeCrearCatalogo || excelBusy}>
             {excelBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             {excelBusy ? 'Importando…' : 'Importar texto'}
           </Button>
@@ -406,14 +408,14 @@ export function CatalogoTab() {
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     {puedeEditarCatalogo && (
-                      <>
-                        <Button size="icon" variant="ghost" onClick={() => openEdit(item)} title="Editar">
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(item.codigo)} title="Eliminar">
-                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                        </Button>
-                      </>
+                      <Button size="icon" variant="ghost" onClick={() => openEdit(item)} title="Editar">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    {puedeEliminarCatalogo && (
+                      <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(item.codigo)} title="Eliminar">
+                        <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                      </Button>
                     )}
                   </div>
                 </TableCell>

@@ -169,8 +169,8 @@ export function RqDetalle({
   onIrAPiso: (target: PisoTargetPosicion) => void
 }) {
   const { perfil } = useAuth()
-  // Permiso granular (rol + overrides por usuario): editar/atender RQ de otros
-  const puedeEditar = puede(perfil, 'atencion.eliminar')
+  // Permiso granular (rol + overrides por usuario): editar RQ = acción «Editar»
+  const puedeEditar = puede(perfil, 'atencion.editar')
   const [rq, setRq] = useState<RqAtencion | null>(null)
   const [items, setItems] = useState<RqItem[]>([])
   const [loading, setLoading] = useState(true)

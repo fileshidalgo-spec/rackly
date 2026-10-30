@@ -89,6 +89,8 @@ export function UsuariosTab() {
   // Regla única de permisos (rol + overrides), espejo de la BD
   const puedeAprobar = puede(perfil, 'usuarios.aprobar')
   const puedeGestionar = puede(perfil, 'usuarios.gestionar_roles')
+  // Celda «Eliminar» del módulo Usuarios (acción separada en el cuadro)
+  const puedeEliminarUsuarios = puede(perfil, 'usuarios.eliminar')
 
   const loadedRef = useRef(false)
 
@@ -288,8 +290,8 @@ export function UsuariosTab() {
                         size="icon"
                         variant="ghost"
                         onClick={() => setDeleteTarget(p)}
-                        disabled={p.id === perfil?.id}
-                        title="Eliminar perfil"
+                        disabled={p.id === perfil?.id || !puedeEliminarUsuarios}
+                        title={puedeEliminarUsuarios ? 'Eliminar perfil' : 'Sin permiso para eliminar usuarios'}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -388,8 +390,8 @@ export function UsuariosTab() {
                     size="icon"
                     variant="ghost"
                     onClick={() => setDeleteTarget(p)}
-                    disabled={p.id === perfil?.id}
-                    title="Eliminar perfil"
+                    disabled={p.id === perfil?.id || !puedeEliminarUsuarios}
+                    title={puedeEliminarUsuarios ? 'Eliminar perfil' : 'Sin permiso para eliminar usuarios'}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

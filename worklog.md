@@ -487,3 +487,25 @@ Work Log:
 Stage Summary:
 - 5 archivos, +270/-63; el editor, el detalle y la impresión de rótulos reabren la guía EXACTAMENTE como se registró
 - Commit: 656aaf7
+
+---
+Task ID: 3 (pedido 2026-10-31 — Módulo Usuarios)
+Agent: Main Agent
+Task: Permisos granulares por usuario, independientes del cargo/rol
+
+Work Log:
+- 1.1/1.2 (error + averiguación): el módulo Usuarios solo manejaba roles todo-o-nada. Hallazgos: (a) sin permisos por usuario; (b) BUG REAL — la UI mostraba "Aprobar" a supervisores (puedeAprobar) pero la RPC aprobar_usuario exigía admin (falso permiso UI/BD, error garantizado al usar); (c) lógica de permisos duplicada en 12 archivos (new Set(ROLES_SUPERVISORES) repetido); (d) tarjetas móviles de UsuariosTab en tema oscuro dentro de contenedores claros
+- 2 (causa): permisos acoplados 1:1 al cargo sin tabla de excepciones; reglas client-side sin fuente única; BD duplicando la lista de roles en 19 políticas
+- 3 (repetición): mismo patrón en page.tsx, StockTab, CatalogoTab, DescargaTab, RecepcionModule, AtencionModule, RqAtencionPanel, RqDetalle, MovimientosTab, SectoresTab×2, lote.ts, UsuariosTab
+- 4 (procedimiento): tabla user_permisos (solo OVERRIDES) + función SQL tiene_permiso() SECURITY DEFINER STABLE (admin→true · override→su valor · defecto→rol) + 18 políticas DELETE ADITIVAS (OR) en 19 tablas + RPC establecer_permiso_usuario con guard; cliente: catálogo único permisos.ts + puede()
+- 5 (sin conflictos): políticas aditivas NUNCA restringen lo actual; admin inmutable (anti-lockout, overrides ignorados); recepcion_delete_propia_sin_transito intacta; escritura de overrides SOLO vía RPC (sin políticas INSERT/UPDATE/DELETE en la tabla); movimientos.eliminar unificado con el borrado de stock (eliminarUbicacion borra de movimientos — evita permisos que la BD rechazaría); descartados permisos muertos (stock.eliminar, catalogo.importar)
+- 6/7 (experto/ordenado): migración documentada 20261031_permisos_por_usuario.sql; lib/permisos.ts (catálogo + rolConcedePermiso + puede); DialogoPermisos.tsx (checkboxes por módulo, badge Rol/Personalizado, "Restablecer rol", admin bloqueado); RPC wrapper en auth.ts; ROL_LABEL deduplicado (roles-label.ts)
+- 8 (accesos): Supabase Mgmt API (migración + verificación E2E: matriz de 12 casos por rol correcta, override concedido/revocado, guard RPC rechaza sin permiso); GitHub push 9b1d175
+- 9 (Módulos): Usuarios (transversal: gates activos en Racks, Piso, Recepción, Atención, Catálogo, Descarga)
+- Extras: aprobar_usuario/cambiar_rol_usuario/eliminar_usuario ahora aceptan los permisos usuarios.aprobar/usuarios.gestionar_roles (coherencia UI↔BD); protecciones nuevas (no cambiar el acceso PROPIO; admin no admite overrides); puedeEditarLotePerfil (lote granular); contador de excepciones visible en la lista
+- QA: tsc OK · eslint OK · 37/37 suites (nueva test_permisos, 80+ checks) · build OK
+
+Stage Summary:
+- 23 archivos, +1198/-105; nuevos: permisos.ts, DialogoPermisos.tsx, roles-label.ts, test_permisos.js, migración SQL
+- El admin puede marcar por usuario qué puede y qué no puede hacer, independiente del cargo; la BD aplica la MISMA regla (no es solo cosmética)
+- Deploy: 9b1d175 en producción (rackly.pages.dev)

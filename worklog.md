@@ -317,4 +317,58 @@ Stage Summary:
   listarRals con estado 200, RPCs en schema cache (error de negocio, no 404),
   ral_items expone columnas de atención.
 
+## 2026-10-30 · Tránsito/Racks: fin del «[object Object]» + ingreso por QR en Racks > Ocupaciones
+- 1.1/1.2 Reporte (screenshot 16:54, usuario Elmer): al escanear un QR en
+  Tránsito, el diálogo «Transferir artículo» muestra «[object Object]» en el
+  artículo 37934 — 81000 UN. Evidencia en BD: fila 8c16a5ab
+  (recepcion_registros, 37934 · 81000 UN · vencimiento **3027-07-31**, typo
+  del proveedor) SIN envío de tránsito; movimientos con ingreso manual
+  16:55:49 B3·T1·P4·Pos1 (Elmer, uuid_sync NULL, no pasó por la RPC).
+- 2 Causa (doble): (a) CLIENTE — postgrest-js devuelve el error como OBJETO
+  PLANO {message,details,hint,code} (no `Error`); mensajeRpcError hacía
+  `err instanceof Error ? err.message : String(err)` → «[object Object]»;
+  (b) BD — el guard v8 de transito_registrar_envio era CÓDIGO MUERTO:
+  `v_venc := v_row.fecha_vencimiento` estaba DESPUÉS del check de año
+  absurdo (corría sobre NULL), así que el venc 3027 llegó crudo a
+  registrar_movimiento_kardex → FECHA_INVALIDA. El error real quedó
+  enmascarado por (a).
+- 3 Repetición: el patrón ingenuo estaba en 3 sitios (auth.ts, transito-core,
+  LectorQR) y la variante «Error desconocido»/'Error' en ~45 más (31 archivos:
+  Atención, Recepción, Kardex, Piso, Usuarios, page.tsx) — mismo defecto de
+  clase: errores PostgrestError planos perdían el mensaje.
+- 4 Vía: extractor CANÓNICO src/lib/rackly/errores.ts — mensajeError()
+  (Error, PostgrestError plano, string, {error|msg|detalle}, prefijo
+  «CODE|» de las RPCs → solo el detalle, fallback JSON — jamás
+  [object Object]). mensajeRpcError y extractError delegan (contrato
+  intacto, incl. Error('INSUFFICIENT_STOCK') con .detail); codemod
+  (scripts/codemod_errores.js + fix_imports_errores.js) reemplazó las
+  variantes en todos los módulos.
+- 5 Sin conflictos: todos los branching de códigos (isInsufficientStockError,
+  isLoteUnsupportedError, fallbacks RPC 42883/PGRST202) operan sobre el error
+  CRUDO, no sobre la salida del extractor — intactos. QA: 34/34 suites ·
+  tsc 0 · eslint 0 · build OK. Tests nuevos: test_errores (21) +
+  test_ingreso_qr (14).
+- 6/7 BD (Management API, scripts/fix_rpc_venc_guard.py): guard v8 reparado
+  (asignación ANTES del check) — verificado con transacción ROLLBACK en
+  producción: fila venc 0027-09-04 ahora viaja «sin fecha» (ok, PARCIAL) y el
+  anti-sobreenvío sigue rechazando (OVER_ISSUE). Corrección de datos
+  (scripts/sincronizar_fila_fantasma.py): el envío del ingreso REAL de Elmer
+  quedó documentado en recepcion_registros.transito con trazabilidad 1:1 al
+  movimiento (uuid = mov 036c2dd2) — fila pasó de ROJO/pendiente fantasma a
+  VERDE sin tocar stock (el ingreso físico ya existía).
+- FEATURE (pedido del usuario): ingreso por QR en Racks > Ocupaciones.
+  lib pura ingreso-qr.ts (rotuloDesdeFila/prefillDesdeRotulo/
+  validarCantidadRotulo/etiquetaPosicionRack); OcupacionTab: botón
+  «Escanear rótulo (QR)» + chip del rótulo + LectorQR compartido (cámara +
+  pistola USB); prefill de código/descripción/UN/cantidad(pendiente)/lote/
+  vencimiento/proveedor. registrarIngresoRackDesdeRotulo (transito.ts) usa la
+  RPC ATÓMICA transito_registrar_envio: ingreso en la posición + marca en
+  Tránsito en UNA transacción — elimina la clase «palet fantasma» del
+  incidente (doble registro); uuid estable por fila (idempotencia entre
+  reintentos); rótulos ya transferidos van por la vía genérica con aviso.
+- Deploy 4845c4b → rackly.pages.dev v=202610301352-4845c4b. E2E REST con
+  JWT real: el error llega {code:"P0001", message:"OVER_ISSUE|La cantidad a
+  transferir (1) excede el pendiente de 37934 (0): excedente 1"} — la UI ahora
+  lo muestra completo.
+
 ---

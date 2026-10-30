@@ -372,3 +372,62 @@ Stage Summary:
   lo muestra completo.
 
 ---
+
+## 2026-10-30 · Auditoría integral de la app — 23 defectos cerrados en TODOS los módulos
+- 1.1 Detección (pedido: «hay errores en la app, bugs, duplicados… estructura
+  de datos eficiente y segura, DB funcionando correctamente — módulos: todos»):
+  (a) QA estático: tsc 0 · eslint 0 · 34/34 suites · build OK;
+  (b) auditoría DB completa con Management API (audit_db.py): RLS activa en
+  20/20 tablas, ninguna policy sin qual, ninguna tabla pública, 12 FKs con
+  reglas correctas, 60+ índices; duplicados de datos analizados caso a caso;
+  (c) 3 revisores en paralelo (Recepción · Kardex+Piso · Tránsito+QR con
+  catálogo completo de errores del camino de escaneo) + revisión directa de
+  Atención (unificada) y auth.ts.
+- 2 Causas raíz consolidadas (8 P2 + 15 P3), entre ellas: convención de error
+  «CODE|texto» que moría dentro de mensajeError (branching AFTER extractor —
+  código muerto); idempotencia M-1 ausente en la EDICIÓN de guías; auto-confirm
+  de login doblemente roto (id vacío + Edge Function con sesión admin que no
+  existe durante el login); parseFloat truncando decimales con coma en 8
+  sitios de OcupacionTab; payload QR sin sanear ^ ~ \; sin guard de numero_rq
+  duplicado (caso real 2026008365 ×2 a 16 min — confirmado en BD);
+  piso_registrar_movimiento aceptando _detalles vacíos (cabecera fantasma);
+  búsqueda unificada RAL-viva vs RQ-al-pulsar (lista mixta incoherente).
+- 3 Repetición verificada por hallazgo: parseFloat→aNumero estaba corregido en
+  DialogoTransferir pero replicado en NINGÚN otro sitio de OcupacionTab (8
+  sitios); guard NaN de FEFO existía en FefoTab y no en FefoPisoTab; ilike con
+  comodines en 2 capas (transito.ts + rq-atencion.ts); el patrón «CODE|» en
+  3 throws × 2 catches (RecepcionModule + GuiaFotoForm).
+- 4 Vía más efectiva: fixes quirúrgicos por bloque (A lib compartida ·
+  B Recepción · C Kardex/Piso/Auth · D Tránsito/QR · E Atención · F SQL),
+  errors.ts como única fuente de códigos controlados (Error.name), migración
+  SQL única para los 5 cambios de BD.
+- 5 Sin conflictos: contrato de mensajeError intacto (los códigos viajan en
+  .name, no en message); los branches existentes de RPC (OVER_ISSUE,
+  INSUFFICIENT_STOCK…) operan sobre el error crudo; tolerancia legada de
+  grupos huérfanos de paletas PRESERVADA (2/3,3/3 sigue uniendo — test que
+  lo cubre); 34/34 suites · tsc 0 · eslint 0 · build OK.
+- 6/7 Implementación experta y ordenada (26 archivos, +938/−91): errores.ts
+  (errorControlado/codigoControladoDe/ERR_*), modulos.ts, recepcion-filas.ts,
+  RecortarImagenDialog, RecepcionModule, GuiaFotoForm, auth.ts, PisoSectoresTab,
+  FefoPisoTab, FechaVencimientoField, DescargaTab, OcupacionTab, LectorQR,
+  transito.ts, rq-atencion.ts (buscarRqPorNumero), zebra.ts, qr-rotulo.ts,
+  RqAtencionPanel, RqFotoForm, RqEditarDialog.
+- 8 Accesos usados: GitHub PAT (push bd34f5e), Supabase Management API
+  (migración + verificaciones), JWT de app (RPC E2E), Cloudflare Pages (deploy
+  automático), anon key (prueba de bloqueo de escritura anónima).
+- 9 Todos los módulos: Recepción, Racks/Ocupaciones (Kardex), Piso, Tránsito,
+  Atención (RQ+RAL unificados), Auth, Etiquetas/ZPL, Usuarios. Falsos
+  positivos descartados con evidencia: 5 pares de movimientos <3 s (salidas
+  partidas con cantidades distintas — legítimas) y logs «odulos]» (artefacto
+  del pipeline de render — el fuente siempre tuvo «[modulos]»; NO hubo cambio).
+- BD (20261030_auditoria_integral.sql, aplicada + verificada): revoke
+  insert/update/delete a anon (prueba en vivo: 401/42501) · search_path de
+  piso_auto_estructura_sector · confirmar_correo_en_auth (bcrypt; E2E
+  correcta→true/incorrecta→false/inexistente→false) · DETALLES_REQUERIDOS en
+  piso_registrar_movimiento · EPS 0.0005 en el anti-sobreenvío de
+  transito_registrar_envio.
+- Tests: +22 checks (R3/R5 en filas, Z1/Z2 en zebra, errores controlados,
+  23505 amigable) → 34/34 suites.
+- Deploy bd34f5e → rackly.pages.dev v=202610301512-bd34f5e (verificado).
+
+---

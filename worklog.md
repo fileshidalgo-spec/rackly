@@ -509,3 +509,24 @@ Stage Summary:
 - 23 archivos, +1198/-105; nuevos: permisos.ts, DialogoPermisos.tsx, roles-label.ts, test_permisos.js, migración SQL
 - El admin puede marcar por usuario qué puede y qué no puede hacer, independiente del cargo; la BD aplica la MISMA regla (no es solo cosmética)
 - Deploy: 9b1d175 en producción (rackly.pages.dev)
+
+---
+Task ID: 4 (pedido 2026-10-31 — Módulo Usuarios, trace 1a18e676af27d259)
+Agent: Main Agent
+Task: CUADRO DE PERMISOS módulo × acción — fin de los bugs del v1 (denegar BLOQUEA de verdad)
+
+Work Log:
+- 1.1/1.2 (bug del v1 9b1d175 reproducido y probado): (a) MÓVIL: el pie del diálogo se SUPERPONÍA a la lista (screenshot iPhone); (b) BD: marcar ✗ NO bloqueaba — las 18 políticas *_delete_permiso son PERMISSIVE (OR con las de rol: un supervisor con override seguía borrando) y SELECT/INSERT/UPDATE seguían abiertos a todos; (c) 14 RPCs SECURITY DEFINER saltaban RLS (ningún override las frenaba); (d) el catálogo (10 permisos) no formaba el cuadro Ver/Crear/Editar/Eliminar/Aprobar del modelo del usuario; (e) RqDetalle usaba atencion.eliminar para EDITAR; (f) toast «Permiso restringido» al quitar una excepción
+- 2 (causa): arquitectura solo-aditiva (OR nunca restringe) sin capa DENY ni matriz módulo×acción
+- 3 (repetición): E2 en las 18 tablas; E3 en todo el catálogo; E4 en Atención/RqDetalle; E5 en las 14 RPCs de escritura (registrar_movimiento_kardex, registrar_traslado_kardex, editar_lote_vencimiento_racks/_piso, piso_registrar_salida/traslado, piso_auto_estructura_sector, rq_crear_completa, rq_atender_lote, rq_revertir_origen, rq_editar_rq, ral_crear_completa, transito_registrar_envio, rackly_reemplazar_movimientos)
+- 4/5 (procedimiento sin conflictos): capa DENY = 60 políticas AS RESTRICTIVE (se AND-ean con las permissive de rol, que NO se tocan) + guards dentro de las 14 RPCs (splice de pg_get_functiondef con respaldo scripts/respaldo_rpc_antes_guard_20261031.sql) + marcador de llamada anidada (GUC rackly.en_rpc_interna) para que transito→registrar_movimiento_kardex herede autorización; defaults por rol en permiso_defecto_rol() que REPRODUCEN el comportamiento actual con cero overrides (verificado contra pg_policies); admin inmutable; uniones explícitas: movimientos INSERT ∪ descarga.subir (UP Data), recepcion SELECT ∪ transito.ver, recepcion/atencion UPDATE ∪ .crear (flujos de atender/imprimir)
+- 6/7: migración 20261031_permisos_matriz.sql (4 funciones + 60 políticas + 14 guards, aplicada statement a statement con scripts/aplicar_migracion.py aware de dollar-quoting); permisos.ts v2 (27 permisos + MATRIZ 8 módulos × 5 acciones + PERMISO_VER_MODULO); DialogoPermisos v2 = cuadro como el modelo (✓ verde / ✗ rojo / borde azul = excepción, columnas pegajosas, scroll móvil, pie NUNCA superpuesto, toasts correctos); gates por celda: ModulosHome/page (Ver por módulo), MovimientoForm (crear racks), PisoSectoresTab×5 handlers (crear piso), Recepción (registrar/editar), RqAtencionPanel (Nueva RQ/RAL), Tránsito (transferir), Catálogo (crear/editar/eliminar separados), UsuariosTab (eliminar), RqDetalle (editar = atencion.editar)
+- 8 (accesos): Supabase Mgmt API (migración + E2E BD scripts/e2e_cuadro_permisos.py 10/10: defaults, DENY bloquea DELETE por RLS con JWT simulado, guard RPC NO_AUTORIZADO, limpieza sin residuos) + navegador E2E (cuadro como modelo, excepción azul guardada, badge contador, denegación en supervisor)
+- 9 (Módulos): Usuarios (transversal: Racks, Catálogo, Descarga, Piso, Recepción, Atención, Tránsito)
+- QA: tsc OK · eslint OK · 37/37 suites (test_permisos v2: 423 checks) · build OK
+- Deploy: dabdca2 en producción (rackly.pages.dev, 2026-10-30 20:43 UTC), verificado con el cuadro en vivo; BD sin overrides residuales tras las pruebas
+
+Stage Summary:
+- 15 archivos, +3387/-269; nuevos: migración del cuadro, aplicar_migracion.py, gen_guard_rpc.py, e2e_cuadro_permisos.py, respaldo RPCs
+- Marcar ✗ en el cuadro ahora BLOQUEA en la base de datos (RLS RESTRICTIVE + guards RPC), no solo oculta botones; con cero excepciones todo funciona exactamente igual que antes
+- Commit: dabdca2

@@ -3,6 +3,8 @@
 import { dataClient } from '@/lib/supabase/client'
 import { aNumero } from '@/lib/rackly/formato'
 import { toast } from 'sonner'
+import { exigirBorradas } from '@/lib/rackly/eliminacion-honesta'
+import { ERR_ELIMINAR_BLOQUEADO, errorControlado } from '@/lib/rackly/errores'
 
 export type CatalogoItem = {
   codigo: string
@@ -316,11 +318,26 @@ export async function mergeCatalogo(
 }
 
 export async function clearCatalogo(): Promise<CatalogoItem[]> {
-  const { error } = await dataClient.from('catalogo').delete().neq('codigo', '')
+  // HONESTIDAD (patrón T173-00004281, auditoría 2026-10-31): la RLS de
+  // catalogo filtra el DELETE por rol en silencio — un operario veía
+  // «catálogo vaciado» con el catálogo intacto. Se piden las filas de
+  // vuelta y se verifica que lo restante sea coherente con lo borrado.
+  const { data: borradas, error } = await dataClient
+    .from('catalogo')
+    .delete()
+    .neq('codigo', '')
+    .select('codigo')
   if (error) throw error
   // Poda FK-safe de las anclas de piso (solo las SIN movimientos históricos)
   await podarAnclasPisoSinUso()
-  return fetchCatalogo()
+  const restantes = await fetchCatalogo()
+  if ((borradas ?? []).length === 0 && restantes.length > 0) {
+    throw errorControlado(
+      ERR_ELIMINAR_BLOQUEADO,
+      'El catálogo NO se vació (tu rol no permite borrar). Pide el vaciado a un supervisor/administrador.'
+    )
+  }
+  return restantes
 }
 
 // ═══ Anclas de piso (piso_bloques) ═══
@@ -357,9 +374,14 @@ export async function podarAnclasPisoSinUso(): Promise<number> {
   let podadas = 0
   const CHUNK = 500
   for (let i = 0; i < aPodar.length; i += CHUNK) {
-    const { error } = await dataClient.from('piso_bloques').delete().in('id', aPodar.slice(i, i + CHUNK))
+    // Contador HONESTO: solo las filas que la BD borró de verdad
+    const { data: borradas, error } = await dataClient
+      .from('piso_bloques')
+      .delete()
+      .in('id', aPodar.slice(i, i + CHUNK))
+      .select('id')
     if (error) break
-    podadas += Math.min(CHUNK, aPodar.length - i)
+    podadas += (borradas ?? []).length
   }
   return podadas
 }

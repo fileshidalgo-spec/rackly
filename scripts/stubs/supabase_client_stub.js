@@ -22,9 +22,13 @@ let updateResult = null
 /** El próximo maybeSingle pertenece a un update (sirve updateResult, no tabla). */
 let pendingUpdate = false
 /** Aditivo 2026-10-30 (honestidad de DELETE): delete() ahora es ENCADENABLE
- *  (delete().in().select()) y resuelve { data: __setDeleteResult(r) } UNA vez;
- *  sin resultado enlatado resuelve { data: null } (legado). */
-let deleteResult = null
+ *  (delete().in().select()) y resuelve { data: resultado enlatado } UNA vez;
+ *  sin resultado enlatado resuelve { data: null } (legado).
+ *  Aditivo 2026-10-31 (COLA): funciones con VARIOS delete seguidos
+ *  (eliminarRq, piso doble delete, guardarEdicionGuia) consumen los
+ *  resultados enlatados EN ORDEN FIFO — __setDeleteResult encola; si la
+ *  cola está vacía, resuelve { data: null } (compatibilidad total). */
+const deleteQueue = []
 let pendingDelete = false
 
 function builder(table) {
@@ -38,6 +42,12 @@ function builder(table) {
     range() { return p },
     ilike() { return p },
     not() { return p },
+    neq() { return p },
+    gte() { return p },
+    lte() { return p },
+    gt() { return p },
+    lt() { return p },
+    is() { return p },
     textSearch() { return p },
     contains() { return p },
     maybeSingle() {
@@ -65,8 +75,7 @@ function builder(table) {
     then(resolve, reject) {
       if (pendingDelete) {
         pendingDelete = false
-        const r = deleteResult ?? { data: null, error: null }
-        deleteResult = null
+        const r = deleteQueue.length ? deleteQueue.shift() : { data: null, error: null }
         return Promise.resolve(r).then(resolve, reject)
       }
       return Promise.resolve({ data: tables[table] ?? [], error: null }).then(resolve, reject)
@@ -90,14 +99,14 @@ module.exports = {
   __orCalls() { return orCalls.slice() },
   __updateCalls() { return updateCalls.slice() },
   __setUpdateResult(r) { updateResult = r },
-  __setDeleteResult(r) { deleteResult = r },
+  __setDeleteResult(r) { deleteQueue.push(r) },
   __clear() {
     for (const k of Object.keys(tables)) delete tables[k]
     orCalls.length = 0
     updateCalls.length = 0
     updateResult = null
     pendingUpdate = false
-    deleteResult = null
+    deleteQueue.length = 0
     pendingDelete = false
   },
 }

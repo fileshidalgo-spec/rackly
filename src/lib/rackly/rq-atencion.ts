@@ -21,6 +21,7 @@ import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { FECHA_INICIO_TRANSITO } from '@/lib/rackly/transito-core'
 import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
 import { construirOrBusquedaRq, MAX_IDS_MATERIALES } from '@/lib/rackly/busqueda-rq'
+import { exigirBorradas, avisarBorradoFiltrado } from '@/lib/rackly/eliminacion-honesta'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS
@@ -464,7 +465,14 @@ export async function crearRq(
       // quitar (permisos de delete), se quita y el reintento parte limpio.
       // Si los permisos no alcanzan, el reintento con el MISMO id entra por
       // la rama duplicate y completa los items — el sistema converge igual.
-      await dataClient.from('rq_atenciones').delete().eq('id', id)
+      // BEST-EFFORT: no lanza (enmascararía eItems); si la RLS filtró el
+      // delete queda cabecera huérfana VISIBLE hasta el reintento — aviso.
+      const { data: borrada } = await dataClient
+        .from('rq_atenciones')
+        .delete()
+        .eq('id', id)
+        .select('id')
+      avisarBorradoFiltrado(borrada, 1, 'rq-atencion.registrarRq.rollback')
       throw eItems
     }
   }
@@ -1180,10 +1188,34 @@ export async function eliminarRq(id: string): Promise<void> {
   // SIN materiales (pérdida parcial). Con este orden el peor caso es lo
   // contrario: items huérfanos INVISIBLES (basura inofensiva, sin impacto
   // en la UI ni en los totales).
-  const { error: eRq } = await dataClient.from('rq_atenciones').delete().eq('id', id)
+  const { data: borrada, error: eRq } = await dataClient
+    .from('rq_atenciones')
+    .delete()
+    .eq('id', id)
+    .select('id')
   if (eRq) throw eRq
-  const { error: eItems } = await dataClient.from('rq_atencion_items').delete().eq('rq_id', id)
+  // HONESTIDAD (patrón T173-00004281, auditoría 2026-10-31): la RLS de
+  // rq_atenciones también filtra el DELETE por rol en silencio (HTTP 200,
+  // 0 filas) — un operario veía «RQ eliminada» y la RQ seguía viva.
+  exigirBorradas(
+    borrada,
+    1,
+    'La RQ NO se eliminó (tu rol no permite borrar, o ya fue eliminada por otro usuario). Recarga la lista.'
+  )
+  // Items: MISMA política RLS que el header — si el header pasó, el delete
+  // de items no puede ser filtrado (gate comentado arriba). Un 0 aquí es
+  // legítimo solo si la RQ nació sin items; se cuenta pero no bloquea.
+  const { data: itemsBorrados, error: eItems } = await dataClient
+    .from('rq_atencion_items')
+    .delete()
+    .eq('rq_id', id)
+    .select('id')
   if (eItems) throw eItems
+  if ((itemsBorrados ?? []).length === 0) {
+    // Cabecera borrada pero items NO: huérfanos invisibles (sin impacto en
+    // UI ni totales — peor caso aceptado por diseño, ver orden header-first).
+    console.warn(`[eliminarRq] RQ ${id}: header borrado, 0 items borrados (¿RQ sin items o filtro RLS).`)
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -16,6 +16,7 @@
 
 import { dataClient } from '@/lib/supabase/client'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
+import { exigirBorradas, avisarBorradoFiltrado } from '@/lib/rackly/eliminacion-honesta'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS
@@ -370,8 +371,15 @@ export async function crearRal(
     )
     if (eI) {
       // No dejar un header sin materiales (reintento entrará por duplicate
-      // y completará): best-effort, espejo del patrón RQ.
-      await dataClient.from('rals').delete().eq('id', id)
+      // y completará): best-effort, espejo del patrón RQ. BEST-EFFORT: no
+      // lanza (enmascararía eI); si la RLS filtró el delete queda cabecera
+      // huérfana hasta el reintento — aviso en consola.
+      const { data: borrada } = await dataClient
+        .from('rals')
+        .delete()
+        .eq('id', id)
+        .select('id')
+      avisarBorradoFiltrado(borrada, 1, 'ral.registrarRal.rollback')
       throw eI
     }
   }
@@ -381,10 +389,22 @@ export async function crearRal(
 /**
  * Elimina el RAL. El header PRIMERO: valida RLS de eliminación
  * (supervisores) en el primer delete; los items caen por CASCADE.
+ * HONESTIDAD (patrón T173-00004281, auditoría 2026-10-31): la RLS filtra
+ * el DELETE por rol EN SILENCIO (HTTP 200, 0 filas) — un operario veía
+ * «RAL eliminado» y el RAL seguía vivo. Se pide la fila de vuelta.
  */
 export async function eliminarRal(id: string): Promise<void> {
-  const { error } = await dataClient.from('rals').delete().eq('id', id)
+  const { data: borrada, error } = await dataClient
+    .from('rals')
+    .delete()
+    .eq('id', id)
+    .select('id')
   if (error) throw error
+  exigirBorradas(
+    borrada,
+    1,
+    'El RAL NO se eliminó (tu rol no permite borrar, o ya fue eliminado por otro usuario). Recarga la lista.'
+  )
 }
 
 // ═══════════════════════════════════════════════════════════════════

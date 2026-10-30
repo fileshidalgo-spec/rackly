@@ -4,6 +4,8 @@ import { dataClient } from '@/lib/supabase/client'
 import { PAGE_SIZE, MAX_ITERATIONS, FETCH_MOV_MAX_PAGES, MOVIMIENTOS_ENTRADA, TURNO_DIA, TURNO_NOCHE } from './constants'
 import { impactoStock } from '@/lib/utils'
 import { toast } from 'sonner'
+import { exigirBorradas } from '@/lib/rackly/eliminacion-honesta'
+import { ERR_ELIMINAR_BLOQUEADO, errorControlado } from '@/lib/rackly/errores'
 
 export type Turno = typeof TURNO_DIA | typeof TURNO_NOCHE
 export type TipoMovimiento = 'ingreso' | 'salida' | 'devolucion' | 'traslado'
@@ -462,8 +464,20 @@ export async function addMovimiento(
 }
 
 export async function deleteMovimiento(id: string): Promise<Movimiento[]> {
-  const { error } = await dataClient.from('movimientos').delete().eq('id', id)
+  // HONESTIDAD (patrón T173-00004281, auditoría 2026-10-31): la RLS de
+  // movimientos filtra el DELETE por rol en silencio (HTTP 200, 0 filas,
+  // sin error) — un éxito falso aquí dejaba el movimiento vivo.
+  const { data: borradas, error } = await dataClient
+    .from('movimientos')
+    .delete()
+    .eq('id', id)
+    .select('id')
   if (error) throw error
+  exigirBorradas(
+    borradas,
+    1,
+    'El movimiento NO se eliminó (tu rol no permite borrar, o ya fue eliminado por otro usuario). Recarga el kardex.'
+  )
   return fetchMovimientos()
 }
 
@@ -1320,12 +1334,17 @@ export async function eliminarMovimientosPorIds(
   let eliminados = 0
   const CHUNK = 500
   for (let i = 0; i < ids.length; i += CHUNK) {
-    const { error } = await dataClient
+    // HONESTIDAD (auditoría 2026-10-31): se cuentan SOLO las filas que la
+    // BD borró DE VERDAD (.select('id')) — antes se sumaba Math.min(CHUNK,
+    // restante) aunque la RLS filtrara el lote completo: contador falso.
+    const lote = ids.slice(i, i + CHUNK)
+    const { data: borradas, error } = await dataClient
       .from('movimientos')
       .delete()
-      .in('id', ids.slice(i, i + CHUNK))
+      .in('id', lote)
+      .select('id')
     if (error) errores.push(`Lote ${Math.floor(i / CHUNK) + 1}: ${error.message}`)
-    else eliminados += Math.min(CHUNK, ids.length - i)
+    else eliminados += (borradas ?? []).length
   }
   return { eliminados, errores }
 }
@@ -1488,13 +1507,24 @@ export async function eliminarUbicacion(
       'No se encontraron movimientos para eliminar en esta ubicación (verifique que el stock exista y no haya sido movido por otro usuario).'
     )
   }
-  // Borrar por IDs en chunks de 500
+  // Borrar por IDs en chunks de 500 — HONESTIDAD (auditoría 2026-10-31):
+  // se verifica el efecto REAL; si la RLS filtra (0 borradas sin error) el
+  // usuario lo sabe AHORA, no con un «stock eliminado» que reaparece.
+  let borradasTotal = 0
   for (let i = 0; i < ids.length; i += 500) {
-    const { error } = await dataClient
+    const { data: borradas, error } = await dataClient
       .from('movimientos')
       .delete()
       .in('id', ids.slice(i, i + 500))
+      .select('id')
     if (error) throw error
+    borradasTotal += (borradas ?? []).length
+  }
+  if (borradasTotal < ids.length) {
+    throw errorControlado(
+      ERR_ELIMINAR_BLOQUEADO,
+      `La eliminación NO se completó: se borraron ${borradasTotal} de ${ids.length} movimiento(s) (tu rol no permite borrarlos). Recarga el kardex.`
+    )
   }
   return fetchMovimientos()
 }

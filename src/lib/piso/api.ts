@@ -3,6 +3,7 @@
 import { dataClient } from '@/lib/supabase/client'
 import { QUERY_TIMEOUT_MS } from '@/lib/rackly/constants'
 import { isLoteUnsupportedError } from '@/lib/rackly/kardex'
+import { exigirBorradas, avisarBorradoFiltrado } from '@/lib/rackly/eliminacion-honesta'
 
 /** Genera un UUID v4 simple (no requiere crypto.randomUUID que no está en todos los browsers) */
 function generateUuidSync(): string {
@@ -13,12 +14,20 @@ function generateUuidSync(): string {
 }
 
 /** Elimina cabeceras huérfanas (sin detalles) para un set de IDs.
- *  Usado como rollback cuando la inserción de detalles falla. */
+ *  Usado como rollback cuando la inserción de detalles falla.
+ *  BEST-EFFORT (no lanza — enmascararía el error original): si la RLS
+ *  filtra el delete queda cabecera huérfana hasta el reintento — aviso. */
 async function rollbackCabeceras(ids: string[], tag: string): Promise<void> {
   for (const id of ids) {
-    await dataClient.from('piso_movimientos').delete().eq('id', id).catch((rbErr) => {
-      console.error(`[${tag}] rollback de cabecera ${id} falló:`, rbErr)
-    })
+    await dataClient
+      .from('piso_movimientos')
+      .delete()
+      .eq('id', id)
+      .select('id')
+      .then(({ data }) => avisarBorradoFiltrado(data, 1, tag))
+      .catch((rbErr) => {
+        console.error(`[${tag}] rollback de cabecera ${id} falló:`, rbErr)
+      })
   }
 }
 
@@ -268,8 +277,19 @@ export async function crearSector(
 }
 
 export async function eliminarSector(id: string): Promise<Sector[]> {
-  const { error } = await dataClient.from('piso_sectores').delete().eq('id', id)
+  // HONESTIDAD (patrón T173-00004281, auditoría 2026-10-31): RLS por rol
+  // filtra el delete en silencio — se verifica el efecto real.
+  const { data: borrado, error } = await dataClient
+    .from('piso_sectores')
+    .delete()
+    .eq('id', id)
+    .select('id')
   if (error) throw error
+  exigirBorradas(
+    borrado,
+    1,
+    'El sector NO se eliminó (tu rol no permite borrar, o ya fue eliminado por otro usuario). Recarga la lista.'
+  )
   return listarSectores()
 }
 
@@ -541,12 +561,18 @@ export async function podarAnclaPisoSiSinUso(codigo: string): Promise<void> {
   const bloqueId = (bloque as { id: string }).id
   // Sin asignaciones de columna (tabla heredada, hoy vacía) ni movimientos
   await dataClient.from('piso_columna_bloques').delete().eq('bloque_id', bloqueId)
-  const { error } = await dataClient.from('piso_bloques').delete().eq('id', bloqueId)
+  const { data: borrado, error } = await dataClient
+    .from('piso_bloques')
+    .delete()
+    .eq('id', bloqueId)
+    .select('id')
   if (error && (error as { code?: string }).code === '23503') {
     // Tiene movimientos históricos: conservar (ancla legítima del historial)
     return
   }
   if (error) throw error
+  // Poda interna best-effort: si la RLS filtró, el ancla queda — inofensivo.
+  avisarBorradoFiltrado(borrado, 1, 'piso.podarAnclaPisoSiSinUso')
 }
 
 // ---- Movements ----
@@ -575,11 +601,19 @@ export async function eliminarMovimiento(movimientoId: string): Promise<void> {
     .delete()
     .eq('movimiento_id', movimientoId)
   if (detErr) throw detErr
-  const { error: movErr } = await dataClient
+  // HONESTIDAD (auditoría 2026-10-31): RLS por rol puede filtrar el delete
+  // del header en silencio — se pide la fila de vuelta y se verifica.
+  const { data: borrado, error: movErr } = await dataClient
     .from('piso_movimientos')
     .delete()
     .eq('id', movimientoId)
+    .select('id')
   if (movErr) throw movErr
+  exigirBorradas(
+    borrado,
+    1,
+    'El movimiento de piso NO se eliminó (tu rol no permite borrar, o ya fue eliminado por otro usuario). Recarga la lista.'
+  )
 }
 
 /**
@@ -607,17 +641,26 @@ export async function eliminarMovimientoConPar(movimientoId: string): Promise<nu
     const ids = (hermanos ?? []).map((h: { id: string }) => h.id)
     if (ids.length > 1) idsAEliminar = ids // traslado: salida + ingreso
   }
-  const { error: detErr } = await dataClient
+  const { data: borradas, error: detErr } = await dataClient
     .from('piso_movimiento_detalles')
     .delete()
     .in('movimiento_id', idsAEliminar)
+    .select('id')
   if (detErr) throw detErr
-  const { error: movErr } = await dataClient
+  const { data: borradasMov, error: movErr } = await dataClient
     .from('piso_movimientos')
     .delete()
     .in('id', idsAEliminar)
+    .select('id')
   if (movErr) throw movErr
-  return idsAEliminar.length
+  // HONESTIDAD (auditoría 2026-10-31): devolver lo REALMENTE eliminado —
+  // si la RLS filtró el delete del header (0 filas), NO reportar éxito.
+  exigirBorradas(
+    borradasMov,
+    1,
+    'El movimiento NO se eliminó (tu rol no permite borrar movimientos de piso). Pide la eliminación a un supervisor/administrador.'
+  )
+  return (borradasMov ?? []).length
 }
 
 /**

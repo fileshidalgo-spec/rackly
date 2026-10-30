@@ -22,6 +22,7 @@ import {
   ERR_ELIMINAR_BLOQUEADO,
   errorControlado,
 } from '@/lib/rackly/errores'
+import { exigirBorradas } from '@/lib/rackly/eliminacion-honesta'
 import {
   extraerIndicePaleta,
   hayDuplicadosRecientes,
@@ -534,18 +535,18 @@ export async function eliminarRecepcion(id: string): Promise<void> {
   // HONESTIDAD (bug T173-00004281): la BD puede FILTRAR el delete en
   // silencio (RLS por rol: HTTP 200 con 0 filas borradas, sin error) — un
   // éxito falso aquí dejaba la fila viva «borrada» ante la app.
+  // Verificación centralizada en eliminacion-honesta.ts (auditoría 10-31).
   const { data: borradas, error } = await dataClient
     .from('recepcion_registros')
     .delete()
     .eq('id', id)
     .select('id')
   if (error) throw error
-  if ((borradas ?? []).length === 0) {
-    throw errorControlado(
-      ERR_ELIMINAR_BLOQUEADO,
-      'La fila NO se eliminó (tu rol no permite borrar este registro, o ya fue eliminado por otro usuario). Recarga la lista.'
-    )
-  }
+  exigirBorradas(
+    borradas,
+    1,
+    'La fila NO se eliminó (tu rol no permite borrar este registro, o ya fue eliminado por otro usuario). Recarga la lista.'
+  )
 }
 
 /**
@@ -615,12 +616,11 @@ export async function eliminarGuia(ref: RefDocumentoRecepcion): Promise<void> {
   // eliminada» que reaparece intacta al recargar.
   const { data: borradas, error } = await q.select('id')
   if (error) throw error
-  if ((borradas ?? []).length === 0) {
-    throw errorControlado(
-      ERR_ELIMINAR_BLOQUEADO,
-      'La guía NO se eliminó: tu rol no permite borrar sus filas (p. ej. filas registradas por otro usuario). Pide el borrado a un supervisor/administrador.'
-    )
-  }
+  exigirBorradas(
+    borradas,
+    1,
+    'La guía NO se eliminó: tu rol no permite borrar sus filas (p. ej. filas registradas por otro usuario). Pide el borrado a un supervisor/administrador.'
+  )
 }
 
 /**
@@ -861,12 +861,17 @@ export async function guardarEdicionGuia(
       .in('id', plan.eliminar)
       .select('id')
     if (error) throw error
-    if ((borradas ?? []).length !== plan.eliminar.length) {
-      throw errorControlado(
-        ERR_ELIMINAR_BLOQUEADO,
-        `El guardado NO se completó: solo se borraron ${(borradas ?? []).length} de ${plan.eliminar.length} ` +
-          'fila(s) que quitaste (tu rol no permite borrarlas). Recarga la guía — las filas quitadas siguen registradas y NO se duplicaron.'
-      )
+    const borradasDeVerdad = exigirBorradas(
+      borradas,
+      plan.eliminar.length,
+      `El guardado NO se completó: solo se borraron ${(borradas ?? []).length} de ${plan.eliminar.length} ` +
+        'fila(s) que quitaste (tu rol no permite borrarlas). Recarga la guía — las filas quitadas siguen registradas y NO se duplicaron.'
+    )
+    // El conteo devuelto refleja el EFECTO REAL (no el plan).
+    return {
+      actualizadas: plan.actualizar.length,
+      eliminadas: borradasDeVerdad,
+      insertadas: plan.insertar.length,
     }
   }
 
@@ -948,12 +953,11 @@ export async function eliminarAtencion(id: string): Promise<void> {
     .eq('id', id)
     .select('id')
   if (error) throw error
-  if ((borradas ?? []).length === 0) {
-    throw errorControlado(
-      ERR_ELIMINAR_BLOQUEADO,
-      'El registro NO se eliminó (tu rol no permite borrar, o ya fue eliminado). Recarga la lista.'
-    )
-  }
+  exigirBorradas(
+    borradas,
+    1,
+    'El registro NO se eliminó (tu rol no permite borrar, o ya fue eliminado). Recarga la lista.'
+  )
 }
 
 // ═══════════════════════════════════════════════════════════════════

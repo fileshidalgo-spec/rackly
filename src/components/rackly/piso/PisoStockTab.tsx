@@ -12,6 +12,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import { Search, PackageSearch, Loader2, MapPin, AlertTriangle, ExternalLink } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: PisoTargetPosicion) => void }) {
   // Estado persistido en sessionStorage (inicializador lazy): al volver desde
@@ -71,7 +72,7 @@ export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: Pis
         // lista vacía real se veían idénticos.
         setHasSearched(true)
         toast.error('No se pudo completar la búsqueda', {
-          description: err instanceof Error ? err.message : 'Error desconocido',
+          description: mensajeError(err),
         })
       } finally {
         if (req === seqRef.current && mountedRef.current) setLoading(false)

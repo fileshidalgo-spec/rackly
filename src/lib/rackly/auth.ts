@@ -1,6 +1,7 @@
 'use client'
 
 import { supabase, dataClient } from '@/lib/supabase/client'
+import { mensajeError } from './errores'
 
 export type Rol = 'admin' | 'operario' | 'auxiliar' | 'almacenero' | 'supervisor_almacen' | 'supervisor_operaciones' | 'coordinador_operaciones'
 
@@ -46,7 +47,9 @@ async function llamarEdgeUsuario(
     if (!res.ok) return { ok: false, error: String(d?.error ?? `HTTP ${res.status}`) }
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    // mensajeError (lib/rackly/errores.ts): los errores de red/fetch pueden
+    // llegar como objeto plano — String(err) los volvía "[object Object]".
+    return { ok: false, error: mensajeError(err) }
   }
 }
 

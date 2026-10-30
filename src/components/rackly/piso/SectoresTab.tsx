@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { Plus, Trash2, RefreshCw, Layers3 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 export function SectoresConfigTab() {
   const { perfil } = useAuth()
@@ -23,7 +24,7 @@ export function SectoresConfigTab() {
       const data = await listarSectores()
       setSectores(data)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al cargar sectores', { description: message })
     } finally {
       setLoading(false)
@@ -60,7 +61,7 @@ export function SectoresConfigTab() {
       setForm({ nombre: '', n_columnas: 2, n_subcolumnas: 2, n_posiciones: 10, n_niveles: 5 })
       toast.success('Sector creado')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al crear sector', { description: message })
     }
   }
@@ -72,7 +73,7 @@ export function SectoresConfigTab() {
       setSectores(data)
       toast.success('Sector eliminado')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al eliminar', { description: message })
     }
   }

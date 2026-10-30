@@ -93,6 +93,7 @@ import {
   FilePlus2,
   BarChart3,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 const PAGE_SIZE = 50
 
@@ -209,7 +210,7 @@ export function RqAtencionPanel({
         }
       } catch (err: unknown) {
         if (gen !== cargaGenRef.current) return
-        const message = err instanceof Error ? err.message : 'Error desconocido'
+        const message = mensajeError(err)
         toast.error('Error al cargar las RQ', { description: message })
       } finally {
         if (gen === cargaGenRef.current) setLoading(false)
@@ -246,7 +247,7 @@ export function RqAtencionPanel({
         })
       )
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('Error al cargar los RAL', { description: message })
     } finally {
       if (!silencioso) setCargandoRals(false)
@@ -314,7 +315,7 @@ export function RqAtencionPanel({
       if (rqAbiertaId === target.id) volverALista()
       else cargar(0, true)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo eliminar', { description: message })
     }
   }
@@ -330,7 +331,7 @@ export function RqAtencionPanel({
       if (ralAbiertaId === target.id) volverALista()
       else void cargarRals()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo eliminar el RAL', { description: message })
     }
   }
@@ -343,7 +344,7 @@ export function RqAtencionPanel({
       setEditarItems(items)
       setEditarTarget(r)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo abrir la edición', { description: message })
     } finally {
       setCargandoEdicion(null)

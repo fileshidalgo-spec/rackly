@@ -75,6 +75,7 @@ import {
   SearchCheck,
   TriangleAlert,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 type Paso = 'elegir' | 'recortar' | 'procesando' | 'confirmar'
 
@@ -527,7 +528,7 @@ export function RalFotoForm({
 
       setPaso('confirmar')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo procesar la foto', { description: message })
       setPaso('elegir')
     }
@@ -582,7 +583,7 @@ export function RalFotoForm({
         try {
           fotoUrl = await subirFotoRq(fotoBlob, perfil.id)
         } catch (errFoto: unknown) {
-          const msg = errFoto instanceof Error ? errFoto.message : 'error desconocido'
+          const msg = mensajeError(errFoto)
           toast.warning('El RAL se registrará SIN foto', { description: msg })
         }
       }
@@ -629,7 +630,7 @@ export function RalFotoForm({
       })
       reiniciar()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo registrar el RAL', { description: message })
     } finally {
       setSaving(false)

@@ -86,6 +86,7 @@ import {
   HeartHandshake,
   Truck,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 function fmtCantidad(n: number) {
   return Number.isInteger(n)
@@ -218,7 +219,7 @@ function RacklyApp() {
       setMovs(next)
       toast.success('Movimiento eliminado')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo eliminar', { description: message })
     }
   }

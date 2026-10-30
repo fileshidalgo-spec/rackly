@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/table'
 import { toast } from 'sonner'
 import { Search, Download, Loader2, CalendarDays, FilterX, MapPin, ExternalLink, PackageSearch } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 type FefoItem = {
   codigo: string
@@ -278,7 +279,7 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
       XLSX.writeFile(wb, `RACKLY_FEFO_${hoyISO()}.xlsx`)
       toast.success('FEFO exportado')
     } catch (err: unknown) {
-      toast.error('Error al exportar', { description: err instanceof Error ? err.message : 'Error' })
+      toast.error('Error al exportar', { description: mensajeError(err) })
     } finally { setBusy(false) }
   }
 

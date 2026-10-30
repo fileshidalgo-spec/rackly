@@ -49,6 +49,7 @@ import {
   RefreshCw,
   Loader2,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 export function UsuariosTab() {
   const { perfil, refresh } = useAuth()
@@ -68,7 +69,7 @@ export function UsuariosTab() {
       const data = await getTodosLosPerfiles()
       setPerfiles(data)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al cargar usuarios', { description: message })
     } finally {
       setLoading(false)
@@ -94,7 +95,7 @@ export function UsuariosTab() {
       const data = await getTodosLosPerfiles()
       setPerfiles(data)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al cambiar rol', { description: message })
     } finally {
       setBusyId(null)
@@ -110,7 +111,7 @@ export function UsuariosTab() {
       const data = await getTodosLosPerfiles()
       setPerfiles(data)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al cambiar estado', { description: message })
     } finally {
       setBusyId(null)
@@ -131,7 +132,7 @@ export function UsuariosTab() {
       const data = await getTodosLosPerfiles()
       setPerfiles(data)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al eliminar', { description: message })
     }
   }
@@ -147,7 +148,7 @@ export function UsuariosTab() {
       }
       toast.success('Correo de recuperación enviado')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al enviar correo', { description: message })
     }
   }

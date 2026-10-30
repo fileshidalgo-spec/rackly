@@ -42,6 +42,7 @@ import { toast } from 'sonner'
 import {
   Upload, Trash2, ClipboardList, Plus, Pencil, X, Check, Loader2, FileSpreadsheet,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 export function CatalogoTab() {
   const { perfil } = useAuth()
@@ -76,7 +77,7 @@ export function CatalogoTab() {
       setCatalogo(data)
       setLoaded(true)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al cargar catálogo', { description: message })
     }
   }
@@ -121,7 +122,7 @@ export function CatalogoTab() {
         })
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al importar', { description: message })
     } finally {
       setExcelBusy(false)
@@ -164,7 +165,7 @@ export function CatalogoTab() {
         })
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al procesar Excel', { description: message })
     } finally {
       setExcelBusy(false)
@@ -180,7 +181,7 @@ export function CatalogoTab() {
       setCatalogo(data)
       toast.success('Catálogo eliminado')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al eliminar', { description: message })
     }
   }
@@ -252,7 +253,7 @@ export function CatalogoTab() {
       setShowAdd(false)
       setEditItem(null)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error(editItem ? 'Error al actualizar' : 'Error al agregar', { description: message })
     } finally {
       setFormBusy(false)
@@ -277,7 +278,7 @@ export function CatalogoTab() {
       setDeleteTarget(null)
       toast.success('Ítem eliminado')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al eliminar', { description: message })
     } finally {
       setFormBusy(false)

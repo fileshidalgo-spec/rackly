@@ -41,6 +41,7 @@ import {
   Mail,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { mensajeError } from '@/lib/rackly/errores'
 
 /* ─── Utilidades de validación ─── */
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -287,7 +288,7 @@ function SetNewPasswordScreen({
       try { await signOut() } catch { /* ok */ }
       await onDone()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       if (message.toLowerCase().includes('expired') || message.toLowerCase().includes('invalid')) {
         toast.error('Enlace expirado', {
           description: 'El enlace de recuperación ha expirado. Solicita uno nuevo desde "¿Olvidaste tu contraseña?".',
@@ -370,7 +371,7 @@ function ForceChangePasswordScreen({
       toast.success('Contraseña actualizada')
       await onDone()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo actualizar', { description: message })
     } finally {
       setBusy(false)
@@ -517,7 +518,7 @@ function ForgotPasswordScreen({
           'Revisa tu bandeja de entrada y haz clic en el enlace para crear tu nueva contraseña.',
       })
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       if (esErrorRateLimit(message)) {
         toast.error('Demasiados intentos', {
           description: 'Por seguridad, espera 60 segundos antes de solicitar otro enlace.',
@@ -663,7 +664,7 @@ function LoginScreen({
         })
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       const newAttempts = attempts + 1
       setAttempts(newAttempts)
       if (esErrorRateLimit(message)) {
@@ -736,7 +737,7 @@ function LoginScreen({
       }
     } catch (err: unknown) {
       const message =
-        err instanceof Error ? err.message : 'Error desconocido'
+        mensajeError(err)
       if (esErrorCorreoExistente(message)) {
         // Verificar si es un perfil huérfano (existe en Auth pero no en profiles)
         // o si es realmente una cuenta existente

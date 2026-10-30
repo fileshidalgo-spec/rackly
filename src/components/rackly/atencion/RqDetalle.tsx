@@ -82,6 +82,7 @@ import {
 } from '@/lib/rackly/rq-atencion'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { aNumero } from '@/lib/rackly/formato'
+import { mensajeError } from '@/lib/rackly/errores'
 
 const ESTADO_ITEM_CLASE: Record<string, string> = {
   Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -213,7 +214,7 @@ export function RqDetalle({
       })
     } catch (err: unknown) {
       if (gen !== genRef.current) return
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       setError(message)
     } finally {
       if (gen === genRef.current) setLoading(false)
@@ -280,7 +281,7 @@ export function RqDetalle({
         setExcedenteAbierto((prev) => ({ ...prev, [actualizado.id]: false }))
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo atender', { description: message })
       void cargar() // re-sincroniza si otro usuario movió la fila
     } finally {
@@ -301,7 +302,7 @@ export function RqDetalle({
       setCantidades((prev) => ({ ...prev, [actualizado.id]: String(pendienteDeItem(actualizado) || '') }))
       toast.success(`Revertido: ${fmt(conf.cantidad)} ${conf.item.unidad}`.trim())
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo revertir', { description: message })
     } finally {
       setSavingId(null)
@@ -342,7 +343,7 @@ export function RqDetalle({
       void cargar()
     } catch (err: unknown) {
       toast.error('No se pudo revertir con origen', {
-        description: err instanceof Error ? err.message : 'Error desconocido',
+        description: mensajeError(err),
       })
     } finally {
       setRevertiendoOrigen(false)

@@ -6,6 +6,8 @@
  * recepcion-filas / recepcion-idempotencia).
  */
 
+import { mensajeError } from './errores'
+
 // ═══════════════════════════════════════════════════════════════════
 // CONSTANTES Y TIPOS
 // ═══════════════════════════════════════════════════════════════════
@@ -362,9 +364,17 @@ export function validarCantidad(cantidad: number, pendiente: number): string | n
   return null
 }
 
-/** Extrae "CODE|detalle" de un error PostgREST y lo vuelve mensaje de usuario. */
+/**
+ * Extrae "CODE|detalle" de un error PostgREST y lo vuelve mensaje de usuario.
+ *
+ * FIX 2026-10-30 (reporte «[object Object]» al escanear QR): los errores de
+ * PostgREST llegan como OBJETO PLANO { message, details, hint, code } — no
+ * como `Error`. El handler antiguo hacía `String(err)` y mostraba
+ * "[object Object]". Ahora delega en el extractor canónico mensajeError()
+ * (lib/rackly/errores.ts), que maneja TODAS las formas conocidas y aplica la
+ * convención "CODE|detalle" de las RPCs. Mismo contrato que antes para
+ * `Error` (tests de test_transito.js).
+ */
 export function mensajeRpcError(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err)
-  const i = msg.indexOf('|')
-  return i >= 0 ? msg.slice(i + 1) : msg
+  return mensajeError(err)
 }

@@ -38,6 +38,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { mensajeError } from '@/lib/rackly/errores'
 
 /** Formato numérico de los avisos RQ (igual que OcupacionTab/PisoSectoresTab). */
 function fmtRq(n: number): string {
@@ -87,7 +88,7 @@ export function RqSalidaConfirmador({
       onTerminar()
     } catch (err: unknown) {
       toast.error('No se pudo registrar en la RQ', {
-        description: err instanceof Error ? err.message : 'Error desconocido',
+        description: mensajeError(err),
       })
       // El diálogo permanece abierto: el usuario decide reintentar o cancelar.
     } finally {

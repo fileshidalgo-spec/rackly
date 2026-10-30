@@ -18,6 +18,20 @@ import {
 } from '@/lib/rackly/kardex'
 import { puedeEditarLote, construirOpcionesLote, calcularAjusteCantidad } from '@/lib/rackly/lote'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
+import { mensajeError } from '@/lib/rackly/errores'
+import {
+  listarArticuloPorRecepcionId,
+  registrarIngresoRackDesdeRotulo,
+} from '@/lib/rackly/transito'
+import {
+  rotuloDesdeFila,
+  prefillDesdeRotulo,
+  validarCantidadRotulo,
+  etiquetaPosicionRack,
+  type RotuloIngreso,
+} from '@/lib/rackly/ingreso-qr'
+import { parsearPayloadQR } from '@/lib/rackly/qr-rotulo'
+import { LectorQR } from '@/components/rackly/transito/LectorQR'
 import { leerContextoSalidaRq, detectarRqParaSalida, type ContextoSalidaRq, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
 import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
 import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
@@ -65,6 +79,7 @@ import {
   Warehouse,
   CircleSlash,
   Pencil,
+  ScanLine,
 } from 'lucide-react'
 
 // Calcula días restantes hasta vencimiento (negativo si ya venció)
@@ -227,6 +242,18 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   const [ingSinLote, setIngSinLote] = useState(false)
   const [ingProveedor, setIngProveedor] = useState('')
 
+  // ── Escaneo de rótulo QR (ingreso por QR, 2026-10-30) ──
+  // El rótulo escaneado alimenta el formulario y, si la fila tiene pendiente,
+  // el registro va por la RPC atómica de Tránsito (ingreso + marca en una
+  // transacción — evita el palet fantasma del incidente 2026-10-29).
+  const [ingRotulo, setIngRotulo] = useState<RotuloIngreso | null>(null)
+  const [lectorAbierto, setLectorAbierto] = useState(false)
+  const [escaneandoRotulo, setEscaneandoRotulo] = useState(false)
+  // Uuid ESTABLE por fila escaneada (idempotencia de transito_registrar_envio):
+  // un reintento del MISMO ingreso reusa el MISMO uuid — si la RPC aplicó pero
+  // el cliente falló, el reintento devuelve duplicado:true en vez de duplicar.
+  const ingUuidsRef = useRef<Record<string, string>>({})
+
   // ── Salida state ──
   const [salidaIdx, setSalidaIdx] = useState(0)
   const [salidaCantidad, setSalidaCantidad] = useState('')
@@ -383,7 +410,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         const celdas = await fetchOcupacionCeldas()
         if (mountedRef.current) setOcupacion(celdas)
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Error'
+        const msg = mensajeError(err)
         if (mountedRef.current) toast.error('Error al cargar ocupación', { description: msg })
       }
     }
@@ -579,7 +606,68 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
     setIngCodigo(''); setIngDescripcion(''); setIngUn('')
     setIngCantidad(''); setIngFVenc('')
     setIngSinFecha(false); setIngProveedor(''); setIngLote(''); setIngSinLote(false)
+    setIngRotulo(null) // el rótulo de un ingreso anterior no arrastra al nuevo
     setDetailMode('ingreso')
+  }
+
+  // ── Escaneo de rótulo para el ingreso (QR único por paleta) ──
+  const resolverRotulo = async (texto: string) => {
+    const p = parsearPayloadQR(texto)
+    if (!p) {
+      toast.error('El QR no es un rótulo de Rackly', { description: texto.slice(0, 60) })
+      return
+    }
+    if (!p.identidad) {
+      toast.error('Rótulo legado sin QR de paleta', {
+        description: 'Este rótulo viejo no identifica la paleta exacta — reimprímelo en Recepción o digita los datos.',
+      })
+      return
+    }
+    setEscaneandoRotulo(true)
+    try {
+      const fila = await listarArticuloPorRecepcionId(p.identidad)
+      if (!fila) {
+        toast.error('El rótulo no corresponde a una fila de Recepción', {
+          description: 'Verifica que el rótulo fue impreso por Recepción o registra el ingreso manualmente.',
+        })
+        return
+      }
+      const rotulo = rotuloDesdeFila(fila)
+      const pf = prefillDesdeRotulo(rotulo)
+      setIngCodigo(pf.codigo)
+      setIngDescripcion(pf.descripcion)
+      setIngUn(pf.un)
+      setIngCantidad(pf.cantidad)
+      setIngLote(pf.lote); setIngSinLote(pf.sinLote)
+      setIngFVenc(pf.fVenc); setIngSinFecha(pf.sinFecha)
+      // Proveedor: solo si la descripción lo exige y el proveedor del rótulo
+      // es una opción válida del catálogo de film (si no, que lo elija).
+      if (requiereProveedor(pf.descripcion)) {
+        const prov = rotulo.proveedor.trim()
+        setIngProveedor(PROVEEDORES_FILM.includes(prov as (typeof PROVEEDORES_FILM)[number]) ? prov : '')
+      } else {
+        setIngProveedor('')
+      }
+      setIngRotulo(rotulo)
+      // Uuid de idempotencia desde YA (reusado por reintentos del mismo ingreso).
+      if (!ingUuidsRef.current[rotulo.recepcionId]) {
+        ingUuidsRef.current[rotulo.recepcionId] = nuevoUuid()
+      }
+      if (rotulo.yaTransferido) {
+        toast.warning(`${rotulo.codigo}: ya está transferido completo`, {
+          description: 'Se registrará como ingreso genérico (sin marca de Tránsito). Verifica que sea mercadería distinta.',
+        })
+      } else {
+        toast.success(`${rotulo.codigo} — ${pf.cantidad} ${pf.un}`, {
+          description: `Guía ${rotulo.numeroDocumento || 'sin número'}${rotulo.nPaleta != null ? ` · Paleta ${rotulo.nPaleta}` : ''}. Al registrar: ingreso en ESTA posición + marca en Tránsito (atómico).`,
+        })
+      }
+      setLectorAbierto(false)
+    } catch (err: unknown) {
+      toast.error('No se pudo leer el rótulo', { description: mensajeError(err) })
+    } finally {
+      setEscaneandoRotulo(false)
+    }
   }
 
   function openSalida(idx: number, total: boolean) {
@@ -676,6 +764,42 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
     if (!ingCodigo.trim() || !ingCantidad) { toast.error('Completa código y cantidad'); return }
     const q = parseFloat(ingCantidad); if (isNaN(q) || q <= 0) { toast.error('Cantidad inválida'); return }
     if (showProveedor && !ingProveedor) { toast.error('Selecciona un proveedor para este artículo'); return }
+    // ── VÍA RÓTULO ESCANEADO (ingreso con pendiente en la guía): la RPC
+    // atómica transito_registrar_envio crea el ingreso en ESTA posición Y
+    // marca Tránsito en la MISMA transacción — el palet jamás queda
+    // «pendiente fantasma» (incidente 2026-10-29).
+    if (ingRotulo && ingTipo === 'ingreso' && !ingRotulo.yaTransferido) {
+      const errValid = validarCantidadRotulo(q, ingRotulo)
+      if (errValid) { toast.error(errValid); return }
+      setActionBusy(true)
+      try {
+        const etiqueta = etiquetaPosicionRack(detail)
+        const r = await registrarIngresoRackDesdeRotulo({
+          recepcionId: ingRotulo.recepcionId,
+          cantidad: q,
+          pendiente: ingRotulo.pendiente,
+          turno: calcularTurno(),
+          usuario: { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo },
+          rack: { bloque: detail.bloque, torre: detail.torre, piso: detail.piso, posicion: detail.posicion },
+          etiqueta,
+          uuidSync: ingUuidsRef.current[ingRotulo.recepcionId],
+        })
+        // Éxito (o duplicado idempotente): el uuid ya no sirve para un nuevo ingreso.
+        delete ingUuidsRef.current[ingRotulo.recepcionId]
+        toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado (rótulo escaneado)' : 'Ingreso registrado', {
+          description: r.duplicado
+            ? 'Ya estaba registrado (reintento) — Tránsito y Racks quedan coherentes.'
+            : `Ingreso en ${etiqueta} + envío marcado en Tránsito.`,
+        })
+        if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
+        setIngRotulo(null)
+      } catch (err: unknown) {
+        // mensajeError: PostgrestError plano (OVER_ISSUE|…, sesión expirada,…)
+        // llega con su mensaje REAL — jamás «[object Object]».
+        toast.error('Error al registrar el ingreso', { description: mensajeError(err) })
+      } finally { setActionBusy(false) }
+      return
+    }
     setActionBusy(true)
     try {
       await addMovimiento({
@@ -690,7 +814,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       }, undefined, { refetch: false })
       toast.success(ingTipo === 'ingreso' ? 'Ingreso registrado' : 'Devolución registrada')
       if (mountedRef.current) { await refreshDetail(); refreshData(); setDetailMode('view') }
-    } catch (err: unknown) { toast.error('Error', { description: extractError(err) }) } finally { setActionBusy(false) }
+    } catch (err: unknown) { toast.error('Error', { description: mensajeError(err) }) } finally { setActionBusy(false) }
   }
 
   function openInc() {
@@ -1645,6 +1769,41 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                 </div>
                 <p className="text-[10px] text-slate-500">Ubicación: <span className="text-sky-400 font-mono">B{detail.bloque} T{detail.torre} P{detail.piso} Pos {detail.posicion}</span></p>
 
+                {/* ── Ingreso por QR (2026-10-30): escanear el rótulo de la paleta ── */}
+                {ingRotulo ? (
+                  <div className={`rounded-lg border p-2.5 space-y-1 ${ingRotulo.yaTransferido ? 'border-amber-500/40 bg-amber-500/10' : 'border-emerald-500/40 bg-emerald-500/10'}`}>
+                    <div className="flex items-center gap-2">
+                      <ScanLine className={`w-4 h-4 flex-shrink-0 ${ingRotulo.yaTransferido ? 'text-amber-400' : 'text-emerald-400'}`} />
+                      <span className="text-xs font-bold text-slate-200 flex-1 truncate">
+                        {ingRotulo.codigo}{ingRotulo.nPaleta != null ? ` · Paleta ${ingRotulo.nPaleta}` : ''}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setIngRotulo(null); setIngCantidad('') }}
+                        className="text-[10px] font-semibold text-slate-400 hover:text-rose-400 flex-shrink-0"
+                      >
+                        Quitar
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      Guía {ingRotulo.numeroDocumento || 'sin número'} · lote {ingRotulo.lote || '—'} ·{' '}
+                      {ingRotulo.yaTransferido
+                        ? 'ya transferido: se registrará como ingreso genérico'
+                        : `pendiente ${ingRotulo.pendiente} ${ingRotulo.unidadMedida} — al registrar se marca Tránsito (atómico)`}
+                    </p>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() => setLectorAbierto(true)}
+                    size="sm"
+                    className="w-full gap-2 border-fuchsia-500/40 text-fuchsia-300 hover:bg-fuchsia-500/10 hover:text-fuchsia-200 text-xs"
+                  >
+                    <ScanLine className="w-4 h-4" />
+                    Escanear rótulo (QR)
+                  </Button>
+                )}
+
                 {/* Búsqueda de artículo por código o descripción */}
                 <div className="space-y-1">
                   <Label className="text-[10px] text-slate-400">Buscar artículo (código o descripción) *</Label>
@@ -2380,6 +2539,20 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         permitirCantidad
         onOpenChange={(o) => { if (!o) setEditLoteTarget(null) }}
         onGuardar={doEditarLoteRacks}
+      />
+
+      {/* ── Escáner de rótulos para el ingreso por QR (Racks > Ocupación) ──
+          Componente compartido de Tránsito: cámara (BarcodeDetector/jsQR) +
+          pistola USB. `escaneandoRotulo` congela el decode mientras la fila
+          se resuelve contra la BD. ── */}
+      <LectorQR
+        open={lectorAbierto}
+        pausado={escaneandoRotulo}
+        onOpenChange={setLectorAbierto}
+        onDetectar={(texto) => void resolverRotulo(texto)}
+        titulo="Escanear rótulo para el ingreso"
+        descripcion="Apunta al QR del rótulo — el formulario se llena con los datos de la paleta y el ingreso marca Tránsito."
+        ocupado={escaneandoRotulo ? 'Leyendo rótulo…' : undefined}
       />
     </div>
   )

@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { MOVIMIENTOS_ENTRADA, LOCALE } from "@/lib/rackly/constants"
+import { mensajeError } from '@/lib/rackly/errores'
 
 // ── Tailwind ────────────────────────────────────────────
 export function cn(...inputs: ClassValue[]) {
@@ -86,50 +87,18 @@ export function fmtUbicacion(bloque: string, torre: string, piso: string, posici
 
 // ── Error handling ──────────────────────────────────────
 /** Extrae mensaje de error legible desde unknown.
- *  Maneja: Error nativo, PostgrestError (Supabase), objetos con message/detalle,
- *  strings, y tipos desconocidos.
+ *  FIX 2026-10-30: delega en el extractor canónico mensajeError()
+ *  (lib/rackly/errores.ts) — mismo contrato de siempre para los ~40 puntos de
+ *  llamada (Kardex/Piso/…), pero ahora también:
+ *   · PostgrestError OBJETO PLANO (supabase-js sin throwOnError) → su message
+ *     (antes caía a JSON.stringify; mensajeError ya lo maneja de primera).
+ *   · Quita la convención "CODE|detalle" de las RPCs (el operario ve el
+ *     detalle; los códigos solo sirven para branching interno).
+ *  Casos especiales que se conservan: Error('INSUFFICIENT_STOCK') con .detail
+ *  (forma legada de addMovimiento) y el join message+details+hint.
  */
 export function extractError(err: unknown): string {
-  if (!err) return 'Error desconocido'
-
-  // Error de stock insuficiente (custom)
-  if (err instanceof Error && err.message === 'INSUFFICIENT_STOCK') {
-    const detail = (err as unknown as Record<string, string>).detail
-    return detail || 'Stock insuficiente para esta operación. Otro usuario pudo haber hecho un movimiento mientras tú operabas.'
-  }
-
-  // Error nativo
-  if (err instanceof Error) {
-    const msg = err.message || ''
-    // PostgrestError de Supabase — usar message + detalles adicionales si existen
-    const rec = err as unknown as Record<string, unknown>
-    if (rec.code || rec.hint || rec.details) {
-      const parts = [msg]
-      if (rec.details && typeof rec.details === 'string') parts.push(rec.details)
-      if (rec.hint && typeof rec.hint === 'string') parts.push(rec.hint)
-      return parts.filter(Boolean).join('. ')
-    }
-    if (msg) return msg
-  }
-
-  // String
-  if (typeof err === 'string') return err
-
-  // Objeto con message
-  if (typeof err === 'object') {
-    const rec = err as Record<string, unknown>
-    if (typeof rec.message === 'string') return rec.message
-    if (typeof rec.error === 'string') return rec.error
-    if (typeof rec.msg === 'string') return rec.msg
-    // Fallback: stringify
-    try {
-      return JSON.stringify(err)
-    } catch {
-      return 'Error desconocido'
-    }
-  }
-
-  return 'Error desconocido'
+  return mensajeError(err)
 }
 
 /** Detecta si un error es de stock insuficiente (race condition capturada por la RPC) */

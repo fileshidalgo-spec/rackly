@@ -103,6 +103,7 @@ import {
   Check,
   CheckCircle2,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 const PAGE_SIZE = 50
 
@@ -295,7 +296,7 @@ export function RecepcionModule() {
       })
       setRotulosOpen(true)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo cargar la guía completa', { description: message })
     } finally {
       setCargandoGuia(false)
@@ -388,7 +389,7 @@ export function RecepcionModule() {
         description: `${filas.length} fila(s) con toda la información registrada (artículos, paletas, lote y fechas).`,
       })
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo generar el Excel', { description: message })
     } finally {
       setExportando(null)
@@ -466,7 +467,7 @@ export function RecepcionModule() {
       })
       setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo abrir la guía para editar', { description: message })
     } finally {
       setCargandoEdicion(false)
@@ -543,7 +544,7 @@ export function RecepcionModule() {
         }
       } catch (err: unknown) {
         if (gen !== cargaGenRef.current) return
-        const message = err instanceof Error ? err.message : 'Error desconocido'
+        const message = mensajeError(err)
         toast.error('Error al cargar recepciones', { description: message })
       } finally {
         if (gen === cargaGenRef.current) setLoading(false)
@@ -846,7 +847,7 @@ export function RecepcionModule() {
       setItems([itemVacio()])
       cargar(0, true)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       // M-1: la cancelación anti-duplicado no es un error — es una decisión
       // del usuario (y el reintento bloqueado por uuid_sync, un aviso).
       if (message.startsWith('REGISTRO_CANCELADO|')) {
@@ -878,7 +879,7 @@ export function RecepcionModule() {
       setFilas((prev) => prev.map((r) => (ids.has(r.id) ? { ...r, estado } : r)))
       toast.success(`Guía actualizada a ${estado} (${grupo.filas.length} fila(s))`)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo actualizar el estado', { description: message })
     }
   }
@@ -904,7 +905,7 @@ export function RecepcionModule() {
       toast.success(`Guía eliminada (${target.filas.length} fila(s))`)
       cargar(0, true)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo eliminar', { description: message })
     }
   }

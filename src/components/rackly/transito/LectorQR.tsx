@@ -38,6 +38,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import jsQR from 'jsqr'
+import { mensajeError } from '@/lib/rackly/errores'
 
 type Props = {
   open: boolean
@@ -161,7 +162,9 @@ export function LectorQR({
         setEstadoCam('activa')
       } catch (err: unknown) {
         if (cancelado) return
-        const msg = err instanceof Error ? err.message : String(err)
+        // mensajeError: los errores de getUserMedia pueden ser objetos planos
+        // (no Error) — String(err) los volvía "[object Object]".
+        const msg = mensajeError(err)
         setErrorCam(
           /permission|denied|NotAllowed/i.test(msg)
             ? 'Permiso de cámara denegado. Actívalo en el candado de la barra de direcciones (o usa la entrada manual / pistola USB).'

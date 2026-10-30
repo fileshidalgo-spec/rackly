@@ -55,6 +55,7 @@ import {
   Plus,
   ClipboardList,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 const ESTADO_RAL_CLASE: Record<string, string> = {
   Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -106,7 +107,7 @@ export function RalDetalle({ ralId, onVolver }: { ralId: string; onVolver: () =>
       })
     } catch (err: unknown) {
       if (gen !== genRef.current) return
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       setError(message)
     } finally {
       if (gen === genRef.current) setLoading(false)
@@ -163,7 +164,7 @@ export function RalDetalle({ ralId, onVolver }: { ralId: string; onVolver: () =>
         setExcedenteAbierto((prev) => ({ ...prev, [actualizado.id]: false }))
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo atender', { description: message })
       void cargar() // re-sincroniza si otro usuario movió la fila
     } finally {
@@ -192,7 +193,7 @@ export function RalDetalle({ ralId, onVolver }: { ralId: string; onVolver: () =>
       setCantidades((prev) => ({ ...prev, [actualizado.id]: String(pendienteDeItem(actualizado) || '') }))
       toast.success(`Revertido: ${fmt(conf.cantidad)} ${conf.item.unidad}`.trim())
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo revertir', { description: message })
     } finally {
       setSavingId(null)

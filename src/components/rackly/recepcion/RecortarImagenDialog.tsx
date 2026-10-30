@@ -33,6 +33,7 @@ import {
   type Esquina,
   type Rect,
 } from '@/lib/rackly/recorte-marco'
+import { mensajeError } from '@/lib/rackly/errores'
 
 export type OrigenRecorte = 'inicio' | 'confirmar'
 
@@ -250,7 +251,7 @@ export function RecortarImagenDialog({
           return ''
         })
         urlRef.current = '' // el unmount ya no debe revocar una URL ya revocada
-        const message = err instanceof Error ? err.message : 'Error desconocido'
+        const message = mensajeError(err)
         setErrorPrep(message)
       })
       .finally(() => {
@@ -339,7 +340,7 @@ export function RecortarImagenDialog({
       const recorte = new File([blob], 'guia-recortada.jpg', { type: 'image/jpeg' })
       onAplicar(recorte)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo recortar la foto', { description: message })
     } finally {
       setAplicando(false)

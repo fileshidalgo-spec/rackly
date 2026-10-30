@@ -26,6 +26,7 @@ import {
   type ReporteItem,
 } from '@/lib/rackly/atencion-reporte'
 import { exportarExcelAtencion } from '@/lib/rackly/atencion-excel'
+import { mensajeError } from '@/lib/rackly/errores'
 
 const EST_KPI: Record<string, string> = {
   Pendiente: 'border-amber-200 bg-amber-50 text-amber-700',
@@ -87,7 +88,7 @@ export function RqDashboard() {
       setHora(new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }))
     } catch (err: unknown) {
       if (gen !== genRef.current) return
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('Error al cargar el dashboard', { description: message })
     } finally {
       if (gen === genRef.current) setLoading(false)
@@ -104,7 +105,7 @@ export function RqDashboard() {
       const nombre = await exportarExcelAtencion(datos ?? (await cargarReporteAtencion()))
       toast.success(`Descargado: ${nombre}`)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo exportar el Excel', { description: message })
     } finally {
       setExportando(false)

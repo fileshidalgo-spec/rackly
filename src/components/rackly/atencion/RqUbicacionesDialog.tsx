@@ -37,6 +37,7 @@ import {
   PackageSearch,
   Inbox,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 type FilaRacks = {
   bloque: string
@@ -93,7 +94,7 @@ export function RqUbicacionesDialog({
         setPiso((p ?? []).filter((x) => x.cantidad > 0))
       } catch (err: unknown) {
         if (!vigente) return
-        const message = err instanceof Error ? err.message : 'Error desconocido'
+        const message = mensajeError(err)
         setError(message)
       } finally {
         if (vigente) setCargando(false)

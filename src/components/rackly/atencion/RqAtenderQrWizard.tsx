@@ -75,6 +75,7 @@ import {
 } from '@/lib/rackly/atencion-qr-lote'
 import { atenderLotePuente, type TomaPuentePayload } from '@/lib/rackly/rq-atencion'
 import { aNumero } from '@/lib/rackly/formato'
+import { mensajeError } from '@/lib/rackly/errores'
 
 type ItemWizard = {
   id: string
@@ -193,7 +194,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
       cacheRef.current.set(clave, filas)
       return filas
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error(`No se pudo leer la guía ${numeroDocumento || ''}`.trim(), { description: message })
       return []
     } finally {
@@ -333,7 +334,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
               cacheRef.current.set(clave, filas)
             } catch (err: unknown) {
               toast.error('No se pudo leer el listado de guías', {
-                description: err instanceof Error ? err.message : 'Error desconocido',
+                description: mensajeError(err),
               })
               return
             } finally {
@@ -396,7 +397,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
       setFilasManual(filas)
     } catch (err: unknown) {
       toast.error('No se pudo cargar el listado de guías', {
-        description: err instanceof Error ? err.message : 'Error desconocido',
+        description: mensajeError(err),
       })
     } finally {
       setBuscandoManual(false)
@@ -486,7 +487,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
       onOpenChange(false)
     } catch (err: unknown) {
       toast.error('No se pudo registrar el lote', {
-        description: err instanceof Error ? err.message : 'Error desconocido',
+        description: mensajeError(err),
       })
     } finally {
       setRegistrando(false)

@@ -35,6 +35,7 @@ import { toast } from 'sonner'
 import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle, MapPin, ExternalLink } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
+import { mensajeError } from '@/lib/rackly/errores'
 
 export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string, torre: string, piso: string, posicion: string) => void }) {
   const { perfil } = useAuth()
@@ -437,7 +438,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       setMovs(next)
       toast.success('Ubicación eliminada')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('No se pudo eliminar', { description: message })
     }
   }

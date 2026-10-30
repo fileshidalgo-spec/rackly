@@ -66,6 +66,7 @@ import {
   Download,
   MonitorDown,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 type EstadoServicio = 'verificando' | 'activo' | 'no-encontrado'
 
@@ -298,13 +299,13 @@ export function ImprimirRotulosDialog({
         try {
           await onImpreso()
         } catch (errMarcado: unknown) {
-          const msg = errMarcado instanceof Error ? errMarcado.message : 'Error desconocido'
+          const msg = mensajeError(errMarcado)
           toast.warning('Impresión enviada, pero no se pudo marcar como Recepcionada', { description: msg })
         }
       }
       onOpenChange(false)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo imprimir', { description: message })
     } finally {
       setImprimiendo(false)

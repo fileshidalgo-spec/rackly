@@ -48,6 +48,7 @@ import {
   Shield,
   History,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 const MODULOS: ModuloActividad[] = ['racks', 'piso', 'recepcion', 'atencion']
 const PAGE_SIZE = 100
@@ -106,7 +107,7 @@ export function UsuariosModule() {
       const data = await getTodosLosPerfiles()
       setPerfiles(data)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al cargar usuarios', { description: message })
     }
   }, [])
@@ -128,7 +129,7 @@ export function UsuariosModule() {
         setOffset(nuevoOffset)
       } catch (err: unknown) {
         if (gen !== cargaGenRef.current) return
-        const message = err instanceof Error ? err.message : 'Error desconocido'
+        const message = mensajeError(err)
         toast.error('Error al cargar actividad', { description: message })
       } finally {
         if (gen === cargaGenRef.current) setLoading(false)

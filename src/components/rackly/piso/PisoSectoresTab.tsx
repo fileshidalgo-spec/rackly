@@ -56,6 +56,7 @@ import {
   Clock, RotateCwIcon, TriangleAlert, MapPin,
   Pencil,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 type DetailStock = { bloque_id: string; bloque_codigo: string; bloque_descripcion: string; bloque_unidad: string; cantidad: number; fecha_vencimiento: string; lote?: string }
 
@@ -490,7 +491,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         if (vigente()) setPosiciones(data)
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error'
+      const msg = mensajeError(err)
       if (vigente() && !silent) toast.error('Error al cargar posiciones', { description: msg })
     } finally {
       if (vigente()) setLoading(false)
@@ -1638,7 +1639,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
       }))
       if (mountedRef.current) setMassData(dataMap)
     } catch (err: unknown) {
-      toast.error('Error al cargar datos', { description: err instanceof Error ? err.message : '' })
+      toast.error('Error al cargar datos', { description: mensajeError(err) })
     } finally {
       if (mountedRef.current) setMassBusy(false)
     }

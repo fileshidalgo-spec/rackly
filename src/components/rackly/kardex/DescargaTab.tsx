@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/table'
 import { toast } from 'sonner'
 import { Download, Upload, FileSpreadsheet, Loader2, Check, AlertTriangle, X, ArrowDownToLine, DatabaseBackup, Trash2, ShieldAlert } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 /* ═══════════════════════════════════════════════════════════
    SUB-COMPONENT: Sección de Descarga (exportar Excel)
@@ -158,7 +159,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
       XLSX.writeFile(wb, `RACKLY_${fecha}.xlsx`)
       toast.success('Archivo descargado')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al exportar', { description: message })
     } finally {
       setBusy(false)
@@ -481,7 +482,7 @@ function UpDataSection() {
         )
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error'
+      const message = mensajeError(err)
       toast.error('Error al cargar datos', { description: message })
       setProgress('')
     } finally {

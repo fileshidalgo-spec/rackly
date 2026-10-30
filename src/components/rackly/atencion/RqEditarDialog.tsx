@@ -71,6 +71,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import { Loader2, Plus, Trash2, TriangleAlert, Undo2 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 /** Fila editable del diálogo (cantidad como texto; key estable para React). */
 type FilaEdicion = {
@@ -316,7 +317,7 @@ export function RqEditarDialog({
         { description: 'Ahora puedes corregir su código, unidad, cantidad o quitarlo, y volver a atender.' }
       )
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo revertir la atención', { description: message })
     } finally {
       setRevirtiendo(false)
@@ -369,7 +370,7 @@ export function RqEditarDialog({
       }
       onGuardada(resultado)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       setErrores([message])
       setConfirmar(false)
       scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })

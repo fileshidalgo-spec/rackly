@@ -86,6 +86,7 @@ import {
   CheckCircle2,
   XCircle,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 function hoyISO(): string {
   const d = new Date()
@@ -457,7 +458,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
 
       setPaso('confirmar')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo procesar la foto', { description: message })
       setPaso('elegir')
     }
@@ -632,7 +633,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
       reiniciar()
       onRegistrado(infoRegistrada)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       // M-1: cancelación anti-duplicado y reintento bloqueado no son errores.
       if (message.startsWith('REGISTRO_CANCELADO|')) {
         toast.info('Registro cancelado', {

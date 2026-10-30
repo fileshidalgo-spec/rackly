@@ -30,6 +30,7 @@ import { toast } from 'sonner'
 import {
   Search, Download, Loader2, CalendarDays, AlertTriangle, PackageSearch, RefreshCw, MapPin, Layers, ExternalLink,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 type FefoStatus = 'vigente' | 'proximo' | 'urgente' | 'vencido' | 'sin_fecha'
 
@@ -231,7 +232,7 @@ export function FefoPisoTab({ onGotoPosicion }: { onGotoPosicion?: (target: Piso
       XLSX.writeFile(wb, `RACKLY_FEFO_PISO_${hoyISO()}.xlsx`)
       toast.success('FEFO Piso exportado')
     } catch (err: unknown) {
-      toast.error('Error al exportar', { description: err instanceof Error ? err.message : 'Error' })
+      toast.error('Error al exportar', { description: mensajeError(err) })
     } finally {
       setExportBusy(false)
     }

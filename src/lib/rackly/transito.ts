@@ -236,6 +236,56 @@ export async function transferirArticulo(args: ArgsTransferir): Promise<Resultad
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// INGRESO DESDE RACKS > OCUPACIONES (rótulo escaneado, 2026-10-30)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Registra el ingreso de una paleta escaneada (rótulo con QR único) directo
+ * en una posición de rack, USANDO LA MISMA RPC ATÓMICA del puente Tránsito:
+ *   · crea el ingreso nativo en movimientos (vía registrar_movimiento_kardex),
+ *   · Y marca el envío en recepcion_registros.transito en la MISMA transacción.
+ *
+ * Por qué NO addMovimiento directo: el incidente 2026-10-29 (Elmer, guía
+ * T-37934) — un ingreso manual en Racks dejó la fila de Tránsito sin marcar y
+ * el palet quedó «pendiente» fantasma (doble conteo al re-escanear). Con esta
+ * vía el semáforo de Tránsito y el stock de Racks nacen coherentes.
+ *
+ * `uuidSync` debe ser ESTABLE entre reintentos del mismo ingreso (idempotencia
+ * de la RPC): OcupacionTab lo genera al escanear y lo reusa por fila.
+ * Revalida anti-sobreenvío en cliente; la RPC es la fuente de verdad.
+ */
+export async function registrarIngresoRackDesdeRotulo(args: {
+  recepcionId: string
+  cantidad: number
+  /** Pendiente declarado por la fila escaneada (validación temprana). */
+  pendiente: number
+  turno: string
+  usuario: UsuarioTransito
+  rack: { bloque: string; torre: string; piso: string; posicion: string }
+  etiqueta: string
+  uuidSync?: string
+}): Promise<ResultadoEnvio> {
+  const v = validarCantidad(args.cantidad, args.pendiente)
+  if (v) throw new Error(v)
+  const uuid = args.uuidSync?.trim() || nuevoUuid()
+  const { data, error } = await dataClient.rpc('transito_registrar_envio', {
+    p_recepcion_id: args.recepcionId,
+    p_tipo_destino: 'rack',
+    p_cantidad: args.cantidad,
+    p_turno: args.turno,
+    p_usuario_id: args.usuario.id || null,
+    p_usuario_nombre: args.usuario.nombre,
+    p_usuario_correo: args.usuario.correo,
+    p_uuid_sync: uuid,
+    p_rack: args.rack,
+    p_piso: null,
+    p_ubicacion: args.etiqueta,
+  })
+  if (error) throw error
+  return (data ?? {}) as ResultadoEnvio
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MAPAS DE UBICACIONES (reutiliza los motores existentes)
 // ═══════════════════════════════════════════════════════════════════
 

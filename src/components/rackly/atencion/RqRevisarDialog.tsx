@@ -41,6 +41,7 @@ import {
   HelpCircle,
   ClipboardList,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 function fmt(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toLocaleString('es-PE', { maximumFractionDigits: 3 })
@@ -79,7 +80,7 @@ export function RqRevisarDialog({
         const r = await revisarAtencionItem(item)
         if (vigente) setRev(r)
       } catch (err: unknown) {
-        if (vigente) setError(err instanceof Error ? err.message : 'Error desconocido')
+        if (vigente) setError(mensajeError(err))
       } finally {
         if (vigente) setCargando(false)
       }

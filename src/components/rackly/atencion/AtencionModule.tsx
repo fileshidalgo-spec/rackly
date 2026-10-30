@@ -75,6 +75,7 @@ import {
   ClipboardList,
   Ticket,
 } from 'lucide-react'
+import { mensajeError } from '@/lib/rackly/errores'
 
 const PAGE_SIZE = 50
 
@@ -183,7 +184,7 @@ export function AtencionModule({
         }
       } catch (err: unknown) {
         if (gen !== cargaGenRef.current) return
-        const message = err instanceof Error ? err.message : 'Error desconocido'
+        const message = mensajeError(err)
         toast.error('Error al cargar atenciones', { description: message })
       } finally {
         if (gen === cargaGenRef.current) setLoading(false)
@@ -260,7 +261,7 @@ export function AtencionModule({
       setFDetalle('')
       cargar(0, true)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo registrar', { description: message })
     } finally {
       setSaving(false)
@@ -283,7 +284,7 @@ export function AtencionModule({
       )
       toast.success(`Estado actualizado a ${estado}`)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo actualizar el estado', { description: message })
     }
   }
@@ -297,7 +298,7 @@ export function AtencionModule({
       toast.success('Registro eliminado')
       cargar(0, true)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
+      const message = mensajeError(err)
       toast.error('No se pudo eliminar', { description: message })
     }
   }

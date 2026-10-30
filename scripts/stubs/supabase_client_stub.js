@@ -21,6 +21,11 @@ const updateCalls = []
 let updateResult = null
 /** El próximo maybeSingle pertenece a un update (sirve updateResult, no tabla). */
 let pendingUpdate = false
+/** Aditivo 2026-10-30 (honestidad de DELETE): delete() ahora es ENCADENABLE
+ *  (delete().in().select()) y resuelve { data: __setDeleteResult(r) } UNA vez;
+ *  sin resultado enlatado resuelve { data: null } (legado). */
+let deleteResult = null
+let pendingDelete = false
 
 function builder(table) {
   const p = {
@@ -53,8 +58,17 @@ function builder(table) {
       pendingUpdate = true
       return p
     },
-    delete() { return Promise.resolve({ data: null, error: null }) },
+    delete() {
+      pendingDelete = true
+      return p
+    },
     then(resolve, reject) {
+      if (pendingDelete) {
+        pendingDelete = false
+        const r = deleteResult ?? { data: null, error: null }
+        deleteResult = null
+        return Promise.resolve(r).then(resolve, reject)
+      }
       return Promise.resolve({ data: tables[table] ?? [], error: null }).then(resolve, reject)
     },
   }
@@ -76,11 +90,14 @@ module.exports = {
   __orCalls() { return orCalls.slice() },
   __updateCalls() { return updateCalls.slice() },
   __setUpdateResult(r) { updateResult = r },
+  __setDeleteResult(r) { deleteResult = r },
   __clear() {
     for (const k of Object.keys(tables)) delete tables[k]
     orCalls.length = 0
     updateCalls.length = 0
     updateResult = null
     pendingUpdate = false
+    deleteResult = null
+    pendingDelete = false
   },
 }

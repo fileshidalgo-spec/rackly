@@ -135,6 +135,11 @@ export const mensajeRpcCanonica = mensajeError
 export const ERR_CANCELADO = 'REGISTRO_CANCELADO'
 /** Reintento bloqueado por idempotencia: nada nuevo se registró. */
 export const ERR_DUPLICADO = 'REGISTRO_DUPLICADO'
+/** Borrado NO aplicado: la BD filtró el DELETE en silencio (RLS por rol) o
+ *  la fila desapareció — el guardado/eliminado NO se completó y se avisa
+ *  con un error claro en vez de un éxito falso (bug T173-00004281:
+ *  rol operario + DELETE de supervisores = guías que se duplicaban). */
+export const ERR_ELIMINAR_BLOQUEADO = 'ELIMINAR_BLOQUEADO'
 
 const NOMBRES_NATIVOS = new Set([
   'Error',

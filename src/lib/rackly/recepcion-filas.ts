@@ -359,6 +359,16 @@ export function obsSinMarcaPaleta(observaciones: string): string {
  */
 export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
   const items: ItemConPaletas[] = []
+  // N del grupo ABIERTO (el marca.n de la fila que abrió el item anterior) o
+  // null si el item anterior no abre grupo de paletas. FIX auditoría
+  // 2026-10-30 (T173-00004281): la continuación exigía SOLO
+  // prev.paletas.length < marca.n — con DOS artículos del MISMO código
+  // divididos en N distintos («1/7» seguido de «2/5»), el grupo /5 se
+  // FUSIONABA dentro del /7 (y viceversa): nacían artículos fantasma con
+  // paletas mezcladas y el guardado re-insertaba juegos completos de
+  // paletas (16→23→36→50→63 filas en una mañana). La continuación exige
+  // AHORA que el N de la fila coincida con el N del grupo abierto.
+  let nAbierto: number | null = null
   for (const f of filas) {
     const marca = marcaPaletaDe(f.observaciones)
     const prev = items[items.length - 1]
@@ -369,14 +379,15 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
     // renumeración impresa dejaba de coincidir con la física.
     // Los grupos INCOMPLETOS siguen uniendo como en el legado (2/2, 3/3 sin
     // la 1ª — filas perdidas se re-ensamblan; behavior cubierto por tests).
-    const continuaGrupo = !!marca && marca.i > 1
+    const continuaGrupo = !!marca && marca.i > 1 && nAbierto !== null && marca.n === nAbierto
     if (
       marca &&
       continuaGrupo &&
+      nAbierto !== null &&
       prev &&
       prev.codigo === f.codigo &&
       prev.paletas &&
-      prev.paletas.length < marca.n
+      prev.paletas.length < nAbierto
     ) {
       // Siguiente paleta del mismo artículo dividido: SU cantidad y sus
       // datos PROPIOS solo si difieren de los del artículo (1ª fila del
@@ -396,6 +407,7 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
       // Inicio de un grupo de paletas (nuevo o huérfano: la fila participa).
       // El item hereda el id de la fila cabecera (paleta 1): si la división
       // cae a fila única al re-guardar, esa fila sigue siendo la anfitriona.
+      nAbierto = marca.n
       items.push({
         codigo: f.codigo,
         descripcion: f.descripcion,
@@ -409,6 +421,9 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
         filaId: f.id,
       })
     } else {
+      // Fila SIN marca de paleta: cierra cualquier grupo abierto (un artículo
+      // normal del mismo código entre medias NUNCA hereda las paletas).
+      nAbierto = null
       items.push({
         codigo: f.codigo,
         descripcion: f.descripcion,

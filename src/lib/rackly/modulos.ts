@@ -16,7 +16,12 @@
 
 import { dataClient, supabase } from '@/lib/supabase/client'
 import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
-import { ERR_CANCELADO, ERR_DUPLICADO, errorControlado } from '@/lib/rackly/errores'
+import {
+  ERR_CANCELADO,
+  ERR_DUPLICADO,
+  ERR_ELIMINAR_BLOQUEADO,
+  errorControlado,
+} from '@/lib/rackly/errores'
 import {
   extraerIndicePaleta,
   hayDuplicadosRecientes,
@@ -251,9 +256,15 @@ export async function listarRecepciones(
  *   · Respaldo (fila sin guia_id, residuo pre-migración): con Nº →
  *     tipo_documento + numero_documento; sin Nº → fecha + proveedor + tipo.
  *
- * Orden estable por created_at: los artículos aparecen en el orden en que
- * se registraron. Solo devuelve datos YA registrados (regla de negocio:
- * nunca se imprime desde el formulario sin guardar).
+ * Orden estable por created_at (los artículos aparecen en el orden en que
+ * se registraron) + desempates DETERMINISTICOS dentro del mismo instante:
+ * las filas de UNA guardada comparten created_at EXACTO (16 filas en el
+ * mismo microsegundo en T173-00004281) y Postgres puede devolverlas en
+ * ORDEN ARBITRARIO — el re-ensamblado de paletas (filasAItems) y la
+ * impresión eran no-deterministas entre aperturas. Desempate: codigo →
+ * n_paleta (1..N juntas, sin marcar las filas sin dividir) → id.
+ * Solo devuelve datos YA registrados (regla de negocio: nunca se imprime
+ * desde el formulario sin guardar).
  */
 export async function listarRecepcionesPorDocumento(ref: {
   guiaId?: string | null
@@ -276,7 +287,11 @@ export async function listarRecepcionesPorDocumento(ref: {
         .eq('proveedor', (ref.proveedor ?? '').trim())
     }
   }
-  const { data, error } = await q.order('created_at', { ascending: true })
+  const { data, error } = await q
+    .order('created_at', { ascending: true })
+    .order('codigo', { ascending: true })
+    .order('n_paleta', { ascending: true, nullsFirst: true })
+    .order('id', { ascending: true })
   if (error) throw error
   return (data ?? []).map(mapRecepcion)
 }
@@ -516,8 +531,21 @@ export async function cambiarEstadoRecepcion(id: string, estado: string): Promis
 }
 
 export async function eliminarRecepcion(id: string): Promise<void> {
-  const { error } = await dataClient.from('recepcion_registros').delete().eq('id', id)
+  // HONESTIDAD (bug T173-00004281): la BD puede FILTRAR el delete en
+  // silencio (RLS por rol: HTTP 200 con 0 filas borradas, sin error) — un
+  // éxito falso aquí dejaba la fila viva «borrada» ante la app.
+  const { data: borradas, error } = await dataClient
+    .from('recepcion_registros')
+    .delete()
+    .eq('id', id)
+    .select('id')
   if (error) throw error
+  if ((borradas ?? []).length === 0) {
+    throw errorControlado(
+      ERR_ELIMINAR_BLOQUEADO,
+      'La fila NO se eliminó (tu rol no permite borrar este registro, o ya fue eliminado por otro usuario). Recarga la lista.'
+    )
+  }
 }
 
 /**
@@ -580,8 +608,19 @@ export async function eliminarGuia(ref: RefDocumentoRecepcion): Promise<void> {
   } else {
     for (const [col, val] of condicionesGuia(ref)) q = q.eq(col, val)
   }
-  const { error } = await q
+  // HONESTIDAD (bug T173-00004281): RLS puede filtrar el borrado en
+  // silencio (rol sin permiso de DELETE → HTTP 200, 0 filas). Se piden las
+  // filas borradas de vuelta: si quedaba ALGO por borrar y no se borró
+  // NADA (o quedó una parte), el usuario lo sabe AHORA — no una «guía
+  // eliminada» que reaparece intacta al recargar.
+  const { data: borradas, error } = await q.select('id')
   if (error) throw error
+  if ((borradas ?? []).length === 0) {
+    throw errorControlado(
+      ERR_ELIMINAR_BLOQUEADO,
+      'La guía NO se eliminó: tu rol no permite borrar sus filas (p. ej. filas registradas por otro usuario). Pide el borrado a un supervisor/administrador.'
+    )
+  }
 }
 
 /**
@@ -687,7 +726,8 @@ export async function guardarEdicionGuia(
   idsOriginales: string[],
   filasNuevas: FilaEdicionGuia[],
   encabezado: EncabezadoEdicionGuia,
-  autor: UsuarioCtx
+  autor: UsuarioCtx,
+  usuarioActualId?: string
 ): Promise<{ actualizadas: number; eliminadas: number; insertadas: number }> {
   const plan = planSyncEdicionPorId(idsOriginales, filasNuevas)
 
@@ -697,10 +737,19 @@ export async function guardarEdicionGuia(
   // semáforo sin origen (misma política que el borrado de guía completa).
   // Muy aparte, cierra el vector "estuvieron trabajando con una guía y
   // desapareció": ninguna edición puede eliminar filas transferidas.
+  //
+  // GUARD de propiedad (mismo vuelo, bug T173-00004281): la política RLS
+  // solo permite DELETE a supervisores+ (y desde 2026-10-30 también al
+  // DUEÑO de cada fila sin envíos). Si el usuario actual quita filas que
+  // no puede borrar, el DELETE se FILTRA EN SILENCIO (HTTP 200, 0 filas,
+  // sin error) — la app creía el guardado y las filas seguían vivas: la
+  // guía se DUPLICABA al re-agregar los artículos (16→23→36→50→63 filas).
+  // Se detecta AQUÍ, antes de tocar nada, mirando usuario_id de las filas
+  // a borrar contra la sesión (usuarioActualId).
   if (plan.eliminar.length > 0) {
     const { data: protegidas, error: errGuard } = await dataClient
       .from('recepcion_registros')
-      .select('id, transito')
+      .select('id, transito, usuario_id')
       .in('id', plan.eliminar)
     if (errGuard) throw errGuard
     const conEnvios = (protegidas ?? []).filter(
@@ -711,6 +760,19 @@ export async function guardarEdicionGuia(
         `No se puede guardar: estás quitando ${conEnvios} fila(s) ya transferidas por Tránsito. ` +
           'Restáuralas en el editor (o revierte los traslados en el módulo Tránsito) y vuelve a guardar — ' +
           'eliminarlas dejaría stock huérfano sin trazabilidad.'
+      )
+    }
+    const actual = (usuarioActualId ?? '').trim()
+    const ajenas = actual
+      ? (protegidas ?? []).filter(
+          (f: Record<string, unknown>) => String(f.usuario_id ?? '').trim() !== actual
+        ).length
+      : 0
+    if (ajenas > 0) {
+      throw errorControlado(
+        ERR_ELIMINAR_BLOQUEADO,
+        `Estás quitando ${ajenas} fila(s) registrada(s) por OTRO usuario: tu rol no puede borrarlas, así que el guardado dejaría duplicados. ` +
+          'Quita esas filas solo con un supervisor/administrador (o restaura las filas en el editor y guarda).'
       )
     }
   }
@@ -787,12 +849,25 @@ export async function guardarEdicionGuia(
   }
 
   // 3) DELETE por id SOLO de las filas sobrantes (al final — ver docstring).
+  //    HONESTIDAD (bug T173-00004281): el DELETE se pide con las filas de
+  //    vuelta — si la BD borró MENOS de las planificadas (RLS filtrando por
+  //    rol, fila ya borrada por otro usuario), se lanza un error CLARO en
+  //    vez de un éxito falso que duplicaba la guía. Queda como red de
+  //    seguridad aunque el guard de propiedad ya frenó el caso conocido.
   if (plan.eliminar.length > 0) {
-    const { error } = await dataClient
+    const { data: borradas, error } = await dataClient
       .from('recepcion_registros')
       .delete()
       .in('id', plan.eliminar)
+      .select('id')
     if (error) throw error
+    if ((borradas ?? []).length !== plan.eliminar.length) {
+      throw errorControlado(
+        ERR_ELIMINAR_BLOQUEADO,
+        `El guardado NO se completó: solo se borraron ${(borradas ?? []).length} de ${plan.eliminar.length} ` +
+          'fila(s) que quitaste (tu rol no permite borrarlas). Recarga la guía — las filas quitadas siguen registradas y NO se duplicaron.'
+      )
+    }
   }
 
   return {
@@ -864,8 +939,21 @@ export async function cambiarEstadoAtencion(id: string, estado: string): Promise
 }
 
 export async function eliminarAtencion(id: string): Promise<void> {
-  const { error } = await dataClient.from('atencion_registros').delete().eq('id', id)
+  // HONESTIDAD (patrón T173-00004281, repetido en otras pestañas): la
+  // política RLS de esta tabla también filtra el DELETE por rol en
+  // silencio — se verifica el efecto real.
+  const { data: borradas, error } = await dataClient
+    .from('atencion_registros')
+    .delete()
+    .eq('id', id)
+    .select('id')
   if (error) throw error
+  if ((borradas ?? []).length === 0) {
+    throw errorControlado(
+      ERR_ELIMINAR_BLOQUEADO,
+      'El registro NO se eliminó (tu rol no permite borrar, o ya fue eliminado). Recarga la lista.'
+    )
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

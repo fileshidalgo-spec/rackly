@@ -103,7 +103,7 @@ import {
   Check,
   CheckCircle2,
 } from 'lucide-react'
-import { mensajeError, codigoControladoDe, ERR_CANCELADO, ERR_DUPLICADO } from '@/lib/rackly/errores'
+import { mensajeError, codigoControladoDe, ERR_CANCELADO, ERR_DUPLICADO, ERR_ELIMINAR_BLOQUEADO } from '@/lib/rackly/errores'
 
 const PAGE_SIZE = 50
 
@@ -705,7 +705,10 @@ export function RecepcionModule() {
             // de la guía (siguen unidas a SU documento).
             guiaId: editando.guiaId,
           },
-          editando.autor
+          editando.autor,
+          // Guard de propiedad (bug T173-00004281): la sesión ACTUAL decide
+          // qué filas puede borrar el RLS — no el autor original de la guía.
+          perfil?.id
         )
         toast.success(
           `Guía actualizada: ${res.actualizadas} fila(s) actualizada(s) · ${res.insertadas} nueva(s) · ${res.eliminadas} quitada(s)`
@@ -865,6 +868,10 @@ export function RecepcionModule() {
         toast.info('Registro cancelado', { description: message })
       } else if (codigo === ERR_DUPLICADO) {
         toast.warning('No se registró nada nuevo', { description: message })
+      } else if (codigo === ERR_ELIMINAR_BLOQUEADO) {
+        // Aviso (no fallo rojo): NADA se duplicó — las filas que quitó
+        // siguen registradas porque su rol no permite borrarlas.
+        toast.warning('Guardado incompleto: no se borraron filas', { description: message })
       } else {
         toast.error('No se pudo registrar', { description: message })
       }

@@ -477,6 +477,45 @@ console.log('\n[12] R5 — filasAItems no fusiona dos grupos de paletas del mism
     filaBd({ codigo: '301', cantidad: 25, observaciones: 'Paleta 2/2' }),
   ])
   check('dos grupos completos 1/2,2/2 + 1/2,2/2 → 2 items', dosGrupos.length === 2 && dosGrupos[1].paletas?.length === 2)
+
+  // ═══ FIX T173-00004281 (2026-10-30): el caso REAL que triplicó la guía.
+  // Guía con DOS artículos del MISMO código 56101 divididos en N distinto
+  // (/5 y /7) + una fila suelta. El ensamblado viejo fusionaba «1/7» con
+  // «2/5» (solo miraba length < marca.n): nacía UN artículo fantasma de
+  // 5 paletas (mezcla /7+/5) + otro de 1, y al re-guardar se re-insertaban
+  // juegos completos de paletas (16→63 filas). AHORA el N debe coincidir.
+  const casoT173 = filasAItems([
+    filaBd({ codigo: '56101', cantidad: 14000, observaciones: '' }),
+    filaBd({ codigo: '56101', cantidad: 2000, observaciones: 'Paleta 1/7' }),
+    filaBd({ codigo: '56101', cantidad: 2000, observaciones: 'Paleta 1/5' }),
+    filaBd({ codigo: '56101', cantidad: 2000, observaciones: 'Paleta 2/5' }),
+    filaBd({ codigo: '56101', cantidad: 2000, observaciones: 'Paleta 3/5' }),
+    filaBd({ codigo: '56101', cantidad: 2000, observaciones: 'Paleta 4/5' }),
+    filaBd({ codigo: '56101', cantidad: 2000, observaciones: 'Paleta 5/5' }),
+  ])
+  check('T173: /7 solitario NO absorbe al grupo /5 (N distinto) → 3 items', casoT173.length === 3, JSON.stringify(casoT173.map((i) => [i.cantidad, i.paletas?.length ?? 0])))
+  check('T173: el /5 sigue siendo un grupo completo de 5 paletas', casoT173.some((i) => i.paletas?.length === 5))
+  check('T173: el /7 solitario queda como item de 1 paleta (no 2, no 5)', casoT173.some((i) => i.paletas?.length === 1) && !casoT173.some((i) => i.paletas?.length === 2))
+  check('T173: las cantidades no se mezclan (14000 intacto)', casoT173.some((i) => i.cantidad === '14000') && casoT173.some((i) => i.cantidad === '2000'))
+  // Round-trip: re-expandir NO crea filas nuevas (todo lleva filaId propio).
+  const idsT173 = casoT173.flatMap((i) => [i.filaId, ...(i.paletas ?? []).map((p) => p.filaId)])
+  const planT173 = planSyncEdicionPorId(idsT173.filter(Boolean), expandirEnFilas(casoT173))
+  check('T173: round-trip → TODO update por identidad, 0 inserts, 0 deletes', planT173.insertar.length === 0 && planT173.eliminar.length === 0 && planT173.actualizar.length === 7, JSON.stringify({ a: planT173.actualizar.length, i: planT173.insertar.length, e: planT173.eliminar.length }))
+
+  // Un artículo SIN marca del mismo código ENTRE grupos cierra el grupo
+  // abierto (los /8 de 58199 entre dos juegos de 56101 no se contaminan).
+  const entreSuelto = filasAItems([
+    filaBd({ codigo: '301', cantidad: 10, observaciones: 'Paleta 1/2' }),
+    filaBd({ codigo: '999', cantidad: 5, observaciones: '' }),
+    filaBd({ codigo: '301', cantidad: 20, observaciones: 'Paleta 2/2' }),
+  ])
+  check('fila suelta de OTRO código cierra el grupo abierto', entreSuelto.length === 3 && entreSuelto[0].paletas?.length === 1 && entreSuelto[2].paletas?.length === 1, JSON.stringify(entreSuelto.map((i) => [i.codigo, i.paletas?.length ?? 0])))
+  const entreMismo = filasAItems([
+    filaBd({ codigo: '301', cantidad: 10, observaciones: 'Paleta 1/2' }),
+    filaBd({ codigo: '301', cantidad: 5, observaciones: '' }),
+    filaBd({ codigo: '301', cantidad: 20, observaciones: 'Paleta 2/2' }),
+  ])
+  check('fila suelta del MISMO código también cierra (2/2 no entra al grupo anterior)', entreMismo.length === 3 && entreMismo[2].paletas?.length === 1, JSON.stringify(entreMismo.map((i) => [i.cantidad, i.paletas?.length ?? 0])))
 }
 
 // ─── Resumen ───

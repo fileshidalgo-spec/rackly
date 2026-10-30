@@ -469,3 +469,21 @@ Stage Summary:
 - 11 archivos, +452/-59 líneas; 2 nuevos (eliminacion-honesta.ts, test_eliminacion_honesta_global.js)
 - Clase entera de defectos (éxito falso por RLS silencioso) eliminada en TODOS los módulos
 - Deploy: rackly.pages.dev — commit ba5fcad
+
+---
+Task ID: 2 (auditoría 2026-10-31 — bug T012-00000192)
+Agent: Main Agent
+Task: Editar guía reabre la división en paletas COMPLETA — grupos intercalados por el orden SQL
+
+Work Log:
+- Evidencia BD: la guía T012-00000192 está ÍNTEGRA (32 filas, UN guardado 18:23:36 UTC: artículo 30233 × 27 paletas lote 090926 + × 5 paletas lote 030926). El dato NUNCA se perdió
+- Repro EXACTO con las 32 filas reales: el ensamblado viejo producía los «9 artículos sin división» que reportó el usuario (8 sueltos + 1 fantasma de 2 paletas + 1 de 23) — guardar esa vista habría reescrito/destruido las marcas
+- CAUSA: el desempate determinista n_paleta ASC (c66cf5f) intercala dos grupos del mismo artículo con N distinto (1/27, 1/5, 2/27, 2/5… 5/5 antes que 5/27 por id) y filasAItems solo miraba «el item anterior»
+- FIX: filasAItems por GRUPOS ABIERTOS con índice esperado (robusto al orden; contratos legados intactos) + NUEVO ordenarFilasGuia (contigüidad 1..N por primera aparición, idempotente) aplicado en listarRecepcionesPorDocumento (detalle/impresión/edición)
+- Paso 3: RQ/Atención usa su propio filasAItems 1:1 sin marcas de paleta — sin el defecto
+- TESTS: sección [13] con el orden EXACTO de BD (2 items 27+5, lotes, round-trip 32u/0i/0e, contigüidad, idempotencia) — 131 checks; 36/36 suites, tsc, eslint, build OK
+- Deploy: 656aaf7 en producción (2026-10-30 18:50 UTC). PAT de remote reconfigurado (token anterior caducó)
+
+Stage Summary:
+- 5 archivos, +270/-63; el editor, el detalle y la impresión de rótulos reabren la guía EXACTAMENTE como se registró
+- Commit: 656aaf7

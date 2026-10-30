@@ -6,6 +6,7 @@ import { aNumero, hoyISO } from '@/lib/rackly/formato'
 import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
 import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { useAuth } from '@/hooks/useAuth'
+import { puede } from '@/lib/rackly/permisos'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -723,11 +724,9 @@ function UpDataSection() {
   )
 }
 
-/** Roles autorizados para usar UP Data */
-const ROLES_UPDATA = new Set(['admin', 'coordinador_operaciones'])
-
 /* ═══════════════════════════════════════════════════════════
    MAIN COMPONENT: DescargaTab con sub-tabs Descarga / UP Data
+   (permiso granular descarga.subir — antes roles fijos admin+coordinador)
    ═══════════════════════════════════════════════════════════ */
 export function DescargaTab() {
   const { perfil } = useAuth()
@@ -737,7 +736,7 @@ export function DescargaTab() {
 
   useMovimientosRealtime(setMovs, setEstadoMovs)
 
-  const puedeSubir = perfil ? ROLES_UPDATA.has(perfil.rol) : false
+  const puedeSubir = puede(perfil, 'descarga.subir')
 
   return (
     <div className="space-y-5">

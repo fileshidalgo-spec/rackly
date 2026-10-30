@@ -1,5 +1,18 @@
 'use client'
 
+/**
+ * RACKLY — Gestión de usuarios (tabla desktop + tarjetas móvil).
+ *
+ * Usado por el módulo Usuarios (UsuariosModule) y por la pestaña de Kardex.
+ *
+ * Permisos (catálogo único en lib/rackly/permisos.ts):
+ *   · usuarios.aprobar         → aprobar/revocar accesos.
+ *   · usuarios.gestionar_roles → cambiar rol, eliminar, recuperar contraseña
+ *                                y abrir el diálogo de permisos granulares.
+ * La BD aplica las MISMAS reglas (RPCs con guard tiene_permiso): lo que la UI
+ * no muestra, la BD lo rechaza.
+ */
+
 import { useState, useEffect, useRef } from 'react'
 import {
   getTodosLosPerfiles,
@@ -9,7 +22,8 @@ import {
   type Perfil,
   type Rol,
 } from '@/lib/rackly/auth'
-import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { puede, etiquetaPermiso } from '@/lib/rackly/permisos'
+import { ROL_LABEL } from '@/lib/rackly/roles-label'
 import { useAuth } from '@/hooks/useAuth'
 import { supabase } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -39,27 +53,42 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { DialogoPermisos } from '@/components/rackly/usuarios/DialogoPermisos'
 import { toast } from 'sonner'
 import {
-  Users,
-  Shield,
-  ShieldCheck,
-  Trash2,
+  KeyRound,
   Mail,
   RefreshCw,
-  Loader2,
+  ShieldCheck,
+  Trash2,
 } from 'lucide-react'
 import { mensajeError } from '@/lib/rackly/errores'
+
+const ROLES_DISPONIBLES: { valor: Rol; etiqueta: string }[] = [
+  { valor: 'admin', etiqueta: 'Admin' },
+  { valor: 'operario', etiqueta: 'Operario' },
+  { valor: 'auxiliar', etiqueta: 'Auxiliar' },
+  { valor: 'almacenero', etiqueta: 'Almacenero' },
+  { valor: 'supervisor_almacen', etiqueta: 'Supervisor Almacén' },
+  { valor: 'supervisor_operaciones', etiqueta: 'Supervisor Operaciones' },
+  { valor: 'coordinador_operaciones', etiqueta: 'Coordinador Operaciones' },
+]
+
+/** Cantidad de excepciones de permisos guardadas para un usuario */
+function totalExcepciones(p: Perfil): number {
+  return p.permisosExtra ? Object.keys(p.permisosExtra).length : 0
+}
 
 export function UsuariosTab() {
   const { perfil, refresh } = useAuth()
   const [perfiles, setPerfiles] = useState<Perfil[]>([])
   const [loading, setLoading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Perfil | null>(null)
+  const [permisosTarget, setPermisosTarget] = useState<Perfil | null>(null)
 
-  const esAdmin = perfil?.rol === 'admin'
-  const SUPERVISORES_SET = new Set<string>(ROLES_SUPERVISORES)
-  const puedeAprobar = esAdmin || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
+  // Regla única de permisos (rol + overrides), espejo de la BD
+  const puedeAprobar = puede(perfil, 'usuarios.aprobar')
+  const puedeGestionar = puede(perfil, 'usuarios.gestionar_roles')
 
   const loadedRef = useRef(false)
 
@@ -104,6 +133,14 @@ export function UsuariosTab() {
 
   async function handleAprobado(userId: string, aprobado: boolean) {
     if (busyId) return
+    // La RPC bloquea cambiar el estado de acceso PROPIO (auto-bloqueo /
+    // auto-aprobación): la UI lo impide antes de intentar.
+    if (userId === perfil?.id) {
+      toast.error('Operación no permitida', {
+        description: 'No puedes cambiar tu propio estado de acceso.',
+      })
+      return
+    }
     setBusyId(userId)
     try {
       await cambiarAprobado(userId, aprobado)
@@ -162,14 +199,15 @@ export function UsuariosTab() {
 
       {/* ── Vista desktop: tabla ── */}
       <div className="hidden md:block overflow-x-auto">
-        <Table className="min-w-[600px]">
+        <Table className="min-w-[640px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-[180px]">Nombre</TableHead>
               <TableHead className="min-w-[200px] max-w-[260px]">Correo</TableHead>
               <TableHead className="w-[160px]">Rol</TableHead>
               <TableHead className="w-[120px]">Estado</TableHead>
-              {puedeAprobar && <TableHead className="w-[100px] text-right">Acciones</TableHead>}
+              {puedeGestionar && <TableHead className="w-[90px]">Permisos</TableHead>}
+              {puedeGestionar && <TableHead className="w-[100px] text-right">Acciones</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -180,7 +218,7 @@ export function UsuariosTab() {
                   <span className="block truncate max-w-[260px]" title={p.correo}>{p.correo}</span>
                 </TableCell>
                 <TableCell>
-                  {esAdmin ? (
+                  {puedeGestionar ? (
                     <Select
                       value={p.rol}
                       onValueChange={(v) => handleRolChange(p.id, v as Rol)}
@@ -190,23 +228,19 @@ export function UsuariosTab() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="admin">Admin</SelectItem>
-                        <SelectItem value="operario">Operario</SelectItem>
-                        <SelectItem value="auxiliar">Auxiliar</SelectItem>
-                        <SelectItem value="almacenero">Almacenero</SelectItem>
-                        <SelectItem value="supervisor_almacen">Supervisor Almacén</SelectItem>
-                        <SelectItem value="supervisor_operaciones">Supervisor Operaciones</SelectItem>
-                        <SelectItem value="coordinador_operaciones">Coordinador Operaciones</SelectItem>
+                        {ROLES_DISPONIBLES.map((r) => (
+                          <SelectItem key={r.valor} value={r.valor}>{r.etiqueta}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   ) : (
                     <Badge variant={p.rol === 'admin' ? 'default' : 'secondary'}>
-                      {p.rol}
+                      {ROL_LABEL[p.rol] ?? p.rol}
                     </Badge>
                   )}
                 </TableCell>
                 <TableCell>
-                  {puedeAprobar ? (
+                  {puedeAprobar && p.id !== perfil?.id ? (
                     <Button
                       size="sm"
                       variant={p.aprobado ? 'outline' : 'default'}
@@ -223,7 +257,23 @@ export function UsuariosTab() {
                     </Badge>
                   )}
                 </TableCell>
-                {esAdmin && (
+                {puedeGestionar && (
+                  <TableCell>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setPermisosTarget(p)}
+                      className="gap-1"
+                      title="Permisos granulares de este usuario"
+                    >
+                      <KeyRound className="h-3 w-3" />
+                      {totalExcepciones(p) > 0 ? (
+                        <span className="text-[10px] font-bold text-amber-600">{totalExcepciones(p)}</span>
+                      ) : null}
+                    </Button>
+                  </TableCell>
+                )}
+                {puedeGestionar && (
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
                       <Button
@@ -262,19 +312,19 @@ export function UsuariosTab() {
         {perfiles.map((p) => (
           <div
             key={p.id}
-            className="rounded-lg border border-white/10 bg-slate-800/50 p-4 space-y-3"
+            className="rounded-lg border border-slate-200 bg-white p-4 space-y-3"
           >
-            {/* Fila 1: nombre + badge estado */}
+            {/* Fila 1: nombre + estado */}
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
-                <p className="font-semibold text-white truncate" title={p.nombre}>
+                <p className="font-semibold text-slate-900 truncate" title={p.nombre}>
                   {p.nombre}
                 </p>
-                <p className="text-sm text-slate-400 truncate" title={p.correo}>
+                <p className="text-sm text-slate-500 truncate" title={p.correo}>
                   {p.correo}
                 </p>
               </div>
-              {puedeAprobar ? (
+              {puedeAprobar && p.id !== perfil?.id ? (
                 <Button
                   size="sm"
                   variant={p.aprobado ? 'outline' : 'default'}
@@ -295,7 +345,7 @@ export function UsuariosTab() {
             {/* Fila 2: rol + acciones */}
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                {esAdmin ? (
+                {puedeGestionar ? (
                   <Select
                     value={p.rol}
                     onValueChange={(v) => handleRolChange(p.id, v as Rol)}
@@ -305,23 +355,27 @@ export function UsuariosTab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="admin">Admin</SelectItem>
-                      <SelectItem value="operario">Operario</SelectItem>
-                      <SelectItem value="auxiliar">Auxiliar</SelectItem>
-                      <SelectItem value="almacenero">Almacenero</SelectItem>
-                      <SelectItem value="supervisor_almacen">Supervisor Almacén</SelectItem>
-                      <SelectItem value="supervisor_operaciones">Supervisor Operaciones</SelectItem>
-                      <SelectItem value="coordinador_operaciones">Coordinador Operaciones</SelectItem>
+                      {ROLES_DISPONIBLES.map((r) => (
+                        <SelectItem key={r.valor} value={r.valor}>{r.etiqueta}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 ) : (
                   <Badge variant={p.rol === 'admin' ? 'default' : 'secondary'}>
-                    {p.rol}
+                    {ROL_LABEL[p.rol] ?? p.rol}
                   </Badge>
                 )}
               </div>
-              {esAdmin && (
+              {puedeGestionar && (
                 <div className="flex gap-1 shrink-0">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => setPermisosTarget(p)}
+                    title="Permisos granulares de este usuario"
+                  >
+                    <KeyRound className="h-4 w-4" />
+                  </Button>
                   <Button
                     size="icon"
                     variant="ghost"
@@ -342,9 +396,36 @@ export function UsuariosTab() {
                 </div>
               )}
             </div>
+
+            {/* Fila 3 (opcional): excepciones activas */}
+            {totalExcepciones(p) > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {Object.entries(p.permisosExtra ?? {}).map(([codigo, concedido]) => (
+                  <Badge
+                    key={codigo}
+                    variant="outline"
+                    className={`text-[9px] px-1 py-0 ${
+                      concedido
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                        : 'border-rose-200 bg-rose-50 text-rose-700'
+                    }`}
+                  >
+                    {concedido ? '+' : '−'} {etiquetaPermiso(codigo)}
+                  </Badge>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
+
+      {/* ── Diálogo de permisos granulares ── */}
+      <DialogoPermisos
+        perfil={permisosTarget}
+        open={!!permisosTarget}
+        onOpenChange={(open) => { if (!open) setPermisosTarget(null) }}
+        onChanged={() => { load().finally(() => refresh()) }}
+      />
 
       <AlertDialog
         open={!!deleteTarget}
@@ -355,8 +436,8 @@ export function UsuariosTab() {
             <AlertDialogTitle>Eliminar usuario</AlertDialogTitle>
             <AlertDialogDescription>
               ¿Estás seguro de eliminar al usuario{' '}
-              <strong>{deleteTarget?.nombre}</strong>? Se eliminará su perfil, roles y
-              cuenta de acceso. Esta acción no se puede deshacer.
+              <strong>{deleteTarget?.nombre}</strong>? Se eliminará su perfil, roles,
+              permisos y cuenta de acceso. Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

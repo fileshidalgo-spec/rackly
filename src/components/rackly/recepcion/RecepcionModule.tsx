@@ -19,7 +19,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime, type MotivoRealtime } from '@/hooks/useRegistrosRealtime'
-import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { puede } from '@/lib/rackly/permisos'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
 import { agruparGuias, avisosDePaletas, expandirEnFilas, faltanProveedor, filasAItems, obsSinMarcaPaleta, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
 import { GuiaFotoForm, type GuiaRegistradaInfo } from '@/components/rackly/recepcion/GuiaFotoForm'
@@ -127,9 +127,8 @@ function hoyISO(): string {
 
 export function RecepcionModule() {
   const { perfil } = useAuth()
-  const SUPERVISORES_SET = new Set<string>(ROLES_SUPERVISORES)
-  const puedeEliminar =
-    perfil?.rol === 'admin' || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
+  // Permiso granular (rol + overrides por usuario, espejo de la política BD)
+  const puedeEliminar = puede(perfil, 'recepcion.eliminar')
   const puedeCambiarEstado = useCallback(
     (reg: RegistroRecepcion) => puedeEliminar || reg.usuarioId === perfil?.id,
     [puedeEliminar, perfil?.id]

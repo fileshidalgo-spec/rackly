@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { listarSectores, crearSector, eliminarSector, type Sector } from '@/lib/piso/api'
 import { useAuth } from '@/hooks/useAuth'
+import { puede } from '@/lib/rackly/permisos'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,6 +15,8 @@ import { mensajeError } from '@/lib/rackly/errores'
 
 export function SectoresConfigTab() {
   const { perfil } = useAuth()
+  // Permiso granular (rol + overrides por usuario, espejo de la política BD)
+  const puedeGestionarSectores = puede(perfil, 'sectores.gestionar')
   const [sectores, setSectores] = useState<Sector[]>([])
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ nombre: '', n_columnas: 2, n_subcolumnas: 2, n_posiciones: 10, n_niveles: 5 })
@@ -80,7 +83,7 @@ export function SectoresConfigTab() {
 
   return (
     <div className="space-y-4">
-      {perfil?.rol === 'admin' && (
+      {puedeGestionarSectores && (
         <Card className="border-slate-700 bg-slate-800/80">
           <CardContent className="pt-6">
             <form onSubmit={handleCreate} className="space-y-3">
@@ -150,7 +153,7 @@ export function SectoresConfigTab() {
                   {s.n_columnas * s.n_subcolumnas * s.n_posiciones * s.n_niveles} ubicaciones
                 </p>
               </div>
-              {perfil?.rol === 'admin' && (
+              {puedeGestionarSectores && (
                 <Button variant="ghost" size="icon" onClick={() => handleDelete(s.id)} className="text-slate-500 hover:text-red-400 hover:bg-red-900/30">
                   <Trash2 className="h-4 w-4" />
                 </Button>

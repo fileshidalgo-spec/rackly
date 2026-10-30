@@ -360,6 +360,33 @@ export type Database = {
         }
         Relationships: []
       }
+      user_permisos: {
+        Row: {
+          user_id: string
+          permiso: string
+          concedido: boolean
+          granted_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          permiso: string
+          concedido: boolean
+          granted_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          permiso?: string
+          concedido?: boolean
+          granted_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

@@ -16,7 +16,7 @@ import {
   editarLoteVencimientoRacks,
   type TrasladoInput,
 } from '@/lib/rackly/kardex'
-import { puedeEditarLote, construirOpcionesLote, calcularAjusteCantidad } from '@/lib/rackly/lote'
+import { puedeEditarLotePerfil, construirOpcionesLote, calcularAjusteCantidad } from '@/lib/rackly/lote'
 // D1 (auditoría 2026-10-30): TODAS las cantidades digitadas se parsean con
 // aNumero — parseFloat truncaba "80,5" a 80 (ingreso por QR, traslado,
 // salida, stock inicial): se transfería MENOS sin ningún aviso. aNumero
@@ -176,7 +176,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   const targetPendingRef = useRef<{ bloque: string; torre: string; piso: string; posicion: string } | null>(null)
 
   // ── Editar lote/fecha de artículos sin esos datos (almacenero/admin) ──
-  const puedeEditarDatosLote = puedeEditarLote(perfil?.rol)
+  const puedeEditarDatosLote = puedeEditarLotePerfil(perfil)
   const [editLoteTarget, setEditLoteTarget] = useState<ArticuloAEditar | null>(null)
   /** uuid_sync del AJUSTE de cantidad de la sesión de edición en curso: se
    *  genera al abrir el diálogo y vive hasta guardar bien — si el guardado

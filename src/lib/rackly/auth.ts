@@ -12,6 +12,24 @@ export type Perfil = {
   rol: Rol
   aprobado: boolean
   mustChangePassword: boolean
+  /** Overrides de permisos (excepciones al rol) — null si no se cargaron */
+  permisosExtra?: Record<string, boolean> | null
+}
+
+/**
+ * Convierte filas de user_permisos en el mapa de overrides de un usuario.
+ * (user_id, permiso, concedido) → { [permiso]: concedido }
+ */
+function overridesDeFilas(
+  filas: { user_id?: string; permiso: string; concedido: boolean }[],
+  userId?: string
+): Record<string, boolean> {
+  const mapa: Record<string, boolean> = {}
+  for (const f of filas) {
+    if (userId && f.user_id !== userId) continue
+    mapa[f.permiso] = f.concedido
+  }
+  return mapa
 }
 
 // FIX auditoría 2026-10-21 (P1): la service_role key ya NO se usa en el
@@ -203,13 +221,18 @@ export async function getPerfilActual(): Promise<Perfil | null> {
   }
   if (!u?.user) return null
 
-  const [perfilRes, rolesRes] = await Promise.all([
+  const [perfilRes, rolesRes, permisosRes] = await Promise.all([
     dataClient
       .from('profiles')
       .select('id, correo, nombre, aprobado, must_change_password')
       .eq('id', u.user.id)
       .maybeSingle(),
     dataClient.from('user_roles').select('role').eq('user_id', u.user.id),
+    // Overrides propios (la política RLS permite leer los propios)
+    dataClient
+      .from('user_permisos')
+      .select('permiso, concedido')
+      .eq('user_id', u.user.id),
   ])
 
   if (perfilRes.error) {
@@ -218,9 +241,14 @@ export async function getPerfilActual(): Promise<Perfil | null> {
   if (rolesRes.error) {
     console.error('[RACKLY] user_roles query error:', rolesRes.error.message)
   }
+  if (permisosRes.error) {
+    // No es crítico: sin overrides la app cae al valor por defecto del rol
+    console.warn('[RACKLY] user_permisos query (no crítico):', permisosRes.error.message)
+  }
 
   const perfil = perfilRes.data
   const roles = rolesRes.data
+  const overrides = overridesDeFilas(permisosRes.data ?? [])
 
   if (!perfil) {
     const nombre =
@@ -246,6 +274,7 @@ export async function getPerfilActual(): Promise<Perfil | null> {
       rol: 'operario',
       aprobado: perfilCreado.aprobado ?? false,
       mustChangePassword: perfilCreado.must_change_password ?? false,
+      permisosExtra: overrides,
     }
   }
 
@@ -259,19 +288,27 @@ export async function getPerfilActual(): Promise<Perfil | null> {
     rol: effectiveRole,
     aprobado: perfil.aprobado ?? false,
     mustChangePassword: perfil.must_change_password ?? false,
+    permisosExtra: esAdmin ? null : overrides, // admin: sin overrides (siempre todo)
   }
 }
 
 export async function getTodosLosPerfiles(): Promise<Perfil[]> {
-  const [perfilesRes, rolesRes] = await Promise.all([
+  const [perfilesRes, rolesRes, permisosRes] = await Promise.all([
     dataClient
       .from('profiles')
       .select('id, correo, nombre, aprobado, must_change_password')
       .order('nombre'),
     dataClient.from('user_roles').select('user_id, role'),
+    // Overrides de todos (la RLS devuelve los propios si el caller no es
+    // gestor: la lista sigue sirviendo para filtros de actividad)
+    dataClient.from('user_permisos').select('user_id, permiso, concedido'),
   ])
   if (perfilesRes.error) throw perfilesRes.error
   if (rolesRes.error) throw rolesRes.error
+  // No crítico: un no-gestor solo recibirá sus propias filas (RLS)
+  if (permisosRes.error) {
+    console.warn('[RACKLY] user_permisos global (no crítico):', permisosRes.error.message)
+  }
   const perfiles = perfilesRes.data ?? []
   const roles = rolesRes.data ?? []
   const roleMap = new Map<string, Rol>()
@@ -281,14 +318,26 @@ export async function getTodosLosPerfiles(): Promise<Perfil[]> {
       roleMap.set(r.user_id, r.role as Rol)
     }
   }
-  return perfiles.map((p: Record<string, unknown>) => ({
-    id: p.id as string,
-    correo: p.correo as string,
-    nombre: p.nombre as string,
-    rol: roleMap.get(p.id as string) ?? ('operario' as const),
-    aprobado: (p.aprobado as boolean) ?? false,
-    mustChangePassword: (p.must_change_password as boolean) ?? false,
-  }))
+  // Overrides por usuario (solo filas de usuarios NO admin: los admin no
+  // admiten excepciones y su mapa se queda en null)
+  const overridesPorUsuario = new Map<string, Record<string, boolean>>()
+  for (const f of (permisosRes.data ?? []) as { user_id: string; permiso: string; concedido: boolean }[]) {
+    const mapa = overridesPorUsuario.get(f.user_id) ?? {}
+    mapa[f.permiso] = f.concedido
+    overridesPorUsuario.set(f.user_id, mapa)
+  }
+  return perfiles.map((p: Record<string, unknown>) => {
+    const rol = roleMap.get(p.id as string) ?? ('operario' as const)
+    return {
+      id: p.id as string,
+      correo: p.correo as string,
+      nombre: p.nombre as string,
+      rol,
+      aprobado: (p.aprobado as boolean) ?? false,
+      mustChangePassword: (p.must_change_password as boolean) ?? false,
+      permisosExtra: rol === 'admin' ? null : overridesPorUsuario.get(p.id as string) ?? null,
+    }
+  })
 }
 
 export async function cambiarPasswordPropia(nuevaPassword: string) {
@@ -304,12 +353,34 @@ export async function cambiarPasswordPropia(nuevaPassword: string) {
 }
 
 export async function cambiarAprobado(userId: string, aprobado: boolean) {
-  // FIX auditoría 2026-10-21: RPC SECURITY DEFINER con guard admin — antes
-  // dependía de service_role en el navegador (RLS de profiles NO permite
-  // actualizar el perfil de otro usuario con el cliente anon).
+  // RPC SECURITY DEFINER con guard por permiso (usuarios.aprobar) — ver
+  // migración 20261031_permisos_por_usuario.sql. La RPC además bloquea
+  // cambiar el estado de acceso PROPIO (ni auto-aprobarse ni auto-bloquearse).
   const { error } = await dataClient.rpc('aprobar_usuario', {
     p_user_id: userId,
     p_aprobado: aprobado,
+  })
+  if (error) throw error
+}
+
+/**
+ * Establece (o retira) el OVERRIDE de un permiso para un usuario concreto.
+ *
+ *   p_concedido = true/false → guarda la excepción (gana al rol).
+ *   p_concedido = null       → borra el override (vuelve al valor del rol).
+ *
+ * RPC SECURITY DEFINER `establecer_permiso_usuario` (guard: admin o quien
+ * tenga usuarios.gestionar_roles; los admin NO admiten overrides).
+ */
+export async function establecerPermisoUsuario(
+  userId: string,
+  permiso: string,
+  concedido: boolean | null
+): Promise<void> {
+  const { error } = await dataClient.rpc('establecer_permiso_usuario', {
+    p_user_id: userId,
+    p_permiso: permiso,
+    p_concedido: concedido,
   })
   if (error) throw error
 }

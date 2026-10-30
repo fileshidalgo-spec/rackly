@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { listarMovimientos, eliminarMovimientoConPar, type Sector } from '@/lib/piso/api'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { useAuth } from '@/hooks/useAuth'
-import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { puede } from '@/lib/rackly/permisos'
 import { extractError } from '@/lib/utils'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -142,8 +142,8 @@ export function MovimientosTab() {
   // Gate de rol: solo admin/supervisores eliminan movimientos (igual que la vista
   // de Racks en page.tsx). Antes cualquier operario veía y podía usar el botón.
   const { perfil } = useAuth()
-  const SUPERVISORES_SET = useMemo(() => new Set<string>(ROLES_SUPERVISORES), [])
-  const puedeEliminar = perfil?.rol === 'admin' || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
+  // Permiso granular (rol + overrides por usuario, espejo de la política BD)
+  const puedeEliminar = puede(perfil, 'piso_movimientos.eliminar')
 
   // Load all movements on mount
   useEffect(() => {

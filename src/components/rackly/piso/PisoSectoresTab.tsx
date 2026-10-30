@@ -44,7 +44,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { extractError } from '@/lib/utils'
-import { puedeEditarLote, construirOpcionesLote } from '@/lib/rackly/lote'
+import { puedeEditarLotePerfil, construirOpcionesLote } from '@/lib/rackly/lote'
 import { leerContextoSalidaRq, detectarRqParaSalida, type ContextoSalidaRq, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
 import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
 import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
@@ -202,7 +202,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   const [mode, setMode] = useState<ActionMode>('view')
 
   // ── Editar lote/fecha de artículos sin esos datos (almacenero/admin) ──
-  const puedeEditarDatosLote = puedeEditarLote(perfil?.rol)
+  const puedeEditarDatosLote = puedeEditarLotePerfil(perfil)
   const [editLoteTarget, setEditLoteTarget] = useState<ArticuloAEditar | null>(null)
   // bloque_id REAL del artículo a editar (los IDs virtuales 'cat_*' no son editables)
   const [editLoteBloqueId, setEditLoteBloqueId] = useState('')

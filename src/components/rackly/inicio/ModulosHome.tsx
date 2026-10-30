@@ -11,6 +11,7 @@
  */
 
 import { useAuth } from '@/hooks/useAuth'
+import { ROL_LABEL } from '@/lib/rackly/roles-label'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -106,16 +107,6 @@ const MODULOS: ModuloDef[] = [
     etiquetaClase: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
   },
 ]
-
-const ROL_LABEL: Record<string, string> = {
-  admin: 'Administrador',
-  operario: 'Operario',
-  auxiliar: 'Auxiliar',
-  almacenero: 'Almacenero',
-  supervisor_almacen: 'Supervisor de Almacén',
-  supervisor_operaciones: 'Supervisor de Operaciones',
-  coordinador_operaciones: 'Coordinador de Operaciones',
-}
 
 export function ModulosHome({ onEntrar }: { onEntrar: (vista: VistaModulo) => void }) {
   const { perfil } = useAuth()

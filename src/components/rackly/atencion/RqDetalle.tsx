@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
-import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { puede } from '@/lib/rackly/permisos'
 import {
   atenderItemRq,
   revertirItemRq,
@@ -169,9 +169,8 @@ export function RqDetalle({
   onIrAPiso: (target: PisoTargetPosicion) => void
 }) {
   const { perfil } = useAuth()
-  const SUPERVISORES_SET = new Set<string>(ROLES_SUPERVISORES)
-  const puedeEditar =
-    perfil?.rol === 'admin' || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
+  // Permiso granular (rol + overrides por usuario): editar/atender RQ de otros
+  const puedeEditar = puede(perfil, 'atencion.eliminar')
   const [rq, setRq] = useState<RqAtencion | null>(null)
   const [items, setItems] = useState<RqItem[]>([])
   const [loading, setLoading] = useState(true)

@@ -13,7 +13,6 @@ import {
 } from '@/lib/rackly/catalogo'
 import { podarAnclaPisoSiSinUso } from '@/lib/piso/api'
 import { useAuth } from '@/hooks/useAuth'
-import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
 import { dataClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,15 +41,14 @@ import { toast } from 'sonner'
 import {
   Upload, Trash2, ClipboardList, Plus, Pencil, X, Check, Loader2, FileSpreadsheet,
 } from 'lucide-react'
+import { puede } from '@/lib/rackly/permisos'
 import { mensajeError } from '@/lib/rackly/errores'
 
 export function CatalogoTab() {
   const { perfil } = useAuth()
-  // FIX auditoría 2026-10-21 (P2): agregar/editar/eliminar del catálogo sin
-  // control de rol — un operario podía borrar un código. Regla: admin +
-  // supervisores/coordinador, igual que la eliminación de movimientos en page.tsx.
-  const SupervisoresSet = new Set<string>(ROLES_SUPERVISORES)
-  const puedeEditarCatalogo = perfil?.rol === 'admin' || (perfil?.rol ? SupervisoresSet.has(perfil.rol) : false)
+  // Permiso granular (rol + overrides por usuario, espejo de la política BD):
+  // agregar/editar/eliminar e importar del catálogo — un solo permiso.
+  const puedeEditarCatalogo = puede(perfil, 'catalogo.editar')
   const [text, setText] = useState('')
   const [catalogo, setCatalogo] = useState<CatalogoItem[]>([])
   const [loaded, setLoaded] = useState(false)

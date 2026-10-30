@@ -32,7 +32,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime, type MotivoRealtime } from '@/hooks/useRegistrosRealtime'
-import { ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { puede } from '@/lib/rackly/permisos'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import {
   listarRqs,
@@ -117,9 +117,8 @@ export function RqAtencionPanel({
   onIrAPiso: (target: PisoTargetPosicion) => void
 }) {
   const { perfil } = useAuth()
-  const SUPERVISORES_SET = new Set<string>(ROLES_SUPERVISORES)
-  const puedeEliminar =
-    perfil?.rol === 'admin' || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
+  // Permiso granular (rol + overrides por usuario, espejo de la política BD)
+  const puedeEliminar = puede(perfil, 'atencion.eliminar')
 
   const [vista, setVista] = useState<Vista>('lista')
   const [rqAbiertaId, setRqAbiertaId] = useState<string>(() =>

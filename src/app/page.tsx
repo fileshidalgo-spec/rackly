@@ -59,7 +59,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { TIPOS_MOVIMIENTO, ROLES_SUPERVISORES } from '@/lib/rackly/constants'
+import { TIPOS_MOVIMIENTO } from '@/lib/rackly/constants'
+import { puede } from '@/lib/rackly/permisos'
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -206,8 +207,8 @@ function RacklyApp() {
 
   const hayFiltrosActivos = filterTipo !== 'todos' || filterUsuario !== 'todos' || filterCodigo.trim() !== ''
 
-  const SUPERVISORES_SET = new Set<string>(ROLES_SUPERVISORES)
-  const puedeEliminar = perfil?.rol === 'admin' || (perfil?.rol ? SUPERVISORES_SET.has(perfil.rol) : false)
+  // Permiso granular (rol + overrides por usuario, espejo de la política BD)
+  const puedeEliminar = puede(perfil, 'movimientos.eliminar')
 
   async function handleDelete(id: string) {
     if (!puedeEliminar) {

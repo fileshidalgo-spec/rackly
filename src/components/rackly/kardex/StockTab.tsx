@@ -35,11 +35,15 @@ import { toast } from 'sonner'
 import { Search, Trash2, PackageSearch, Warehouse, ArrowRight, AlertTriangle, MapPin, ExternalLink } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
+import { puede } from '@/lib/rackly/permisos'
 import { mensajeError } from '@/lib/rackly/errores'
 
 export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string, torre: string, piso: string, posicion: string) => void }) {
   const { perfil } = useAuth()
-  const esAdmin = perfil?.rol === 'admin'
+  // Eliminar una fila de stock = borrar movimientos de esa ubicación
+  // (eliminarUbicacion → tabla movimientos): MISMO permiso que la pestaña de
+  // movimientos, misma política BD. Antes solo el admin veía la papelera.
+  const puedeEliminarStock = puede(perfil, 'movimientos.eliminar')
   // Estado persistido en sessionStorage (inicializador lazy): al volver desde
   // Ocupación (botón de retorno) la búsqueda continúa donde quedó.
   const [movs, setMovs] = useState<Movimiento[]>([])
@@ -688,7 +692,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                     ) : (
                       <Badge variant="default" className="text-sm">{s.stock}</Badge>
                     )}
-                    {esAdmin && (
+                    {puedeEliminarStock && (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -751,7 +755,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                   <TableHead>Vencimiento</TableHead>
                   <TableHead>INC</TableHead>
                   <TableHead className="text-right">Stock</TableHead>
-                  {esAdmin && <TableHead className="w-12"></TableHead>}
+                  {puedeEliminarStock && <TableHead className="w-12"></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -818,7 +822,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                         <Badge variant="default">{s.stock}</Badge>
                       )}
                     </TableCell>
-                    {esAdmin && (
+                    {puedeEliminarStock && (
                       <TableCell>
                         <Button
                           variant="ghost"

@@ -32,6 +32,8 @@
  *   elegir cuando hay más de una.
  */
 
+import { puede } from './permisos'
+
 export const ROLES_EDICION_LOTE = [
   'almacenero',
   'admin',
@@ -43,6 +45,18 @@ export const ROLES_EDICION_LOTE = [
 export function puedeEditarLote(rol: string | null | undefined): boolean {
   if (!rol) return false
   return (ROLES_EDICION_LOTE as readonly string[]).includes(rol)
+}
+
+/**
+ * Versión con permisos granulares (v3, 2026-10-31): además del rol, respeta
+ * los overrides por usuario del catálogo `lote.editar` (tabla user_permisos).
+ * Es la que deben usar los componentes con acceso al perfil completo.
+ */
+export function puedeEditarLotePerfil(perfil: {
+  rol?: string | null
+  permisosExtra?: Record<string, boolean> | null
+} | null | undefined): boolean {
+  return puede(perfil, 'lote.editar')
 }
 
 const RE_FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/

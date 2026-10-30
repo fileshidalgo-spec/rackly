@@ -1,4 +1,27 @@
 ---
+Task ID: 1
+Agent: Main Agent
+Task: Regularización de filas sobrantes sin envíos (T173-00004274 · guía T173-00004274 · 53414 DIVERFLOW 156) — 9 pasos
+
+Work Log (1.1–9):
+- 1.1/1.2 (DB real): guía T173-00004274 tenía 6 filas del 53414 = 172 UN registradas vs 150 reales; sobrante fantasma = fila d6d01142 (22 UN, Paleta 2, lote 20930276, 0 envíos — exactamente la fila de la captura "Sin transferir"); 118 ya transferidos a piso; pendiente aparente 54 (22 fantasma + 32 reales)
+- 2 (causa): el guard "ajenas" de guardarEdicionGuia era CIEGO AL ROL — bloqueaba quitar filas de otro usuario INCLUSO a admin/supervisor con recepcion.eliminar, aunque las políticas RLS SÍ lo permiten (recepcion_delete_auth + recepcion_registros_delete_permiso bajo recepcion_delete_restr = tiene_permiso). Guard más estricto que la BD = guía imposible de corregir. Además Tránsito solo añade envíos: una fila flotante sin envíos no tenía NINGÚN camino de salida
+- 3 (repetición): patrón único en modulos.ts; otros ERR_ELIMINAR_BLOQUEADO son verificaciones honestas de DELETE (correctas, intactas); eliminarGuia con envíos sigue bloqueado (política correcta)
+- 4/5 (decisión sin conflictos): reutilizar la MISMA función tiene_permiso que usa la RLS (cero deriva) + RPC SECURITY DEFINER con advisory lock (mismo salt 7771 que transito_registrar_envio → serializa con envíos concurrentes) + SOLO filas 0 envíos (con envíos = stock ya en Racks/Piso, no se toca)
+- 6 (código): migración 20261031_regularizacion_fila.sql (RPC recepcion_regularizar_fila: guard permiso + lock + DELETE honesto con RETURNING + snapshot de auditoría); modulos.ts guard consulta tiene_permiso vía RPC (fail-safe: si la consulta falla, bloquea); transito-core.regularizable() puro; transito.regularizarFila(); Tránsito muestra acción "Regularizar" junto a Historial (solo con recepcion.eliminar y fila 100% sin transferir) con DialogoRegularizar (confirmación + motivo → snapshot)
+- 7 (QA): tsc 0 errores · eslint OK · 38/38 suites (nueva test_regularizacion 16 checks; [3b]/[3c] en test_recepcion_delete_honesto; stub rpc enlatado por nombre) · build OK
+- 8 (accesos): SQL aplicado por Management API; smoke: service_role → "PERMISO|…" OK; E2E admin (cuenta proporcionada) → pasa PERMISO, llega a la fila ("RECEPCION_NO_EXISTE" con id falso) OK
+- 9 (módulos): Recepción (modulos.ts) · Tránsito (UI + RPC) · Suite global de tests
+- REGULARIZACIÓN EJECUTADA en producción (admin): fila d6d01142 eliminada con snapshot completo (owner Elvis R. Valdivia, motivo documentado) → guía 172→150 OK, transferido 118, pendiente real 32 OK
+- Deploy: commit 866d14a → Cloudflare Pages → version.json 202610302139-866d14a OK
+
+Stage Summary:
+- Nueva capacidad: regularizar el sobrante de una guía DIRECTAMENTE desde Tránsito (puente Tránsito→Recepción) o desde el editor de Recepción (ahora permitido a quien tenga recepcion.eliminar)
+- Sin regresiones: los 4 guards previos intactos (filas con envíos siguen intocables; sin permiso sigue bloqueado; DELETE honesto sigue verificando el efecto real)
+- Caso T173-00004274 CERRADO: la guía quedó en 150, el pendiente de Tránsito es el stock real (32) y la fila flotante de la captura ya no existe
+---
+
+---
 Task ID: 2
 Agent: Main Agent
 Task: Eliminar modo offline del aplicativo Rackly

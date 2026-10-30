@@ -359,83 +359,83 @@ export function obsSinMarcaPaleta(observaciones: string): string {
  */
 export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
   const items: ItemConPaletas[] = []
-  // N del grupo ABIERTO (el marca.n de la fila que abrió el item anterior) o
-  // null si el item anterior no abre grupo de paletas. FIX auditoría
-  // 2026-10-30 (T173-00004281): la continuación exigía SOLO
-  // prev.paletas.length < marca.n — con DOS artículos del MISMO código
-  // divididos en N distintos («1/7» seguido de «2/5»), el grupo /5 se
-  // FUSIONABA dentro del /7 (y viceversa): nacían artículos fantasma con
-  // paletas mezcladas y el guardado re-insertaba juegos completos de
-  // paletas (16→23→36→50→63 filas en una mañana). La continuación exige
-  // AHORA que el N de la fila coincida con el N del grupo abierto.
-  let nAbierto: number | null = null
+  // Grupos ABIERTOS de paletas — pueden ser VARIOS a la vez. FIX auditoría
+  // 2026-10-31 (guía real T012-00000192): el orden determinista de la BD
+  // (created_at→codigo→n_paleta→id) INTERCALA dos grupos del mismo artículo
+  // con N distinto (1/27, 1/5, 2/27, 2/5, …); el ensamblado anterior solo
+  // miraba «el item anterior» y FRAGMENTABA los grupos (la guía se abría
+  // con 10+ «artículos» sin división — y guardarla habría DESTRUIDO las
+  // marcas de paleta). Ahora la continuación busca el grupo que espera
+  // EXACTAMENTE esa paleta: mismo código + mismo N + siguiente índice
+  // esperado === marca.i. La fusión fantasma del bug T173-00004281
+  // (16→63 filas) sigue imposible: «1/N» JAMÁS entra en un grupo abierto
+  // (siguiente nunca es 1) y una fila sin marca cierra TODOS los abiertos.
+  type GrupoAbierto = { item: ItemConPaletas; n: number; siguiente: number }
+  const abiertos: GrupoAbierto[] = []
   for (const f of filas) {
     const marca = marcaPaletaDe(f.observaciones)
-    const prev = items[items.length - 1]
-    // FIX auditoría 2026-10-30 (R5): un «Paleta 1/N» SIEMPRE abre SU propio
-    // grupo (i === 1). Antes solo se miraba length < marca.n: un grupo
-    // completo «Paleta 1/2, 2/2» seguido de OTRO grupo del mismo código
-    // «Paleta 1/3» se fusionaba en un solo item de 3 paletas y la
-    // renumeración impresa dejaba de coincidir con la física.
-    // Los grupos INCOMPLETOS siguen uniendo como en el legado (2/2, 3/3 sin
-    // la 1ª — filas perdidas se re-ensamblan; behavior cubierto por tests).
-    const continuaGrupo = !!marca && marca.i > 1 && nAbierto !== null && marca.n === nAbierto
-    if (
-      marca &&
-      continuaGrupo &&
-      nAbierto !== null &&
-      prev &&
-      prev.codigo === f.codigo &&
-      prev.paletas &&
-      prev.paletas.length < nAbierto
-    ) {
-      // Siguiente paleta del mismo artículo dividido: SU cantidad y sus
-      // datos PROPIOS solo si difieren de los del artículo (1ª fila del
-      // grupo = valores del artículo; igual → '' = hereda). Cada paleta
-      // conserva la IDENTIDAD de su fila (filaId) para la edición.
-      prev.paletas.push({
+    if (!marca) {
+      // Fila SIN marca de paleta: cierra TODOS los grupos abiertos (un
+      // artículo normal —mismo código o de otro— entre medias NUNCA hereda
+      // las paletas; contrato anti-fantasma [12] de tests).
+      abiertos.length = 0
+      items.push({
+        codigo: f.codigo,
+        descripcion: f.descripcion,
         cantidad: formatearCantidad(f.cantidad),
-        lote: f.lote !== prev.lote ? f.lote : '',
-        fechaProduccion: f.fechaProduccion !== prev.fechaProduccion ? f.fechaProduccion : '',
-        fechaVencimiento: f.fechaVencimiento !== prev.fechaVencimiento ? f.fechaVencimiento : '',
-        proveedor: f.proveedor !== prev.proveedor ? f.proveedor : '',
+        unidad: f.unidadMedida,
+        lote: f.lote,
+        fechaProduccion: f.fechaProduccion,
+        fechaVencimiento: f.fechaVencimiento,
+        proveedor: f.proveedor,
         filaId: f.id,
       })
       continue
     }
-    if (marca) {
-      // Inicio de un grupo de paletas (nuevo o huérfano: la fila participa).
-      // El item hereda el id de la fila cabecera (paleta 1): si la división
-      // cae a fila única al re-guardar, esa fila sigue siendo la anfitriona.
-      nAbierto = marca.n
-      items.push({
-        codigo: f.codigo,
-        descripcion: f.descripcion,
+    const idx = abiertos.findIndex(
+      (g) => g.n === marca.n && g.siguiente === marca.i && g.item.codigo === f.codigo
+    )
+    if (idx >= 0) {
+      // Siguiente paleta EXACTA de un grupo abierto (mismo artículo
+      // dividido): SU cantidad y sus datos PROPIOS solo si difieren de los
+      // del artículo (1ª fila del grupo = valores del artículo; igual → ''
+      // = hereda). Cada paleta conserva la IDENTIDAD de su fila (filaId).
+      const g = abiertos[idx]
+      const item = g.item
+      item.paletas!.push({
         cantidad: formatearCantidad(f.cantidad),
-        unidad: f.unidadMedida,
-        lote: f.lote,
-        fechaProduccion: f.fechaProduccion,
-        fechaVencimiento: f.fechaVencimiento,
-        proveedor: f.proveedor,
-        paletas: [{ ...paletaVacia(), cantidad: formatearCantidad(f.cantidad), filaId: f.id }],
+        lote: f.lote !== item.lote ? f.lote : '',
+        fechaProduccion: f.fechaProduccion !== item.fechaProduccion ? f.fechaProduccion : '',
+        fechaVencimiento: f.fechaVencimiento !== item.fechaVencimiento ? f.fechaVencimiento : '',
+        proveedor: f.proveedor !== item.proveedor ? f.proveedor : '',
         filaId: f.id,
       })
-    } else {
-      // Fila SIN marca de paleta: cierra cualquier grupo abierto (un artículo
-      // normal del mismo código entre medias NUNCA hereda las paletas).
-      nAbierto = null
-      items.push({
-        codigo: f.codigo,
-        descripcion: f.descripcion,
-        cantidad: formatearCantidad(f.cantidad),
-        unidad: f.unidadMedida,
-        lote: f.lote,
-        fechaProduccion: f.fechaProduccion,
-        fechaVencimiento: f.fechaVencimiento,
-        proveedor: f.proveedor,
-        filaId: f.id,
-      })
+      g.siguiente = marca.i + 1
+      if (g.siguiente > g.n) abiertos.splice(idx, 1) // grupo completo
+      continue
     }
+    // Inicio de un grupo (i=1 normal, R5: «1/N» SIEMPRE abre SU propio
+    // grupo — siguiente nunca es 1) o huérfano tolerado (i>1: la fila
+    // «2/3» sin su «1/3» re-ensambla como en el legado — tests [8]).
+    // Dos huérfanos del MISMO índice (2/3 + 2/3) NO se fusionan: son dos
+    // paletas físicas distintas que reclaman el mismo índice (mismo
+    // espíritu anti-fantasma R5; el legado las mezclaba en un item).
+    // El item hereda el id de la fila cabecera: si la división cae a fila
+    // única al re-guardar, esa fila sigue siendo la anfitriona.
+    const item: ItemConPaletas = {
+      codigo: f.codigo,
+      descripcion: f.descripcion,
+      cantidad: formatearCantidad(f.cantidad),
+      unidad: f.unidadMedida,
+      lote: f.lote,
+      fechaProduccion: f.fechaProduccion,
+      fechaVencimiento: f.fechaVencimiento,
+      proveedor: f.proveedor,
+      paletas: [{ ...paletaVacia(), cantidad: formatearCantidad(f.cantidad), filaId: f.id }],
+      filaId: f.id,
+    }
+    if (marca.i < marca.n) abiertos.push({ item, n: marca.n, siguiente: marca.i + 1 })
+    items.push(item)
   }
   // El total del item dividido = suma de sus paletas (lo registrado manda).
   for (const it of items) {
@@ -444,6 +444,57 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
     }
   }
   return items
+}
+
+/**
+ * Ordena las filas de UNA guía para que cada grupo de paletas quede
+ * CONTIGUO (1..N juntos) sin alterar el orden relativo entre grupos y
+ * artículos (primera aparición manda). Espejo puro del matching de
+ * `filasAItems`: mismo criterio de apertura/continuación/cierre.
+ *
+ * Por qué existe (auditoría 2026-10-31, guía T012-00000192): el desempate
+ * determinista de la consulta (n_paleta ASC) es necesario — 32 filas de un
+ * mismo guardado comparten created_at EXACTO y Postgres puede devolverlas
+ * en orden arbitrario — pero intercala los grupos (1/27, 1/5, 2/27, 2/5…):
+ * el detalle, la impresión de rótulos y el editor mostraban la división
+ * rota. Este reordenado en JS es determinista (entrada determinista →
+ * salida determinista) y deja cada grupo 1..N junto para TODOS los
+ * consumidores (vista, impresión, edición).
+ */
+export function ordenarFilasGuia(filas: FilaRegistrada[]): FilaRegistrada[] {
+  const bloques: FilaRegistrada[][] = []
+  const abiertos: Array<{
+    bloque: FilaRegistrada[]
+    codigo: string
+    n: number
+    siguiente: number
+  }> = []
+  for (const f of filas) {
+    const marca = marcaPaletaDe(f.observaciones)
+    if (!marca) {
+      // Sin marca: cierra todos los grupos abiertos y sale como su propio
+      // bloque (misma semántica que filasAItems).
+      abiertos.length = 0
+      bloques.push([f])
+      continue
+    }
+    const idx = abiertos.findIndex(
+      (g) => g.n === marca.n && g.siguiente === marca.i && g.codigo === f.codigo
+    )
+    if (idx >= 0) {
+      const g = abiertos[idx]
+      g.bloque.push(f)
+      g.siguiente = marca.i + 1
+      if (g.siguiente > g.n) abiertos.splice(idx, 1)
+      continue
+    }
+    const bloque = [f]
+    bloques.push(bloque)
+    if (marca.i < marca.n) {
+      abiertos.push({ bloque, codigo: f.codigo, n: marca.n, siguiente: marca.i + 1 })
+    }
+  }
+  return bloques.flat()
 }
 
 // NOTA DE DISEÑO (lote/fechas por paleta): expandirEnFilas y filasAItems son

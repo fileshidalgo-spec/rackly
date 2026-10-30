@@ -24,6 +24,7 @@ const {
   agruparGuias,
   claveGuiaDe,
   filasAItems,
+  ordenarFilasGuia,
   obsSinMarcaPaleta,
   marcaPaletaDe,
   repartirEquitativo,
@@ -516,6 +517,65 @@ console.log('\n[12] R5 — filasAItems no fusiona dos grupos de paletas del mism
     filaBd({ codigo: '301', cantidad: 20, observaciones: 'Paleta 2/2' }),
   ])
   check('fila suelta del MISMO código también cierra (2/2 no entra al grupo anterior)', entreMismo.length === 3 && entreMismo[2].paletas?.length === 1, JSON.stringify(entreMismo.map((i) => [i.cantidad, i.paletas?.length ?? 0])))
+}
+
+// ─── [13] T012-00000192 (auditoría 2026-10-31): el orden determinista de la
+// BD INTERCALA dos grupos del MISMO artículo con N distinto — el ensamblado
+// viejo fragmentaba la guía en 9 «artículos» sin división y un guardado
+// habría DESTRUIDO las marcas de paleta. Caso REAL: 27 paletas (lote 090926)
+// + 5 paletas (lote 030926) del código 30233.
+console.log('\n[13] T012 — grupos intercalados por el orden SQL se re-ensamblan COMPLETOS')
+{
+  // Orden EXACTO que entrega la consulta (created_at→codigo→n_paleta→id):
+  // nótese 5/5 ANTES que 5/27 (desempate por id) — es el orden real de BD.
+  const ordenSql = [
+    ['p1_27', '090926', 'Paleta 1/27'], ['p1_5', '030926', 'Paleta 1/5'],
+    ['p2_27', '090926', 'Paleta 2/27'], ['p2_5', '030926', 'Paleta 2/5'],
+    ['p3_27', '090926', 'Paleta 3/27'], ['p3_5', '030926', 'Paleta 3/5'],
+    ['p4_27', '090926', 'Paleta 4/27'], ['p4_5', '030926', 'Paleta 4/5'],
+    ['p5_5', '030926', 'Paleta 5/5'], ['p5_27', '090926', 'Paleta 5/27'],
+    ['p6_27', '090926', 'Paleta 6/27'], ['p7_27', '090926', 'Paleta 7/27'],
+    ['p8_27', '090926', 'Paleta 8/27'], ['p9_27', '090926', 'Paleta 9/27'],
+    ['p10_27', '090926', 'Paleta 10/27'], ['p11_27', '090926', 'Paleta 11/27'],
+    ['p12_27', '090926', 'Paleta 12/27'], ['p13_27', '090926', 'Paleta 13/27'],
+    ['p14_27', '090926', 'Paleta 14/27'], ['p15_27', '090926', 'Paleta 15/27'],
+    ['p16_27', '090926', 'Paleta 16/27'], ['p17_27', '090926', 'Paleta 17/27'],
+    ['p18_27', '090926', 'Paleta 18/27'], ['p19_27', '090926', 'Paleta 19/27'],
+    ['p20_27', '090926', 'Paleta 20/27'], ['p21_27', '090926', 'Paleta 21/27'],
+    ['p22_27', '090926', 'Paleta 22/27'], ['p23_27', '090926', 'Paleta 23/27'],
+    ['p24_27', '090926', 'Paleta 24/27'], ['p25_27', '090926', 'Paleta 25/27'],
+    ['p26_27', '090926', 'Paleta 26/27'], ['p27_27', '090926', 'Paleta 27/27'],
+  ]
+  const filasT012 = ordenSql.map(([id, lote, obs]) =>
+    filaBd({ id, codigo: '30233', cantidad: 864, lote, observaciones: obs })
+  )
+  const itemsT012 = filasAItems(filasT012)
+  check('T012 intercalado → SOLO 2 items (antes: 9 fragmentos)', itemsT012.length === 2, JSON.stringify(itemsT012.map((i) => [i.cantidad, i.paletas?.length ?? 0])))
+  check('grupo /27 completo con 27 paletas', itemsT012.some((i) => i.paletas?.length === 27))
+  check('grupo /5 completo con 5 paletas', itemsT012.some((i) => i.paletas?.length === 5))
+  check('lotes del artículo correctos por grupo (090926 y 030926)', itemsT012.map((i) => i.lote).sort().join(',') === '030926,090926')
+  check('cantidades: 27×864=23328 y 5×864=4320 (suma de paletas manda)', itemsT012.map((i) => i.cantidad).sort().join(',') === '23328,4320', itemsT012.map((i) => i.cantidad).join(','))
+  // Round-trip de identidad: re-guardar NO crea ni borra filas (32 updates)
+  const idsT012 = itemsT012.flatMap((i) => [i.filaId, ...(i.paletas ?? []).map((p) => p.filaId)])
+  const planT012 = planSyncEdicionPorId(idsT012.filter(Boolean), expandirEnFilas(itemsT012))
+  check('round-trip identidad: 32 updates, 0 inserts, 0 deletes', planT012.actualizar.length === 32 && planT012.insertar.length === 0 && planT012.eliminar.length === 0, JSON.stringify({ a: planT012.actualizar.length, i: planT012.insertar.length, e: planT012.eliminar.length }))
+
+  // ordenarFilasGuia: mismo intercalado → grupos CONTIGUOS en orden de 1ª aparición
+  const ordenadas = ordenarFilasGuia(filasT012)
+  const marcas = ordenadas.map((f) => f.observaciones)
+  check('ordenarFilasGuia deja 32 filas (nada se pierde)', ordenadas.length === 32)
+  check('grupo /27 contiguo 1..27 al inicio', JSON.stringify(marcas.slice(0, 27).map((m) => marcaPaletaDe(m).i)) === JSON.stringify(Array.from({ length: 27 }, (_, k) => k + 1)) && marcaPaletaDe(marcas[0]).n === 27)
+  check('grupo /5 contiguo 1..5 después', JSON.stringify(marcas.slice(27).map((m) => marcaPaletaDe(m).i)) === JSON.stringify([1, 2, 3, 4, 5]) && marcaPaletaDe(marcas[27]).n === 5)
+  // El reordenado es IDEMPOTENTE y estable (determinismo garantizado)
+  check('ordenarFilasGuia es idempotente', JSON.stringify(ordenarFilasGuia(ordenadas).map((f) => f.id)) === JSON.stringify(ordenadas.map((f) => f.id)))
+  // Dos grupos del MISMO N intercalados (doble carga idéntica) → 2 bloques contiguos
+  const dobles = ordenarFilasGuia([
+    filaBd({ id: 'a1', codigo: 'X', cantidad: 1, observaciones: 'Paleta 1/2' }),
+    filaBd({ id: 'b1', codigo: 'X', cantidad: 1, observaciones: 'Paleta 1/2' }),
+    filaBd({ id: 'a2', codigo: 'X', cantidad: 1, observaciones: 'Paleta 2/2' }),
+    filaBd({ id: 'b2', codigo: 'X', cantidad: 1, observaciones: 'Paleta 2/2' }),
+  ])
+  check('doble grupo 1/2..2/2 intercalado → 2 bloques contiguos', JSON.stringify(dobles.map((f) => f.id)) === JSON.stringify(['a1', 'a2', 'b1', 'b2']), JSON.stringify(dobles.map((f) => f.id)))
 }
 
 // ─── Resumen ───

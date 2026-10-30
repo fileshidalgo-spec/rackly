@@ -28,7 +28,7 @@ import {
   hayDuplicadosRecientes,
   nuevoUuid,
 } from '@/lib/rackly/recepcion-idempotencia'
-import { planSyncEdicionPorId } from '@/lib/rackly/recepcion-filas'
+import { ordenarFilasGuia, planSyncEdicionPorId } from '@/lib/rackly/recepcion-filas'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS COMPARTIDOS
@@ -294,7 +294,16 @@ export async function listarRecepcionesPorDocumento(ref: {
     .order('n_paleta', { ascending: true, nullsFirst: true })
     .order('id', { ascending: true })
   if (error) throw error
-  return (data ?? []).map(mapRecepcion)
+  const registradas = (data ?? []).map(mapRecepcion)
+  // CONTIGÜIDAD de grupos (auditoría 2026-10-31, guía T012-00000192): el
+  // desempate determinista por n_paleta es necesario (32 filas de UN
+  // guardado comparten created_at EXACTO y Postgres puede devolverlas en
+  // orden arbitrario), pero INTERCALA dos grupos del mismo artículo con N
+  // distinto (1/27, 1/5, 2/27, 2/5…) — filasAItems los fragmentaba y un
+  // guardado del editor habría DESTRUIDO la división. Reorden en JS
+  // determinista: cada grupo 1..N junto, sin mover grupos entre sí —
+  // beneficioso para detalle, impresión de rótulos y edición.
+  return ordenarFilasGuia(registradas)
 }
 
 /**

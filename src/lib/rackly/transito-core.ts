@@ -351,6 +351,29 @@ export function claveCeldaRack(c: {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// REGULARIZACIÓN DE SOBRANTE (T173-00004274, 2026-10-31)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * ¿Puede esta fila REGULARIZARSE (eliminarse como sobrante de recepción)?
+ *
+ * Caso de origen: la guía T173-00004274 registró 172 UN del artículo 53414
+ * cuando físicamente llegaron 150 — las 22 de sobrante "flotan" en Tránsito
+ * con el semáforo ROJO para siempre (nunca existieron: no se pueden
+ * transferir ni encajar en ninguna ubicación).
+ *
+ * SOLO filas 100 % SIN transferir son regularizables (enviados = 0 y
+ * pendiente > 0): con AL MENOS un envío el stock ya vive en Racks/Piso y la
+ * fila NO se toca (borrarla dejaría stock huérfano — misma política del
+ * editor de Recepción). La eliminación real la ejecuta la RPC
+ * `recepcion_regularizar_fila` con guard `recepcion.eliminar`.
+ */
+export function regularizable(a: { cantidad: number; envios: EnvioTransito[] }): boolean {
+  const { enviados, pendiente } = estadoSem(a)
+  return pendiente > EPS_TRANSITO && enviados <= EPS_TRANSITO
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // VALIDACIONES
 // ═══════════════════════════════════════════════════════════════════
 

@@ -778,11 +778,38 @@ export async function guardarEdicionGuia(
         ).length
       : 0
     if (ajenas > 0) {
-      throw errorControlado(
-        ERR_ELIMINAR_BLOQUEADO,
-        `Estás quitando ${ajenas} fila(s) registrada(s) por OTRO usuario: tu rol no puede borrarlas, así que el guardado dejaría duplicados. ` +
-          'Quita esas filas solo con un supervisor/administrador (o restaura las filas en el editor y guarda).'
-      )
+      // FIX 2026-10-31 (T173-00004274 · regularización de sobrante): el guard
+      // era CIEGO AL ROL — bloqueaba a CUALQUIER usuario que quitara filas de
+      // otro, INCLUSO a un admin/supervisor con `recepcion.eliminar`, aunque
+      // las políticas RLS de la tabla SÍ lo permiten (permissive
+      // recepcion_delete_auth/_permiso bajo la restrictive
+      // recepcion_delete_restr = tiene_permiso). Guard más estricto que la BD
+      // = guía imposible de corregir (sobrante 172 vs 150 sin regularizar).
+      // Ahora pregunta a la MISMA función que usa la BD (tiene_permiso RPC):
+      // con el permiso, el DELETE de filas ajenas SIN envíos pasa de verdad
+      // (la honestidad del paso 3 sigue validando el efecto real); sin él,
+      // se mantiene el bloqueo original — ningún caso nuevo queda expuesto.
+      let puedeEliminarAjenas = false
+      try {
+        const { data: okPermiso, error: errPermiso } = await dataClient.rpc('tiene_permiso', {
+          p_user_id: actual,
+          p_permiso: 'recepcion.eliminar',
+        })
+        if (errPermiso) throw errPermiso
+        puedeEliminarAjenas = okPermiso === true
+      } catch {
+        // Si la consulta del permiso falla (red/sesión), la política segura
+        // es el comportamiento anterior: NO asumir el permiso.
+        puedeEliminarAjenas = false
+      }
+      if (!puedeEliminarAjenas) {
+        throw errorControlado(
+          ERR_ELIMINAR_BLOQUEADO,
+          `Estás quitando ${ajenas} fila(s) registrada(s) por OTRO usuario: tu rol no puede borrarlas, así que el guardado dejaría duplicados. ` +
+            'Quita esas filas con un supervisor/administrador (o quien tenga el permiso "Eliminar guías"), ' +
+            'usa la acción "Regularizar" de Tránsito sobre la fila flotante, o restaura las filas en el editor y guarda.'
+        )
+      }
     }
   }
 

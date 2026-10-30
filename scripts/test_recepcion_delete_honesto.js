@@ -123,6 +123,56 @@ async function main() {
   )
   check('aborta con ELIMINAR_BLOQUEADO (pre-guard, no el conteo final)', codigoControladoDe(errAjena) === ERR_ELIMINAR_BLOQUEADO && errAjena.message.includes('OTRO usuario'), errAjena && errAjena.message)
 
+  console.log('\n[3b] guardarEdicionGuia — filas ajenas CON recepcion.eliminar: el guard consulta a la BD (T173-00004274)')
+  stub.__clear()
+  stub.__setTable('recepcion_registros', [
+    fila('A'),
+    fila('B'),
+    fila('C', { usuario_id: U_OTRO }), // sobrante regularizable (0 envíos, ajena)
+  ])
+  stub.__setRpcResult('tiene_permiso', { data: true, error: null }) // admin/supervisor con el permiso
+  stub.__setDeleteResult({ data: [{ id: 'C' }], error: null }) // DELETE honesto
+  const resPermiso = await guardarEdicionGuia(
+    ['A', 'B', 'C'],
+    [
+      { codigo: '56101', descripcion: 'X', cantidad: 10, unidadMedida: 'KG', lote: '', fechaProduccion: '', fechaVencimiento: '', proveedor: '', observaciones: '', filaId: 'A' },
+      { codigo: '56101', descripcion: 'X', cantidad: 20, unidadMedida: 'KG', lote: '', fechaProduccion: '', fechaVencimiento: '', proveedor: '', observaciones: '', filaId: 'B' },
+    ],
+    { fecha: '2026-10-30', tipoDocumento: 'Guia', numeroDocumento: 'T173-00004274', empresaOrigen: 'AJEPER', proveedor: '', placa: '', estado: 'Pendiente', fotoUrl: '', guiaId: 'g1' },
+    { id: U_OTRO, nombre: 'Autor', correo: 'a@e.pe' },
+    U_YO
+  )
+  check('con permiso, el guardado quita la fila ajena SIN envíos', resPermiso.eliminadas === 1 && resPermiso.actualizadas === 2, JSON.stringify(resPermiso))
+  const rpcLlamadas = stub.__rpcCalls().filter((c) => c.name === 'tiene_permiso')
+  check(
+    'el guard pregunta el permiso EXACTO de la política RLS (misma función que la BD)',
+    rpcLlamadas.length === 1 && rpcLlamadas[0].args.p_permiso === 'recepcion.eliminar' && rpcLlamadas[0].args.p_user_id === U_YO,
+    JSON.stringify(rpcLlamadas)
+  )
+
+  console.log('\n[3c] guardarEdicionGuia — la consulta del permiso FALLA: política segura = bloquear')
+  stub.__clear()
+  stub.__setTable('recepcion_registros', [
+    fila('A'),
+    fila('B'),
+    fila('C', { usuario_id: U_OTRO }),
+  ])
+  stub.__setRpcResult('tiene_permiso', { data: null, error: { message: 'red caída', code: 'XX' } })
+  stub.__setDeleteResult({ data: [{ id: 'C' }], error: null }) // canario: NUNCA debe llegar
+  const errPermiso = await capturaError(() =>
+    guardarEdicionGuia(
+      ['A', 'B', 'C'],
+      [
+        { codigo: '56101', descripcion: 'X', cantidad: 10, unidadMedida: 'KG', lote: '', fechaProduccion: '', fechaVencimiento: '', proveedor: '', observaciones: '', filaId: 'A' },
+        { codigo: '56101', descripcion: 'X', cantidad: 20, unidadMedida: 'KG', lote: '', fechaProduccion: '', fechaVencimiento: '', proveedor: '', observaciones: '', filaId: 'B' },
+      ],
+      { fecha: '2026-10-30', tipoDocumento: 'Guia', numeroDocumento: 'T', empresaOrigen: 'AJEPER', proveedor: '', placa: '', estado: 'Pendiente', fotoUrl: '', guiaId: 'g1' },
+      { id: U_OTRO, nombre: 'Autor', correo: 'a@e.pe' },
+      U_YO
+    )
+  )
+  check('fallo al consultar permiso → ELIMINAR_BLOQUEADO (no asume)', codigoControladoDe(errPermiso) === ERR_ELIMINAR_BLOQUEADO, JSON.stringify(errPermiso))
+
   console.log('\n[4] guardarEdicionGuia — guard de Tránsito SIGUE primero')
   stub.__clear()
   stub.__setTable('recepcion_registros', [

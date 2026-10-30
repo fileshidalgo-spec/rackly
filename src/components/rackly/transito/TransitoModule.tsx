@@ -45,6 +45,7 @@ import {
   Truck,
   Users,
   RotateCcw,
+  Wrench,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { puede } from '@/lib/rackly/permisos'
@@ -61,12 +62,15 @@ import {
   contarPendientes,
   filtrarArticulos,
   datosFaltantes,
+  regularizable,
   type ArticuloTransito,
   type EnvioTransito,
   type GuiaTransito,
+  type ResultadoRegularizacion,
 } from '@/lib/rackly/transito'
 import { parsearPayloadQR, type PayloadQRRotulo } from '@/lib/rackly/qr-rotulo'
 import { DialogoTransferir } from './DialogoTransferir'
+import { DialogoRegularizar } from './DialogoRegularizar'
 import { LectorQR } from './LectorQR'
 
 const EPS = 0.0005
@@ -78,6 +82,9 @@ export function TransitoModule() {
   // Cuadro de permisos: transferir = acción «Crear» de Tránsito (la RPC
   // transito_registrar_envio también la aplica en BD)
   const puedeTransferir = puede(perfil, 'transito.crear')
+  // Regularización de sobrante (T173-00004274): misma puerta que la RPC
+  // recepcion_regularizar_fila aplica en BD (recepcion.eliminar).
+  const puedeRegularizar = puede(perfil, 'recepcion.eliminar')
   const [estado, setEstado] = useState<EstadoCarga>('cargando')
   const [articulos, setArticulos] = useState<ArticuloTransito[]>([])
   /** Hora del último refresco (prueba VISIBLE del auto-refresco en vivo). */
@@ -87,6 +94,8 @@ export function TransitoModule() {
   const [historialAbierto, setHistorialAbierto] = useState<Set<string>>(new Set())
   const [seleccion, setSeleccion] = useState<Set<string>>(new Set())
   const [dialogoItems, setDialogoItems] = useState<ArticuloTransito[] | null>(null)
+  /** Regularización de sobrante: fila fantasma en proceso (T173-00004274). */
+  const [regularizando, setRegularizando] = useState<ArticuloTransito | null>(null)
   /** Lector de QR (cámara + pistola USB): abierto y en pausa durante transferencia. */
   const [lectorOpen, setLectorOpen] = useState(false)
   /** Anti-doble-disparo: una resolución a la vez (ref, no estado — no renderiza). */
@@ -559,6 +568,8 @@ export function TransitoModule() {
           historialAbierto={historialAbierto}
           onToggleHistorial={toggleHistorial}
           onTransferir={(a) => abrirDialogo([a])}
+          puedeRegularizar={puedeRegularizar}
+          onRegularizar={(a) => setRegularizando(a)}
           onTransferirTodoGuia={() => {
             const items = guia.articulos.filter((a) => a.pendiente > EPS)
             if (items.length === 0) {
@@ -588,6 +599,19 @@ export function TransitoModule() {
           onCancelar={() => setDialogoItems(null)}
         />
       )}
+
+      {/* ═══ Diálogo de regularización (sobrante sin envíos) ═══ */}
+      {regularizando && (
+        <DialogoRegularizar
+          articulo={regularizando}
+          onListo={(_res: ResultadoRegularizacion) => {
+            setRegularizando(null)
+            setSeleccion(new Set())
+            cargar()
+          }}
+          onCancelar={() => setRegularizando(null)}
+        />
+      )}
     </div>
   )
 }
@@ -605,6 +629,8 @@ function TarjetaGuia({
   historialAbierto,
   onToggleHistorial,
   onTransferir,
+  puedeRegularizar,
+  onRegularizar,
   onTransferirTodoGuia,
 }: {
   guia: GuiaTransito
@@ -615,6 +641,9 @@ function TarjetaGuia({
   historialAbierto: Set<string>
   onToggleHistorial: (id: string) => void
   onTransferir: (a: ArticuloTransito) => void
+  /** Regularización de sobrante (T173-00004274): la RPC la aplica en BD. */
+  puedeRegularizar: boolean
+  onRegularizar: (a: ArticuloTransito) => void
   onTransferirTodoGuia: () => void
 }) {
   const nArticulos = guia.articulos.length
@@ -693,6 +722,8 @@ function TarjetaGuia({
                 historialAbierto={historialAbierto.has(a.id)}
                 onToggleHistorial={() => onToggleHistorial(a.id)}
                 onTransferir={() => onTransferir(a)}
+                puedeRegularizar={puedeRegularizar}
+                onRegularizar={() => onRegularizar(a)}
               />
             ))}
           </div>
@@ -713,6 +744,8 @@ function FilaArticulo({
   historialAbierto,
   onToggleHistorial,
   onTransferir,
+  puedeRegularizar,
+  onRegularizar,
 }: {
   articulo: ArticuloTransito
   seleccionado: boolean
@@ -720,10 +753,16 @@ function FilaArticulo({
   historialAbierto: boolean
   onToggleHistorial: () => void
   onTransferir: () => void
+  puedeRegularizar: boolean
+  onRegularizar: () => void
 }) {
   const sem = a.estado
   // Datos ausentes del artículo (lote/vencimiento/producción) — alerta consciente
   const faltanFila = datosFaltantes(a)
+  // REGULARIZACIÓN (T173-00004274): solo filas 100 % SIN transferir y SOLO
+  // para quien la RPC aceptaría (recepcion.eliminar). El botón aparece junto
+  // al Historial — la fila flotante se corrige donde se ve flotando.
+  const esRegularizable = puedeRegularizar && regularizable(a)
 
   return (
     <div className="p-2.5 sm:p-3 rounded-xl hover:bg-slate-50 transition-colors">
@@ -820,6 +859,16 @@ function FilaArticulo({
             <History className="h-3 w-3" />
             Historial
           </button>
+          {esRegularizable && (
+            <button
+              onClick={onRegularizar}
+              title="Regularizar: la cantidad fue registrada de más y nunca llegó — elimina esta fila de la guía"
+              className="text-[11px] text-rose-600 hover:text-rose-800 inline-flex items-center gap-1 font-semibold border border-rose-200 hover:border-rose-300 rounded-md px-1.5 py-0.5 bg-rose-50/60 transition-colors"
+            >
+              <Wrench className="h-3 w-3" />
+              Regularizar
+            </button>
+          )}
         </div>
       </div>
 

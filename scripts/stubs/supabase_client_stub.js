@@ -17,6 +17,8 @@ const tables = {}
 const orCalls = []
 /** Captura de updates {table, payload} — aditivo 2026-10-30. */
 const updateCalls = []
+/** Captura de llamadas rpc {name, args} — aditivo 2026-10-31. */
+const rpcCalls = []
 /** Resultado pendiente para update().select().maybeSingle() (un uso). */
 let updateResult = null
 /** El próximo maybeSingle pertenece a un update (sirve updateResult, no tabla). */
@@ -30,6 +32,11 @@ let pendingUpdate = false
  *  cola está vacía, resuelve { data: null } (compatibilidad total). */
 const deleteQueue = []
 let pendingDelete = false
+/** Aditivo 2026-10-31 (regularización T173-00004274): rpc(name, args) puede
+ *  resolver un resultado enlatado por NOMBRE de función — cola FIFO; sin
+ *  enlatado resuelve { data: [], error: null } (compatibilidad total con
+ *  todos los suites previos, cuyo guard ve data=[] ≠ true = sin permiso). */
+const rpcQueue = {}
 
 function builder(table) {
   const p = {
@@ -87,7 +94,12 @@ function builder(table) {
 module.exports = {
   dataClient: {
     from: (t) => builder(t),
-    rpc: () => Promise.resolve({ data: [], error: null }),
+    rpc: (name, args) => {
+      const q = rpcQueue[name]
+      const r = q && q.length ? q.shift() : { data: [], error: null }
+      rpcCalls.push({ name, args })
+      return Promise.resolve(r)
+    },
     channel: () => ({ on() { return this }, subscribe() { return this } }),
     removeChannel() {},
   },
@@ -100,10 +112,19 @@ module.exports = {
   __updateCalls() { return updateCalls.slice() },
   __setUpdateResult(r) { updateResult = r },
   __setDeleteResult(r) { deleteQueue.push(r) },
+  /** Encola el resultado del PRÓXIMO rpc(name) (cola FIFO por nombre). */
+  __setRpcResult(name, r) {
+    if (!rpcQueue[name]) rpcQueue[name] = []
+    rpcQueue[name].push(r)
+  },
+  /** Captura de llamadas rpc {name, args} — para verificar el permiso pedido. */
+  __rpcCalls() { return rpcCalls.slice() },
   __clear() {
     for (const k of Object.keys(tables)) delete tables[k]
     orCalls.length = 0
     updateCalls.length = 0
+    rpcCalls.length = 0
+    for (const k of Object.keys(rpcQueue)) delete rpcQueue[k]
     updateResult = null
     pendingUpdate = false
     deleteQueue.length = 0

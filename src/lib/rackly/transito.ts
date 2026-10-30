@@ -56,6 +56,7 @@ export {
   claveCeldaRack,
   validarCantidad,
   mensajeRpcError,
+  regularizable,
 } from './transito-core'
 export type {
   DestinoTransito,
@@ -237,6 +238,59 @@ export async function transferirArticulo(args: ArgsTransferir): Promise<Resultad
   })
   if (error) throw error
   return (data ?? {}) as ResultadoEnvio
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// REGULARIZACIÓN DE SOBRANTE (T173-00004274, 2026-10-31)
+// ═══════════════════════════════════════════════════════════════════
+
+export type ResultadoRegularizacion = {
+  ok?: boolean
+  accion?: string
+  fila?: {
+    id: string
+    guia_id: string | null
+    tipo_documento: string
+    numero_documento: string
+    fecha: string
+    codigo: string
+    descripcion: string
+    cantidad: number
+    unidad_medida: string
+    lote: string | null
+    n_paleta: number | null
+    owner_nombre: string | null
+  }
+  regularizado_por?: string
+  motivo?: string
+  fecha?: string
+}
+
+/**
+ * REGULARIZA una fila sobrante de recepción (la ELIMINA de la guía).
+ *
+ * Puente Tránsito→Recepción: la fila fantasma (p. ej. 22 UN de más en la
+ * guía T173-00004274) se elimina DIRECTAMENTE desde Tránsito, sin abrir el
+ * editor. La RPC `recepcion_regularizar_fila` es la fuente de verdad:
+ *   · exige `recepcion.eliminar` (misma función que las políticas RLS),
+ *   · SOLO acepta filas SIN envíos de Tránsito,
+ *   · serializa con los envíos concurrentes (mismo advisory lock),
+ *   · y devuelve el snapshot de lo eliminado (auditoría).
+ * El cliente NO replica los guards: ante cualquier rechazo muestra el error
+ * "CODE|detalle" de la RPC (mensajeError en la UI).
+ */
+export async function regularizarFila(args: {
+  recepcionId: string
+  motivo?: string
+}): Promise<ResultadoRegularizacion> {
+  const id = args.recepcionId.trim()
+  if (!id) throw new Error('FILA_REQUERIDA|Falta identificar la fila a regularizar')
+  const { data, error } = await dataClient.rpc('recepcion_regularizar_fila', {
+    p_fila_id: id,
+    p_motivo: args.motivo?.trim() || '',
+  })
+  if (error) throw error
+  return (data ?? {}) as ResultadoRegularizacion
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -97,8 +97,12 @@ async function main() {
   insertSizes.length = 0
   insertHandler = () => Promise.resolve({ data: null, error: { code: '23505', message: 'dup' } })
   let msg = ''
-  try { await crearRecepciones(items(10), USUARIO) } catch (e) { msg = e.message }
-  check('23505 → REGISTRO_DUPLICADO', msg.startsWith('REGISTRO_DUPLICADO'), msg)
+  let cod = null
+  try { await crearRecepciones(items(10), USUARIO) } catch (e) { msg = e.message; cod = e.name }
+  // Auditoría 2026-10-30 (R1): el código viaja en Error.name (los branches de
+  // UI usan codigoControladoDe) — el message es el texto legible sin prefijo.
+  check('23505 → REGISTRO_DUPLICADO', cod === 'REGISTRO_DUPLICADO', `${cod} · ${msg}`)
+  check('23505 → mensaje legible sin prefijo', msg.includes('ya fueron registradas'), msg)
 
   console.log(`\n${passed} OK / ${failed} FALLOS`)
   process.exit(failed > 0 ? 1 : 0)

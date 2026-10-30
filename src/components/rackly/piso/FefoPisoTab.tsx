@@ -81,8 +81,13 @@ const fmtQty = (n: number) => (n % 1 === 0 ? String(n) : n.toLocaleString(undefi
 
 function statusDe(fv: string): { status: FefoStatus; dias: number } {
   if (!fv) return { status: 'sin_fecha', dias: -1 }
+  // Guard NaN (auditoría 2026-10-30, K4 — mismo criterio que FefoTab): la
+  // columna es TEXT y una fecha imposible entró por la ruta directa sin RPC;
+  // NaN < 0 / NaN <= 15 son false y el lote se pintaba "Vigente ... NaN días".
+  const t = new Date(fv + 'T00:00:00').getTime()
+  if (!Number.isFinite(t)) return { status: 'sin_fecha', dias: -1 }
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
-  const dias = Math.round((new Date(fv + 'T00:00:00').getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24))
+  const dias = Math.round((t - hoy.getTime()) / (1000 * 60 * 60 * 24))
   return { status: dias < 0 ? 'vencido' : dias <= 15 ? 'urgente' : dias <= 30 ? 'proximo' : 'vigente', dias }
 }
 

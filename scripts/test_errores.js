@@ -138,4 +138,48 @@ t('extractError: NUEVO — PostgrestError plano → message (antes JSON.stringif
   assert.strictEqual(extractError({ message: 'columna no existe', code: '42703' }), 'columna no existe')
 })
 
+// ── 6) Errores CONTROLADOS (auditoría 2026-10-30, R1) ──
+// El bug real: Recepción lanzaba Error('REGISTRO_CANCELADO|…') y la UI
+// branqueaba con message.startsWith('REGISTRO_CANCELADO|') — pero mensajeError
+// ya había quitado el prefijo → CÓDIGO MUERTO: cancelar un duplicado se
+// pintaba como error rojo en vez de aviso. El código ahora viaja en Error.name.
+console.log('\nerrores controlados — código en Error.name (sobrevive a mensajeError)')
+const { errorControlado, codigoControladoDe, ERR_CANCELADO, ERR_DUPLICADO } = require('@/lib/rackly/errores')
+
+t('errorControlado: name = código · message = texto legible', () => {
+  const e = errorControlado(ERR_CANCELADO, 'Registro cancelado por posible duplicado.')
+  assert.strictEqual(e.name, 'REGISTRO_CANCELADO')
+  assert.strictEqual(e.message, 'Registro cancelado por posible duplicado.')
+})
+
+t('codigoControladoDe: recupera el código DESPUÉS de mensajeError', () => {
+  const e = errorControlado(ERR_DUPLICADO, 'Estas filas ya fueron registradas (reintento detectado).')
+  const msg = mensajeError(e) // el flujo real de la UI: mensajeError primero
+  assert.strictEqual(msg, 'Estas filas ya fueron registradas (reintento detectado).')
+  assert.strictEqual(codigoControladoDe(e), 'REGISTRO_DUPLICADO')
+})
+
+t('codigoControladoDe: null para errores nativos y no-Error', () => {
+  assert.strictEqual(codigoControladoDe(new TypeError('x')), null)
+  assert.strictEqual(codigoControladoDe(new Error('x')), null)
+  assert.strictEqual(codigoControladoDe({ name: 'REGISTRO_CANCELADO' }), null) // objeto plano
+  assert.strictEqual(codigoControladoDe('REGISTRO_CANCELADO|algo'), null)
+  assert.strictEqual(codigoControladoDe(null), null)
+})
+
+t('flujo UI completo: branch por codigoControladoDe + toast.info (no error rojo)', () => {
+  // Simula el catch de RecepcionModule/GuiaFotoForm.
+  function clasificar(err) {
+    const codigo = codigoControladoDe(err)
+    const message = mensajeError(err)
+    if (codigo === ERR_CANCELADO) return 'info'
+    if (codigo === ERR_DUPLICADO) return 'warning'
+    return 'error'
+  }
+  assert.strictEqual(clasificar(errorControlado(ERR_CANCELADO, 'Registro cancelado: el documento ya estaba registrado.')), 'info')
+  assert.strictEqual(clasificar(errorControlado(ERR_DUPLICADO, 'Estas filas ya fueron registradas.')), 'warning')
+  assert.strictEqual(clasificar(new Error('fallo de red')), 'error')
+  assert.strictEqual(clasificar({ message: 'P0001|algo' }), 'error')
+})
+
 console.log(`\n${ok} checks OK${process.exitCode ? ' (con fallos)' : ''}`)

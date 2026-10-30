@@ -48,6 +48,7 @@ import {
   crearRq,
   eliminarFotoRq,
   subirFotoRq,
+  buscarRqPorNumero,
   type RqAtencion,
 } from '@/lib/rackly/rq-atencion'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
@@ -621,6 +622,30 @@ export function RqFotoForm({
     if (!form.fecha) {
       toast.error('Ingresa la fecha de la RQ')
       return
+    }
+    // DB1 (auditoría 2026-10-30): advertencia informada si el Nº de RQ ya
+    // existe (doble registro real: RQ 2026008365 ×2 a 16 min). ANTES de subir
+    // la foto — si el usuario cancela no queda huérfano en Storage. NO bloquea:
+    // pueden ser hojas físicas distintas que comparten número.
+    const numeroNuevo = form.numeroRq.trim()
+    if (numeroNuevo) {
+      let existentes: Awaited<ReturnType<typeof buscarRqPorNumero>> = []
+      try {
+        existentes = await buscarRqPorNumero(numeroNuevo)
+      } catch {
+        // Si la verificación falla (red), se registra igual: nunca peor.
+      }
+      if (existentes.length > 0) {
+        const e0 = existentes[0]
+        const ok = window.confirm(
+          `Ya existe ${existentes.length > 1 ? `${existentes.length} RQ` : 'UNA RQ'} con el número ${numeroNuevo}` +
+            `${e0.fecha ? ` (fecha ${e0.fecha}` : ''}${e0.ordenProduccion ? `, OP ${e0.ordenProduccion}` : ''}${e0.fecha ? ')' : ''}.\n\n` +
+            'Si es LA MISMA hoja registrada dos veces, cancela y atiéndela desde la lista ' +
+            '(registrarla otra vez duplica su atención y sus reportes).\n\n' +
+            '¿Registrar de todos modos (hoja distinta con el mismo número)?'
+        )
+        if (!ok) return
+      }
     }
     setSaving(true)
     try {

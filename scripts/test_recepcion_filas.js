@@ -426,6 +426,59 @@ console.log('\n[11] proveedor del artículo y de la paleta (empresa de origen se
   check('agrupado: empresaOrigen del encabezado = AJEPER S.A.', gEmp[0].empresaOrigen === 'AJEPER S.A.')
 }
 
+// ─── [11] R3 (auditoría 2026-10-30): total "0" + UNA paleta con cantidad ───
+console.log('\n[11] R3 — total "0" explícito + una paleta válida usa SU cantidad')
+{
+  // Antes: totalNum=0 no era NaN → la fila salía con cantidad 0 aunque la
+  // única paleta con cantidad tuviera el valor real (aviso mentiroso).
+  const conCero = expandirEnFilas([{ ...base, cantidad: '0', paletas: pal(['4000']) }])
+  check('total "0" + paleta 4000 → fila con 4000 (no 0)', conCero.length === 1 && conCero[0].cantidadNum === 4000)
+  const conCeroYVacias = expandirEnFilas([{ ...base, cantidad: '0', paletas: pal(['', '4000']) }])
+  check('total "0" + 1 válida entre vacías → usa la válida', conCeroYVacias.length === 1 && conCeroYVacias[0].cantidadNum === 4000)
+  // El total digitado > 0 sigue mandando (comportamiento fijado por tests).
+  const conTotal = expandirEnFilas([{ ...base, cantidad: '9000', paletas: pal(['4000']) }])
+  check('total 9000 + paleta 4000 → manda el total (9000)', conTotal.length === 1 && conTotal[0].cantidadNum === 9000)
+}
+
+// ─── [12] R5 (auditoría 2026-10-30): grupos de paletas NO contiguos ───
+console.log('\n[12] R5 — filasAItems no fusiona dos grupos de paletas del mismo código')
+{
+  // Grupo 1: Paleta 1/2, 2/2 — Grupo 2 (otra carga del mismo código): Paleta 1/3.
+  // Antes se fusionaban en UN item de 3 paletas y la renumeración impresa ya
+  // no coincidía con la física.
+  const filas = [
+    filaBd({ codigo: '301', cantidad: 40, observaciones: 'Paleta 1/2' }),
+    filaBd({ codigo: '301', cantidad: 60, observaciones: 'Paleta 2/2' }),
+    filaBd({ codigo: '301', cantidad: 30, observaciones: 'Paleta 1/3' }),
+  ]
+  const items = filasAItems(filas)
+  check('grupo 2/2 + grupo 1/3 del mismo código → items SEPARADOS', items.length === 2)
+  check('grupo 1 conserva 2 paletas', items[0].paletas?.length === 2)
+  check('grupo 2 nace como item de 1 paleta (fila marcada nueva)', items[1].paletas?.length === 1 && items[1].paletas[0].cantidad === '30')
+  // La contigüidad correcta SIGUE uniendo: 1/3, 2/3, 3/3 consecutivos.
+  const contiguo = filasAItems([
+    filaBd({ codigo: '301', cantidad: 10, observaciones: 'Paleta 1/3' }),
+    filaBd({ codigo: '301', cantidad: 20, observaciones: 'Paleta 2/3' }),
+    filaBd({ codigo: '301', cantidad: 30, observaciones: 'Paleta 3/3' }),
+  ])
+  check('secuencia contigua 1/3→2/3→3/3 SÍ fusiona en 3 paletas', contiguo.length === 1 && contiguo[0].paletas?.length === 3)
+  // Tolerancia legada intacta: grupo huérfano SIN la 1ª paleta sigue
+  // re-ensamblándose (filas perdidas en BD; cubierto en [8] borde).
+  const huerfano = filasAItems([
+    filaBd({ codigo: '301', cantidad: 20, observaciones: 'Paleta 2/3' }),
+    filaBd({ codigo: '301', cantidad: 30, observaciones: 'Paleta 3/3' }),
+  ])
+  check('huérfano 2/3→3/3 (sin la 1ª) sigue uniéndose (legado)', huerfano.length === 1 && huerfano[0].paletas?.length === 2)
+  // Y DOS grupos completos consecutivos del mismo N se separan.
+  const dosGrupos = filasAItems([
+    filaBd({ codigo: '301', cantidad: 40, observaciones: 'Paleta 1/2' }),
+    filaBd({ codigo: '301', cantidad: 60, observaciones: 'Paleta 2/2' }),
+    filaBd({ codigo: '301', cantidad: 15, observaciones: 'Paleta 1/2' }),
+    filaBd({ codigo: '301', cantidad: 25, observaciones: 'Paleta 2/2' }),
+  ])
+  check('dos grupos completos 1/2,2/2 + 1/2,2/2 → 2 items', dosGrupos.length === 2 && dosGrupos[1].paletas?.length === 2)
+}
+
 // ─── Resumen ───
 console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)
 process.exit(fallidos > 0 ? 1 : 0)

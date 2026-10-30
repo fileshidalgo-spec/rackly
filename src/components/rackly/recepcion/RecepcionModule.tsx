@@ -103,7 +103,7 @@ import {
   Check,
   CheckCircle2,
 } from 'lucide-react'
-import { mensajeError } from '@/lib/rackly/errores'
+import { mensajeError, codigoControladoDe, ERR_CANCELADO, ERR_DUPLICADO } from '@/lib/rackly/errores'
 
 const PAGE_SIZE = 50
 
@@ -142,6 +142,8 @@ export function RecepcionModule() {
   const [estadoFiltro, setEstadoFiltro] = useState('todos')
   const [offset, setOffset] = useState(0)
   const [saving, setSaving] = useState(false)
+  /** R6: id de la guía cuyo cambio de estado está en vuelo (anti-carrera). */
+  const [estadoEnCurso, setEstadoEnCurso] = useState<string | null>(null)
   // Borrado POR GUÍA: el registro está agrupado por documento y el documento
   // completo entra y sale junto (con confirmación que muestra el conteo).
   const [deleteTarget, setDeleteTarget] = useState<GuiaAgrupada | null>(null)
@@ -670,7 +672,7 @@ export function RecepcionModule() {
         }
         const res = await guardarEdicionGuia(
           editando.ids,
-          filasGuardar.map((f) => ({
+          filasGuardar.map((f, i) => ({
             codigo: f.codigo,
             descripcion: f.descripcion,
             cantidad: f.cantidadNum,
@@ -681,6 +683,11 @@ export function RecepcionModule() {
             proveedor: f.proveedor,
             observaciones: [fObs, f.paleta].filter(Boolean).join(' · '),
             filaId: f.filaId ?? null,
+            // M-1 en la EDICIÓN (auditoría 2026-10-30, R2): las filas NUEVAS
+            // llevan SU uuid del lote estable (mismo ref que la alta — estable
+            // entre reintentos; un fallo de red no duplica). Las filas que
+            // actualizan (filaId) no lo necesitan: van por UPDATE.
+            uuidSync: f.filaId ? null : uuids[i],
           })),
           {
             fecha,
@@ -847,15 +854,17 @@ export function RecepcionModule() {
       setItems([itemVacio()])
       cargar(0, true)
     } catch (err: unknown) {
+      // Códigos controlados (errores.ts): la cancelación anti-duplicado y el
+      // reintento bloqueado NO son errores — son decisiones/avisos. El código
+      // viaja en Error.name (sobrevive a mensajeError); el branch viejo con
+      // startsWith('CODE|') era código muerto (el extractor ya había quitado
+      // el prefijo y la cancelación se pintaba como fallo rojo).
+      const codigo = codigoControladoDe(err)
       const message = mensajeError(err)
-      // M-1: la cancelación anti-duplicado no es un error — es una decisión
-      // del usuario (y el reintento bloqueado por uuid_sync, un aviso).
-      if (message.startsWith('REGISTRO_CANCELADO|')) {
-        toast.info('Registro cancelado', {
-          description: message.split('|')[1],
-        })
-      } else if (message.startsWith('REGISTRO_DUPLICADO|')) {
-        toast.warning('No se registró nada nuevo', { description: message.split('|')[1] })
+      if (codigo === ERR_CANCELADO) {
+        toast.info('Registro cancelado', { description: message })
+      } else if (codigo === ERR_DUPLICADO) {
+        toast.warning('No se registró nada nuevo', { description: message })
       } else {
         toast.error('No se pudo registrar', { description: message })
       }
@@ -873,6 +882,16 @@ export function RecepcionModule() {
       toast.error('Solo el autor o un supervisor puede cambiar el estado.')
       return
     }
+    // Guard anti-carrera (auditoría 2026-10-30, R6): un UPDATE en vuelo no
+    // admite otro — dos cambios rápidos podían confirmar en otro orden que
+    // el clic y divergir UI/BD hasta el refresco.
+    if (estadoEnCurso) {
+      toast.info('Espera: se está guardando el cambio de estado anterior.')
+      return
+    }
+    // Clave estable de la guía (guiaId M-2; fallback al documento legado).
+    const claveGuia = grupo.ref.guiaId || grupo.ref.numeroDocumento
+    setEstadoEnCurso(claveGuia)
     try {
       await cambiarEstadoGuia(grupo.ref, estado)
       const ids = new Set(grupo.filas.map((f) => f.id))
@@ -881,6 +900,8 @@ export function RecepcionModule() {
     } catch (err: unknown) {
       const message = mensajeError(err)
       toast.error('No se pudo actualizar el estado', { description: message })
+    } finally {
+      setEstadoEnCurso(null)
     }
   }
 
@@ -1285,7 +1306,11 @@ export function RecepcionModule() {
                     </TableCell>
                     <TableCell>
                       {puedeEstado && g.estado ? (
-                        <Select value={g.estado} onValueChange={(v) => void handleEstadoGuia(g, v)}>
+                        <Select
+                          value={g.estado}
+                          onValueChange={(v) => void handleEstadoGuia(g, v)}
+                          disabled={estadoEnCurso === (g.ref.guiaId || g.ref.numeroDocumento)}
+                        >
                           <SelectTrigger className="h-8 w-[125px] text-xs">
                             <SelectValue />
                           </SelectTrigger>
@@ -1475,7 +1500,11 @@ export function RecepcionModule() {
                 )}
               </div>
               {puedeEstado && g.estado && (
-                <Select value={g.estado} onValueChange={(v) => void handleEstadoGuia(g, v)}>
+                <Select
+                  value={g.estado}
+                  onValueChange={(v) => void handleEstadoGuia(g, v)}
+                  disabled={estadoEnCurso === (g.ref.guiaId || g.ref.numeroDocumento)}
+                >
                   <SelectTrigger className="h-8 w-full text-xs">
                     <SelectValue />
                   </SelectTrigger>

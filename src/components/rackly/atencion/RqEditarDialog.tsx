@@ -34,6 +34,7 @@ import {
   revertirOrigenRq,
   obtenerRqCompleta,
   listarLotesPuenteDeItem,
+  buscarRqPorNumero,
   type RqAtencion,
   type RqItem,
   type ItemEditarRq,
@@ -341,6 +342,23 @@ export function RqEditarDialog({
       setErrores(vivos)
       setConfirmar(false)
       return
+    }
+    // DB1 (auditoría 2026-10-30): si el Nº de RQ CAMBIÓ, advertir si ya existe
+    // otra RQ con ese número (misma política que el alta: aviso, no bloqueo).
+    if (numeroRq.trim() && numeroRq.trim() !== rq.numeroRq.trim()) {
+      try {
+        const existentes = await buscarRqPorNumero(numeroRq, rq.id)
+        if (existentes.length > 0) {
+          const e0 = existentes[0]
+          const ok = window.confirm(
+            `Ya existe ${existentes.length > 1 ? `${existentes.length} RQ` : 'UNA RQ'} con el número ${numeroRq.trim()}` +
+              `${e0.fecha ? ` (fecha ${e0.fecha})` : ''}.\n\n¿Guardar la edición de todos modos?`
+          )
+          if (!ok) return
+        }
+      } catch {
+        // Verificación no disponible: seguir (nunca peor).
+      }
     }
     setErrores([])
     setSaving(true)

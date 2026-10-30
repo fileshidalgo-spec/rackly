@@ -269,8 +269,35 @@ export function RqAtencionPanel({
       void cargar(0, true)
       void cargarRals()
     }
-      
+
   }, [vista])
+
+  // ── Búsqueda EN VIVO unificada (auditoría 2026-10-30) ──
+  // Los RAL se filtran en vivo en cliente mientras se escribe; las RQ solo
+  // respondían al pulsar «Buscar» → la lista unificada era INCOHERENTE
+  // durante la digitación (RAL del término nuevo + RQ de la búsqueda
+  // anterior, y los conteos del resumen saltaban). Con este debounce de
+  // 350 ms ambas capas siguen la MISMA tecla: buscar/filtrar más rápido era
+  // el objetivo de la lista unificada. La firma evita recargas duplicadas
+  // al montar (el efecto de vista ya carga al entrar a la lista).
+  const firmaFiltrosRef = useRef('')
+  useEffect(() => {
+    if (vista !== 'lista') {
+      firmaFiltrosRef.current = ''
+      return
+    }
+    const fBusqueda = busqueda.trim()
+    const fEstado = estadoFiltro === 'todos' ? '' : estadoFiltro
+    const fFecha = fechaFiltro
+    const fTurno = turnoFiltro === 'todos' ? '' : turnoFiltro
+    const firma = JSON.stringify([fBusqueda, fEstado, fFecha, fTurno])
+    const t = setTimeout(() => {
+      if (firma === firmaFiltrosRef.current) return
+      firmaFiltrosRef.current = firma
+      void cargar(0, true, { busqueda: fBusqueda, estado: fEstado, fecha: fFecha, turno: fTurno })
+    }, 350)
+    return () => clearTimeout(t)
+  }, [busqueda, estadoFiltro, fechaFiltro, turnoFiltro, vista, cargar])
 
   function buscar() {
     cargar(0, true)

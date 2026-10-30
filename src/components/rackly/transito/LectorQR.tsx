@@ -186,20 +186,38 @@ export function LectorQR({
   useEffect(() => {
     if (!open || estadoCam !== 'activa') return
     const Ctor = (globalThis as unknown as { BarcodeDetector?: DetectorCtor }).BarcodeDetector
-    const nativo: DetectorLike | null = Ctor ? new Ctor({ formats: ['qr_code'] }) : null
+    // A2 (auditoría 2026-10-30): el ctor puede lanzar TypeError en builds
+    // parciales de Chromium (formato no soportado) — antes tumbaba el effect;
+    // ahora cae al fallback jsQR como si no existiera el detector nativo.
+    let nativo: DetectorLike | null = null
+    if (Ctor) {
+      try {
+        nativo = new Ctor({ formats: ['qr_code'] })
+      } catch {
+        nativo = null
+      }
+    }
 
     function tick() {
       if (pausadoRef.current) return
-      if (Date.now() < cooldownRef.current) return
       const video = videoRef.current
       if (!video || video.readyState < 2) return
+
+      // A3 (auditoría 2026-10-30): el cooldown de 2.5 s solo bloquea el MISMO
+      // símbolo — antes ignoraba TODO símbolo durante la ventana, y un segundo
+      // rótulo distinto escaneado seguido se perdía sin feedback. emitir
+      // actualiza ultimoRef+cooldownRef; aquí se entrega directo símbolos nuevos.
+      const entregar = (texto: string) => {
+        if (Date.now() < cooldownRef.current && texto === ultimoRef.current) return
+        emitir(texto, 'camara')
+      }
 
       if (nativo) {
         nativo
           .detect(video)
           .then((codes) => {
             const texto = codes.find((c) => c.rawValue)?.rawValue
-            if (texto) emitir(texto, 'camara')
+            if (texto) entregar(texto)
           })
           .catch(() => {
             // Frame ilegible: siguiente tick.
@@ -220,7 +238,7 @@ export function LectorQR({
       ctx.drawImage(video, 0, 0, w, h)
       const img = ctx.getImageData(0, 0, w, h)
       const code = jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' })
-      if (code?.data) emitir(code.data, 'camara')
+      if (code?.data) entregar(code.data)
     }
 
     timerRef.current = setInterval(tick, INTERVALO_MS)

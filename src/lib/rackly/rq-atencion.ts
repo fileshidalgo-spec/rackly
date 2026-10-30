@@ -264,6 +264,33 @@ async function buscarIdsPorMateriales(seguro: string): Promise<string[]> {
   )
 }
 
+/**
+ * DB1 (auditoría 2026-10-30): RQ existentes con ESTE número exacto.
+ * El caso real (RQ 2026008365 registrada 2 veces a 16 min por el mismo
+ * usuario, producto con variación de OCR) demostró que la idempotencia por
+ * `id` (rq_crear_completa) NO cubre el mismo `numero_rq` con id distinto.
+ * No hay constraint UNIQUE en numero_rq a propósito: pueden existir hojas
+ * físicas distintas que compartan número (caso 0000192590) — por eso el
+ * guard es una ADVERTENCIA informada en la UI, no un bloqueo duro.
+ */
+export async function buscarRqPorNumero(
+  numeroRq: string,
+  excluirId?: string
+): Promise<RqAtencion[]> {
+  const n = numeroRq.trim()
+  if (!n) return []
+  const { data, error } = await dataClient
+    .from('rq_atenciones')
+    .select('*')
+    .eq('numero_rq', n)
+    .order('created_at', { ascending: false })
+    .limit(5)
+  if (error) throw error
+  return (data ?? [])
+    .map(mapRq)
+    .filter((r) => r.id !== excluirId)
+}
+
 export async function listarRqs(
   filtros: FiltrosRq = {}
 ): Promise<{ filas: RqAtencion[]; total: number }> {
@@ -1098,12 +1125,15 @@ export async function listarLotesPuenteDeItem(
   itemId: string,
   codigo: string
 ): Promise<LotePuenteDeItem[]> {
-  const c = codigo.trim()
+  // FIX auditoría 2026-10-30 (T1): igualdad exacta en mayúsculas (el código
+  // de recepcion_registros se guarda normalizado) — el .ilike(c) anterior
+  // dejaba entrar comodines y no usaba el índice.
+  const c = codigo.trim().toUpperCase()
   if (!c || !itemId.trim()) return []
   const { data, error } = await dataClient
     .from('recepcion_registros')
     .select('transito')
-    .ilike('codigo', c)
+    .eq('codigo', c)
     .gte('fecha', FECHA_INICIO_TRANSITO)
     .limit(2000)
   if (error) throw error

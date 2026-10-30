@@ -141,18 +141,22 @@ export async function listarArticuloPorRecepcionId(
  * Filas de TODAS las guías de UN código (desde la fecha de implementación de
  * Tránsito), más antigua primero. Lo usa el wizard del puente Atención↔Tránsito
  * para la ruta MANUAL (sin QR): muestra guías con pendiente/posicionado y el
- * usuario elige (nunca auto-elegir en silencio). ilike = exacto sin mayúsculas.
+ * usuario elige (nunca auto-elegir en silencio). Igualdad exacta (mayúsculas).
  */
 export async function listarArticulosPorCodigo(
   codigo: string,
   maxFilas = 500
 ): Promise<ArticuloTransito[]> {
-  const c = codigo.trim()
+  // FIX auditoría 2026-10-30 (T1): antes .ilike(c) — el comodín '_' de un
+  // código raro traía filas ajenas y el LIKE no aprovecha el índice btree.
+  // El código SIEMPRE se guarda en mayúsculas (crearRecepciones), así que la
+  // igualdad exacta en mayúsculas es el emparejamiento correcto Y indexable.
+  const c = codigo.trim().toUpperCase()
   if (!c) return []
   const { data, error } = await dataClient
     .from('recepcion_registros')
     .select('*')
-    .ilike('codigo', c)
+    .eq('codigo', c)
     .gte('fecha', FECHA_INICIO_TRANSITO)
     .order('created_at', { ascending: true })
     .limit(maxFilas)

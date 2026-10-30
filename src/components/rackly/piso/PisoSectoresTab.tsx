@@ -1236,6 +1236,17 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     try {
       // Resolve manual_ IDs before registering
       const resolved = await ensureManualBloqueCreated(validRows)
+      // FIX auditoría 2026-10-30 (K2): si el ancla manual_ no pudo crearse,
+      // TODAS las filas quedan descartadas — registrar con detalles vacíos
+      // crearía una CABECERA fantasma (numero_operacion consumido, sin items).
+      // Abortar ANTES de tocar la RPC.
+      if (resolved.length === 0) {
+        toast.error('No se pudo resolver el bloque de ningún artículo', {
+          description: 'No se registró nada. Revisa el bloque de cada artículo e intenta de nuevo.',
+        })
+        setBusy(false)
+        return
+      }
       const detalles = resolved.map((r) => ({
         nivel_id: nivelId,
         bloque_id: r.bloque_id,
@@ -1555,6 +1566,15 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     try {
       // Resolve manual_ IDs before registering
       const resolved = await ensureManualBloqueCreated(validRows)
+      // FIX auditoría 2026-10-30 (K2, misma raíz que el ingreso): sin bloque
+      // resuelto la devolución saldría como cabecera fantasma sin detalles.
+      if (resolved.length === 0) {
+        toast.error('No se pudo resolver el bloque de ningún artículo', {
+          description: 'No se registró nada. Revisa el bloque de cada artículo e intenta de nuevo.',
+        })
+        setBusy(false)
+        return
+      }
       const detalles = resolved.map((r) => ({
         nivel_id: nivelId,
         bloque_id: r.bloque_id,

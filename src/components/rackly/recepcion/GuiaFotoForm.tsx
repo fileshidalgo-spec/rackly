@@ -86,7 +86,7 @@ import {
   CheckCircle2,
   XCircle,
 } from 'lucide-react'
-import { mensajeError } from '@/lib/rackly/errores'
+import { mensajeError, codigoControladoDe, ERR_CANCELADO, ERR_DUPLICADO } from '@/lib/rackly/errores'
 
 function hoyISO(): string {
   const d = new Date()
@@ -633,14 +633,15 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
       reiniciar()
       onRegistrado(infoRegistrada)
     } catch (err: unknown) {
+      // Códigos controlados (errores.ts): cancelación anti-duplicado y
+      // reintento bloqueado NO son errores (el branch viejo startsWith era
+      // código muerto — el extractor ya había quitado el prefijo CODE|).
+      const codigo = codigoControladoDe(err)
       const message = mensajeError(err)
-      // M-1: cancelación anti-duplicado y reintento bloqueado no son errores.
-      if (message.startsWith('REGISTRO_CANCELADO|')) {
-        toast.info('Registro cancelado', {
-          description: message.split('|')[1],
-        })
-      } else if (message.startsWith('REGISTRO_DUPLICADO|')) {
-        toast.warning('No se registró nada nuevo', { description: message.split('|')[1] })
+      if (codigo === ERR_CANCELADO) {
+        toast.info('Registro cancelado', { description: message })
+      } else if (codigo === ERR_DUPLICADO) {
+        toast.warning('No se registró nada nuevo', { description: message })
       } else {
         toast.error('No se pudo registrar', { description: message })
       }

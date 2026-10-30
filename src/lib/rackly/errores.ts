@@ -113,3 +113,57 @@ export function mensajeError(err: unknown): string {
  * con nombre histórico para los módulos de Tránsito.
  */
 export const mensajeRpcCanonica = mensajeError
+
+// ═══════════════════════════════════════════════════════════════════
+// ERRORES CONTROLADOS (2026-10-30, auditoría integral):
+// Situaciones QUE NO SON ERRORES (el usuario canceló, el reintento ya
+// estaba registrado) deben viajar de la capa de datos a la UI sin
+// disfrazarse de fallo. La convención antigua los metía EN el message
+// como "CODE|texto" — pero mensajeError() quita el prefijo "CODE|" y el
+// branch de la UI (message.startsWith('CODE|')) se volvía CÓDIGO MUERTO:
+// cancelar un duplicado mostraba un error rojo en vez del aviso previsto.
+//
+// CONTRATO NUEVO: el código vive en Error.name (sobrevive a mensajeError,
+// que solo lee message/details/hint) y el detalle legible en message.
+//   · Lanzar:    throw errorControlado(ERR_CANCELADO, 'Registro cancelado…')
+//   · Branchar:  const cod = codigoControladoDe(err)
+//                if (cod === ERR_CANCELADO) → toast.info(mensajeError(err))
+// Los branches con startsWith('CODE|') quedan obsoletos — jamás casaban.
+// ═══════════════════════════════════════════════════════════════════
+
+/** Registro cancelado por el usuario (anti-duplicado / anti-guía-duplicada). */
+export const ERR_CANCELADO = 'REGISTRO_CANCELADO'
+/** Reintento bloqueado por idempotencia: nada nuevo se registró. */
+export const ERR_DUPLICADO = 'REGISTRO_DUPLICADO'
+
+const NOMBRES_NATIVOS = new Set([
+  'Error',
+  'EvalError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'TypeError',
+  'URIError',
+  'AbortError',
+  'TimeoutError',
+])
+
+/**
+ * Crea un Error controlado: `name` = código de branching, `message` = texto
+ * legible para el operario (mensajeError(err) lo devuelve tal cual).
+ */
+export function errorControlado(codigo: string, mensaje: string): Error {
+  const e = new Error(mensaje)
+  e.name = codigo
+  return e
+}
+
+/**
+ * Código controlado de un error (Error.name si NO es un nombre nativo de
+ * JS/DOM), o null. Nunca lanza; acepta cualquier throw.
+ */
+export function codigoControladoDe(err: unknown): string | null {
+  if (!(err instanceof Error)) return null
+  const nombre = err.name?.trim() ?? ''
+  return nombre && !NOMBRES_NATIVOS.has(nombre) ? nombre : null
+}

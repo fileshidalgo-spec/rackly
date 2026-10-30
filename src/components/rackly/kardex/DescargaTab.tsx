@@ -423,7 +423,10 @@ function UpDataSection() {
     const totalQty = allRows.reduce((s, r) => s + r.cantidad, 0)
     if (
       !confirm(
-        `⚠️ ATENCIÓN: Se ELIMINARÁN TODOS los movimientos existentes antes de subir.\n\nSe registrarán ${allRows.length} ingreso(s) con un total de ${totalQty.toLocaleString()} unidades.\n\n¿Deseas continuar?`
+        `⚠️ ATENCIÓN: Se REEMPLAZARÁN los movimientos actuales por el contenido del archivo.\n\n` +
+          `Orden seguro (sin riesgo de pérdida total): 1) snapshot de lo existente, ` +
+          `2) se registran ${allRows.length} ingreso(s) con un total de ${totalQty.toLocaleString()} unidades, ` +
+          `3) SOLO AL FINAL se retiran los movimientos que ya no estén en el archivo.\n\n¿Deseas continuar?`
       )
     ) return
 

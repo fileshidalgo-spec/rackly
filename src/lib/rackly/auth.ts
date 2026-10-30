@@ -138,26 +138,30 @@ export async function signIn(correo: string, password: string) {
     password,
   })
   if (error) {
-    // Si el error es por email no confirmado, intentar auto-confirmar y reintentar
+    // Si el error es por email no confirmado, intentar auto-confirmar y reintentar.
+    // FIX auditoría 2026-10-30 (K1): la vía anterior estaba DOBLEMENTE rota —
+    //   · buscarUsuarioEnAuth() ya no devuelve id (devolvía id:''), y
+    //   · la Edge Function gestionar-usuario-auth exige sesión ADMIN, que NO
+    //     existe durante el login (el usuario aún no entra).
+    // La RPC confirmar_correo_en_auth(correo, password) es SECURITY DEFINER,
+    // verifica bcrypt(correo+password) contra auth.users y SOLO entonces
+    // confirma: sin la contraseña correcta no se confirma nada (E2E probado:
+    // correcta→true · incorrecta→false · inexistente→false).
     const msg = error.message.toLowerCase()
     if (msg.includes('email not confirmed') || msg.includes('not confirmed')) {
-      console.warn('[RACKLY] Email no confirmado, intentando auto-confirmar vía Admin API...')
+      console.warn('[RACKLY] Email no confirmado: auto-confirmación con prueba de contraseña (RPC)...')
       try {
-        // Localizar al usuario EXACTO por email (paginado + match exacto);
-        // nunca usar users[0] de una consulta sin filtro real.
-        const busqueda = await buscarUsuarioEnAuth(correo)
-        if (busqueda.estado === 'encontrado') {
-          const confirmed = await confirmarEmailUsuario(busqueda.id)
-          if (confirmed) {
-            // Reintentar login después de confirmar
-            const retry = await supabase.auth.signInWithPassword({ email: correo, password })
-            if (!retry.error) return retry.data
-            console.error('[RACKLY] Login reintentado tras confirmar pero falló:', retry.error.message)
-          } else {
-            console.error('[RACKLY] No se pudo confirmar el email de', correo)
-          }
+        const { data: confirmed, error: errRpc } = await supabase.rpc('confirmar_correo_en_auth', {
+          p_correo: correo.trim().toLowerCase(),
+          p_password: password,
+        })
+        if (!errRpc && confirmed === true) {
+          // Reintentar login después de confirmar
+          const retry = await supabase.auth.signInWithPassword({ email: correo, password })
+          if (!retry.error) return retry.data
+          console.error('[RACKLY] Login reintentado tras confirmar pero falló:', retry.error.message)
         } else {
-          console.error('[RACKLY] Usuario', correo, 'no localizable en Admin API (estado:', busqueda.estado, ')')
+          console.error('[RACKLY] No se pudo confirmar el email de', correo, '(credenciales no verificadas)')
         }
       } catch (confirmErr) {
         console.error('[RACKLY] Error en auto-confirmación durante login:', confirmErr)

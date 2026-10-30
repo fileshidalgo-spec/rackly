@@ -75,7 +75,28 @@ export async function recortarImagen(
   maxLado = MAX_LADO
 ): Promise<Blob> {
   const imagen = await createImageBitmap(archivo)
+  // FIX auditoría 2026-10-30 (R4): el bitmap de la ORIGINAL se libera SIEMPRE
+  // (finally) — igual que construirImagenTrabajo. Una foto de 48 MP son
+  // ~200 MB decodificados: sin close() quedaban al GC bajo presión, justo el
+  // escenario iOS que este archivo documenta.
+  try {
+    return await recortarImagenInterna(imagen, area, rotacion, maxLado)
+  } finally {
+    try {
+      imagen.close()
+    } catch {
+      // close() no existe en navegadores muy viejos — nada que hacer.
+    }
+  }
+}
 
+/** Cuerpo del recorte sobre un bitmap YA creado (recortarImagen lo libera). */
+async function recortarImagenInterna(
+  imagen: ImageBitmap,
+  area: Rect,
+  rotacion: number,
+  maxLado: number
+): Promise<Blob> {
   // 1) Lienzo con la imagen ROTADA: caja delimitadora del giro (con techo de área).
   const rad = (rotacion * Math.PI) / 180
   const seno = Math.abs(Math.sin(rad))

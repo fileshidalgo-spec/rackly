@@ -17,6 +17,11 @@ import {
   type TrasladoInput,
 } from '@/lib/rackly/kardex'
 import { puedeEditarLote, construirOpcionesLote, calcularAjusteCantidad } from '@/lib/rackly/lote'
+// D1 (auditoría 2026-10-30): TODAS las cantidades digitadas se parsean con
+// aNumero — parseFloat truncaba "80,5" a 80 (ingreso por QR, traslado,
+// salida, stock inicial): se transfería MENOS sin ningún aviso. aNumero
+// entiende coma decimal y miles; los pattern `|| 0` ya normalizan NaN.
+import { aNumero } from '@/lib/rackly/formato'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { mensajeError } from '@/lib/rackly/errores'
 import {
@@ -567,7 +572,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   const trTorres = trDestBloque ? torresDeBloque(trDestBloque) : []
   const trPositions = trDestBloque ? posicionesDeBloque(trDestBloque) : []
   const trItem = detail?.stock[trIdx] ?? null
-  const trQtyNum = parseFloat(trCantidad) || 0
+  const trQtyNum = aNumero(trCantidad) || 0
   const trExcede = trItem ? trQtyNum > trItem.stock : false
   const trFalta = trItem ? trQtyNum > 0 && trQtyNum < trItem.stock : false
   const trDiferencia = trItem ? trQtyNum - trItem.stock : 0
@@ -611,7 +616,12 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   }
 
   // ── Escaneo de rótulo para el ingreso (QR único por paleta) ──
+  // D2 (auditoría 2026-10-30): ref anti-doble-disparo — un doble Enter de la
+  // pistola USB lanzaba DOS resoluciones concurrentes (la cámara sí se congela
+  // con pausado, el input manual no). Benigno pero parpadeaba el formulario.
+  const resolviendoRotuloRef = useRef(false)
   const resolverRotulo = async (texto: string) => {
+    if (resolviendoRotuloRef.current) return
     const p = parsearPayloadQR(texto)
     if (!p) {
       toast.error('El QR no es un rótulo de Rackly', { description: texto.slice(0, 60) })
@@ -624,6 +634,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       return
     }
     setEscaneandoRotulo(true)
+    resolviendoRotuloRef.current = true
     try {
       const fila = await listarArticuloPorRecepcionId(p.identidad)
       if (!fila) {
@@ -667,6 +678,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       toast.error('No se pudo leer el rótulo', { description: mensajeError(err) })
     } finally {
       setEscaneandoRotulo(false)
+      resolviendoRotuloRef.current = false
     }
   }
 
@@ -762,7 +774,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   async function doIngreso() {
     if (!detail || !perfil) return
     if (!ingCodigo.trim() || !ingCantidad) { toast.error('Completa código y cantidad'); return }
-    const q = parseFloat(ingCantidad); if (isNaN(q) || q <= 0) { toast.error('Cantidad inválida'); return }
+    const q = aNumero(ingCantidad); if (isNaN(q) || q <= 0) { toast.error('Cantidad inválida'); return }
     if (showProveedor && !ingProveedor) { toast.error('Selecciona un proveedor para este artículo'); return }
     // ── VÍA RÓTULO ESCANEADO (ingreso con pendiente en la guía): la RPC
     // atómica transito_registrar_envio crea el ingreso en ESTA posición Y
@@ -827,7 +839,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   async function doIngresoINC() {
     if (!detail || !perfil) return
     if (!incCodigo.trim() || !incCantidad || !incCodigoInc.trim()) { toast.error('Completa código, cantidad y código INC'); return }
-    const q = parseFloat(incCantidad); if (isNaN(q) || q <= 0) { toast.error('Cantidad inválida'); return }
+    const q = aNumero(incCantidad); if (isNaN(q) || q <= 0) { toast.error('Cantidad inválida'); return }
     setActionBusy(true)
     try {
       await addMovimiento({
@@ -855,7 +867,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
     if (!detail || !perfil) return
     const item = detail.stock[salidaIdx]
     if (!item) return
-    const qty = parseFloat(salidaCantidad)
+    const qty = aNumero(salidaCantidad)
     if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
     // Lote ELEGIDO por el usuario (FEFO pre-marcado). La salida descuenta EXACTAMENTE ese lote:
     // se registra con su f_vencimiento, que es como la vista de lotes lo reparte.
@@ -916,7 +928,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
     const itemKey = `${stockItem.codigo}-${stockItem.codigoInc ?? ''}-${stockItem.fVencimiento || ''}`
     const isTotal = trSalidaTotalFlags[itemKey] === true
     const cantStr = trSalidaCant[itemKey] || ''
-    const cantNum = isTotal ? stockItem.stock : parseFloat(cantStr)
+    const cantNum = isTotal ? stockItem.stock : aNumero(cantStr)
     if (isNaN(cantNum) || cantNum <= 0) { toast.error('Cantidad inválida'); return }
     if (cantNum > stockItem.stock) { toast.error(`Máximo: ${stockItem.stock} ${stockItem.un}`); return }
     // Lote ELEGIDO (FEFO pre-marcado): la salida descuenta EXACTAMENTE ese lote
@@ -978,7 +990,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   // Ejecutar el traslado (se llama desde la alerta o directamente si destino vacío)
   async function ejecutarTraslado() {
     if (!detail || !perfil || !trItem) return
-    const qty = parseFloat(trCantidad)
+    const qty = aNumero(trCantidad)
     setActionBusy(true)
     try {
       // FIX auditoría Task 20 (M-1): traslado LOTE-POR-LOTE (misma corrección
@@ -1096,7 +1108,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   async function doTransferir() {
     if (!detail || !perfil || !trItem) return
     if (!trDestBloque || !trDestTorre || !trDestPiso || !trDestPos) { toast.error('Completa destino'); return }
-    const qty = parseFloat(trCantidad)
+    const qty = aNumero(trCantidad)
     if (isNaN(qty) || qty <= 0) { toast.error('Cantidad inválida'); return }
     const origKey = `${detail.bloque}-${detail.torre}-${detail.piso}-${detail.posicion}`
     const destKey = `${trDestBloque}-${trDestTorre}-${trDestPiso}-${trDestPos}`
@@ -2009,7 +2021,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                   <p className="text-[10px] text-amber-400/80">Se descontará del lote {salLoteFV || 'S/F'} seleccionado arriba.</p>
                 )}
                 {!salidaTotal && (
-                  <p className="text-[10px] text-slate-500">Saldrán {salidaCantidad || '0'} de {salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock} {salItem.un} del lote — quedarán {Math.max(0, (salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock) - (parseFloat(salidaCantidad) || 0))} {salItem.un}</p>
+                  <p className="text-[10px] text-slate-500">Saldrán {salidaCantidad || '0'} de {salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock} {salItem.un} del lote — quedarán {Math.max(0, (salItem.lotes?.length ? stockDeLote(salItem, salLoteFV) : salItem.stock) - (aNumero(salidaCantidad) || 0))} {salItem.un}</p>
                 )}
                 <div className="flex gap-2 pt-1">
                   <Button variant="outline" onClick={() => setDetailMode('view')} size="sm" className="flex-1 border-slate-600/40 text-slate-400 text-xs gap-1"><X className="w-3.5 h-3.5" /> Cancelar</Button>
@@ -2077,7 +2089,7 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                     </div>
                     {(() => {
                       const stockLote = stockDeLote(trItem, trLoteFV)
-                      const trQty = parseFloat(trCantidad) || 0
+                      const trQty = aNumero(trCantidad) || 0
                       if (trQty > stockLote + 1e-9) {
                         return (
                           <p className="text-[10px] text-amber-400/90 mt-1.5">

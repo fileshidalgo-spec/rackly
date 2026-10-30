@@ -208,12 +208,16 @@ export function expandirEnFilas(items: ItemConPaletas[]): FilaRecepcion[] {
         })
       })
     } else {
-      // Fila única. Si el total quedó VACÍO (NaN) pero hay UNA paleta válida,
-      // esa paleta es la única verdad disponible: usar SU cantidad (y sus
-      // overrides de lote/fechas) en vez de registrar un 0 silencioso.
-      // Con total digitado manda el total (comportamiento fijado por tests).
+      // Fila única. Si el total quedó VACÍO (NaN) — o el usuario digitó un
+      // literal "0" (FIX auditoría 2026-10-30, R3: antes la fila salía con
+      // cantidad 0 aunque la única paleta con cantidad tuviera el valor real,
+      // volviendo falso el aviso «se registra el total del artículo») — pero
+      // hay UNA paleta válida, esa paleta es la única verdad disponible: usar
+      // SU cantidad (y sus overrides de lote/fechas) en vez de un 0 silencioso.
+      // Con total digitado > 0 manda el total (comportamiento fijado por tests).
       const totalNum = totalArticulo(it)
-      const unica = validas.length === 1 && isNaN(totalNum) ? validas[0] : null
+      const unica =
+        validas.length === 1 && (isNaN(totalNum) || totalNum === 0) ? validas[0] : null
       const cantidadNum = unica ? aNumero(unica.cantidad) : totalNum
       filas.push({
         ...base,
@@ -358,7 +362,22 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
   for (const f of filas) {
     const marca = marcaPaletaDe(f.observaciones)
     const prev = items[items.length - 1]
-    if (marca && prev && prev.codigo === f.codigo && prev.paletas && prev.paletas.length < marca.n) {
+    // FIX auditoría 2026-10-30 (R5): un «Paleta 1/N» SIEMPRE abre SU propio
+    // grupo (i === 1). Antes solo se miraba length < marca.n: un grupo
+    // completo «Paleta 1/2, 2/2» seguido de OTRO grupo del mismo código
+    // «Paleta 1/3» se fusionaba en un solo item de 3 paletas y la
+    // renumeración impresa dejaba de coincidir con la física.
+    // Los grupos INCOMPLETOS siguen uniendo como en el legado (2/2, 3/3 sin
+    // la 1ª — filas perdidas se re-ensamblan; behavior cubierto por tests).
+    const continuaGrupo = !!marca && marca.i > 1
+    if (
+      marca &&
+      continuaGrupo &&
+      prev &&
+      prev.codigo === f.codigo &&
+      prev.paletas &&
+      prev.paletas.length < marca.n
+    ) {
       // Siguiente paleta del mismo artículo dividido: SU cantidad y sus
       // datos PROPIOS solo si difieren de los del artículo (1ª fila del
       // grupo = valores del artículo; igual → '' = hereda). Cada paleta

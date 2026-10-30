@@ -58,8 +58,14 @@ export type PayloadQRRotulo = {
 
 /**
  * Construye el texto que va codificado en el QR del rótulo.
- * Los segmentos se limpian de '|' (el separador) para que un dato con ese
- * carácter no rompa el formato; trims defensivos en cada campo.
+ * Los segmentos se limpian de:
+ *   · '|'  — el separador del payload (un dato con '|' rompería el parseo).
+ *   · '^ ~ \'' — caracteres de CONTROL de ZPL (FIX auditoría 2026-10-30, Z1):
+ *     el payload viaja dentro de `^FDQA,…^FS` en la etiqueta; un '^' o '~' en
+ *     el Nº de guía (texto libre de Recepción) cerraba el campo antes de
+ *     tiempo y CORROMPÍA el rótulo completo. El parseo del QR no cambia:
+ *     son caracteres que jamás debieron entrar al payload.
+ * trims defensivos en cada campo.
  */
 export function construirPayloadQR(p: {
   identidad: string
@@ -67,7 +73,7 @@ export function construirPayloadQR(p: {
   codigo: string
   paleta?: number | null
 }): string {
-  const limpiar = (s: string) => (s ?? '').trim().replace(/\|/g, ' ')
+  const limpiar = (s: string) => (s ?? '').trim().replace(/[|^~\\]/g, ' ')
   const partes = [
     PREFIJO_QR,
     limpiar(p.identidad),

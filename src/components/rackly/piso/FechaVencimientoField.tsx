@@ -138,26 +138,38 @@ const FechaVencimientoField = function FechaVencimientoField({
   // M-2 (auditoría): handleGlobalClick y closeCalendar se llaman
   // mutuamente; la referencia circular se rompe con una ref que siempre
   // apunta al closeCalendar vigente (estable por useCallback []).
+  // FIX auditoría 2026-10-30 (K3): los handlers que entran/salen de
+  // document son AHORA ESTABLES (useCallback [] — solo tocan refs). Antes se
+  // recreaban en cada render: openCalendar añadía los del render vigente
+  // (dentro de un setTimeout) y closeCalendar/remount quitaban los del
+  // PRIMER render → 1 par de listeners huérfanos por abrir/cerrar. Además el
+  // setTimeout queda CANCELABLE (addTimerRef): cerrar antes de los 150 ms
+  // ya no deja un listener que se añade después.
   const closeCalendarRef = useRef<() => void>(() => {})
+  const addTimerRef = useRef<number | null>(null)
 
-  const handleGlobalClick = (e: MouseEvent) => {
+  const handleGlobalClick = useCallback((e: MouseEvent) => {
     if (!mountedRef.current) return
     const target = e.target as HTMLElement
     if (target.closest('[data-cal-popup]')) return
     if (inputContainerRef.current?.contains(target)) return
     closeCalendarRef.current()
-  }
+  }, [])
 
-  const handleEsc = (e: KeyboardEvent) => {
+  const handleEsc = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape') closeCalendarRef.current()
-  }
+  }, [])
 
   const closeCalendar = useCallback(() => {
     setCalendarOpen(false)
     setCalState(null)
+    if (addTimerRef.current != null) {
+      window.clearTimeout(addTimerRef.current)
+      addTimerRef.current = null
+    }
     document.removeEventListener('mousedown', handleGlobalClick)
     document.removeEventListener('keydown', handleEsc)
-  }, [])
+  }, [handleGlobalClick, handleEsc])
 
   // Los listeners solo se añaden tras abrir el calendario (después de
   // montar): la ref ya apunta al closeCalendar real cuando se usa.
@@ -189,7 +201,8 @@ const FechaVencimientoField = function FechaVencimientoField({
     setCalState({ year: y, month: m, selectedDay: parsed?.d ?? null, position: { top, left }, view: 'days' })
     setCalendarOpen(true)
 
-    setTimeout(() => {
+    addTimerRef.current = window.setTimeout(() => {
+      addTimerRef.current = null
       document.addEventListener('mousedown', handleGlobalClick)
       document.addEventListener('keydown', handleEsc)
     }, 150)
@@ -201,10 +214,14 @@ const FechaVencimientoField = function FechaVencimientoField({
     mountedRef.current = true
     return () => {
       mountedRef.current = false
+      if (addTimerRef.current != null) {
+        window.clearTimeout(addTimerRef.current)
+        addTimerRef.current = null
+      }
       document.removeEventListener('mousedown', handleGlobalClick)
       document.removeEventListener('keydown', handleEsc)
     }
-  }, [])
+  }, [handleGlobalClick, handleEsc])
 
 
   // ═══ Navegación del calendario ═══

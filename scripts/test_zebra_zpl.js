@@ -387,5 +387,40 @@ check(
   })()
 )
 
+// ─── Auditoría 2026-10-30: payload del QR (Z1 saneado + Z2 tope v8) ───
+console.log('\n── Auditoría 2026-10-30: payload QR (Z1/Z2) ──')
+const { payloadQRRotulo } = require('@/lib/rackly/zebra')
+const { parsearPayloadQR } = require('@/lib/rackly/qr-rotulo')
+{
+  // Z1: caracteres de CONTROL de ZPL en el Nº de documento (texto libre de
+  // Recepción): antes entraban crudos al ^FDQA, y corrompían el rótulo.
+  const z = construirZPLRotulo(
+    { ...DATOS },
+    { ...ENCABEZADO, numeroDocumento: 'T173^000~040\\90' },
+    { copias: 1 }
+  )
+  check('Z1: el ZPL no contiene ^FS truncado por el doc (^FDQA intacto)', (z.match(/\^FDQA,/g) || []).length === 1)
+  const mQr = /\^FDQA,([^^]*)\^FS/.exec(z)
+  check('Z1: payload del QR parsea de vuelta (sin caracteres ZPL)', !!mQr && !!parsearPayloadQR(mQr[1]))
+  check('Z1: doc saneado conserva dígitos y guiones', !!mQr && mQr[1].includes('T173 000 040 90'))
+  // Z2: caps de longitud — doc 32 + código 20 → payload SIEMPRE ≤ 99 bytes.
+  const docLargo = 'X'.repeat(60)
+  const p = payloadQRRotulo(
+    { ...DATOS, codigo: 'A'.repeat(30), recepcionId: '123e4567-e89b-42d3-a456-426614174000' },
+    { ...ENCABEZADO, numeroDocumento: docLargo }
+  )
+  check('Z2: payload con doc 60 + código 30 queda ≤ 99 bytes', !!p && p.length <= 99)
+  check('Z2: identidad (uuid de fila) intacta tras los caps', !!p && p.split('|')[1] === '123e4567-e89b-42d3-a456-426614174000')
+  check('Z2: doc truncado a 32', !!p && p.split('|')[2].length === 32)
+  // La magnificación sigue siendo la de la versión planeada (≤ v8, mods ≤ 49).
+  const z2 = construirZPLRotulo(
+    { ...DATOS, codigo: 'A'.repeat(30) },
+    { ...ENCABEZADO, numeroDocumento: docLargo },
+    { copias: 1 }
+  )
+  const mag = /(\^BQN,2,(\d+))/.exec(z2)
+  check('Z2: magnificación del QR dentro del rango 3..10', !!mag && Number(mag[2]) >= 3 && Number(mag[2]) <= 10)
+}
+
 console.log(`\n═══ RESULTADO: ${passed} pasados, ${failed} fallados ═══`)
 process.exit(failed > 0 ? 1 : 0)

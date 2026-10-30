@@ -356,6 +356,18 @@ const X_ZONA_QR = 1200 - ZONA_QR_LADO
 export type ContextoQR = { guiaId?: string | null; numeroDocumento?: string }
 
 /**
+ * TOPE DEL PAYLOAD (FIX auditoría 2026-10-30, Z2): la tabla modulosQR cubre
+ * hasta la versión 8 del QR (cap 100 bytes para EC 'Q', frontera −1 → 99).
+ * Un Nº de guía largo (texto libre) + código largo empujaban el payload
+ * POR ENCIMA sin guard: el encoder real salta a v9+ (53 módulos) y la mag
+ * calculada para v8 viola la quiet zone → QR ilegible.
+ * Presupuesto: RKLY(4) + 3 '|' + identidad(36) + doc + codigo + '|Pn'(4) ≤ 99
+ *   ⟺  doc + codigo ≤ 52. Caps: doc 32 + codigo 20 = 52. Siempre v8 o menos.
+ */
+const QR_DOC_MAX = 32
+const QR_CODIGO_MAX = 20
+
+/**
  * Payload del QR del rótulo. Null si el rótulo no tiene NINGUNA identidad
  * (sin recepcionId, sin guia_id y sin Nº de documento): el rótulo sale SIN
  * QR (degradación graceful — un QR que no resuelve a nada no debe
@@ -367,7 +379,7 @@ export type ContextoQR = { guiaId?: string | null; numeroDocumento?: string }
  */
 export function payloadQRRotulo(datos: DatosRotulo, ctx: ContextoQR): string | null {
   const identidad = (datos.recepcionId ?? '').trim() || (ctx.guiaId ?? '').trim()
-  const numeroDocumento = (ctx.numeroDocumento ?? '').trim()
+  const numeroDocumento = (ctx.numeroDocumento ?? '').trim().slice(0, QR_DOC_MAX)
   if (!identidad && !numeroDocumento) return null
   // "Paleta i/N" → nº de paleta para el QR (P<i): Tránsito preselecciona
   // la paleta exacta al escanear.
@@ -376,7 +388,7 @@ export function payloadQRRotulo(datos: DatosRotulo, ctx: ContextoQR): string | n
   return construirPayloadQR({
     identidad,
     numeroDocumento,
-    codigo: sanearZPL(datos.codigo),
+    codigo: sanearZPL(datos.codigo).slice(0, QR_CODIGO_MAX),
     paleta: nPaleta != null && Number.isFinite(nPaleta) ? nPaleta : null,
   })
 }
@@ -433,7 +445,12 @@ const INTERIOR_QR = ZONA_QR_LADO - 2 * 3
  * y destruía la quiet zone — mantener siempre el mapeo por esquinas).
  */
 function campoQR(payload: string): string {
-  const mods = modulosQR(payload.length)
+  // DEFENSA FINAL (Z2): cualquier payload por encima de la v8 (99 bytes) se
+  // trunca — el encoder jamás debe salirse de la versión planeada. Con los
+  // caps de payloadQRRotulo esto es inalcanzable hoy; protege llamadores
+  // futuros.
+  const dato = payload.length > 99 ? payload.slice(0, 99) : payload
+  const mods = modulosQR(dato.length)
   const mag = Math.max(3, Math.min(10, Math.floor(INTERIOR_QR / (mods + 6))))
   const ladoEsp = mods * mag
   const margen = Math.floor((INTERIOR_QR - ladoEsp) / 2)
@@ -441,7 +458,7 @@ function campoQR(payload: string): string {
   const xVisIzq = X_ZONA_QR + 3 + margen // desde el límite (línea en X_ZONA_QR)
   const xFis = ANCHO_FISICO - yVisSup - ladoEsp
   const yFis = xVisIzq
-  return `^FO${xFis},${yFis}^BQN,2,${mag}^FDQA,${payload}^FS`
+  return `^FO${xFis},${yFis}^BQN,2,${mag}^FDQA,${dato}^FS`
 }
 
 /** Centro visual de la banda del código (Y 0..240). */

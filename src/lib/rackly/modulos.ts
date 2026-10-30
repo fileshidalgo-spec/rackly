@@ -9,12 +9,14 @@
  *     (recepcion_registros, atencion_registros) y hace LECTURAS de
  *     movimientos / piso_movimientos para el módulo Usuarios.
  *   · No invoca RPCs ni muta tablas de Racks o Piso.
- *   · Todas las escrituras van por dataClient (service_role), igual que
- *     el resto de la app.
+ *   · Todas las escrituras van por dataClient (anon key + JWT del usuario —
+ *     la service_role NO viaja al navegador desde el fix P1 2026-10-21) y
+ *     quedan cubiertas por las políticas RLS de cada tabla.
  */
 
 import { dataClient, supabase } from '@/lib/supabase/client'
 import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
+import { ERR_CANCELADO, ERR_DUPLICADO, errorControlado } from '@/lib/rackly/errores'
 import {
   extraerIndicePaleta,
   hayDuplicadosRecientes,
@@ -305,7 +307,11 @@ export async function crearRecepciones(
         `(documento ${primera.numeroDocumento.trim() || '—'}, código ${primera.codigo.trim() || '—'}, ` +
         `cantidad ${primera.cantidad}).\n\n¿Registrar de todos modos?`
     )
-    if (!ok) throw new Error('REGISTRO_CANCELADO|Registro cancelado por posible duplicado.')
+    // errorControlado (errores.ts): el código viaja en Error.name — los
+    // branches de la UI ramifican por codigoControladoDe(err). La convención
+    // vieja "CODE|texto" era código muerto: mensajeError() quitaba el
+    // prefijo ANTES del startsWith y la cancelación se pintaba como error.
+    if (!ok) throw errorControlado(ERR_CANCELADO, 'Registro cancelado por posible duplicado.')
   }
 
   // ANTI-GUÍA-DUPLICADA (Task 23): el mismo Nº de documento registrado 2
@@ -335,7 +341,7 @@ export async function crearRecepciones(
           '(registrarla otra vez duplica sus rótulos QR y confunde el escaneo).\n\n' +
           '¿Registrar de todos modos como carga distinta?'
       )
-      if (!ok) throw new Error('REGISTRO_CANCELADO|Registro cancelado: el documento ya estaba registrado.')
+      if (!ok) throw errorControlado(ERR_CANCELADO, 'Registro cancelado: el documento ya estaba registrado.')
     }
   }
 
@@ -378,7 +384,7 @@ export async function crearRecepciones(
       // Reintento tras éxito perdido: el índice único de uuid_sync marca el
       // duplicado — se informa como aviso, no como error técnico.
       if (String((error as { code?: string }).code ?? '').includes('23505')) {
-        throw new Error('REGISTRO_DUPLICADO|Estas filas ya fueron registradas (reintento detectado).')
+        throw errorControlado(ERR_DUPLICADO, 'Estas filas ya fueron registradas (reintento detectado).')
       }
       throw error
     }
@@ -612,7 +618,12 @@ export async function marcarGuiaRecepcionada(
 
 /** Contenido editable de UNA fila de la guía. `filaId` (opcional) es el id
  *  de la fila YA registrada que esta fila actualiza (edición por identidad;
- *  adjuntado por filasAItems → expandirEnFilas). null/ausente = fila nueva. */
+ *  adjuntado por filasAItems → expandirEnFilas). null/ausente = fila nueva.
+ *  `uuidSync` (opcional, SOLO filas nuevas): idempotencia M-1 en la EDICIÓN
+ *  (FIX auditoría 2026-10-30, R2) — la UI genera UNO estable por fila nueva
+ *  al montar el editor y lo conserva ante reintentos; si el insert tiene
+ *  éxito pero la respuesta se pierde (red), el reintento con el MISMO
+ *  uuid_sync choca con el índice único y NO duplica la fila. */
 export type FilaEdicionGuia = {
   codigo: string
   descripcion: string
@@ -626,6 +637,7 @@ export type FilaEdicionGuia = {
   /** Observaciones del usuario + marca "Paleta i/N" si la fila es una paleta. */
   observaciones: string
   filaId?: string | null
+  uuidSync?: string | null
 }
 
 /** Encabezado (común a todas las filas) aplicado al guardar la edición. */
@@ -744,9 +756,11 @@ export async function guardarEdicionGuia(
   }
 
   // 2) INSERT de solo las filas nuevas (heredan encabezado, autor y estado).
-  //    Cada fila nueva lleva SU uuid_sync (idempotencia M-1), SU n_paleta y
-  //    LA IDENTIDAD DE LA GUÍA (guia_id, M-2): seguirá unida a SU documento
-  //    en impresión/edición/estado/borrado aunque cambie el encabezado.
+  //    Cada fila nueva lleva SU uuid_sync (idempotencia M-1 — en la edición
+  //    la UI entrega uno ESTABLE por fila (FilaEdicionGuia.uuidSync); si no
+  //    viene, se genera aquí como antes), SU n_paleta y LA IDENTIDAD DE LA
+  //    GUÍA (guia_id, M-2): seguirá unida a SU documento en impresión/
+  //    edición/estado/borrado aunque cambie el encabezado.
   if (plan.insertar.length > 0) {
     const { error } = await dataClient
       .from('recepcion_registros')
@@ -759,10 +773,17 @@ export async function guardarEdicionGuia(
           usuario_id: autor.id,
           usuario_nombre: autor.nombre,
           usuario_correo: autor.correo,
-          uuid_sync: nuevoUuid(),
+          uuid_sync: f.uuidSync?.trim() || nuevoUuid(),
         }))
       )
-    if (error) throw error
+    if (error) {
+      // M-1 en la edición: un reintento tras éxito perdido choca con el
+      // índice único de uuid_sync — aviso claro, no error técnico (23505).
+      if (String((error as { code?: string }).code ?? '').includes('23505')) {
+        throw errorControlado(ERR_DUPLICADO, 'Las filas nuevas ya habían sido guardadas (reintento detectado).')
+      }
+      throw error
+    }
   }
 
   // 3) DELETE por id SOLO de las filas sobrantes (al final — ver docstring).

@@ -449,3 +449,23 @@ Stage Summary:
 **Tests**: `test_recepcion_delete_honesto` (9 checks, nuevo) + caso real T173 en `test_recepcion_filas` (120 checks) — **35/35 suites**, tsc/eslint/build verdes.
 
 **Pendiente para el usuario**: la guía corrupta (63 filas) es de Edwin y no tiene envíos de Tránsito → con la política nueva puede eliminarla él mismo desde la app (botón Eliminar), o dejar que un supervisor lo haga.
+
+---
+Task ID: 1 (auditoría global 2026-10-31 — Módulos: todos)
+Agent: Main Agent
+Task: Honestidad de DELETE en TODOS los módulos — fin de los éxitos falsos por RLS (patrón T173-00004281 generalizado)
+
+Work Log:
+- Cierre del bug T173-00004281 (guía 16→63 filas al editar): verificado que el fix c66cf5f (RLS recepcion_delete_propia_sin_transito + DELETE honesto + ensamblado de paletas) ya está en producción (a00bc31) y que la BD quedó limpia: la guía duplicada fue eliminada (0 filas), queda la reconstrucción del usuario (22 filas, workaround intencional)
+- Paso 3 (no se repite en otras pestañas): barrido de TODO .delete() de src/ + pg_policies → 18 tablas con DELETE por rol filtran EN SILENCIO la misma clase de defecto en RQ, RAL, Kardex, Piso y Catálogo
+- Paso 6/7: nuevo src/lib/rackly/eliminacion-honesta.ts (exigirBorradas + avisarBorradoFiltrado, una sola implementación); 21 puntos de delete cubiertos: modulos.ts (4 refactorizados al helper), rq-atencion.ts (eliminarRq + rollback), ral.ts (eliminarRal + rollback), kardex.ts (deleteMovimiento, eliminarMovimientosPorIds con contador honesto, eliminación por ubicación), piso/api.ts (eliminarSector, eliminarMovimiento, eliminarMovimientoConPar, rollbackCabeceras, podarAncla), catalogo.ts (clearCatalogo, podarAnclasPisoSinUso)
+- Rollbacks best-effort NO lanzan (convergencia por diseño se preserva) — solo avisan en consola
+- Stub: cola FIFO de delete-results + neq/gte/lte/gt/lt/is
+- Suite nueva test_eliminacion_honesta_global (9 secciones / 20 checks): RQ, RAL, Kardex, Piso y Catálogo ya NO reportan éxitos falsos
+- QA: 36/36 suites, tsc, eslint, build OK; push main → deploy verificado (ba5fcad, 2026-10-30 16:24 UTC)
+- Salud BD: 0 items huérfanos (rq/ral/piso), 0 uuid_sync duplicados, 0 residuos sin guia_id, 20/20 tablas con RLS activa y con políticas
+
+Stage Summary:
+- 11 archivos, +452/-59 líneas; 2 nuevos (eliminacion-honesta.ts, test_eliminacion_honesta_global.js)
+- Clase entera de defectos (éxito falso por RLS silencioso) eliminada en TODOS los módulos
+- Deploy: rackly.pages.dev — commit ba5fcad

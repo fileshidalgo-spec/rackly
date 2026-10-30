@@ -15,6 +15,12 @@ const tables = {}
 /** Captura de llamadas or() por tabla — para tests de composición de filtros.
  *  Aditivo (2026-10-29): los suites existentes no leen esto. */
 const orCalls = []
+/** Captura de llamadas eq {table, col, val} — aditivo 2026-10-31 (devoluciones
+ *  de línea: verificar el filtro tipo_recepcion de listados y anti-duplicados). */
+const eqCalls = []
+/** Captura de inserts {table, payload} — aditivo 2026-10-31 (verificar que
+ *  las filas llevan tipo_recepcion en alta y en la edición). */
+const insertCalls = []
 /** Captura de updates {table, payload} — aditivo 2026-10-30. */
 const updateCalls = []
 /** Captura de llamadas rpc {name, args} — aditivo 2026-10-31. */
@@ -42,7 +48,7 @@ function builder(table) {
   const p = {
     select() { return p },
     or(value) { orCalls.push({ table, value }); return p },
-    eq() { return p },
+    eq(col, val) { eqCalls.push({ table, col, val }); return p },
     in() { return p },
     order() { return p },
     limit() { return p },
@@ -69,7 +75,7 @@ function builder(table) {
     },
     single() { return Promise.resolve({ data: null, error: null }) },
     upsert() { return Promise.resolve({ data: null, error: null }) },
-    insert() { return Promise.resolve({ data: null, error: null }) },
+    insert(payload) { insertCalls.push({ table, payload }); return Promise.resolve({ data: null, error: null }) },
     update(payload) {
       updateCalls.push({ table, payload })
       pendingUpdate = true
@@ -109,6 +115,8 @@ module.exports = {
   },
   __setTable(t, rows) { tables[t] = rows },
   __orCalls() { return orCalls.slice() },
+  __eqCalls() { return eqCalls.slice() },
+  __insertCalls() { return insertCalls.slice() },
   __updateCalls() { return updateCalls.slice() },
   __setUpdateResult(r) { updateResult = r },
   __setDeleteResult(r) { deleteQueue.push(r) },
@@ -122,6 +130,8 @@ module.exports = {
   __clear() {
     for (const k of Object.keys(tables)) delete tables[k]
     orCalls.length = 0
+    eqCalls.length = 0
+    insertCalls.length = 0
     updateCalls.length = 0
     rpcCalls.length = 0
     for (const k of Object.keys(rpcQueue)) delete rpcQueue[k]

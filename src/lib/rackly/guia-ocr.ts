@@ -59,6 +59,16 @@ export type DatosGuia = {
    * rótulos QR). Vacío = lectura sin señales de error.
    */
   avisos?: string[]
+  /**
+   * DEVOLUCIONES DE LÍNEA (formato "REQUISICION DE DEVOLUCION DE MATERIAL
+   * DISPONIBLE", AJEPER): notas del encabezado de la requisición — orden de
+   * producción y solicitante — que el formulario guarda en observaciones
+   * ("OP 2026008387 · Solicita: …"). '' si el documento no es una requisición.
+   */
+  notasDevolucion?: string
+  /** TRUE si el texto es una REQUISICIÓN DE DEVOLUCIÓN (no una guía de
+   *  remisión): el formulario ajusta el tipo de documento solo. */
+  esRequisicionDevolucion?: boolean
 }
 
 /** Una fila cruda de la tabla de artículos, tal como salió del OCR. */
@@ -91,8 +101,9 @@ const RE_GUIA = /\bT\s?\d{3}\s?-\s?\d{5,8}\b/
  */
 const RE_GUIA_SIN_T = /\b\d{3,4}\s?-\s?\d{5,8}\b/
 
-/** Cantidad con separador de miles y/o decimales: 2,884 · 9,400.00 · 340.340 */
-const RE_CANTIDAD = /\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,3})?\b|\b\d+[.,]\d{1,3}\b/
+/** Cantidad con separador de miles y/o decimales: 2,884 · 9,400.00 · 340.340
+ *  REQUISICIÓN DE DEVOLUCIÓN (AJEPER): 4 decimales — 15,040.0000 · 3,456.0000 */
+const RE_CANTIDAD = /\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,4})?\b|\b\d+[.,]\d{1,4}\b/
 
 /** El token COMPLETO es una cantidad (anclas sobre TODO el patrón, no por alternativa). */
 const RE_CANTIDAD_EXACTA = new RegExp('^(?:' + RE_CANTIDAD.source + ')$')
@@ -117,7 +128,19 @@ const RE_UNIDAD_LINEA = new RegExp(
  * transportista, notas y sellos). Evita falsos positivos fuera de la tabla.
  */
 const RE_SKIP_LINEA =
-  /(PESO\s+KILOGRAMOS|PUNTO\s+DE|DIRECCI|BREVETE|REGISTRO|MOTIVO|ORDEN\s+DE|FECHA|TELE|FAX|PLACA|CONDUCTOR|TRANSPORTISTA|NOTAS?|GU[IÍ]A\s+DE|REMISI|DESTINATARIO|RAZ[OÓ]N|NOMBRE\s+COMERCIAL|SERIE|COMPROBANTE|ENTREGA|REPRESENTACI|CONSULTE|ALMAC[EÉ]N|DESPACHADO|VIGILANCIA|CONFIRMIDAD|SE[ÑN]AL|R\.U\.C|DNI|LICENCIA|VEH[IÍ]CULO|PRECINTO|CONTENEDOR|OBSERVACI|CONSTE|CONDICIONES|SUB\s?TOTAL|IMPUESTO|I\.G\.V|SON\s*:|PAGAR[ÉE]|TUCE|CHV|N[ÚU]MERO|BULTOS|ORDEN\s+DE\s+CARGA|C[ÓO]DIGO|DESCRIPCI|CANTIDAD|UNIDAD\s+DE\s+MEDIDA|^\s*ITEM\s)/i
+  /(PESO\s+KILOGRAMOS|PUNTO\s+DE|DIRECCI|BREVETE|REGISTRO|MOTIVO|ORDEN\s+DE|FECHA|TELE|FAX|PLACA|CONDUCTOR|TRANSPORTISTA|NOTAS?|GU[IÍ]A\s+DE|REMISI|DESTINATARIO|RAZ[OÓ]N|NOMBRE\s+COMERCIAL|SERIE|COMPROBANTE|ENTREGA|REPRESENTACI|CONSULTE|ALMAC[EÉ]N|DESPACHADO|VIGILANCIA|CONFIRMIDAD|SE[ÑN]AL|R\.U\.C|DNI|LICENCIA|VEH[IÍ]CULO|PRECINTO|CONTENEDOR|OBSERVACI|CONSTE|CONDICIONES|SUB\s?TOTAL|IMPUESTO|I\.G\.V|SON\s*:|PAGAR[ÉE]|TUCE|CHV|N[ÚU]MERO|BULTOS|ORDEN\s+DE\s+CARGA|C[ÓO]DIGO|DESCRIPCI|CANTIDAD|UNIDAD\s+DE\s+MEDIDA|^\s*ITEM\s|ORDEN\/PRODUCCI|LOTE\s+DEL\s+SISTEMA|SOLICITANTE|TURNO\s+Y\s+FECH|INSUMOS\s+EN\s+PROVEEDORES|NUMERO\s+REQUISICI|^ARTICULO\s*:|^LINEA\s*:|P[EÁ]GINA\s*:)/i
+
+/**
+ * REQUISICIÓN DE DEVOLUCIÓN DE MATERIAL (AJEPER, 2026-10-31): el documento
+ * que acompaña a las devoluciones de línea NO es una guía de remisión —
+ * el Nº viaja en "NUMERO REQUISICION : 0000192967" (dígitos, sin serie T).
+ */
+const RE_DOC_DEVOLUCION =
+  /REQUISICI[OÓ]N\s+DE\s+DEVOLUCI[OÓ]N|DEVOLUCI[OÓ]N\s+DE\s+MATERIAL/i
+const RE_NUM_REQUISICION = /NUMERO\s+REQUISICI[OÓ]N\s*:?\s*(\d{6,12})/
+/** Orden de producción + solicitante (contexto de la devolución). */
+const RE_ORDEN_PROD = /ORDEN\/PRODUCCI[OÓ]N\s*:?\s*(\d{4,12})/
+const RE_SOLICITANTE = /SOLICITANTE\s*:?\s*(?:\d{0,8}\s*)?([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ ,.\-]{4,60})/i
 
 /** Tope de artículos reconocidos por guía (el usuario pidió soportar 20+). */
 const MAX_ITEMS = 30
@@ -321,6 +344,19 @@ function extraerProveedor(lineas: string[]): string {
       if (val.length >= 3 && val.length <= 80) return val
     }
   }
+  // REQUISICIÓN DE DEVOLUCIÓN: la empresa va SUELTA en el encabezado (esquina
+  // superior izquierda, "AJEPER S.A.") — sin etiqueta. Respaldo: la primera
+  // línea corta con forma de razón social (…S.A./S.A.C.). limpiarLineas ya
+  // colapsó los espacios, así que el límite es UN espacio o fin de línea.
+  for (const linea of lineas.slice(0, 6)) {
+    const m = linea.match(
+      /^[^A-Za-z]*([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .,&\-]{0,25}?(?:S\.?\s?A\.?C?\.?|E\.?\s?I\.?\s?R\.?\s?L\.?))(?:\s|$)/
+    )
+    if (m && !/REQUISICI|DEVOLUCI|MATERIAL|GU[IÍ]A|FACTURA|ORDEN|PAGINA|INSUMOS/i.test(m[1])) {
+      const val = m[1].trim()
+      if (val.length >= 3) return val
+    }
+  }
   return ''
 }
 
@@ -341,11 +377,13 @@ function normalizarSerieGuia(candidato: string, textoUpper: string): string {
 // 5. FILAS DE TABLA (parser de líneas "ITEM CÓDIGO DESCRIPCIÓN CANT UND PESO")
 // ═══════════════════════════════════════════════════════════════════
 
-/** Cantidad válida: no es el propio código, ni fecha, ni serie larga. */
+/** Cantidad válida: no es el propio código, ni fecha, ni serie larga.
+ *  REQUISICIÓN (4 decimales): 15,040.0000 → 9 dígitos — el tope pasa de 9 a
+ *  10 para no rechazarla; series/fechas siguen fuera (separadores distintos). */
 function esCantidadValida(tok: string, codigo: string): boolean {
   if (mismaClave(tok.replace(/[.,]/g, ''), codigo)) return false
   if (/^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(tok)) return false
-  if (tok.replace(/[.,]/g, '').length >= 9) return false
+  if (tok.replace(/[.,]/g, '').length >= 10) return false
   return true
 }
 
@@ -430,6 +468,21 @@ export function extraerFilasDeTabla(texto: string): FilaTabla[] {
         if (m2 && m2[0].length >= tokLimpio.length - 3 && esCantidadValida(m2[0], codigoOCR)) {
           cantidad = m2[0]
           break
+        }
+      }
+      // REQUISICIÓN DE DEVOLUCIÓN (columnas UNID. → CANTIDAD, al revés que la
+      // guía): si a la IZQUIERDA de la unidad no hay número, se busca el
+      // PRIMERO válido a la DERECHA ("KG 15,040.0000"). Solo cuando el lado
+      // izquierdo falló: una fila de guía bien formada jamás llega aquí.
+      if (!cantidad) {
+        for (let i = ui + 1; i < toks.length; i++) {
+          const tokLimpio = toks[i].replace(/^[.:;]+|[.:;]+$/g, '')
+          if (RE_CANTIDAD_EXACTA.test(tokLimpio)) {
+            if (esCantidadValida(tokLimpio, codigoOCR)) cantidad = tokLimpio
+            break
+          }
+          // "Pendiente"/texto: la columna terminó.
+          if (/[A-Za-z]{3,}/.test(toks[i])) break
         }
       }
       // Descripción = hasta la última palabra con letras; los números
@@ -704,6 +757,11 @@ export function extraerDatosGuiaDeTextos(
   const conT = textoCompleto.match(RE_GUIA)
   const sinT = conT ? null : textoCompleto.match(RE_GUIA_SIN_T)
   const crudo = conT ? conT[0] : sinT ? sinT[0] : ''
+  // REQUISICIÓN DE DEVOLUCIÓN: sin Nº de guía (T###-######), el Nº propio
+  // viaja en "NUMERO REQUISICION : 0000192967" (puro dígito — sin la
+  // normalización de serie T que solo aplica a guías).
+  const mRequisicion = crudo ? null : textoCompleto.match(RE_NUM_REQUISICION)
+  const esRequisicion = RE_DOC_DEVOLUCION.test(textoUp) || Boolean(mRequisicion)
 
   const indices = indicesDeCatalogo(catalogo)
   // EXHAUSTIVO: se parsean AMBAS lecturas (zoom de la tabla y página
@@ -729,12 +787,31 @@ export function extraerDatosGuiaDeTextos(
   items = items.map((it) => (it.cantidad.trim() ? it : { ...it, revision: true }))
 
   const cantidadSugerida = (items.length > 0 && items[0].cantidad) || extraerCantidadFallback(lineas)
+  // Contexto de la requisición de devolución → observaciones del registro
+  // ("OP 2026008387 · Solicita: CANALES MORI, ROBERTO SERGIO").
+  let notasDevolucion = ''
+  if (esRequisicion) {
+    const op = textoUp.match(RE_ORDEN_PROD)?.[1] ?? ''
+    const sol = (textoCompleto.match(RE_SOLICITANTE)?.[1] ?? '').trim()
+    notasDevolucion = [
+      op ? `OP ${op}` : '',
+      sol ? `Solicita: ${sol.replace(/\s{2,}/g, ' ').replace(/[,;:]+$/, '')}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  }
   return {
-    numeroGuia: crudo ? normalizarSerieGuia(crudo, textoUp) : '',
+    numeroGuia: crudo
+      ? normalizarSerieGuia(crudo, textoUp)
+      : mRequisicion
+        ? mRequisicion[1]
+        : '',
     placa: extraerPlaca(lineas),
     proveedor: extraerProveedor(lineas),
     items,
     cantidadSugerida,
+    ...(esRequisicion ? { esRequisicionDevolucion: true } : {}),
+    ...(notasDevolucion ? { notasDevolucion } : {}),
     ...(avisos.length > 0 ? { avisos } : {}),
   }
 }
@@ -963,6 +1040,9 @@ export function fusionarDatos(a: DatosGuia, b: DatosGuia): DatosGuia {
     proveedor: a.proveedor || b.proveedor,
     items,
     cantidadSugerida: a.cantidadSugerida || b.cantidadSugerida,
+    // Devoluciones: el contexto de la requisición viaja si ALGÚN pase lo leyó.
+    esRequisicionDevolucion: a.esRequisicionDevolucion || b.esRequisicionDevolucion,
+    notasDevolucion: a.notasDevolucion || b.notasDevolucion,
     ...(avisos.length > 0 ? { avisos } : {}),
   }
 }

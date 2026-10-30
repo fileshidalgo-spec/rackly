@@ -136,13 +136,16 @@ export function rotulosDesdeFilas(filas: RegistroRecepcion[]): RotuloAImprimir[]
  * documento siempre visible mientras se revisan los artículos.
  */
 function FichaGuia({ encabezado }: { encabezado: EncabezadoRotulo }) {
-  const { numeroDocumento, empresaOrigen, fecha, placa, registradoPor } = encabezado
+  const { numeroDocumento, empresaOrigen, fecha, placa, registradoPor, tipoDocumento } = encabezado
   if (!numeroDocumento && !empresaOrigen && !fecha && !placa) return null
+  // Devoluciones de línea: la ficha dice "Devolución X" (no "Guía X").
+  // Cubre 'Devolución' y 'Requisición de devolución' (formato AJEPER).
+  const esDevolucion = /devoluci/i.test(tipoDocumento ?? '')
   return (
     <div className="mt-2.5 rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2">
       <p className="text-xs font-bold text-amber-900 truncate">
         {numeroDocumento
-          ? `Guía ${numeroDocumento}`
+          ? `${esDevolucion ? 'Devolución' : 'Guía'} ${numeroDocumento}`
           : empresaOrigen || 'Documento sin número'}
       </p>
       <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] sm:text-[11px] text-slate-500">

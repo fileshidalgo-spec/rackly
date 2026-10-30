@@ -461,7 +461,12 @@ export function filasAItems(filas: FilaRegistrada[]): ItemConPaletas[] {
  * salida determinista) y deja cada grupo 1..N junto para TODOS los
  * consumidores (vista, impresión, edición).
  */
-export function ordenarFilasGuia(filas: FilaRegistrada[]): FilaRegistrada[] {
+export function ordenarFilasGuia<T extends FilaRegistrada>(filas: T[]): T[] {
+  return ordenarFilasGuiaInterno(filas) as T[]
+}
+
+/** Implementación (concreta) del reorden de contigüidad de paletas. */
+function ordenarFilasGuiaInterno(filas: FilaRegistrada[]): FilaRegistrada[] {
   const bloques: FilaRegistrada[][] = []
   const abiertos: Array<{
     bloque: FilaRegistrada[]
@@ -594,6 +599,9 @@ export type FilaRegistrada = {
   /** Nº de envíos de Tránsito sobre la fila (0/ausente = sin transferir).
    *  Estructural: RegistroRecepcion (modulos.ts) lo satisface. */
   enviosTransito?: number
+  /** Pestaña de origen ('guia' | 'devolucion'); ausente = guías legacy.
+   *  Estructural: RegistroRecepcion (modulos.ts) lo satisface. */
+  tipoRecepcion?: string
 }
 
 /** Una guía completa del registro: encabezado compartido + sus filas. */
@@ -626,6 +634,10 @@ export type GuiaAgrupada = {
   cantidadTotal: number
   /** Estado del documento si TODAS sus filas coinciden; '' si difieren. */
   estado: string
+  /** Pestaña de origen del documento ('guia' | 'devolucion') — decide en
+   *  qué pestaña se muestra y qué tipo_recepcion heredan las filas nuevas
+   *  al guardar la edición. */
+  tipoRecepcion?: string
 }
 
 /**
@@ -687,6 +699,7 @@ export function agruparGuias(filas: FilaRegistrada[]): GuiaAgrupada[] {
         filas: [],
         cantidadTotal: 0,
         estado: f.estado,
+        tipoRecepcion: f.tipoRecepcion,
       }
       porClave.set(clave, g)
       orden.push(clave)

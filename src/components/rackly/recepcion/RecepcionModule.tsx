@@ -49,6 +49,8 @@ import {
   urlFirmadaGuia,
   ESTADOS_RECEPCION,
   TIPOS_DOCUMENTO_RECEPCION,
+  TIPOS_DOCUMENTO_DEVOLUCION,
+  TIPO_RECEPCION,
   type RefDocumentoRecepcion,
   type RegistroRecepcion,
 } from '@/lib/rackly/modulos'
@@ -102,6 +104,7 @@ import {
   X,
   Check,
   CheckCircle2,
+  Undo2,
 } from 'lucide-react'
 import { mensajeError, codigoControladoDe, ERR_CANCELADO, ERR_DUPLICADO, ERR_ELIMINAR_BLOQUEADO } from '@/lib/rackly/errores'
 
@@ -109,6 +112,20 @@ const PAGE_SIZE = 50
 
 /** Las 2 vías de registro del módulo (independientes entre sí). */
 type ModoRegistro = 'foto' | 'manual'
+
+/**
+ * Las DOS PESTAÑAS del módulo (devoluciones de línea, 2026-10-31):
+ *   · 'guias'       → recepción de guías (la original).
+ *   · 'devoluciones' → DEVOLUCIONES DE LÍNEA: misma mecánica (foto OCR +
+ *     manual, paletas, rótulos con QR, estados, Excel, edición) sobre
+ *     SU PROPIO listado — la separación vive en recepcion_registros.
+ *     tipo_recepcion: cada pestaña lista SOLO su tipo.
+ */
+type SeccionRecepcion = 'guias' | 'devoluciones'
+
+function tipoDeSeccion(s: SeccionRecepcion): string {
+  return s === 'devoluciones' ? TIPO_RECEPCION.DEVOLUCION : TIPO_RECEPCION.GUIA
+}
 
 const ESTADO_CLASE: Record<string, string> = {
   Pendiente: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -161,6 +178,26 @@ export function RecepcionModule() {
   }
   // Vía de registro activa: foto de guía (OCR) o formulario manual.
   const [modo, setModo] = useState<ModoRegistro>('foto')
+  // PESTAÑA activa: guías o devoluciones de línea. `seccionRef` espeja el
+  // estado para que `cargar` (callback estable usado por realtime/polling)
+  // SIEMPRE filtre por la pestaña vigente sin depender de closures viejas.
+  const [seccion, setSeccion] = useState<SeccionRecepcion>('guias')
+  const seccionRef = useRef<SeccionRecepcion>('guias')
+  const esSeccionDevo = seccion === 'devoluciones'
+  const tipoActivo = tipoDeSeccion(seccion)
+  function cambiarSeccion(s: SeccionRecepcion) {
+    if (s === seccionRef.current) return
+    // Sale de una edición en curso: sin guardar (cada pestaña es su mundo).
+    if (editando) cancelarEdicion()
+    setSeccion(s)
+    seccionRef.current = s
+    setUltimaRegistrada(null)
+    setExpandidas(new Set())
+    // Default del documento del formulario manual POR PESTAÑA ('Requisición
+    // de devolución' = el formato físico AJEPER de las devoluciones).
+    setFDoc(s === 'devoluciones' ? 'Requisición de devolución' : 'Guia')
+    cargar(0, true)
+  }
   // Modal de impresión de rótulos (Zebra ZT411). Se abre SOLO tras REGISTRAR
   // (la carga ya validada y guardada en la BD): automáticamente al guardar
   // (instantánea `guardados`) o con el botón de reimpresión de una fila ya
@@ -205,6 +242,9 @@ export function RecepcionModule() {
     estado: string
     /** M-2: identidad exacta de la guía editada — filas nuevas la heredan. */
     guiaId: string | null
+    /** Pestaña del documento editado: las filas NUEVAS heredan su
+     *  tipo_recepcion (una devolución editada jamás derrama filas 'guia'). */
+    tipoRecepcion: string
     autor: { id: string; nombre: string; correo: string }
     fotoUrl: string
     doc: string
@@ -438,6 +478,9 @@ export function RecepcionModule() {
         ids: filasCompletas.map((f) => f.id),
         guiaId: g.ref.guiaId ?? primera.guiaId ?? null,
         estado: g.estado || primera.estado || 'Pendiente',
+        // Pestaña del documento (guía | devolución): las filas nuevas que
+        // agregue la edición heredan SU tipo_recepcion.
+        tipoRecepcion: g.tipoRecepcion || primera.tipoRecepcion || TIPO_RECEPCION.GUIA,
         autor: {
           id: primera.usuarioId,
           nombre: primera.usuarioNombre,
@@ -529,9 +572,12 @@ export function RecepcionModule() {
         // VIEJO y el polling/realtime (cada 8 s) re-fetcheaba con el filtro
         // anterior — el filtro se revertía solo ≤8 s después de aplicarlo.
         filtrosActivosRef.current = { busqueda: fBusqueda, estado: fEstado }
+        // PESTAÑA (seccionRef, no closure): cada listado SOLO trae su tipo —
+        // guías ≠ devoluciones de línea (migración tipo_recepcion).
         const { filas: filasNuevas, total: totalNuevo } = await listarRecepciones({
           busqueda: fBusqueda,
           estado: fEstado,
+          tipoRecepcion: tipoDeSeccion(seccionRef.current),
           limit: PAGE_SIZE,
           offset: nuevoOffset,
         })
@@ -617,7 +663,10 @@ export function RecepcionModule() {
     // Cuadro de permisos: registrar (crear) y editar guías son acciones
     // distintas; la BD también lo aplica (política RESTRICTIVE recepcion).
     if (editando ? !puedeEditarRecepcion : !puedeCrearRecepcion) {
-      toast.error('No tienes permiso para ' + (editando ? 'editar guías' : 'registrar guías'))
+      toast.error(
+        'No tienes permiso para ' +
+          (editando ? 'editar' : esSeccionDevo ? 'registrar devoluciones' : 'registrar guías')
+      )
       return
     }
     const validos = itemsValidos(items)
@@ -712,6 +761,9 @@ export function RecepcionModule() {
             // M-2: las filas NUEVAS de esta edición heredan la identidad
             // de la guía (siguen unidas a SU documento).
             guiaId: editando.guiaId,
+            // Pestaña del documento editado: las filas nuevas heredan SU
+            // tipo_recepcion (una devolución no derrama filas 'guia').
+            tipoRecepcion: editando.tipoRecepcion,
           },
           editando.autor,
           // Guard de propiedad (bug T173-00004281): la sesión ACTUAL decide
@@ -749,6 +801,8 @@ export function RecepcionModule() {
               empresaOrigen: fEmpresaOrigen,
               placa: fPlaca,
               registradoPor: editando.autor.nombre,
+              // Ficha del modal: "Devolución X" cuando el doc es de devolución.
+              tipoDocumento: fDoc,
             },
             ref: {
               guiaId: editando.guiaId,
@@ -760,7 +814,7 @@ export function RecepcionModule() {
               // lo carga tal cual al abrir la edición.
               proveedor: fEmpresaOrigen,
             },
-            nota: `Guía actualizada: ${filasGuardar.length} fila(s) en la base de datos. Configura las etiquetas por rótulo/paleta e imprime todo de una vez.`,
+            nota: `${esSeccionDevo ? 'Devolución' : 'Guía'} actualizada: ${filasGuardar.length} fila(s) en la base de datos. Configura las etiquetas por rótulo/paleta e imprime todo de una vez.`,
           })
           setRotulosOpen(true)
         }
@@ -772,6 +826,7 @@ export function RecepcionModule() {
       // ── ALTA normal: filas nuevas con el encabezado digitado ──
       // M-2: crearRecepciones devuelve la identidad única de ESTA recepción
       // (guia_id compartido por todas sus filas) → banner + impresión exacta.
+      // Pestaña: la fila nace 'guia' o 'devolucion' según la pestaña activa.
       const guiaId = await crearRecepciones(
         filasGuardar.map((f, i) => ({
           fecha,
@@ -790,11 +845,14 @@ export function RecepcionModule() {
           observaciones: [fObs, f.paleta].filter(Boolean).join(' · '),
           uuidSync: uuids[i],
         })),
-        { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
+        { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo },
+        { tipoRecepcion: tipoActivo }
       )
       loteUuid.liberar()
       toast.success(
-        `Recepción registrada: ${validos.length} artículo(s) · ${filasGuardar.length} fila(s)`
+        esSeccionDevo
+          ? `Devolución registrada: ${validos.length} artículo(s) · ${filasGuardar.length} fila(s)`
+          : `Recepción registrada: ${validos.length} artículo(s) · ${filasGuardar.length} fila(s)`
       )
       // BANNER "GUÍA RECIÉN REGISTRADA": queda fijada en pantalla con su
       // identidad exacta — no se pierde de vista aunque el orden por fecha
@@ -810,6 +868,7 @@ export function RecepcionModule() {
         filas: filasGuardar.length,
         cantidadTotal: filasGuardar.reduce((s, f) => s + f.cantidadNum, 0),
         usuarioNombre: perfil.nombre,
+        tipoRecepcion: tipoActivo,
       })
       // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
       // se abre solo, listo para digitar las etiquetas por rótulo/paleta. La
@@ -842,6 +901,8 @@ export function RecepcionModule() {
             empresaOrigen: fEmpresaOrigen,
             placa: fPlaca,
             registradoPor: perfil.nombre,
+            // Ficha del modal: "Devolución X" cuando el doc es de devolución.
+            tipoDocumento: fDoc,
           },
           ref: {
             guiaId,
@@ -850,11 +911,13 @@ export function RecepcionModule() {
             fecha,
             proveedor: fEmpresaOrigen,
           },
-          nota: `Recepción guardada: ${filasGuardar.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
+          nota: `${esSeccionDevo ? 'Devolución' : 'Recepción'} guardada: ${filasGuardar.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
         })
         setRotulosOpen(true)
       } else {
-        toast.info('Recepción guardada sin rótulos', {
+        toast.info(
+          esSeccionDevo ? 'Devolución guardada sin rótulos' : 'Recepción guardada sin rótulos',
+          {
           description: 'Ningún artículo registrado tiene código; completa el código en la lista para poder imprimir etiquetas.',
         })
       }
@@ -938,7 +1001,9 @@ export function RecepcionModule() {
         return
       }
       await eliminarGuia(target.ref)
-      toast.success(`Guía eliminada (${target.filas.length} fila(s))`)
+      toast.success(
+        `${esSeccionDevo ? 'Devolución' : 'Guía'} eliminada (${target.filas.length} fila(s))`
+      )
       cargar(0, true)
     } catch (err: unknown) {
       const message = mensajeError(err)
@@ -950,6 +1015,35 @@ export function RecepcionModule() {
 
   return (
     <div className="space-y-5">
+      {/* ── PESTAÑAS DEL MÓDULO (devoluciones de línea, 2026-10-31):
+          Recepción de guías · Devoluciones de línea — listados y formularios
+          SEPARADOS (cada pestaña lista SOLO su tipo_recepcion); la mecánica
+          (OCR, paletas, rótulos QR, estados) es la misma. ── */}
+      <div className="flex items-center gap-1 bg-white/70 border rounded-lg p-1 w-fit">
+        <button
+          onClick={() => cambiarSeccion('guias')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+            !esSeccionDevo
+              ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+          }`}
+        >
+          <PackageCheck className="h-3.5 w-3.5" />
+          Recepción de guías
+        </button>
+        <button
+          onClick={() => cambiarSeccion('devoluciones')}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${
+            esSeccionDevo
+              ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+          }`}
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+          Devoluciones de línea
+        </button>
+      </div>
+
       {/* ── Selector de las 2 vías de registro ── */}
       <div className="flex items-center gap-1 bg-white/70 border rounded-lg p-1 w-fit">
         <button
@@ -961,7 +1055,7 @@ export function RecepcionModule() {
           }`}
         >
           <Camera className="h-3.5 w-3.5" />
-          Con foto de guía
+          Con foto de {esSeccionDevo ? 'documento' : 'guía'}
         </button>
         <button
           onClick={() => setModo('manual')}
@@ -976,13 +1070,16 @@ export function RecepcionModule() {
         </button>
       </div>
 
-      {/* ── Opción 1: registro con foto de la guía (OCR + catálogo) ── */}
+      {/* ── Opción 1: registro con foto (OCR + catálogo) — MISMA extracción
+          de datos en ambas pestañas; en devoluciones reconoce la REQUISICIÓN
+          DE DEVOLUCIÓN DE MATERIAL (Nº, orden de producción, solicitante). ── */}
       {modo === 'foto' && (
         <GuiaFotoForm
+          modo={esSeccionDevo ? 'devolucion' : 'guia'}
           onRegistrado={(info) => {
-            // BANNER "GUÍA RECIÉN REGISTRADA": la guía guardada por la vía
-            // foto queda fijada en pantalla (con identidad exacta) aunque
-            // el orden por fecha del documento la baje de la página 1.
+            // BANNER "RECIÉN REGISTRADA": el documento guardado por la vía
+            // foto queda fijado en pantalla (con identidad exacta) aunque
+            // el orden por fecha del documento lo baje de la página 1.
             setUltimaRegistrada(info)
             cargar(0, true)
           }}
@@ -1000,7 +1097,11 @@ export function RecepcionModule() {
               <Plus className="h-4 w-4 text-amber-600" />
             )}
             <h3 className="text-sm font-bold text-amber-900">
-              {editando ? `Editando ${editando.doc}` : 'Nueva recepción (manual)'}
+              {editando
+                ? `Editando ${editando.doc}`
+                : esSeccionDevo
+                  ? 'Nueva devolución de línea (manual)'
+                  : 'Nueva recepción (manual)'}
             </h3>
           </div>
           {editando ? (
@@ -1040,7 +1141,7 @@ export function RecepcionModule() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {TIPOS_DOCUMENTO_RECEPCION.map((t) => (
+                {(esSeccionDevo ? TIPOS_DOCUMENTO_DEVOLUCION : TIPOS_DOCUMENTO_RECEPCION).map((t) => (
                   <SelectItem key={t} value={t}>
                     {t}
                   </SelectItem>
@@ -1108,18 +1209,18 @@ export function RecepcionModule() {
       </div>
       )}
 
-      {/* ── BANNER: guía recién registrada (fijada hasta que la descarten)
-          — corrección del reporte "estuvieron trabajando con una guía y
-          desapareció": la lista ordena por FECHA DEL DOCUMENTO y pagina a
-          50 filas, así que una guía con fecha anterior se hunde en páginas
-          siguientes y parece desaparecer. Aquí SIEMPRE está a la vista,
-          con acceso directo a su impresión y a encontrarla en la lista. ── */}
-      {ultimaRegistrada && (
+      {/* ── BANNER: documento recién registrado (fijado hasta que lo
+          descarten) — SOLO se muestra en SU pestaña (guías ≠ devoluciones):
+          la lista ordena por fecha del documento y pagina a 50 filas, así
+          que un documento con fecha anterior se hunde en páginas siguientes
+          y parece desaparecer. Aquí SIEMPRE está a la vista, con acceso
+          directo a su impresión y a encontrarlo en la lista. ── */}
+      {ultimaRegistrada && (ultimaRegistrada.tipoRecepcion ?? TIPO_RECEPCION.GUIA) === tipoActivo && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
           <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-600" />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-bold text-emerald-900">
-              Recepción recién registrada:{' '}
+              {esSeccionDevo ? 'Devolución' : 'Recepción'} recién registrada:{' '}
               {ultimaRegistrada.numeroDocumento
                 ? `${ultimaRegistrada.tipoDocumento} ${ultimaRegistrada.numeroDocumento}`
                 : ultimaRegistrada.tipoDocumento || '(sin número)'}
@@ -1255,7 +1356,9 @@ export function RecepcionModule() {
               <TableRow>
                 <TableCell colSpan={puedeEliminar ? 13 : 12} className="text-center text-sm text-slate-400 py-10">
                   <Inbox className="h-8 w-8 mx-auto mb-2 text-slate-300" />
-                  No hay recepciones registradas con los filtros actuales.
+                  {esSeccionDevo
+                    ? 'No hay devoluciones registradas con los filtros actuales.'
+                    : 'No hay recepciones registradas con los filtros actuales.'}
                 </TableCell>
               </TableRow>
             )}
@@ -1442,7 +1545,9 @@ export function RecepcionModule() {
       {/* ── Listado móvil AGRUPADO POR GUÍA ── */}
       <div className="md:hidden space-y-3">
         {grupos.length === 0 && !loading && (
-          <p className="text-sm text-slate-400 text-center py-8">No hay recepciones para mostrar.</p>
+          <p className="text-sm text-slate-400 text-center py-8">
+            {esSeccionDevo ? 'No hay devoluciones para mostrar.' : 'No hay recepciones para mostrar.'}
+          </p>
         )}
         {grupos.map((g) => {
           const abierta = expandidas.has(g.clave)

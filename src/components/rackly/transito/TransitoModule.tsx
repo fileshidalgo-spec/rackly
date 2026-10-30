@@ -664,6 +664,15 @@ function TarjetaGuia({
           <p className="text-sm font-extrabold text-slate-900 truncate">
             {guia.numeroDocumento || 'Guía sin número'}
             <span className="ml-2 text-xs font-medium text-slate-500">{guia.tipoDocumento}</span>
+            {/* DEVOLUCIÓN DE LÍNEA (2026-10-31): las devoluciones recepcionadas
+                en Recepción llegan aquí para rackearse igual que las guías —
+                el badge evita que el operario las confunda con guías de
+                proveedor (mismo listado, distinto origen). */}
+            {guia.esDevolucion && (
+              <Badge className="ml-2 bg-orange-100 text-orange-800 border border-orange-300 text-[10px] font-bold align-middle">
+                Devolución
+              </Badge>
+            )}
           </p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500 mt-0.5">
             <span className="inline-flex items-center gap-1">

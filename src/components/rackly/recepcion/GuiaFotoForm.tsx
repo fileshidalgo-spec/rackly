@@ -43,7 +43,7 @@ import {
   type DatosGuia,
 } from '@/lib/rackly/guia-ocr'
 import { avisosDePaletas, expandirEnFilas, faltanProveedor } from '@/lib/rackly/recepcion-filas'
-import { crearRecepciones, listarRecepcionesPorDocumento, marcarGuiaRecepcionada, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION } from '@/lib/rackly/modulos'
+import { crearRecepciones, listarRecepcionesPorDocumento, marcarGuiaRecepcionada, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION, TIPOS_DOCUMENTO_DEVOLUCION, TIPO_RECEPCION } from '@/lib/rackly/modulos'
 import { useLoteUuidSync } from '@/lib/rackly/recepcion-idempotencia'
 import {
   RecepcionItemsEditor,
@@ -112,13 +112,15 @@ type FormFoto = {
 
 /** Estado inicial FRESCO: fecha del día (FORM_VACIO congelaba la fecha de la
  *  carga de la página) y arrays propios (sin instancias compartidas). */
-function formVacio(): FormFoto {
+function formVacio(esDevolucion = false): FormFoto {
   return {
     numeroGuia: '',
     placa: '',
     empresaOrigen: '',
     fecha: hoyISO(),
-    tipoDocumento: 'Guia',
+    // Devoluciones de línea: SU documento default es 'Requisición de
+    // devolución' (el formato físico AJEPER, foto 2026-10-30).
+    tipoDocumento: esDevolucion ? 'Requisición de devolución' : 'Guia',
     observaciones: '',
     items: [itemVacio()],
   }
@@ -150,9 +152,9 @@ function extraccionSuficiente(d: DatosGuia): boolean {
 void extraccionSuficiente
 
 /**
- * Informe de la guía REGISTRADA que el módulo necesita para fijarla en
+ * Informe del documento REGISTRADO que el módulo necesita para fijarlo en
  * pantalla (banner "recién registrada"): con guiaId, la lista/impresión
- * pueden operarla aunque el orden por fecha la baje de la primera página.
+ * pueden operarlo aunque el orden por fecha lo baje de la primera página.
  */
 export type GuiaRegistradaInfo = {
   guiaId: string
@@ -166,9 +168,28 @@ export type GuiaRegistradaInfo = {
   filas: number
   cantidadTotal: number
   usuarioNombre: string
+  /** Pestaña de origen ('guia' | 'devolucion'): el módulo solo fija el
+   *  banner en la pestaña que corresponde. */
+  tipoRecepcion?: string
 }
 
-export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegistradaInfo) => void }) {
+/**
+ * Vía foto (OCR) del módulo Recepción — para GUÍAS y para DEVOLUCIONES DE
+ * LÍNEA (`modo='devolucion'`): la extracción de datos es LA MISMA
+ * (Tesseract + parser de la guía + catálogo — el documento que acompaña a
+ * una devolución lleva el mismo formato), cambia el default del tipo de
+ * documento, los textos y el tipo_recepcion que se persiste por fila.
+ */
+export function GuiaFotoForm({
+  onRegistrado,
+  modo = 'guia',
+}: {
+  onRegistrado: (info: GuiaRegistradaInfo) => void
+  /** 'guia' (default) = recepción de guías · 'devolucion' = devoluciones de línea. */
+  modo?: 'guia' | 'devolucion'
+}) {
+  const esDevo = modo === 'devolucion'
+  const tiposDocumento = esDevo ? TIPOS_DOCUMENTO_DEVOLUCION : TIPOS_DOCUMENTO_RECEPCION
   const { perfil } = useAuth()
   const [paso, setPaso] = useState<Paso>('elegir')
   const [catalogo, setCatalogo] = useState<CatalogoItem[]>([])
@@ -176,7 +197,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
   const [etapa, setEtapa] = useState('')
   const [thumb, setThumb] = useState<string>('')
   const [fotoBlob, setFotoBlob] = useState<Blob | null>(null)
-  const [form, setForm] = useState<FormFoto>(formVacio())
+  const [form, setForm] = useState<FormFoto>(() => formVacio(esDevo))
   const [saving, setSaving] = useState(false)
 
   /**
@@ -245,13 +266,20 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
       )
     }
     const itemsOcr = datos.items.map(itemDesdeOcr)
+    // REQUISICIÓN DE DEVOLUCIÓN detectada (formato AJEPER, foto 2026-10-30):
+    // el tipo de documento se ajusta solo (pestaña devoluciones) y las notas
+    // del encabezado (orden de producción + solicitante) van a observaciones.
+    const esRequisicion = Boolean(datos.esRequisicionDevolucion)
     setForm({
-      ...formVacio(),
+      ...formVacio(esDevo),
       numeroGuia: datos.numeroGuia,
       placa: datos.placa,
       // El OCR lee del encabezado de la guía física a la EMPRESA que envía
       // (antes se etiquetaba "proveedor" — separación 2026-10-22).
       empresaOrigen: datos.proveedor,
+      tipoDocumento:
+        esRequisicion && esDevo ? 'Requisición de devolución' : formVacio(esDevo).tipoDocumento,
+      observaciones: esDevo ? (datos.notasDevolucion ?? '') : '',
       items: itemsOcr.length > 0 ? itemsOcr : [itemVacio()],
     })
 
@@ -263,8 +291,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
     }
 
     const faltantes: string[] = []
-    if (!datos.numeroGuia) faltantes.push('nº guía')
-    if (!datos.placa) faltantes.push('placa')
+    if (!datos.numeroGuia) faltantes.push(esRequisicion ? 'nº requisición' : 'nº guía')
+    // La requisición de devolución NO trae placa — no se exige.
+    if (!datos.placa && !esRequisicion) faltantes.push('placa')
     const enCat = itemsOcr.filter((i) => i.enCatalogo).length
     const fueraCat = itemsOcr.length - enCat
     const porDesc = itemsOcr.filter((i) => i.matchPorDescripcion).length
@@ -468,7 +497,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
     if (thumb) URL.revokeObjectURL(thumb)
     setThumb('')
     setFotoBlob(null)
-    setForm(formVacio())
+    setForm(formVacio(esDevo))
     setProgreso(0)
     originalRef.current = null
     setPendiente(null)
@@ -564,7 +593,10 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
           observaciones: [form.observaciones, f.paleta].filter(Boolean).join(' · '),
           uuidSync: uuids[i],
         })),
-        { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo }
+        { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo },
+        // Pestaña de origen: la fila nace 'devolucion' en la pestaña de
+        // devoluciones de línea (guía física que acompaña la devolución).
+        { tipoRecepcion: esDevo ? TIPO_RECEPCION.DEVOLUCION : TIPO_RECEPCION.GUIA }
       )
       // Informe para el banner "recién registrada" ANTES de limpiar el form.
       const infoRegistrada: GuiaRegistradaInfo = {
@@ -578,10 +610,13 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
         filas: filas.length,
         cantidadTotal: filas.reduce((s, f) => s + f.cantidadNum, 0),
         usuarioNombre: perfil.nombre,
+        tipoRecepcion: esDevo ? TIPO_RECEPCION.DEVOLUCION : TIPO_RECEPCION.GUIA,
       }
       loteUuid.liberar()
       toast.success(
-        `Recepción registrada con foto: ${validos.length} artículo(s) · ${filas.length} fila(s)`
+        esDevo
+          ? `Devolución registrada con foto: ${validos.length} artículo(s) · ${filas.length} fila(s)`
+          : `Recepción registrada con foto: ${validos.length} artículo(s) · ${filas.length} fila(s)`
       )
       // Instantánea de EXACTAMENTE lo guardado en la BD → el modal de rótulos
       // se abre solo, listo para digitar las etiquetas por artículo/paleta.
@@ -614,6 +649,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
             empresaOrigen: form.empresaOrigen,
             placa: form.placa,
             registradoPor: perfil.nombre,
+            // La ficha del modal dice "Devolución X" en la pestaña de
+            // devoluciones (EncabezadoRotulo.tipoDocumento, opcional).
+            tipoDocumento: form.tipoDocumento,
           },
           ref: {
             guiaId,
@@ -622,11 +660,11 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
             fecha,
             proveedor: form.empresaOrigen,
           },
-          nota: `Recepción guardada: ${filas.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
+          nota: `${esDevo ? 'Devolución' : 'Recepción'} guardada: ${filas.length} fila(s) en la base de datos. Digita cuántas etiquetas necesitas de cada rótulo e imprime todo de una vez.`,
         })
         setRotulosOpen(true)
       } else {
-        toast.info('Recepción guardada sin rótulos', {
+        toast.info(esDevo ? 'Devolución guardada sin rótulos' : 'Recepción guardada sin rótulos', {
           description: 'Ningún artículo registrado tiene código; completa el código en la lista para poder imprimir etiquetas.',
         })
       }
@@ -707,8 +745,9 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
           <h3 className="text-sm font-bold text-amber-900">Registrar con foto de guía</h3>
         </div>
         <p className="text-xs text-slate-500 mb-2">
-          Toma una foto a la guía y el app recopila el número de guía, placa, empresa de origen y TODOS los
-          artículos detectados (código, descripción del catálogo, cantidad y unidad). La fecha de
+          {esDevo
+            ? 'DEVOLUCIÓN DE LÍNEA: toma una foto al documento de la devolución y el app recopila su número, placa, empresa y TODOS los artículos detectados (código, descripción del catálogo, cantidad y unidad) — misma extracción de datos que Recepción.'
+            : 'Toma una foto a la guía y el app recopila el número de guía, placa, empresa de origen y TODOS los artículos detectados (código, descripción del catálogo, cantidad y unidad).'} La fecha de
           producción, vencimiento y el lote se completan manualmente. Todo es editable antes de
           registrar.
         </p>
@@ -812,7 +851,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <Camera className="h-4 w-4 text-amber-600" />
-          <h3 className="text-sm font-bold text-amber-900">Confirmar datos de la guía</h3>
+          <h3 className="text-sm font-bold text-amber-900">Confirmar datos de la {esDevo ? 'devolución' : 'guía'}</h3>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           {/* Reajustar el recorte sobre la foto ORIGINAL (sin volver a
@@ -848,11 +887,12 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
         <div className="flex-1 min-w-[220px] space-y-1.5">
           {form.numeroGuia ? (
             <p className="text-xs flex items-center gap-1.5 text-emerald-700">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Guía detectada: <b>{form.numeroGuia}</b>
+              <CheckCircle2 className="h-3.5 w-3.5" />{' '}
+              {esDevo ? 'Documento detectado' : 'Guía detectada'}: <b>{form.numeroGuia}</b>
             </p>
           ) : (
             <p className="text-xs flex items-center gap-1.5 text-amber-700">
-              <XCircle className="h-3.5 w-3.5" /> Nº de guía no detectado — colócalo abajo
+              <XCircle className="h-3.5 w-3.5" /> Nº de {esDevo ? 'documento' : 'guía'} no detectado — colócalo abajo
             </p>
           )}
           {form.placa ? (
@@ -881,7 +921,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
       {/* Encabezado del documento (compartido por todos los artículos) */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1.5">
-          <Label className="text-xs">Nº de guía</Label>
+          <Label className="text-xs">Nº de {esDevo ? 'documento' : 'guía'}</Label>
           <Input value={form.numeroGuia} onChange={(e) => set('numeroGuia', e.target.value)} placeholder="T000-000000" />
         </div>
         <div className="space-y-1.5">
@@ -903,7 +943,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {TIPOS_DOCUMENTO_RECEPCION.map((t) => (
+              {tiposDocumento.map((t) => (
                 <SelectItem key={t} value={t}>
                   {t}
                 </SelectItem>
@@ -930,7 +970,7 @@ export function GuiaFotoForm({ onRegistrado }: { onRegistrado: (info: GuiaRegist
           className="flex-1 gap-2 bg-gradient-to-r from-amber-500 to-orange-600 text-white hover:from-amber-600 hover:to-orange-700"
         >
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
-          Registrar recepción ({itemsValidos(form.items).length} artículo(s))
+          Registrar {esDevo ? 'devolución' : 'recepción'} ({itemsValidos(form.items).length} artículo(s))
         </Button>
         {/* La impresión de rótulos NO va aquí: el modal se abre solo tras
             REGISTRAR, cuando la carga ya fue validada y guardada. */}

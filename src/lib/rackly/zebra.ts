@@ -122,6 +122,10 @@ export type EncabezadoRotulo = {
   placa: string
   registradoPor?: string
   guiaId?: string | null
+  /** Tipo de documento para la FICHA del modal ('Guia' default;
+   *  'Devolución' en la pestaña de devoluciones de línea). El ZPL no
+   *  cambia: el formato PERECIBLE no imprime el documento. */
+  tipoDocumento?: string
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -72,19 +72,28 @@ export type HuellaDuplicado = {
  * código, cantidad y lote) creada dentro de la ventana de 60 segundos.
  * Usada ANTES de insertar: con ella, un doble clic/doble pestaña pide
  * confirmación en lugar de inflar las cantidades en silencio.
+ *
+ * `tipoRecepcion` DELIMITA la búsqueda a la MISMA pestaña ('guia' |
+ * 'devolucion'): una devolución y una guía que compartan documento+código
+ * son documentos distintos — sin el filtro se avisarían entre sí (y una
+ * devolución nueva parecería un duplicado de una guía registrada antes).
  */
 export async function hayDuplicadosRecientes(
-  items: HuellaDuplicado[]
+  items: HuellaDuplicado[],
+  tipoRecepcion?: string
 ): Promise<boolean> {
   if (items.length === 0) return false
   const doc = (items[0].numeroDocumento ?? '').trim()
   if (!doc) return false // sin número de guía no hay huella confiable
   const desde = new Date(Date.now() - VENTANA_DUPLICADO_SEG * 1000).toISOString()
   try {
-    const { data, error } = await dataClient
+    const tipo = (tipoRecepcion ?? '').trim()
+    let q = dataClient
       .from('recepcion_registros')
       .select('codigo, cantidad, lote')
       .eq('numero_documento', doc)
+    if (tipo) q = q.eq('tipo_recepcion', tipo)
+    const { data, error } = await q
       .gte('created_at', desde)
       .limit(200)
     if (error) throw error

@@ -86,6 +86,10 @@ export type ArticuloTransito = {
   enviados: number
   pendiente: number
   estado: EstadoSem
+  /** Pestaña de origen de la fila ('guia' | 'devolucion') — Tránsito marca
+   *  con badge las DEVOLUCIONES DE LÍNEA para que el operario no las
+   *  confunda con guías de proveedor. Filas legacy: 'guia'. */
+  tipoRecepcion: string
   /** Datos ausentes (lote/vencimiento/producción) — alimenta la ALERTA
    *  de transferencia consciente (v2 2026-10-20). Vacío = datos completos. */
   datosFaltantes: string[]
@@ -102,6 +106,9 @@ export type GuiaTransito = {
   proveedor: string
   placa: string
   articulos: ArticuloTransito[]
+  /** TRUE si la "guía" es una DEVOLUCIÓN DE LÍNEA (alguna fila con
+   *  tipo_recepcion='devolucion') — el encabezado muestra el badge. */
+  esDevolucion: boolean
 }
 
 export type UsuarioTransito = { id: string; nombre: string; correo: string }
@@ -227,6 +234,9 @@ export function mapArticuloTransito(r: Record<string, unknown>): ArticuloTransit
     nPaleta: typeof r.n_paleta === 'number' ? r.n_paleta : null,
     usuarioNombre: str(r.usuario_nombre),
     observaciones: str(r.observaciones),
+    // Filas legacy (pre-migración): la BD las trae 'guia' — mismo respaldo
+    // que mapRecepcion (modulos.ts).
+    tipoRecepcion: str(r.tipo_recepcion) || 'guia',
     envios: parseEnvios(r.transito ? (r.transito as Record<string, unknown>).envios : []),
   }
   const sem = estadoSem(base)
@@ -269,10 +279,12 @@ export function agruparEnGuias(articulos: ArticuloTransito[]): GuiaTransito[] {
         proveedor: a.proveedor,
         placa: a.placa,
         articulos: [],
+        esDevolucion: false,
       }
       map.set(key, g)
     }
     g.articulos.push(a)
+    if (a.tipoRecepcion === 'devolucion') g.esDevolucion = true
     // Encabezado: rellenar huecos con el primer artículo que traiga el dato.
     if (!g.empresaOrigen && a.empresaOrigen) g.empresaOrigen = a.empresaOrigen
     if (!g.placa && a.placa) g.placa = a.placa

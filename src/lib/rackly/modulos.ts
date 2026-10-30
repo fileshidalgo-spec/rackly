@@ -38,6 +38,36 @@ export const ESTADOS_RECEPCION = ['Pendiente', 'Recepcionado', 'Recibido', 'Obse
 export const TIPOS_DOCUMENTO_RECEPCION = ['Guia', 'Orden de compra', 'Factura', 'Otro'] as const
 
 /**
+ * Tipo de RECEPCIÓN (columna `tipo_recepcion` de recepcion_registros):
+ *   · 'guia'       → recepción de guías (la vía original; DEFAULT en BD —
+ *                    todas las filas legacy ya viven ahí).
+ *   · 'devolucion' → DEVOLUCIONES DE LÍNEA: la misma mecánica de recepción
+ *                    (registro foto OCR/manual, paletas, rótulos con QR)
+ *                    pero en SU PROPIA pestaña, separada del listado de
+ *                    guías. Comparten tabla a propósito: la RPC atómica
+ *                    transito_registrar_envio, el QR único por rótulo
+ *                    (recepcionId = fila), las políticas RLS y la
+ *                    idempotencia uuid_sync siguen operando sin duplicar
+ *                    lógica (migración 20261031_devoluciones_tipo_recepcion).
+ */
+export const TIPO_RECEPCION = {
+  GUIA: 'guia',
+  DEVOLUCION: 'devolucion',
+} as const
+export type TipoRecepcion = (typeof TIPO_RECEPCION)[keyof typeof TIPO_RECEPCION]
+
+/** Tipos de documento de la pestaña DEVOLUCIONES. El formato físico que
+ *  acompaña la devolución de línea es la "REQUISICION DE DEVOLUCION DE
+ *  MATERIAL DISPONIBLE" de AJEPER (foto del usuario 2026-10-30, Nº
+ *  0000192967) — 'Requisición de devolución' es el default del formulario. */
+export const TIPOS_DOCUMENTO_DEVOLUCION = [
+  'Requisición de devolución',
+  'Devolución',
+  'Guia',
+  'Otro',
+] as const
+
+/**
  * Estado que se asigna AUTOMÁTICAMENTE al imprimir los rótulos de una guía
  * (pedido del usuario 2026-10: "cuando se dé imprimir dar en estatus
  * automático que se recepcionó"). Solo SUBE desde 'Pendiente' — nunca
@@ -82,6 +112,10 @@ export type RegistroRecepcion = {
   /** Nº de envíos de Tránsito registrados sobre ESTA fila (columna transito
    *  jsonb, escrita por la RPC transito_registrar_envio). 0 = sin transferir. */
   enviosTransito?: number
+  /** Pestaña de origen: 'guia' (recepción de guías) o 'devolucion'
+   *  (devoluciones de línea). Opcional: filas de tests/llamadores antiguos
+   *  sin el campo se tratan como 'guia' (mismo criterio que la BD). */
+  tipoRecepcion?: string
 }
 
 export type RegistroAtencion = {
@@ -118,6 +152,9 @@ export type NuevoRecepcion = {
   placa?: string
   fotoUrl?: string
   observaciones: string
+  /** Pestaña de origen ('guia' default | 'devolucion'); viaja a
+   *  recepcion_registros.tipo_recepcion. */
+  tipoRecepcion?: string
   /** uuid_sync generado por el cliente (idempotencia M-1). */
   uuidSync?: string
   /** Número de paleta si la fila viene de un dividido (M-1). */
@@ -187,6 +224,9 @@ function mapRecepcion(r: Record<string, unknown>): RegistroRecepcion {
     usuarioCorreo: str(r.usuario_correo),
     nPaleta: typeof r.n_paleta === 'number' ? r.n_paleta : null,
     enviosTransito: contarEnviosTransito(r.transito),
+    // Filas escritas antes de la migración: la BD las backfilló a 'guia';
+    // el respaldo || cubre lecturas de instantáneas sin la columna.
+    tipoRecepcion: str(r.tipo_recepcion) || TIPO_RECEPCION.GUIA,
   }
 }
 
@@ -215,6 +255,9 @@ function mapAtencion(r: Record<string, unknown>): RegistroAtencion {
 export type FiltrosRecepcion = {
   busqueda?: string
   estado?: string // '' = todos
+  /** Pestaña: 'guia' lista SOLO guías, 'devolucion' SOLO devoluciones.
+   *  Sin valor lista todo (compatibilidad con llamadores existentes). */
+  tipoRecepcion?: string
   limit?: number
   offset?: number
 }
@@ -228,6 +271,11 @@ export async function listarRecepciones(
     .select('*', { count: 'exact' })
     .order('fecha', { ascending: false })
     .order('created_at', { ascending: false })
+  // SEPARACIÓN DE PESTAÑAS (devoluciones de línea): cada pestaña lista
+  // SOLO su tipo. Con el índice idx_recepcion_tipo_fecha (tipo, fecha DESC,
+  // created_at DESC) la consulta por pestaña sale indexada.
+  const tipoRecepcion = (filtros.tipoRecepcion ?? '').trim()
+  if (tipoRecepcion) q = q.eq('tipo_recepcion', tipoRecepcion)
   if (estado) q = q.eq('estado', estado)
   // Saneado: una coma/paréntesis en el término rompía el filtro .or() de
   // PostgREST y el listado fallaba con "Error al cargar recepciones".
@@ -313,8 +361,17 @@ export async function listarRecepcionesPorDocumento(ref: {
  */
 export async function crearRecepciones(
   items: NuevoRecepcion[],
-  usuario: UsuarioCtx
+  usuario: UsuarioCtx,
+  /** Pestaña de origen: 'guia' (default, recepción de guías) o 'devolucion'
+   *  (devoluciones de línea). Se persiste por fila y DELIMITA el alcance de
+   *  los anti-duplicados (una devolución Nº X y una guía Nº X jamás se
+   *  avisan entre sí — son documentos de pestañas distintas). */
+  opciones?: { tipoRecepcion?: string }
 ): Promise<string> {
+  const tipoRecepcion =
+    opciones?.tipoRecepcion === TIPO_RECEPCION.DEVOLUCION
+      ? TIPO_RECEPCION.DEVOLUCION
+      : TIPO_RECEPCION.GUIA
   // M-2: UNA identidad de guía para TODO el lote — las filas de esta
   // recepción quedan unidas por guia_id aunque el Nº/proveedor/fecha
   // cambien después al editar. Se devuelve al llamador para fijar la
@@ -324,8 +381,8 @@ export async function crearRecepciones(
 
   // ANTI-DUPLICADO (M-1): si una fila idéntica se registró hace menos de
   // 60 segundos, pedir confirmación antes de insertar (doble clic, doble
-  // pestaña o recarga a mitad del registro).
-  if (await hayDuplicadosRecientes(items)) {
+  // pestaña o recarga a mitad del registro). Delimitado a la MISMA pestaña.
+  if (await hayDuplicadosRecientes(items, tipoRecepcion)) {
     const primera = items[0]
     const ok = window.confirm(
       'Ya existe una fila idéntica registrada hace menos de 1 minuto ' +
@@ -347,12 +404,16 @@ export async function crearRecepciones(
   // contexto y deja que el operario decida — decisión informada, no sorpresa.
   const docNuevo = (items[0]?.numeroDocumento ?? '').trim()
   if (docNuevo) {
-    const { data: previa, error: errPrev } = await dataClient
+    const qPrev = dataClient
       .from('recepcion_registros')
       .select('fecha, created_at')
       .eq('numero_documento', docNuevo)
+      // Delimitado a la MISMA pestaña (guías ≠ devoluciones): el mismo Nº
+      // en dos pestañas distintas es legítimo, no un re-registro.
+      .eq('tipo_recepcion', tipoRecepcion)
       .order('created_at', { ascending: false })
       .limit(1)
+    const { data: previa, error: errPrev } = await qPrev
     if (!errPrev && previa && previa.length > 0) {
       const p = previa[0] as { fecha: string | null; created_at: string | null }
       const cuando = p.fecha
@@ -387,6 +448,9 @@ export async function crearRecepciones(
     foto_url: datos.fotoUrl?.trim() || null,
     observaciones: datos.observaciones.trim() || null,
     estado: 'Pendiente',
+    // Pestaña de origen (guías vs devoluciones de línea) — migración
+    // 20261031_devoluciones_tipo_recepcion; CHECK en BD fija el dominio.
+    tipo_recepcion: tipoRecepcion,
     guia_id: guiaId,
     usuario_id: usuario.id,
     usuario_nombre: usuario.nombre,
@@ -706,6 +770,10 @@ export type EncabezadoEdicionGuia = {
   /** M-2: identidad de la guía — las filas NUEVAS la reciben para seguir
    *  unidas a SU documento (las viejas ya la traen y el UPDATE no la toca). */
   guiaId?: string | null
+  /** Pestaña de origen del documento editado: las filas NUEVAS heredan
+   *  `tipo_recepcion` (guía o devolución) para NO derramarse a la otra
+   *  pestaña. Las filas que persisten conservan el suyo (UPDATE no lo toca). */
+  tipoRecepcion?: string
 }
 
 /**
@@ -868,6 +936,10 @@ export async function guardarEdicionGuia(
           foto_url: encabezado.fotoUrl?.trim() || null,
           estado: encabezado.estado || 'Pendiente',
           guia_id: encabezado.guiaId?.trim() || null,
+          // Pestaña de origen heredada (C1, devoluciones): sin esto, cada
+          // fila NUEVA de una devolución editada nacía 'guia' (DEFAULT) y
+          // se derramaba a la pestaña de guías.
+          tipo_recepcion: encabezado.tipoRecepcion?.trim() || TIPO_RECEPCION.GUIA,
           usuario_id: autor.id,
           usuario_nombre: autor.nombre,
           usuario_correo: autor.correo,
@@ -1084,7 +1156,7 @@ export async function listarActividad(
   const tabla = modulo === 'recepcion' ? 'recepcion_registros' : 'atencion_registros'
   const cols =
     modulo === 'recepcion'
-      ? 'id, created_at, fecha, tipo_documento, numero_documento, proveedor, codigo, descripcion, cantidad, estado, usuario_id, usuario_nombre, usuario_correo'
+      ? 'id, created_at, fecha, tipo_documento, numero_documento, proveedor, codigo, descripcion, cantidad, estado, tipo_recepcion, usuario_id, usuario_nombre, usuario_correo'
       : 'id, created_at, fecha, solicitante, area, tipo, asunto, detalle, estado, usuario_id, usuario_nombre, usuario_correo'
   let q = dataClient
     .from(tabla)
@@ -1100,7 +1172,9 @@ export async function listarActividad(
         ? {
             id: str(r.id),
             fecha: str(r.fecha) || str(r.created_at),
-            tipo: 'Recepción',
+            // Devoluciones de línea se reportan con SU nombre (la actividad
+            // de Recepción no debe confundirse con la de guías).
+            tipo: str(r.tipo_recepcion) === TIPO_RECEPCION.DEVOLUCION ? 'Devolución' : 'Recepción',
             titulo: str(r.numero_documento) || '(sin documento)',
             detalle: [str(r.proveedor), str(r.codigo), str(r.descripcion)].filter(Boolean).join(' · '),
             cantidad: toNum(r.cantidad),

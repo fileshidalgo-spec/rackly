@@ -1,4 +1,26 @@
 ---
+Task ID: 8
+Agent: Main Agent
+Task: Devoluciones de línea en Recepción — pestaña propia + rótulos QR (trace 1a18f196e42d8cc1 · Módulos: recepción y transito) — 9 pasos
+
+Work Log (1.1–9):
+- 1.1 (hallazgo): el rótulo físico NO imprime el documento — la identidad vive en el QR (recepcionId = fila); zebra.ts/ImprimirRotulosDialog/qr-rotulo.ts funcionan para devoluciones SIN tocar el ZPL calibrado. transito.ts lee recepcion_registros COMPLETA (sin filtro de tipo) → las devoluciones entran a Tránsito de facto. DB: recepcion_registros 2.624 filas sin columna de tipo; 10 políticas RLS; RPCs transito_registrar_envio + recepcion_regularizar_fila operan por id/guia_id (tipo-agnósticas)
+- 2 (causa): la función no existía; los 4 puntos de conflicto previstos eran C1 (editar devolución → filas nuevas nacían 'guia' por DEFAULT), C2 (anti-duplicados cruzaban pestañas), C3 (un solo listado mezclaba), C4 (Tránsito sin distinción visual)
+- 3 (repetición): RLS/uuid_sync/QR/regularización ya son tipo-agnósticos (nada que duplicar); Actividad (Usuarios) etiquetaba todo como 'Recepción' → ahora distingue 'Devolución'; OCR de guía no conocía el formato requisición
+- 4/5 (decisión sin conflictos): UNA tabla + tipo_recepcion ('guia' default | 'devolucion') con CHECK + índice idx_recepcion_tipo_fecha — transito_registrar_envio, QR por fila, RLS y idempotencia siguen operando SIN duplicar lógica (tabla nueva habría exigido RPC+RLS+parser duplicados); se corrigen C1–C4 ANTES de que existan
+- 6 (código): migración 20261031_devoluciones_tipo_recepcion.sql (aplicada por Management API, 2.624 filas backfill 'guia'); modulos.ts (TIPO_RECEPCION, TIPOS_DOCUMENTO_DEVOLUCION, filtro/listado, crearRecepciones opciones, edición hereda tipo, Actividad); recepcion-idempotencia (anti-duplicado por pestaña); transito-core (tipoRecepcion + esDevolucion) + badge en Tránsito; RecepcionModule (pestañas guías/devoluciones con listados separados); GuiaFotoForm modo devolucion; guia-ocr reconoce la REQUISICIÓN DE DEVOLUCIÓN DE MATERIAL (formato real foto 2026-10-30: Nº 0000192967, empresa suelta, OP/solicitante → observaciones, tabla UNID→CANT con 4 decimales)
+- 7 (QA): tsc 0 · eslint OK · 39/39 suites (nueva test_recepcion_devoluciones 28 checks: tipo en alta/lista/edición, delimitación de anti-duplicados, badge Tránsito, OCR requisición real + no-regresión de guía) · build OK
+- 8 (accesos): SQL por Management API; verificación de columnas/constraint/índice/conteo en BD real
+- 9 (módulos): Recepción (pestañas + formularios + impresión) · Tránsito (badge devolución) · Usuarios-Actividad (etiqueta)
+- Deploy: commit cd32f6e → version.json 202610302353-cd32f6e OK; bundle productivo verificado (tipo_recepcion + 'Devoluciones de línea' en chunk 9f376494)
+
+Stage Summary:
+- Nueva capacidad: recepcionar DEVOLUCIONES DE LÍNEA en su propia pestaña (separada de guías) con la MISMA extracción de datos OCR, paletas, estados, Excel, edición y rótulos con QR único por fila para pegar a los artículos de devolución; el escaneo en Tránsito resuelve la fila exacta y la transferencia a Rack/Piso funciona igual (badge 'Devolución' visible)
+- El formato físico real (Requisición de devolución AJEPER) se autodetecta: nº de requisición, empresa, orden de producción y solicitante se precargan; la pestaña usa 'Requisición de devolución' como tipo de documento por defecto
+- Sin regresiones: 39 suites verdes; guías legacy intactas (default 'guia'); Tránsito/RQ/Racks sin cambios de comportamiento
+---
+
+---
 Task ID: 1
 Agent: Main Agent
 Task: Regularización de filas sobrantes sin envíos (T173-00004274 · guía T173-00004274 · 53414 DIVERFLOW 156) — 9 pasos

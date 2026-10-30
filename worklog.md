@@ -431,3 +431,21 @@ Stage Summary:
 - Deploy bd34f5e → rackly.pages.dev v=202610301512-bd34f5e (verificado).
 
 ---
+
+## 2026-10-30 · Recepción: fin de la duplicación de guías al editar (T173-00004281) — commit c66cf5f
+
+**1.1 Detección** (reporte del usuario: «cada que modifico una guía, elimino un artículo y le doy guardar, se duplican los artículos y rótulos a imprimir; tenía 24 etiquetas y se triplicó»): la guía T173-00004281 tiene DOS guias_id — `0bbdef5d` con **63 filas** (la corrupta) y `d24dacf6` con 22 (la recreación del usuario como workaround, confirmado por él). Evidencia en BD: 16 filas originales (14:31) + INSERTS de 7/13/14/13 filas en 4 guardados (14:39→15:08) con **CERO deletes efectivos**, mezclando marcas «Paleta 2/6» y «2/7» en una misma tanda.
+
+**2. Causa** (doble): (a) la política RLS `recepcion_delete_auth` solo permite DELETE a supervisores+; Edwin tiene rol **operario** → cada DELETE que disparaba al quitar un artículo llegaba como HTTP 200 con **0 filas borradas** (RLS filtra en silencio, sin error); la app creía el guardado y al re-agregar los artículos la guía se inflaba. (b) `filasAItems` fusionaba grupos de paletas del mismo código con N distinto («1/7» + «2/5» → artículo fantasma) y la lectura ordenaba solo por `created_at` (16 filas comparten el MISMO microsegundo → orden arbitrario).
+
+**3. Repetición en otras pestañas**: el patrón «UPDATE=true / DELETE=solo supervisores» se repite en `rals`, `rq_atenciones`, `rq_atencion_items` y `atencion_registros` — mismos borrados silenciosos. Se corrigió la honestidad en las 3 vías de borrado de Recepción + Atención; las demás tablas quedan para una pasada siguiente (los roles supervisores ya podían borrar).
+
+**4/5. Procedimiento + no-conflictos**: (a) política RLS nueva `recepcion_delete_propia_sin_transito` — el DUEÑO borra SUS filas sin envíos de Tránsito; supervisores conservan el poder total (política anterior intacta); (b) guard de propiedad ANTES de escribir en `guardarEdicionGuia` (filas de otro usuario → `ELIMINAR_BLOQUEADO` sin tocar nada) + verificación del DELETE real al final; (c) `eliminarGuia/eliminarRecepcion/eliminarAtencion` verifican el efecto (0 filas = error claro, jamás éxito falso); (d) `filasAItems` exige el MISMO N del grupo abierto y las filas sin marca cierran el grupo; (e) orden determinista `created_at→codigo→n_paleta→id` en `listarRecepcionesPorDocumento`. Los guards de Tránsito y la sincronización por identidad quedan intactos (tests [4] y T173 round-trip 0 inserts/0 deletes).
+
+**6/7. Código**: `errores.ts` (+`ERR_ELIMINAR_BLOQUEADO`), `recepcion-filas.ts` (guard N), `modulos.ts` (pre-guard, conteo real, orden), `RecepcionModule.tsx` (pasa `perfil.id` + toast de aviso, no error rojo: «Guardado incompleto: no se borraron filas»), stub encadenable `delete()`. Estructura: la verificación vive en la capa de datos (una sola fuente), la UI solo interpreta códigos.
+
+**8. Accesos usados**: Supabase Management API (política aplicada + E2E RLS con `SET LOCAL ROLE authenticated` + `set_config('request.jwt.claims')` y ROLLBACK: **dueño borra 27, no-dueño 0**), GitHub/Cloudflare (deploy `202610301553-c66cf5f` verificado en `rackly.pages.dev/version.json`).
+
+**Tests**: `test_recepcion_delete_honesto` (9 checks, nuevo) + caso real T173 en `test_recepcion_filas` (120 checks) — **35/35 suites**, tsc/eslint/build verdes.
+
+**Pendiente para el usuario**: la guía corrupta (63 filas) es de Edwin y no tiene envíos de Tránsito → con la política nueva puede eliminarla él mismo desde la app (botón Eliminar), o dejar que un supervisor lo haga.

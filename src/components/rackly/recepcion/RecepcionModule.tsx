@@ -20,6 +20,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime, type MotivoRealtime } from '@/hooks/useRegistrosRealtime'
 import { puede } from '@/lib/rackly/permisos'
+import { observacionesContextoRq } from '@/lib/rackly/devolucion-rq'
+import { DevolucionFotoForm } from '@/components/rackly/recepcion/DevolucionFotoForm'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
 import { agruparGuias, avisosDePaletas, expandirEnFilas, faltanProveedor, filasAItems, obsSinMarcaPaleta, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
 import { GuiaFotoForm, type GuiaRegistradaInfo } from '@/components/rackly/recepcion/GuiaFotoForm'
@@ -196,6 +198,9 @@ export function RecepcionModule() {
     // Default del documento del formulario manual POR PESTAÑA ('Requisición
     // de devolución' = el formato físico AJEPER de las devoluciones).
     setFDoc(s === 'devoluciones' ? 'Requisición de devolución' : 'Guia')
+    // Contexto del RQ de devolución (vía manual): limpiar al cambiar de pestaña.
+    setFOp('')
+    setFLinea('')
     cargar(0, true)
   }
   // Modal de impresión de rótulos (Zebra ZT411). Se abre SOLO tras REGISTRAR
@@ -449,6 +454,12 @@ export function RecepcionModule() {
   const [fEmpresaOrigen, setFEmpresaOrigen] = useState('')
   const [fPlaca, setFPlaca] = useState('')
   const [fObs, setFObs] = useState('')
+  // Contexto del RQ de la DEVOLUCIÓN (vía manual, pestaña devoluciones):
+  // la misma información de encabezado que extrae la vía foto (Atención) —
+  // OP y Línea viajan a las observaciones de cada fila; el SOLICITANTE (el
+  // origen de la devolución) vive en fEmpresaOrigen con SU etiqueta propia.
+  const [fOp, setFOp] = useState('')
+  const [fLinea, setFLinea] = useState('')
   const [items, setItems] = useState<ItemRecepcion[]>([itemVacio()])
 
   const formRef = useRef<HTMLDivElement>(null)
@@ -528,6 +539,8 @@ export function RecepcionModule() {
     setFEmpresaOrigen('')
     setFPlaca('')
     setFObs('')
+    setFOp('')
+    setFLinea('')
     setItems([itemVacio()])
   }
   // Guard generacional: si cambian los filtros mientras una carga está en vuelo,
@@ -827,6 +840,16 @@ export function RecepcionModule() {
       // M-2: crearRecepciones devuelve la identidad única de ESTA recepción
       // (guia_id compartido por todas sus filas) → banner + impresión exacta.
       // Pestaña: la fila nace 'guia' o 'devolucion' según la pestaña activa.
+      // Devoluciones (vía manual): el contexto del RQ (OP · Línea · Solicita:
+      // …) acompaña a CADA fila — el mismo mapeo que la vía foto.
+      const contextoDevo = esSeccionDevo
+        ? observacionesContextoRq({
+            numeroRq: fNumero,
+            ordenProduccion: fOp,
+            linea: fLinea,
+            solicitante: fEmpresaOrigen,
+          })
+        : ''
       const guiaId = await crearRecepciones(
         filasGuardar.map((f, i) => ({
           fecha,
@@ -842,7 +865,12 @@ export function RecepcionModule() {
           fechaProduccion: f.fechaProduccion,
           fechaVencimiento: f.fechaVencimiento,
           placa: fPlaca,
-          observaciones: [fObs, f.paleta].filter(Boolean).join(' · '),
+          observaciones: (esSeccionDevo
+            ? [contextoDevo, fObs, f.paleta]
+            : [fObs, f.paleta]
+          )
+            .filter(Boolean)
+            .join(' · '),
           uuidSync: uuids[i],
         })),
         { id: perfil.id, nombre: perfil.nombre, correo: perfil.correo },
@@ -925,6 +953,8 @@ export function RecepcionModule() {
       setFEmpresaOrigen('')
       setFPlaca('')
       setFObs('')
+      setFOp('')
+      setFLinea('')
       setItems([itemVacio()])
       cargar(0, true)
     } catch (err: unknown) {
@@ -1055,7 +1085,7 @@ export function RecepcionModule() {
           }`}
         >
           <Camera className="h-3.5 w-3.5" />
-          Con foto de {esSeccionDevo ? 'documento' : 'guía'}
+          Con foto de {esSeccionDevo ? 'RQ' : 'guía'}
         </button>
         <button
           onClick={() => setModo('manual')}
@@ -1070,14 +1100,25 @@ export function RecepcionModule() {
         </button>
       </div>
 
-      {/* ── Opción 1: registro con foto (OCR + catálogo) — MISMA extracción
-          de datos en ambas pestañas; en devoluciones reconoce la REQUISICIÓN
-          DE DEVOLUCIÓN DE MATERIAL (Nº, orden de producción, solicitante). ── */}
-      {modo === 'foto' && (
-        <GuiaFotoForm
-          modo={esSeccionDevo ? 'devolucion' : 'guia'}
+      {/* ── Opción 1: registro con foto — pestaña GUÍAS: OCR de la guía
+          (guia-ocr). Pestaña DEVOLUCIONES: el RQ de devolución con la MISMA
+          extracción de datos que ATENCIÓN (rq-ocr vía pipeline compartido)
+          — el documento NO es una guía, es una requisición. ── */}
+      {modo === 'foto' && esSeccionDevo && (
+        <DevolucionFotoForm
           onRegistrado={(info) => {
-            // BANNER "RECIÉN REGISTRADA": el documento guardado por la vía
+            // BANNER "RECIÉN REGISTRADA": la devolución guardada por la vía
+            // foto queda fijada en pantalla (con identidad exacta) aunque el
+            // orden por fecha del documento la baje de la página 1.
+            setUltimaRegistrada(info)
+            cargar(0, true)
+          }}
+        />
+      )}
+      {modo === 'foto' && !esSeccionDevo && (
+        <GuiaFotoForm
+          onRegistrado={(info) => {
+            // BANNER "GUÍA RECIÉN REGISTRADA": el documento guardado por la vía
             // foto queda fijado en pantalla (con identidad exacta) aunque
             // el orden por fecha del documento lo baje de la página 1.
             setUltimaRegistrada(info)
@@ -1128,7 +1169,11 @@ export function RecepcionModule() {
           </p>
         )}
 
-        {/* Encabezado del documento (compartido por todos los artículos) */}
+        {/* Encabezado del documento (compartido por todos los artículos).
+            Pestaña DEVOLUCIONES: el documento es un RQ de devolución — SIN
+            placa y con el contexto del RQ (OP · Línea) como campos propios;
+            el Solicitante vive en "Empresa de Origen" (el ORIGEN de la
+            devolución, el mismo mapeo que la vía foto). */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="space-y-1.5">
             <Label className="text-xs">Fecha</Label>
@@ -1150,34 +1195,65 @@ export function RecepcionModule() {
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Nº de documento</Label>
+            <Label className="text-xs">{esSeccionDevo ? 'Nº del RQ' : 'Nº de documento'}</Label>
             <Input
-              placeholder="Ej: T005-0034403"
+              placeholder={esSeccionDevo ? 'Ej: 0000192967' : 'Ej: T005-0034403'}
               value={fNumero}
               onChange={(e) => setFNumero(e.target.value)}
             />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Empresa de Origen</Label>
+            <Label className="text-xs">
+              {esSeccionDevo ? 'Solicitante (quien devuelve)' : 'Empresa de Origen'}
+            </Label>
             <Input
-              placeholder="Empresa que nos envía (ej: AJEPER S.A.)"
+              placeholder={
+                esSeccionDevo ? 'Ej: CANALES MORI, ROBERTO' : 'Empresa que nos envía (ej: AJEPER S.A.)'
+              }
               value={fEmpresaOrigen}
               onChange={(e) => setFEmpresaOrigen(e.target.value)}
             />
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">Placa</Label>
-            <Input
-              placeholder="Placa del vehículo"
-              value={fPlaca}
-              onChange={(e) => setFPlaca(e.target.value.toUpperCase())}
-            />
-          </div>
-          <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
+          {esSeccionDevo && !editando && (
+            <>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Orden de producción</Label>
+                <Input
+                  inputMode="numeric"
+                  placeholder="Ej: 2026008387"
+                  value={fOp}
+                  onChange={(e) => setFOp(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Línea de producción</Label>
+                <Input
+                  placeholder="Ej: O TANQUES DE JARABE GASEOSA"
+                  value={fLinea}
+                  onChange={(e) => setFLinea(e.target.value)}
+                />
+              </div>
+            </>
+          )}
+          {!esSeccionDevo && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Placa</Label>
+              <Input
+                placeholder="Placa del vehículo"
+                value={fPlaca}
+                onChange={(e) => setFPlaca(e.target.value.toUpperCase())}
+              />
+            </div>
+          )}
+          <div
+            className={`space-y-1.5 ${
+              esSeccionDevo ? 'sm:col-span-2 lg:col-span-2' : 'sm:col-span-2 lg:col-span-3'
+            }`}
+          >
             <Label className="text-xs">Observaciones</Label>
             <Textarea
               rows={1}
-              placeholder="Observaciones de la recepción (opcional)"
+              placeholder={esSeccionDevo ? 'Observaciones de la devolución (opcional)' : 'Observaciones de la recepción (opcional)'}
               value={fObs}
               onChange={(e) => setFObs(e.target.value)}
             />

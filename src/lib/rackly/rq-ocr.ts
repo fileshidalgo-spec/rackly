@@ -82,8 +82,15 @@ export type DatosRq = {
 // CONSTANTES
 // ═══════════════════════════════════════════════════════════════════
 
-/** Nº de RQ: etiqueta "Nº/Nro/NUMERO/№" + 6-12 dígitos (tolera ":" y "."). */
-const RE_NUM_RQ = /(?:N[º°⁰O]|NRO|NUMERO|NUM)\s*[.:]?\s*(\d{6,12})\b/
+/**
+ * Nº de RQ: etiqueta "Nº/Nro/NUMERO/№" + 6-12 dígitos (tolera ":" y ".").
+ * Variante de la REQUISICIÓN DE DEVOLUCIÓN DE MATERIAL (devoluciones de
+ * línea, foto 2026-10-30): «NUMERO REQUISICION :  0000192967» — la palabra
+ * REQUISICIÓN puede mediar entre la etiqueta y el número (grupo opcional;
+ * las RQ de despacho con "Nº : 0000191373" siguen cuadrando igual).
+ */
+const RE_NUM_RQ =
+  /(?:N[º°⁰O]|NRO|NUMERO|NUM)(?:\s+REQUISICI[OÓ]N)?\s*[.:]?\s*(\d{6,12})\b/
 
 /** Respaldo: cualquier 7-10 dígitos en una línea que mencione "REQUISIC". */
 const RE_NUM_RQ_SUELTO = /\b(\d{7,10})\b/

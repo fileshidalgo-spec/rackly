@@ -20,29 +20,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import type { PSM } from 'tesseract.js'
 import {
   buscarCatalogo,
   fetchCatalogo,
-  getCachedCatalogo,
   searchCatalogo,
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
-import {
-  avisoNumerosDebiles,
-  dividirFranjaEnBandas,
-  extraerPalabras,
-  mejorarImagenOCR,
-  MARGEN_OCR,
-  recortarFranjaTabla,
-  reducirImagen,
-} from '@/lib/rackly/guia-ocr'
-import {
-  anclasTablaRq,
-  extraerDatosRqDeTexto,
-  fusionarDatosRq,
-  type DatosRq,
-} from '@/lib/rackly/rq-ocr'
+import { type DatosRq } from '@/lib/rackly/rq-ocr'
+import { ejecutarOcrRq } from '@/lib/rackly/rq-ocr-runner'
 import { calcularTurnoRecepcion } from '@/lib/rackly/turno'
 import {
   crearRq,
@@ -173,11 +158,6 @@ function itemsDesdeOcr(datos: DatosRq): ItemRqForm[] {
     descripcionManual: false,
     unidadManual: false,
   }))
-}
-
-/** Umbral de calidad: con estos pilares no se re-procesa. */
-function extraccionSuficiente(d: DatosRq): boolean {
-  return d.items.length > 0 && Boolean(d.numeroRq) && Boolean(d.fecha)
 }
 
 export type RqRegistradaInfo = {
@@ -327,13 +307,6 @@ export function RqFotoForm({
     }
   }
 
-  async function asegurarCatalogo(): Promise<boolean> {
-    if (catalogo.length > 0) return true
-    const c = await fetchCatalogo()
-    setCatalogo(c)
-    return c.length > 0
-  }
-
   /** Aplica la mejor extracción al formulario + resumen de lo detectado. */
   function procesarExtraccion(datos: DatosRq, avisosExtra: string[] = []) {
     const itemsOcr = itemsDesdeOcr(datos)
@@ -405,178 +378,35 @@ export function RqFotoForm({
     setProgreso(0)
     setEtapa('Preparando imagen…')
     try {
+      // Si un intento anterior dejó thumbnail, liberarlo (fuga de objectURL).
       if (thumb) {
         URL.revokeObjectURL(thumb)
         setThumb('')
       }
-      setEtapa('Preparando imagen (contraste)…')
+      // Fuente ORIGINAL conservada para "Recortar foto" desde la
+      // confirmación (re-encuadrar y re-escanear sin volver a fotografiar).
+      // SOLO se fija la PRIMERA vez (el recorte no pisa el original).
       if (!originalRef.current) originalRef.current = archivo
-      // Preprocesado: gris + contraste a 2800px (letra pequeña de la RQ)
-      const imagen = await mejorarImagenOCR(archivo, 2800)
-      const liviana = await reducirImagen(archivo, 1200, 0.8)
-      setFotoBlob(liviana)
-      setThumb(URL.createObjectURL(liviana))
 
-      setEtapa('Verificando catálogo…')
-      const catOk = await asegurarCatalogo()
-      if (!catOk) {
+      // PIPELINE OCR COMPARTIDO (rq-ocr-runner.ts): 2 pases + zoom tabla +
+      // zoom encabezado + avisos de rigor numérico — el MISMO que consume la
+      // pestaña Devoluciones de Recepción (extracción idéntica entre módulos).
+      const { datos, avisos, fotoLiviana, catalogoVacio } = await ejecutarOcrRq(archivo, {
+        onEtapa: setEtapa,
+        onProgreso: setProgreso,
+      })
+      if (fotoLiviana) {
+        setFotoBlob(fotoLiviana)
+        setThumb(URL.createObjectURL(fotoLiviana))
+      }
+      if (catalogoVacio) {
         toast.warning('Catálogo no disponible', {
           description:
             'Los códigos no se podrán reconocer automáticamente; completa los materiales a mano.',
         })
       }
 
-      setEtapa('Leyendo la RQ (OCR español)…')
-      const { createWorker, PSM } = await import('tesseract.js')
-      const worker = await createWorker('spa', 1, {
-        logger: (m: { status: string; progress: number }) => {
-          if (m.status === 'recognizing text') {
-            setProgreso(Math.round(m.progress * 100))
-            setEtapa(`Reconociendo texto… ${Math.round(m.progress * 100)}%`)
-          }
-        },
-      })
-      // Igual que la guía: DPI fijo + espacios inter-palabra para conservar
-      // las columnas de la tabla de materiales.
-      await worker.setParameters({ user_defined_dpi: '300', preserve_interword_spaces: '1' })
-
-      async function ocrData(psm: PSM, con: Blob, conBloques = false) {
-        await worker.setParameters({ tessedit_pageseg_mode: psm })
-        const { data } = await worker.recognize(con, {}, conBloques ? { blocks: true } : {})
-        return data
-      }
-      async function ocrTexto(psm: PSM, con: Blob): Promise<string> {
-        return (await ocrData(psm, con)).text ?? ''
-      }
-
-      try {
-        // PASADA 1 — PSM 6 (bloque uniforme) sobre la página completa.
-        // Con `blocks: true` entrega las cajas de palabras para localizar
-        // la franja de la tabla (zoom "cuadro por cuadro", igual que la guía).
-        const d1 = await ocrData(PSM.SINGLE_BLOCK, imagen, true)
-        const texto1 = d1.text ?? ''
-        const palabras1 = extraerPalabras(d1)
-        const catalogoParaOCR = catOk ? getCachedCatalogo() : []
-        let datos = extraerDatosRqDeTexto(texto1, catalogoParaOCR)
-
-        // PASADA 2 — SIEMPRE: releer con PSM 3 (layout automático) y fusionar
-        // (unión sin duplicados; rescata filas que el 1er pase omitió).
-        // La fusión trae los AVISOS de rigor numérico (cantidades que
-        // difieren entre pases — Task 23).
-        setEtapa('Revisando la lectura con un segundo pase…')
-        const imagenBase = await reducirImagen(archivo, 2800, 0.9)
-        const texto2 = await ocrTexto(PSM.AUTO, imagenBase)
-        const datos2 = extraerDatosRqDeTexto(texto2, catalogoParaOCR)
-        const fusion = fusionarDatosRq(datos, datos2)
-        if (
-          fusion.items.length > datos.items.length ||
-          (!datos.numeroRq && fusion.numeroRq) ||
-          (!datos.fecha && fusion.fecha) ||
-          (!datos.solicitante && fusion.solicitante) ||
-          (!datos.ordenProduccion && fusion.ordenProduccion)
-        ) {
-          datos = fusion
-        } else if (!extraccionSuficiente(datos) && extraccionSuficiente(datos2)) {
-          datos = datos2
-        }
-
-        // Geometría compartida de las 2 pasadas zoom: la imagen leída viene
-        // de mejorarImagenOCR (2800px + MARGEN_OCR) → original = (y − margen)/escala.
-        const bmpProc = await createImageBitmap(imagen)
-        const altoProc = bmpProc.height
-        bmpProc.close()
-        const franja = anclasTablaRq(palabras1, altoProc)
-        const bmpOrig = await createImageBitmap(archivo)
-        const escala = 2800 / Math.max(bmpOrig.width, bmpOrig.height)
-        bmpOrig.close()
-        const aOriginal = (yOcr: number) => Math.max(0, (yOcr - MARGEN_OCR) / escala)
-
-        // PASADA ZOOM · TABLA — "cuadro por cuadro" (el truco que rescata los
-        // códigos de letra pequeña en la guía): si quedaron materiales fuera
-        // de catálogo o no se leyó ninguno, se relee SOLO la franja de la
-        // tabla escalada ×3 en tramos con solape.
-        // SOLO se adopta si reduce las filas a revisar (o llena una lectura
-        // vacía) — la fusión jamás puede empeorar la lectura.
-        const aRevisar = (d: DatosRq) => d.items.filter((i) => i.revision || !i.enCatalogo).length
-        if (catOk && (datos.items.length === 0 || aRevisar(datos) > 0)) {
-          try {
-            setEtapa('Releyendo la tabla de materiales con zoom…')
-            const bandas = dividirFranjaEnBandas(aOriginal(franja.yTop), aOriginal(franja.yBot))
-            let textoZoom = ''
-            for (const b of bandas) {
-              const trozo = await recortarFranjaTabla(archivo, b.y0, b.y1, 3)
-              const t = await ocrTexto(PSM.SINGLE_BLOCK, trozo)
-              if (t.trim()) textoZoom += (textoZoom ? '\n' : '') + t
-            }
-            if (textoZoom.trim()) {
-              const datosZoom = extraerDatosRqDeTexto(textoZoom, catalogoParaOCR)
-              if (datos.items.length === 0 && datosZoom.items.length > 0) {
-                datos = datosZoom
-              } else {
-                const fusionZoom = fusionarDatosRq(datos, datosZoom)
-                if (aRevisar(fusionZoom) < aRevisar(datos)) datos = fusionZoom
-              }
-            }
-          } catch {
-            // Zoom oportunista: si falla queda la lectura de página completa.
-          }
-        }
-
-        // PASADA ZOOM · ENCABEZADO (Task 23 — rigor numérico, pedido del
-        // usuario: "tienes que ser muy riguroso al momento de leer los
-        // números"). El Nº de RQ, la OP y el producto se releen a ×3 sobre
-        // la banda del encabezado. Si el zoom (mayor resolución) DIFIERE de
-        // la lectura de página completa, GANA el zoom y se muestra un aviso
-        // visible con ambas lecturas — el usuario verifica antes de registrar.
-        // Rigor numérico (Task 23): avisos de la fusión (cantidades que
-        // difieren entre pases) + NÚMEROS leídos con baja confianza según
-        // Tesseract (ahí viven las confusiones 4↔9 — antes se descartaba
-        // la confianza por palabra y un «4»→«9» pasaba sin advertencia).
-        const avisos: string[] = [
-          ...avisoNumerosDebiles(palabras1),
-          ...(fusion.avisos ?? []),
-        ]
-        try {
-          setEtapa('Verificando los números del encabezado…')
-          const yTopOrig = Math.min(aOriginal(franja.yTop), Math.max(60, altoProc / 4))
-          if (yTopOrig >= 60) {
-            const trozo = await recortarFranjaTabla(archivo, 0, yTopOrig, 3)
-            const textoHz = await ocrTexto(PSM.SINGLE_BLOCK, trozo)
-            if (textoHz.trim()) {
-              const hz = extraerDatosRqDeTexto(textoHz, catalogoParaOCR)
-              const campos: { k: 'numeroRq' | 'ordenProduccion' | 'productoCodigo'; etq: string }[] = [
-                { k: 'numeroRq', etq: 'Nº de RQ' },
-                { k: 'ordenProduccion', etq: 'Orden de producción' },
-                { k: 'productoCodigo', etq: 'Código del producto' },
-              ]
-              let adoptoProducto = false
-              for (const { k, etq } of campos) {
-                const leidoZoom = hz[k].trim()
-                if (!leidoZoom) continue
-                const leidoActual = (datos[k] ?? '').trim()
-                if (!leidoActual) {
-                  datos = { ...datos, [k]: leidoZoom }
-                  if (k === 'productoCodigo') adoptoProducto = true
-                } else if (leidoZoom !== leidoActual) {
-                  datos = { ...datos, [k]: leidoZoom }
-                  avisos.push(`${etq}: el zoom leyó ${leidoZoom} (antes ${leidoActual}) — verifica`)
-                  if (k === 'productoCodigo') adoptoProducto = true
-                }
-              }
-              if (adoptoProducto && !datos.productoDescripcion.trim() && hz.productoDescripcion.trim()) {
-                datos = { ...datos, productoDescripcion: hz.productoDescripcion }
-              }
-            }
-          }
-        } catch {
-          // Zoom oportunista: sin él queda la lectura de página completa.
-        }
-
-        procesarExtraccion(datos, Array.from(new Set(avisos)))
-      } finally {
-        await worker.terminate()
-      }
-
+      procesarExtraccion(datos, avisos)
       setPaso('confirmar')
     } catch (err: unknown) {
       const message = mensajeError(err)

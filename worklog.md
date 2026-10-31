@@ -1,4 +1,26 @@
 ---
+Task ID: 1
+Agent: Main Agent
+Task: Devoluciones de línea = RQ con la extracción de ATENCIÓN (trace 1a18f4a2b62c90cd · Módulos: recepción y transito) — 9 pasos
+
+Work Log (1.1–9):
+- 1.1 (hallazgo): el documento de devolución NO es una guía sino un RQ («REQUISICION DE DEVOLUCION DE MATERIAL DISPONIBLE», Nº 0000192967) — la iteración 1 (cd32f6e) lo parseó con el PARSER DE GUÍAS (guia-ocr + extensión esRequisicionDevolucion); el usuario lo corrige: la extracción debe ser IDÉNTICA a la de Atención, que procesa RQs con rq-ocr.ts. Producción verificada = cdb636f; BD ya con tipo_recepcion (CHECK ok, 2.633 filas, 0 devoluciones → cambio de flujo sin migrar datos)
+- 2 (causa): el parser de Atención (rq-ocr.ts) ya leía el formato de la devolución (ancla B UNID→CANT con saldo/estado, calibrada con RQ 0000191740) — el error fue re-usar el parser de guías en vez del de RQ
+- 3 (repetición): la extensión de devolución en guia-ocr.ts era código muerto tras el cambio → SE REVIERTE guia-ocr.ts a su estado pre-iteración-1 (86 líneas fuera, cero residuo); Atención quedó tocada solo por refactor (mismo pipeline extraído)
+- 4/5 (decisión sin conflictos): pipeline OCR de RQ EXTRAÍDO a rq-ocr-runner.ts (2 pases + zoom tabla + zoom encabezado + rigor numérico) consumido por RqFotoForm (Atención) y DevolucionFotoForm (Recepción) — extracción única, sin duplicar 180 líneas; el guardado SIGUE siendo recepcion_registros (transito_registrar_envio, QR por fila, RLS y uuid_sync intactos); SIN migración de BD
+- 6 (código): rq-ocr.ts RE_NUM_RQ reconoce «NUMERO REQUISICION : 0000192967»; devolucion-rq.ts (mapeo puro: numeroDocumento=Nº RQ · empresaOrigen=Solicitante · observaciones=OP · Línea · Solicita · Producto · placa=''); DevolucionFotoForm.tsx (flujo elegir→recortar→procesando→confirmar, autocompletado de catálogo igual que Atención, proveedor solo films, rótulos QR por fila + auto-estatus Recepcionado); RecepcionModule (pestaña devoluciones usa DevolucionFotoForm; vía manual con Nº del RQ/Solicitante/OP/Línea y SIN placa; contexto RQ a observaciones); GuiaFotoForm vuelve a ser SOLO guías + guard de permiso recepcion.crear (hueco detectado: la vía foto no lo tenía)
+- 7 (QA): tsc 0 · eslint 0 · 39/39 suites · build OK — test_recepcion_devoluciones reescrita (42 checks: OCR del RQ real con el parser de Atención 13 checks, mapeo+alta 10, regresión de guías 4, delimitación/edición/badge 15)
+- 8 (accesos): Supabase Management API (verificación de columnas/CHECK/contenido); GitHub + Cloudflare para deploy
+- 9 (módulos): Recepción (pestaña devoluciones con extracción Atención + rótulos QR) · Tránsito (verificado, sin cambios — badge 'Devolución' ya operante) · Atención (solo refactor del pipeline, suites rq_* verdes)
+- Deploy: commit → version.json; bundle productivo verificado
+
+Stage Summary:
+- La pestaña DEVOLUCIONES de línea ahora extrae datos EXACTAMENTE como Atención (mismo pipeline rq-ocr-runner + parser rq-ocr): Nº del RQ, OP, producto, línea, solicitante y tabla de materiales con cantidades de 4 decimales; el documento se registra como RECEPCIÓN (tipo_recepcion='devolucion') separada de guías, con rótulos y QR por fila para pegar en los artículos
+- Limpieza de duplicados: guia-ocr.ts revertido (cero lógica de devolución en el parser de guías); un solo pipeline OCR de RQ compartido por Atención y Devoluciones
+- Hallazgo colateral corregido: la vía foto de guías ya exige recepcion.crear (antes solo la BD lo bloqueaba al guardar)
+
+---
+---
 Task ID: 8
 Agent: Main Agent
 Task: Devoluciones de línea en Recepción — pestaña propia + rótulos QR (trace 1a18f196e42d8cc1 · Módulos: recepción y transito) — 9 pasos

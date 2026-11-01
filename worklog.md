@@ -633,3 +633,23 @@ Stage Summary:
 - 15 archivos, +3387/-269; nuevos: migración del cuadro, aplicar_migracion.py, gen_guard_rpc.py, e2e_cuadro_permisos.py, respaldo RPCs
 - Marcar ✗ en el cuadro ahora BLOQUEA en la base de datos (RLS RESTRICTIVE + guards RPC), no solo oculta botones; con cero excepciones todo funciona exactamente igual que antes
 - Commit: dabdca2
+
+---
+Task ID: 5 (pedido 2026-11-01 — Racks/Ocupación, trace 1a1978d198de5c91)
+Agent: Main Agent
+Task: «75 espacios libres — ¿se están contando como libres los espacios ocupados por artículos INC?» — verificación DB + 1 bug real corregido (Tránsito) + textos sin ambigüedad
+
+Work Log:
+- 1.1/1.2 (verificación en DB, owjryvcrhpmgtkkdcrkm): los números del resumen son CORRECTOS — occupied=1085 (RPC ocupacion_celdas_v2, que EXCLUYE codigo_inc), INC con stock neto>0 = 41 (1 mixta + 40 solo INC), y Vacías = 1200 − 1085 − 40 = 75: las celdas con INC NO están dentro de las 75. Anti-join contra la grilla oficial (9 bloques × torres × 4 pisos × pos): 0 celdas ocupadas fuera de grilla, 0 INC fuera de grilla, 0 celdas con stock negativo → 1085 + 40 + 75 = 1200 exacto
+- 2 (causa de la duda): (a) el subtítulo de la tarjeta VACÍAS decía «Disponibles · 40 con INC» — literalmente sugiere que 40 espacios libres tienen INC (falso: están FUERA de las 75); (b) el subtítulo de OCUPADAS mezclaba «41 con INC (1 ocupadas + 40 solo INC)»; (c) BUG REAL de la misma clase: MapaRackSelector (Tránsito → DialogoTransferir, destino Piso→Rack) usa ocupacionRacks() = RPC v2 SIN merge INC → las 40 celdas solo-INC quedaban con stock 0: se pintaban VERDES «Libre — sin artículo», la sugerencia automática podía preseleccionarlas como destino y el clic NO pedía confirmación de co-ubicación → se podíameter mercadería nueva en una celda físicamente bloqueada por INC
+- 3 (repetición en otras pestañas): Piso NO hereda el defecto (RPC piso_stock_sector_grid netea TODOS los movimientos sin excluir INC → sus Vacías ya cuentan INC como ocupado); Ocupación (Racks) ya mergeaba INC correctamente; el Excel exportado ya distingue «Solo INC» de «Vacío»; la leyenda del mapa de Racks (page.tsx) no documentaba el color INC → incluida
+- 4/5 (procedimiento sin conflictos): 100% frontend, sin cambios de RPC ni de firmas compartidas — MapaRackSelector gana el MISMO merge que ya usa OcupacionTab (buildCellMap como referencia); SeleccionRack gana campo OPCIONAL incItems (los callers existentes no se rompen); el convenio de colores queda idéntico en ambos mapas (INC rosado gana a azul/naranja, respetando selección y marca mismo-código)
+- 6/7 (implementación ordenada): MapaRackSelector — helpers tieneIncActiva/esCeldaLibre/fusionarInc (documentados), cargar() con Promise.all(ocupacionRacks, fetchIncPorUbicacion), sugerencia SOLO celdas sin stock ni INC, clic en celda INC = ocupada + confirmación de co-ubicación con detalle «INC pendiente de disponer», tooltip INC con códigos/cantidades, leyenda «Con INC (no libre)»; OcupacionTab — VACÍAS «Sin stock ni INC · N INC aparte», OCUPADAS «N con INC», ecuación visible «1085 + 40 INC + 75 = 1200» bajo la barra de %, eliminadas variables muertas con semántica incorrecta (bEmpty sin descontar INC, tInc sin uso)
+- 8 (accesos): DB verificada por Supabase Mgmt API (definiciones de ocupacion_celdas/_v2/piso_stock_sector_grid + conteos reales); navegador E2E en producción con cuenta propia: login OK, pestaña Ocupación muestra los textos nuevos y la ecuación, console/page errors = 0
+- 9 (Módulos): Racks/Ocupación + Tránsito (mapa de destino) — transversal a Piso solo en verificación
+- QA: tsc 0 · eslint 0 · 39/39 suites · build OK · push 0f09ca2 · producción version.json = 202611011454-0f09ca2
+
+Stage Summary:
+- 4 archivos, +97/−21: MapaRackSelector.tsx (INC nunca libre ni sugerido), OcupacionTab.tsx (textos + ecuación + limpieza), page.tsx (leyenda), version-sello.ts (auto)
+- Respuesta al reporte: los 75 libres NO incluyen espacios con INC (verificado fila a fila en DB); el resumen era correcto pero su texto inducía a la duda, y el MISMO criterio sí estaba mal en el mapa de Tránsito — ahí sí se podía elegir/sugerir una celda con INC como destino; ambos quedan alineados con el convenio «INC = ocupada, no libre»
+- Deploy: 0f09ca2 en producción (rackly.pages.dev, 2026-11-01 14:54 UTC)

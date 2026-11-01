@@ -1,4 +1,25 @@
 ---
+Task ID: 3
+Agent: Main Agent
+Task: Auditoría integral 2026-11-01 — «revisa toda la app que no tenga errores ni bugs» (trace 1a1976a1b9d39725 · Módulos: todos) — 9 pasos
+
+Work Log (1.1–9):
+- 1.1 (hallazgo): QA baseline verde (tsc 0 · eslint 0 · 39 suites · build) y E2E producción 6/6 módulos sin errores de consola; el barrido estático encontró la CLASE ESPEJO del bug T173 no cubierta: la RLS de UPDATE también FILTRA EN SILENCIO (HTTP 200, 0 filas) — 3 vías CRUD de Catálogo (alta por upsert / edición / borrado) y 4 cambios de estado (cambiarEstadoGuia, cambiarEstadoAtencion, recalcularEstadoRq, recalcularEstadoRal) celebraban escrituras que la BD podía no haber aplicado; colateral: eliminar ítem de catálogo sin verificación ejecutaba la poda del ancla de Piso aunque el DELETE no ocurriera; además cambiarEstadoRecepcion era CÓDIGO MUERTO (0 llamadores) y en BD las RPCs de mantenimiento FEFO (backfill/rebalance de lotes) estaban SECURITY DEFINER, sin guard y con EXECUTE abierto a anon
+- 2 (causa): la auditoría 10-31 generalizó la honestidad del DELETE pero no la del UPDATE; el upsert de alta ocultaba que su rama ON CONFLICT UPDATE corre bajo la política de UPDATE (rol sin catalogo.editar → 0 filas → «Ítem agregado» falso)
+- 3 (repetición): verificado por barrido completo — atender/revertir RQ-RAL ya usaban guard optimista + maybeSingle verificado; marcarGuiaRecepcionada ya devolvía conteo; guardarEdicionGuia ya contaba exacto; JSON.parse/.single()/catchs restantes todos con guard legítimo; BD sana: RLS 20/20, 0 huérfanos (RQ/RAL/Piso), 0 uuid_sync duplicados, 0 códigos de catálogo duplicados, estados dentro del catálogo
+- 4/5 (procedimiento sin conflictos): extender eliminacion-honesta.ts con exigirActualizadas (misma filosofía, una sola implementación) y aplicarla en los 6 puntos; el alta de catálogo se separa en INSERT puro (la RLS de INSERT rechaza CON ERROR, jamás en silencio) vs edición verificada usando la lectura de existencia que ya existía (además PRESERVA stock_big_magic que el upsert habría pisado a 0); RPCs FEFO: REVOKE EXECUTE a anon/authenticated (sin llamadores en la app → impacto cero; service_role/postgres conservan); los llamadores de cambiarEstado* ya envuelven en try/catch con mensajeError → el nuevo error sale como toast claro, sin crash
+- 6/7 (código): errores.ts (+ERR_ACTUALIZAR_BLOQUEADO), eliminacion-honesta.ts (+exigirActualizadas), modulos.ts (cambiarEstadoGuia/cambiarEstadoAtencion verificados; cambiarEstadoRecepcion eliminado), rq-atencion.ts/ral.ts (recalcular con verificación — el encabezado ya no queda con estado viejo tras atender por respaldo), CatalogoTab.tsx (3 vías honestas), stub (+cola FIFO __setUpdateData, compatibilidad total), suite test_eliminacion_honesta_global (+[10]/[11], 25 checks), migración scripts/migracion_revoke_fefo_rpc_1101.sql aplicada por Management API (ACL verificado: postgres+service_role; E2E anon → 401 permission denied)
+- 8 (accesos): Supabase Management API (migración + verificación E2E), GitHub push, Cloudflare deploy, navegador E2E con cuenta admin
+- 9 (módulos): Racks-Catálogo (CRUD honesto), Recepción (estado de guía), Atención (estado de registro), RQ/RAL (estado de encabezado en respaldo), BD (superficie anon cerrada) — Tránsito/Piso/Descarga verificados sin cambios necesarios
+- QA final: tsc 0 · eslint 0 · 39/39 suites (honestidad 25 checks) · build OK
+
+Stage Summary:
+- Cierre de la CLASE ESPEJO: ninguna escritura visible al usuario (INSERT/UPDATE/DELETE) puede volver a reportar éxito sin efecto real — la app ya no celebra cambios que la BD filtró
+- Superficie de ataque BD reducida: RPCs de mantenimiento FEFO ya no ejecutables por anon/authenticated (401 verificado)
+- Higiene: código muerto eliminado; alta de catálogo existente ya no pisa stock_big_magic a 0
+- Sin regresiones: 39/39 suites; E2E producción 6/6 módulos sin errores de consola
+
+---
 Task ID: 2
 Agent: Main Agent
 Task: Verificación de cierre 2026-11-01 — devoluciones de línea en producción (5d0b1c5) + QA completo del entorno reconstruido

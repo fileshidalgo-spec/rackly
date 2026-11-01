@@ -140,6 +140,12 @@ export const ERR_DUPLICADO = 'REGISTRO_DUPLICADO'
  *  con un error claro en vez de un éxito falso (bug T173-00004281:
  *  rol operario + DELETE de supervisores = guías que se duplicaban). */
 export const ERR_ELIMINAR_BLOQUEADO = 'ELIMINAR_BLOQUEADO'
+/** Actualización NO aplicada: la clase espejo del borrado filtrado — la RLS
+ *  de UPDATE (por rol o DENY del cuadro de permisos) también filtra en
+ *  silencio (HTTP 200, 0 filas). El estado NO cambió y la app lo dice en
+ *  vez de celebrar (auditoría 2026-11-01: cambiarEstadoGuia/Atencion,
+ *  recalcularEstadoRq/Ral, edición de catálogo). */
+export const ERR_ACTUALIZAR_BLOQUEADO = 'ACTUALIZAR_BLOQUEADO'
 
 const NOMBRES_NATIVOS = new Set([
   'Error',

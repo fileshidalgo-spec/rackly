@@ -21,7 +21,7 @@ import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { FECHA_INICIO_TRANSITO } from '@/lib/rackly/transito-core'
 import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
 import { construirOrBusquedaRq, MAX_IDS_MATERIALES } from '@/lib/rackly/busqueda-rq'
-import { exigirBorradas, avisarBorradoFiltrado } from '@/lib/rackly/eliminacion-honesta'
+import { exigirActualizadas, exigirBorradas, avisarBorradoFiltrado } from '@/lib/rackly/eliminacion-honesta'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS
@@ -226,8 +226,20 @@ async function recalcularEstadoRq(rqId: string): Promise<void> {
     filas.length === 0 ? 'Pendiente' : pendientes === 0 ? 'Atendido' : algunoAtendido ? 'En proceso' : 'Pendiente'
   // FIX auditoría 2026-10-22 (P3): el resultado del UPDATE no se revisaba — un
   // fallo dejaba el encabezado de la RQ con estado viejo y sin rastro.
-  const { error: eEstado } = await dataClient.from('rq_atenciones').update({ estado }).eq('id', rqId)
+  // HONESTIDAD (auditoría 2026-11-01): además del error explícito, 0 filas
+  // de vuelta = RLS filtró el UPDATE en silencio (misma clase que el DELETE
+  // filtrado del bug T173) — la RQ quedaba con estado viejo tras atender.
+  const { data, error: eEstado } = await dataClient
+    .from('rq_atenciones')
+    .update({ estado })
+    .eq('id', rqId)
+    .select('id')
   if (eEstado) throw eEstado
+  exigirActualizadas(
+    data,
+    1,
+    'El estado de la RQ NO se actualizó (tu rol no permite editarla). Recarga y verifica el estado real.'
+  )
 }
 
 // ═══════════════════════════════════════════════════════════════════

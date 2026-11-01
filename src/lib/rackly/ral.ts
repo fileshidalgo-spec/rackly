@@ -16,7 +16,7 @@
 
 import { dataClient } from '@/lib/supabase/client'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
-import { exigirBorradas, avisarBorradoFiltrado } from '@/lib/rackly/eliminacion-honesta'
+import { exigirActualizadas, exigirBorradas, avisarBorradoFiltrado } from '@/lib/rackly/eliminacion-honesta'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS
@@ -167,8 +167,20 @@ async function recalcularEstadoRal(ralId: string): Promise<void> {
         : algunoAtendido
           ? 'En proceso'
           : 'Pendiente'
-  const { error: eEstado } = await dataClient.from('rals').update({ estado }).eq('id', ralId)
+  // HONESTIDAD (auditoría 2026-11-01): 0 filas de vuelta = RLS filtró el
+  // UPDATE en silencio — el RAL quedaba con estado viejo tras atender
+  // (misma clase que el DELETE filtrado del bug T173-00004281).
+  const { data, error: eEstado } = await dataClient
+    .from('rals')
+    .update({ estado })
+    .eq('id', ralId)
+    .select('id')
   if (eEstado) throw eEstado
+  exigirActualizadas(
+    data,
+    1,
+    'El estado del RAL NO se actualizó (tu rol no permite editarlo). Recarga y verifica el estado real.'
+  )
 }
 
 /**

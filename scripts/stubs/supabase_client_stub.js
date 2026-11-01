@@ -38,6 +38,14 @@ let pendingUpdate = false
  *  cola está vacía, resuelve { data: null } (compatibilidad total). */
 const deleteQueue = []
 let pendingDelete = false
+/** Aditivo 2026-11-01 (honestidad de UPDATE — auditoría integral):
+ *  update().select() await-ed puede resolver un resultado enlatado FIFO
+ *  (__setUpdateData) para probar las verificaciones exigirActualizadas;
+ *  sin cola pendiente resuelve { data: filas de la tabla enlatada } —
+ *  compatibilidad TOTAL con los suites previos (que ignoraban el data
+ *  del update directo). maybeSingle() sigue sirviendo __setUpdateResult
+ *  (camino optimista atender/revertir) con prioridad sobre la cola. */
+const updateQueue = []
 /** Aditivo 2026-10-31 (regularización T173-00004274): rpc(name, args) puede
  *  resolver un resultado enlatado por NOMBRE de función — cola FIFO; sin
  *  enlatado resuelve { data: [], error: null } (compatibilidad total con
@@ -91,6 +99,11 @@ function builder(table) {
         const r = deleteQueue.length ? deleteQueue.shift() : { data: null, error: null }
         return Promise.resolve(r).then(resolve, reject)
       }
+      if (pendingUpdate) {
+        pendingUpdate = false
+        const r = updateQueue.length ? updateQueue.shift() : { data: tables[table] ?? [], error: null }
+        return Promise.resolve(r).then(resolve, reject)
+      }
       return Promise.resolve({ data: tables[table] ?? [], error: null }).then(resolve, reject)
     },
   }
@@ -120,6 +133,8 @@ module.exports = {
   __updateCalls() { return updateCalls.slice() },
   __setUpdateResult(r) { updateResult = r },
   __setDeleteResult(r) { deleteQueue.push(r) },
+  /** Encola el resultado del PRÓXIMO update await-ed (FIFO) — honestidad UPDATE. */
+  __setUpdateData(r) { updateQueue.push(r) },
   /** Encola el resultado del PRÓXIMO rpc(name) (cola FIFO por nombre). */
   __setRpcResult(name, r) {
     if (!rpcQueue[name]) rpcQueue[name] = []
@@ -138,6 +153,7 @@ module.exports = {
     updateResult = null
     pendingUpdate = false
     deleteQueue.length = 0
+    updateQueue.length = 0
     pendingDelete = false
   },
 }

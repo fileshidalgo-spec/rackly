@@ -163,6 +163,9 @@ async function main() {
     data: { id: 'it-1', ral_id: 'ral-1', cantidad: 10, cantidad_atendida: 9, usuario_atencion: 'MIGUEL', atendido_en: null },
     error: null,
   })
+  // Honestidad UPDATE (auditoría 2026-11-01): recalcularEstadoRal ahora
+  // verifica que el encabezado se tocó de verdad → resultado enlatado FIFO.
+  stub.__setUpdateData({ data: [{ id: 'ral-1' }], error: null })
   const atendidoFb = await atenderItemRal('it-1', 5, 'MIGUEL')
   check('respaldo suma sobre lo atendido (4+5=9)', atendidoFb.cantidadAtendida === 9)
   const updates = stub.__updateCalls()
@@ -180,6 +183,7 @@ async function main() {
     { id: 'it-1', ral_id: 'ral-1', cantidad: 10, cantidad_atendida: 4 },
   ])
   stub.__setUpdateResult({ data: null, error: null }) // guard optimista: 0 filas
+  // (la carrera dispara el error ANTES del recálculo — no se necesita cola)
   let falloConflict = ''
   try {
     await atenderItemRal('it-1', 5, 'MIGUEL')
@@ -224,6 +228,8 @@ async function main() {
     data: { id: 'it-1', ral_id: 'ral-1', cantidad: 10, cantidad_atendida: 0, atendido_en: null },
     error: null,
   })
+  // Honestidad UPDATE (auditoría 2026-11-01): recálculo del encabezado verificado
+  stub.__setUpdateData({ data: [{ id: 'ral-1' }], error: null })
   const revertidoFb = await revertirItemRal('it-1', 5) // pide 5, solo hay 2 → clamp 0 (client) / GREATEST (RPC)
   check('respaldo de reversa nunca baja de 0 (2-5 → 0)', revertidoFb.cantidadAtendida === 0)
   const updRev = stub.__updateCalls().filter((u) => u.table === 'rals')

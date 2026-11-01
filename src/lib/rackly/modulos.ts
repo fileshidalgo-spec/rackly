@@ -22,7 +22,7 @@ import {
   ERR_ELIMINAR_BLOQUEADO,
   errorControlado,
 } from '@/lib/rackly/errores'
-import { exigirBorradas } from '@/lib/rackly/eliminacion-honesta'
+import { exigirBorradas, exigirActualizadas } from '@/lib/rackly/eliminacion-honesta'
 import {
   extraerIndicePaleta,
   hayDuplicadosRecientes,
@@ -596,14 +596,6 @@ export async function abrirFotoGuia(fotoUrl: string): Promise<void> {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-export async function cambiarEstadoRecepcion(id: string, estado: string): Promise<void> {
-  const { error } = await dataClient
-    .from('recepcion_registros')
-    .update({ estado })
-    .eq('id', id)
-  if (error) throw error
-}
-
 export async function eliminarRecepcion(id: string): Promise<void> {
   // HONESTIDAD (bug T173-00004281): la BD puede FILTRAR el delete en
   // silencio (RLS por rol: HTTP 200 con 0 filas borradas, sin error) — un
@@ -665,8 +657,18 @@ export async function cambiarEstadoGuia(
   } else {
     for (const [col, val] of condicionesGuia(ref)) q = q.eq(col, val)
   }
-  const { error } = await q
+  // HONESTIDAD (auditoría 2026-11-01): la RLS de UPDATE por rol o el DENY
+  // del cuadro de permisos filtran EN SILENCIO (HTTP 200, 0 filas) — un
+  // éxito falso dejaba el combobox con un estado que la BD jamás aplicó.
+  // El combobox solo existe sobre guías visibles (≥ 1 fila), así que 0
+  // filas de vuelta = filtro de permisos o fila desaparecida.
+  const { data, error } = await q.select('id')
   if (error) throw error
+  exigirActualizadas(
+    data,
+    1,
+    'El estado NO se cambió: tu rol no permite editar este documento (o fue eliminado por otro usuario). Recarga la lista.'
+  )
 }
 
 /**
@@ -1044,11 +1046,19 @@ export async function cambiarEstadoAtencion(id: string, estado: string): Promise
   const patch: Record<string, unknown> = { estado }
   if (estado === 'Atendido') patch.atendido_en = new Date().toISOString()
   else patch.atendido_en = null
-  const { error } = await dataClient
+  // HONESTIDAD (auditoría 2026-11-01): 0 filas de vuelta = RLS filtró el
+  // UPDATE en silencio (permisos por rol o DENY del cuadro) — se avisa.
+  const { data, error } = await dataClient
     .from('atencion_registros')
     .update(patch)
     .eq('id', id)
+    .select('id')
   if (error) throw error
+  exigirActualizadas(
+    data,
+    1,
+    'El estado NO se cambió: tu rol no permite editar este registro (o ya no existe). Recarga la lista.'
+  )
 }
 
 export async function eliminarAtencion(id: string): Promise<void> {

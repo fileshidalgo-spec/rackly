@@ -12,6 +12,7 @@ import {
   type ProgresoMerge,
 } from '@/lib/rackly/catalogo'
 import { podarAnclaPisoSiSinUso } from '@/lib/piso/api'
+import { exigirActualizadas, exigirBorradas } from '@/lib/rackly/eliminacion-honesta'
 import { useAuth } from '@/hooks/useAuth'
 import { dataClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -219,8 +220,10 @@ export function CatalogoTab() {
       const existingSBM = (sbmData as Record<string, unknown>)?.stock_big_magic ?? 0
 
       if (editItem) {
-        // Update
-        const { error } = await dataClient
+        // Update — HONESTIDAD (auditoría 2026-11-01): la RLS de UPDATE filtra
+        // en silencio (0 filas = «Ítem actualizado» mentiroso). Se piden las
+        // filas de vuelta y se verifica el efecto real.
+        const { data, error } = await dataClient
           .from('catalogo')
           .update({
             codigo: formCodigo.trim().toUpperCase(),
@@ -230,19 +233,51 @@ export function CatalogoTab() {
             updated_at: new Date().toISOString(),
           })
           .eq('codigo', editItem.codigo)
+          .select('codigo')
         if (error) throw error
+        exigirActualizadas(
+          data,
+          1,
+          'El ítem NO se actualizó: tu rol no permite editar el catálogo (o el código ya no existe). Recarga la lista.'
+        )
         toast.success('Ítem actualizado')
+      } else if (sbmData) {
+        // El código YA existía (la lectura de arriba lo confirmó): esto es una
+        // edición, no un alta — un upsert aquí ejecutaba la rama UPDATE bajo la
+        // política de UPDATE, que para un rol sin catalogo.editar filtraba en
+        // silencio (0 filas) y la app celebraba «Ítem agregado» sin cambiar
+        // NADA. Ruta honesta: update verificado con exigirActualizadas.
+        const { data, error } = await dataClient
+          .from('catalogo')
+          .update({
+            codigo: formCodigo.trim().toUpperCase(),
+            un: formUn.trim(),
+            descripcion: formDesc.trim(),
+            stock_big_magic: formSBM ? parseFloat(formSBM) || 0 : existingSBM,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('codigo', formCodigo.trim().toUpperCase())
+          .select('codigo')
+        if (error) throw error
+        exigirActualizadas(
+          data,
+          1,
+          'El ítem NO se modificó: el código ya existe y tu rol no permite editar el catálogo. Recarga la lista.'
+        )
+        toast.success('Ítem actualizado (el código ya existía)')
       } else {
-        // Insert
+        // Insert puro: la RLS de INSERT rechaza CON ERROR (WITH CHECK) —
+        // nunca filtra en silencio; la carrera 23505 (otro usuario insertó
+        // el mismo código) la vuelve amigable mensajeError.
         const { error } = await dataClient
           .from('catalogo')
-          .upsert({
+          .insert({
             codigo: formCodigo.trim().toUpperCase(),
             un: formUn.trim(),
             descripcion: formDesc.trim(),
             stock_big_magic: formSBM ? parseFloat(formSBM) || 0 : 0,
             updated_at: new Date().toISOString(),
-          }, { onConflict: 'codigo' })
+          })
         if (error) throw error
         toast.success('Ítem agregado')
       }
@@ -265,11 +300,21 @@ export function CatalogoTab() {
     if (!deleteTarget) return
     setFormBusy(true)
     try {
-      const { error } = await dataClient
+      // HONESTIDAD (auditoría 2026-11-01): la RLS de DELETE filtra en
+      // silencio — sin verificación, un rol sin catalogo.eliminar veía
+      // «Ítem eliminado» con la fila viva, y encima se podaba el ancla de
+      // Piso como si el borrado hubiera ocurrido (efecto cruzado).
+      const { data: borradas, error } = await dataClient
         .from('catalogo')
         .delete()
         .eq('codigo', deleteTarget)
+        .select('codigo')
       if (error) throw error
+      exigirBorradas(
+        borradas,
+        1,
+        'El ítem NO se eliminó: tu rol no permite borrar del catálogo (o ya fue eliminado por otro usuario). Recarga la lista.'
+      )
       // Task 15 — catálogo único: podar el ancla de piso SOLO si quedó sin
       // movimientos (FK-safe; si tiene historial se conserva como respaldo).
       await podarAnclaPisoSiSinUso(deleteTarget)

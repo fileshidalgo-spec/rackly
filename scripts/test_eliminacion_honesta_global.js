@@ -15,6 +15,12 @@
  *   · podarAnclasPisoSinUso: contador honesto.
  *   · rollbacks best-effort (registrarRq/registrarRal/rollbackCabeceras):
  *     NO lanzan — avisan en consola (el flujo converge por diseño).
+ *
+ * Aditivo 2026-11-01 (auditoría integral — clase espejo): la RLS de UPDATE
+ * también filtra en silencio. Se verifica exigirActualizadas en:
+ *   · cambiarEstadoGuia / cambiarEstadoAtencion (modulos.ts).
+ *   · recalcularEstadoRq (vía atenderItemRq) / recalcularEstadoRal (vía
+ *     atenderItemRal) — el encabezado ya no queda con estado viejo.
  */
 
 process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://dummy.supabase.co'
@@ -34,7 +40,14 @@ const {
   eliminarMovimientoConPar,
 } = require('@/lib/piso/api')
 const { clearCatalogo, podarAnclasPisoSinUso } = require('@/lib/rackly/catalogo')
-const { codigoControladoDe, ERR_ELIMINAR_BLOQUEADO } = require('@/lib/rackly/errores')
+const {
+  codigoControladoDe,
+  ERR_ELIMINAR_BLOQUEADO,
+  ERR_ACTUALIZAR_BLOQUEADO,
+} = require('@/lib/rackly/errores')
+const { cambiarEstadoGuia, cambiarEstadoAtencion } = require('@/lib/rackly/modulos')
+const { atenderItemRq } = require('@/lib/rackly/rq-atencion')
+const { atenderItemRal } = require('@/lib/rackly/ral')
 
 let pasados = 0
 let fallidos = 0
@@ -58,6 +71,8 @@ async function capturaError(fn) {
 }
 
 const bloqueado = (err) => codigoControladoDe(err) === ERR_ELIMINAR_BLOQUEADO
+const actualizacionBloqueada = (err) =>
+  codigoControladoDe(err) === ERR_ACTUALIZAR_BLOQUEADO
 
 async function main() {
   console.log('\n[1] eliminarRq — header filtrado por RLS ya NO es éxito falso')
@@ -157,6 +172,59 @@ async function main() {
   stub.__setDeleteResult({ data: [{ id: 'b1' }], error: null }) // RLS filtró b2
   const podadas = await podarAnclasPisoSinUso()
   check(`podadas refleja lo real (1, no 2): ${podadas}`, podadas === 1)
+
+  // ─── Auditoría 2026-11-01: HONESTIDAD DE LOS UPDATE (clase espejo) ───
+  console.log('\n[10] cambiarEstadoGuia / cambiarEstadoAtencion — 0 filas NO es éxito')
+  stub.__clear()
+  stub.__setTable('recepcion_registros', [{ id: 'r1' }, { id: 'r2' }])
+  stub.__setUpdateData({ data: [], error: null }) // RLS filtró TODAS las filas
+  const errGuia = await capturaError(() => cambiarEstadoGuia({ guiaId: 'g1' }, 'Observado'))
+  check('guía: 0 filas de vuelta → ACTUALIZAR_BLOQUEADO', actualizacionBloqueada(errGuia), JSON.stringify(errGuia))
+  stub.__setUpdateData({ data: [{ id: 'r1' }, { id: 'r2' }], error: null })
+  await cambiarEstadoGuia({ guiaId: 'g1' }, 'Observado')
+  check('guía: filas reales de vuelta → resuelve sin error', true)
+  stub.__setUpdateData({ data: [{ id: 'a1' }], error: null })
+  await cambiarEstadoAtencion('a1', 'Atendido')
+  check('atención: 1 fila de vuelta → resuelve sin error', true)
+  stub.__setUpdateData({ data: [], error: null })
+  const errAten = await capturaError(() => cambiarEstadoAtencion('a1', 'Pendiente'))
+  check('atención: 0 filas de vuelta → ACTUALIZAR_BLOQUEADO', actualizacionBloqueada(errAten), JSON.stringify(errAten))
+
+  console.log('\n[11] recalcularEstadoRq/Ral — el encabezado filtrado ya no queda viejo')
+  stub.__clear()
+  const itemRq = {
+    id: 'i1', rq_id: 'rq1', orden: 1, codigo: '118', descripcion: 'ACIDO', unidad: 'KGM',
+    cantidad: 10, cantidad_atendida: 0, usuario_atencion: '', atendido_en: '',
+  }
+  stub.__setTable('rq_atencion_items', [itemRq])
+  // La vía primaria es la RPC rq_atender_item (SECURITY DEFINER: dentro de la
+  // BD no aplica RLS) — para llegar al RESPALDO cliente (donde sí filtra la
+  // RLS) la RPC debe fallar primero.
+  stub.__setRpcResult('rq_atender_item', { data: null, error: { message: 'RPC no disponible (test)' } })
+  stub.__setUpdateResult({ data: itemRq, error: null }) // optimista: atiende OK
+  stub.__setUpdateData({ data: [], error: null }) // encabezado RQ: RLS filtró
+  const errRqHdr = await capturaError(() => atenderItemRq('i1', 5, 'Tester'))
+  check('atender RQ con encabezado filtrado → ACTUALIZAR_BLOQUEADO', actualizacionBloqueada(errRqHdr), JSON.stringify(errRqHdr))
+  stub.__setRpcResult('rq_atender_item', { data: null, error: { message: 'RPC no disponible (test)' } })
+  stub.__setUpdateResult({ data: itemRq, error: null })
+  stub.__setUpdateData({ data: [{ id: 'rq1' }], error: null })
+  await atenderItemRq('i1', 3, 'Tester')
+  check('atender RQ con encabezado real → resuelve sin error', true)
+  const itemRal = {
+    id: 'j1', ral_id: 'ra1', orden: 1, codigo: '5653', descripcion: 'FILM', unidad: 'UN',
+    cantidad: 8, cantidad_atendida: 0, usuario_atencion: '', atendido_en: '',
+  }
+  stub.__setTable('ral_items', [itemRal])
+  stub.__setRpcResult('ral_atender_item', { data: null, error: { message: 'RPC no disponible (test)' } })
+  stub.__setUpdateResult({ data: itemRal, error: null })
+  stub.__setUpdateData({ data: [], error: null })
+  const errRalHdr = await capturaError(() => atenderItemRal('j1', 2, 'Tester'))
+  check('atender RAL con encabezado filtrado → ACTUALIZAR_BLOQUEADO', actualizacionBloqueada(errRalHdr), JSON.stringify(errRalHdr))
+  stub.__setRpcResult('ral_atender_item', { data: null, error: { message: 'RPC no disponible (test)' } })
+  stub.__setUpdateResult({ data: itemRal, error: null })
+  stub.__setUpdateData({ data: [{ id: 'ra1' }], error: null })
+  await atenderItemRal('j1', 2, 'Tester')
+  check('atender RAL con encabezado real → resuelve sin error', true)
 
   // ─── Resumen ───
   console.log(`\n════════ RESULTADO: ${pasados} pasados, ${fallidos} fallidos ════════`)

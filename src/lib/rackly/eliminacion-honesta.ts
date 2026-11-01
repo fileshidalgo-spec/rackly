@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════
-// HONESTIDAD DE LOS BORRADOS — helper compartido por TODOS los módulos
-// (bug T173-00004281 generalizado; auditoría 2026-10-31, Módulos: todos)
+// HONESTIDAD DE LOS BORRADOS Y LAS ACTUALIZACIONES — helper compartido
+// por TODOS los módulos (bug T173-00004281 generalizado;
+// auditoría 2026-10-31 borrados · auditoría 2026-11-01 actualizaciones)
 // ═══════════════════════════════════════════════════════════════════
 //
 // BUG REAL (2026-10-30, recepción): la política RLS de DELETE por rol
@@ -19,7 +20,11 @@
 // mensajes consistentes) — usada por modulos.ts, rq-atencion.ts, ral.ts,
 // kardex.ts, piso/api.ts y catalogo.ts.
 
-import { ERR_ELIMINAR_BLOQUEADO, errorControlado } from '@/lib/rackly/errores'
+import {
+  ERR_ACTUALIZAR_BLOQUEADO,
+  ERR_ELIMINAR_BLOQUEADO,
+  errorControlado,
+} from '@/lib/rackly/errores'
 
 /**
  * Exige que un DELETE haya borrado AL MENOS `esperadas` filas.
@@ -40,6 +45,32 @@ export function exigirBorradas(
     throw errorControlado(ERR_ELIMINAR_BLOQUEADO, mensaje)
   }
   return borradas
+}
+
+/**
+ * Exige que un UPDATE haya tocado AL MENOS `esperadas` filas.
+ *
+ * La RLS de UPDATE (permisiva por rol o RESTRICTIVE del cuadro de
+ * permisos) TAMBIÉN filtra en silencio: HTTP 200 con 0 filas. Es la clase
+ * espejo del borrado filtrado — sin esta verificación, «cambiar estado»
+ * o «editar ítem» celebran un cambio que la BD jamás aplicó.
+ *
+ * @param data      filas devueltas por `.update(...).select(...)`
+ * @param esperadas mínimo que el flujo exige (1 = «alguna»)
+ * @param mensaje   texto para el usuario (es-PE), consistente con el flujo
+ * @returns cuántas filas se actualizaron DE VERDAD
+ * @throws errorControlado(ERR_ACTUALIZAR_BLOQUEADO) si se tocaron menos
+ */
+export function exigirActualizadas(
+  data: Array<unknown> | null,
+  esperadas: number,
+  mensaje: string
+): number {
+  const actualizadas = (data ?? []).length
+  if (actualizadas < esperadas) {
+    throw errorControlado(ERR_ACTUALIZAR_BLOQUEADO, mensaje)
+  }
+  return actualizadas
 }
 
 /**

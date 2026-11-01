@@ -10,10 +10,20 @@
  *                      para co-ubicar (regla v3.3: nunca silenciosa).
  *   · Más de 1       → NARANJA (mismo convenio que Ocupación de racks;
  *                      multi-lote marca un punto ámbar).
+ *   · Con INC        → ROSADO, se trata como OCUPADA (nunca sugerida);
+ *                      clic pide confirmación de co-ubicación igual que
+ *                      cualquier celda ocupada.
  *   · Mismo código del artículo → marcador violeta para agrupar cerca.
  *   · Torre 1 / Torre 2 con encabezado propio sobre sus columnas.
  * Sugerencia automática: la primera celda libre del piso más bajo queda
  * preseleccionada ("Sugerido").
+ *
+ * FIX 2026-11-01 (ocupación INC): el RPC ocupacion_celdas_v2 EXCLUYE los
+ * movimientos INC (codigo_inc IS NULL) — las celdas con SOLO artículos INC
+ * quedaban con stock 0 y este mapa las pintaba VERDES y las SUGERÍA como
+ * destino, aunque físicamente están bloqueadas por mercadería pendiente de
+ * disponer. Ahora se mergea el mapa INC (mismo criterio que Ocupación de
+ * racks) y una celda con INC activo se comporta como ocupada.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -43,6 +53,7 @@ import {
   etiquetaRack,
   type OcupacionCelda,
 } from '@/lib/rackly/transito'
+import { fetchIncPorUbicacion, type IncEnCelda } from '@/lib/rackly/kardex'
 
 export type SeleccionRack = {
   rack: { bloque: string; torre: string; piso: string; posicion: string }
@@ -52,9 +63,55 @@ export type SeleccionRack = {
   codigos: string[]
   /** Stock total de la celda (solo si está ocupada). */
   stockTotal: number
+  /** Artículos INC presentes (solo si la celda tiene INC). Opcional: los
+   * callers antiguos no lo usan — no rompe la firma. */
+  incItems?: IncEnCelda[]
 }
 
 const EPS = 0.0005
+
+/** ¿La celda tiene artículos INC activos (stock INC neto > 0)? */
+function tieneIncActiva(c: OcupacionCelda | undefined): boolean {
+  return !!c && c.tieneInc && c.incItems.length > 0
+}
+
+/** ¿La celda está físicamente disponible? Solo si no tiene stock normal NI INC. */
+function esCeldaLibre(c: OcupacionCelda | undefined): boolean {
+  return !c || (c.stock <= EPS && !tieneIncActiva(c))
+}
+
+/**
+ * Fusiona el mapa INC (por ubicación) sobre las celdas del RPC.
+ * Mismo criterio que OcupacionTab.buildCellMap: la celda existente gana
+ * tieneInc + incItems; la celda que solo existe en el mapa INC se añade con
+ * stock 0 y sus códigos INC (físicamente bloqueada, no libre).
+ */
+function fusionarInc(
+  celdas: OcupacionCelda[],
+  incMap: Map<string, IncEnCelda[]>,
+): OcupacionCelda[] {
+  if (incMap.size === 0) return celdas
+  const mapa = new Map<string, OcupacionCelda>()
+  for (const c of celdas) mapa.set(claveCeldaRack(c), c)
+  for (const [key, incItems] of incMap) {
+    const existente = mapa.get(key)
+    if (existente) {
+      existente.tieneInc = true
+      existente.incItems = incItems
+    } else {
+      const [bloque, torre, piso, posicion] = key.split('-')
+      mapa.set(key, {
+        bloque, torre, piso, posicion,
+        stock: 0,
+        codigos: incItems.map((i) => i.codigo),
+        lotes: incItems.length,
+        tieneInc: true,
+        incItems,
+      })
+    }
+  }
+  return Array.from(mapa.values())
+}
 
 export function MapaRackSelector({
   codigoMarca,
@@ -74,8 +131,10 @@ export function MapaRackSelector({
   const cargar = async () => {
     setCargando(true)
     try {
-      const res = await ocupacionRacks()
-      setCeldas(res ?? [])
+      // FIX 2026-11-01: ocupación (RPC v2) + mapa INC en paralelo, merge antes
+      // de pintar — sin esto las celdas solo-INC aparecían libres/sugeridas.
+      const [res, incMap] = await Promise.all([ocupacionRacks(), fetchIncPorUbicacion()])
+      setCeldas(fusionarInc(res ?? [], incMap))
     } catch (err) {
       console.error('[MapaRack] Error cargando ocupación:', err)
       toast.error('No se pudo cargar la ocupación de racks')
@@ -103,7 +162,8 @@ export function MapaRackSelector({
         for (const p of PISOS) {
           for (const pos of posicionesDeBloque(b)) {
             const c = mapa.get(claveCeldaRack({ bloque: b, torre: t, piso: p, posicion: pos }))
-            if (!c || c.stock <= EPS) {
+            // Solo se sugieren celdas REALMENTE libres: sin stock normal NI INC
+            if (esCeldaLibre(c)) {
               const r = { bloque: b, torre: t, piso: p, posicion: pos }
               setSugerida(claveCeldaRack(r))
               setBloque(b)
@@ -119,13 +179,15 @@ export function MapaRackSelector({
 
   const clickCelda = (rack: SeleccionRack['rack']) => {
     const c = mapa.get(claveCeldaRack(rack))
-    const ocupada = !!c && c.stock > EPS
+    // Ocupada = con stock normal O con artículos INC (físicamente bloqueada)
+    const ocupada = !!c && (c.stock > EPS || tieneIncActiva(c))
     const s: SeleccionRack = {
       rack,
       etiqueta: etiquetaRack(rack),
       ocupada,
       codigos: ocupada ? (c?.codigos ?? []) : [],
       stockTotal: ocupada ? c?.stock ?? 0 : 0,
+      incItems: tieneIncActiva(c) ? c?.incItems ?? [] : undefined,
     }
     setSel(s)
     setBloque(rack.bloque)
@@ -225,11 +287,14 @@ export function MapaRackSelector({
                         const rack = { bloque, torre, piso, posicion }
                         const key = claveCeldaRack(rack)
                         const c = mapa.get(key)
-                        const ocupada = !!c && c.stock > EPS
+                        const esInc = tieneIncActiva(c)
+                        // Ocupada = con stock normal O con INC (físicamente bloqueada)
+                        const ocupada = !!c && (c.stock > EPS || esInc)
                         // Colores de Ocupación de racks (mismo convenio que el módulo):
-                        // sin artículo = verde · 1 artículo = azul · más de 1 = naranja.
+                        // sin artículo = verde · 1 artículo = azul · más de 1 = naranja
+                        // · con INC = rosado (ocupada, nunca libre).
                         const nCodigos = c?.codigos.length ?? 0
-                        const multiLote = !!c && nCodigos === 1 && c.lotes > 1
+                        const multiLote = !!c && nCodigos === 1 && c.lotes > 1 && !esInc
                         const mismoCodigo = !!c && !!codigoMarca && c.codigos.includes(codigoMarca)
                         const esSel =
                           sel?.rack.bloque === rack.bloque &&
@@ -242,20 +307,24 @@ export function MapaRackSelector({
                             key={key}
                             onClick={() => clickCelda(rack)}
                             title={
-                              ocupada
-                                ? `${nCodigos > 1 ? `${nCodigos} artículos` : '1 artículo'} · ${c!.codigos.join(', ')} · stock ${formatearStock(c!.stock)}`
-                                : 'Libre — sin artículo'
+                              esInc
+                                ? `${c!.codigos.join(', ')} — INC: ${c!.incItems.map((i) => `${i.codigo} (INC: ${i.codigoInc}) ×${i.cantidad}`).join(', ')}${c!.stock > EPS ? ` · stock normal ${formatearStock(c!.stock)}` : ' · (solo INC)'}`
+                                : ocupada
+                                  ? `${nCodigos > 1 ? `${nCodigos} artículos` : '1 artículo'} · ${c!.codigos.join(', ')} · stock ${formatearStock(c!.stock)}`
+                                  : 'Libre — sin artículo'
                             }
                             className={`relative w-9 h-9 sm:w-10 sm:h-10 rounded-md text-[9px] font-bold transition-all flex flex-col items-center justify-center leading-none ${
                               esSel
                                 ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/40 scale-110 z-10 ring-2 ring-blue-300'
                                 : mismoCodigo
                                   ? 'bg-violet-200 text-violet-800 border-2 border-violet-500 hover:bg-violet-300'
-                                  : !ocupada
-                                    ? 'bg-emerald-200 text-emerald-800 hover:bg-emerald-300'
-                                    : nCodigos > 1
-                                      ? 'bg-orange-200 text-orange-900 hover:bg-orange-300'
-                                      : 'bg-blue-200 text-blue-900 hover:bg-blue-300'
+                                  : esInc
+                                    ? 'bg-rose-200 text-rose-900 hover:bg-rose-300'
+                                    : !ocupada
+                                      ? 'bg-emerald-200 text-emerald-800 hover:bg-emerald-300'
+                                      : nCodigos > 1
+                                        ? 'bg-orange-200 text-orange-900 hover:bg-orange-300'
+                                        : 'bg-blue-200 text-blue-900 hover:bg-blue-300'
                             }`}
                           >
                             {esSel && <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-blue-600 border-2 border-white" />}
@@ -289,6 +358,7 @@ export function MapaRackSelector({
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-300" /> Sin artículo</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-300" /> Con 1 artículo</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-orange-300" /> Con más de 1</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-300" /> Con INC (no libre)</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-400" /> Multi-lote (punto)</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-violet-400" /> Mismo código</span>
         <span className="inline-flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-600" /> Seleccionada</span>
@@ -332,6 +402,11 @@ export function MapaRackSelector({
                         <span className="font-semibold text-slate-900">{codigo}</span>
                       </li>
                     ))}
+                    {sel.incItems && sel.incItems.length > 0 && (
+                      <li className="text-rose-700">
+                        INC pendiente de disponer: {sel.incItems.map((i) => `${i.codigo} ×${i.cantidad}`).join(', ')}
+                      </li>
+                    )}
                     <li className="text-slate-600">Stock total en la celda: {formatearStock(sel.stockTotal)}</li>
                   </ul>
                 ) : null}

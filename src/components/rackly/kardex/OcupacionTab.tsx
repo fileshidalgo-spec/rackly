@@ -1243,12 +1243,12 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         <div className="rounded-xl border border-blue-600/30 bg-gradient-to-br from-blue-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center"><Layers className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-blue-400/80 uppercase tracking-widest">Ocupadas</p></div>
           <p className="text-2xl font-bold text-blue-300">{occupied}</p>
-          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiLote} multi-lote · {multiArt} mixtas{totalInc > 0 ? ` · ${totalInc} con INC (${occupiedInc} ocupadas + ${incOnly} solo INC)` : ''}</p>
+          <p className="text-[10px] text-blue-600/60 mt-0.5">{singleArt} simple · {multiLote} multi-lote · {multiArt} mixtas{occupiedInc > 0 ? ` · ${occupiedInc} con INC` : ''}</p>
         </div>
         <div className="rounded-xl border border-emerald-600/30 bg-gradient-to-br from-emerald-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>
           <p className="text-2xl font-bold text-emerald-300">{empty.toLocaleString()}</p>
-          <p className="text-[10px] text-sky-600/60 mt-0.5">Disponibles{incOnly > 0 ? ` · ${incOnly} con INC` : ''}</p>
+          <p className="text-[10px] text-sky-600/60 mt-0.5">Sin stock ni INC{incOnly > 0 ? ` · ${incOnly} INC aparte` : ''}</p>
         </div>
         <div className="rounded-xl border border-rose-600/30 bg-gradient-to-br from-rose-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-rose-400 to-pink-600 flex items-center justify-center"><AlertTriangle className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-rose-400/80 uppercase tracking-widest">Con INC</p></div>
@@ -1259,6 +1259,9 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center"><Building2 className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-violet-400/80 uppercase tracking-widest">Ocupación</p></div>
           <p className="text-2xl font-bold text-violet-300">{pct}<span className="text-base">%</span></p>
           <div className="mt-2 h-1.5 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(pct, 100)}%`, background: pct > 80 ? 'linear-gradient(90deg,#ef4444,#f97316)' : pct > 50 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#0ea5e9,#3b82f6)' }} /></div>
+          {/* Ecuación explícita: ocupadas + INC aparte + vacías = total.
+              Deja claro que las VACÍAS NO incluyen las celdas con INC. */}
+          <p className="text-[10px] text-violet-300/70 mt-1.5 tabular-nums">{occupied} + {incOnly} INC + {empty} = {total}</p>
         </div>
       </div>
 
@@ -1302,7 +1305,6 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
           const posiciones = posicionesDeBloque(bloque)
           const bTotal = totalPosBloque(bloque)
           const bOcup = ocupacion.filter(o => o.bloque === bloque && o.stock > 0).length
-          const bEmpty = bTotal - bOcup
           const bPct = bTotal > 0 ? Math.round((bOcup / bTotal) * 100) : 0
           return (
             <div key={bloque} className="rounded-xl border border-slate-600/30 bg-gradient-to-b from-slate-800/80 to-slate-900/80 shadow-lg overflow-hidden">
@@ -1322,7 +1324,6 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                   {torres.map(torre => {
                     const tTotal = PISOS.length * posiciones.length
                     const tOcup = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.stock > 0).length
-                    const tInc = ocupacion.filter(o => o.bloque === bloque && o.torre === torre && o.tieneInc).length
                     const halfLen = Math.ceil(posiciones.length / 2)
                     const posA = posiciones.slice(0, halfLen)
                     const posB = posiciones.slice(halfLen)

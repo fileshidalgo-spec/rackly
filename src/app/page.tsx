@@ -742,7 +742,7 @@ function RacklyApp() {
                     </div>
                     <div>
                       <CardTitle className="text-lg">Ocupación del Kardex</CardTitle>
-                      <CardDescription>Mapa visual 3D con dashboard de resumen. Verde = vacío, Azul = 1 artículo, Naranja = varios artículos.</CardDescription>
+                      <CardDescription>Mapa visual 3D con dashboard de resumen. Verde = vacío, Azul = 1 artículo, Naranja = varios artículos, Rosado = INC (no libre).</CardDescription>
                     </div>
                   </div>
                 </CardHeader>

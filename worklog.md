@@ -653,3 +653,23 @@ Stage Summary:
 - 4 archivos, +97/−21: MapaRackSelector.tsx (INC nunca libre ni sugerido), OcupacionTab.tsx (textos + ecuación + limpieza), page.tsx (leyenda), version-sello.ts (auto)
 - Respuesta al reporte: los 75 libres NO incluyen espacios con INC (verificado fila a fila en DB); el resumen era correcto pero su texto inducía a la duda, y el MISMO criterio sí estaba mal en el mapa de Tránsito — ahí sí se podía elegir/sugerir una celda con INC como destino; ambos quedan alineados con el convenio «INC = ocupada, no libre»
 - Deploy: 0f09ca2 en producción (rackly.pages.dev, 2026-11-01 14:54 UTC)
+
+---
+Task ID: 6 (pedido 2026-11-02 — Racks, trace 1a19c8089fb5fba5)
+Agent: Main Agent
+Task: «los INC les sale con color verde en vez de rosado» — causa raíz (consulta INC que falla) corregida en los 2 mapas que la comparten
+
+Work Log:
+- 1.1/1.2 (averiguación): la regla de render es y era correcta (isInc → rosado). El verde era REAL e intermitente: el mapa INC se consulta APARTE (fetchIncPorUbicacion) y al fallar devuelve un mapa vacío con _error=true (no lanza) → el merge no aportaba nada y las celdas solo-INC caían a la rama «Vacío» (verde). Segunda vía: el fallback RPC v1 de Ocupación hacía setOcupacion(celdas) SIN fusionar INC. Con el polling de 10 s, cualquier fallo transitorio de red/BD («tema de internet») pintaba el mapa sin INC hasta el siguiente ciclo, y el toast que avisaba se perdía
+- 2 (causa): el estado «INC desconocido» se representaba como «Vacío» — un verde que PROMETE «sin stock ni INC» cuando en realidad no se sabía
+- 3 (repetición): MapaRackSelector (Tránsito → transferencias) tenía el MISMO hueco vía _error: tras el fix de Task 5 seguía fusionando bien en el camino normal, pero con consulta INC caída las celdas solo-INC volvían a «Libre» y la sugerencia automática podía preseleccionarlas como destino. Verificados y a salvo: MapaPisoSelector (RPC piso netea INC como ocupado), leyenda de Racks (texto estático), StockIncTab (lista, no mapa)
+- 4/5 (procedimiento sin conflictos): 100% frontend, sin cambios de RPC ni de firmas — (a) lib compartida mapa-inc.ts: fusionarIncEnCeldas (UNA implementación del merge para los dos mapas, reemplaza buildCellMap + fusionarInc duplicadas) y fetchIncPorUbicacionConReintento (1 reintento automático a ~800 ms absorbe los fallos transitorios dentro del mismo ciclo; _truncated no se reintenta); (b) si aún así falla, honestidad en vez de mentira: banner ámbar persistente + celdas «vacío» en gris neutro con tooltip «INC desconocido» (nunca verde), ecuación y contadores INC marcados «no verificado»; (c) MapaRackSelector en modo «INC no verificado»: SIN sugerencia automática, tooltip «¿Libre? — datos INC no disponibles» y confirmación obligatoria al elegir cualquier celda (diálogo adaptado: «Estado INC no verificado» / «Sí, usar de todos modos»)
+- 6/7 (experto/ordenado): eliminadas las dos copias del merge; clave canónica única (claveCelda = claveCeldaRack); incError se setea/cleara en TODOS los caminos (RPC v2, client-side, fallback v1); dataSource muestra «· INC falló»; banner se limpia solo al ciclo siguiente exitoso
+- 8 (accesos): E2E en producción con cuenta propia (login → Racks → Ocupación): Total 1,200 · Ocupadas 1077 · Vacías 83 · Con INC 41 · ecuación «1077 + 40 INC + 83 = 1200» visible, SIN banner (consulta INC OK con reintento activo); 40/40 celdas solo-INC pintadas rosado (clase rose verificada por DOM), tooltips con código/codigoInc/cantidad; console errors = 0, page errors = 0
+- 9 (Módulos): Racks/Ocupación + Tránsito (MapaRackSelector) — transversal: mapa-inc.ts compartido
+- QA: tsc 0 · eslint 0 · 40/40 suites (nueva test_mapa_inc: 8 checks) · build OK · push 03a93af · producción version.json = 202611021400-03a93af
+
+Stage Summary:
+- 5 archivos, +318/−96: mapa-inc.ts (nuevo, merge único + reintento), OcupacionTab.tsx (fallback con merge + banner + celdas grises honestas), MapaRackSelector.tsx (modo INC no verificado), test_mapa_inc.js (nuevo), run_all_tests.sh (registro)
+- Respuesta al reporte: no era «internet del usuario» ni un color mal definido — era la consulta INC cayendo de forma intermitente y el mapa pintando «Vacío» lo que no podía verificar; ahora el fallo transitorio se reintenta solo y, si persiste, la app lo DICE (banner) y no pinta libres las celdas que no puede verificar
+- Deploy: 03a93af en producción (rackly.pages.dev, 2026-11-02 14:00 UTC)

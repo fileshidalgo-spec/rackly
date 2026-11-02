@@ -5,12 +5,10 @@ import {
   fetchOcupacionCeldas,
   fetchOcupacionCeldasV2,
   fetchMovimientos,
-  fetchIncPorUbicacion,
   stockEnUbicacion,
   type Movimiento,
   type StockEnUbicacion,
   type OcupacionCelda,
-  type IncEnCelda,
   addMovimiento,
   trasladarMovimiento,
   editarLoteVencimientoRacks,
@@ -36,6 +34,7 @@ import {
   type RotuloIngreso,
 } from '@/lib/rackly/ingreso-qr'
 import { parsearPayloadQR } from '@/lib/rackly/qr-rotulo'
+import { fusionarIncEnCeldas, fetchIncPorUbicacionConReintento } from '@/lib/rackly/mapa-inc'
 import { LectorQR } from '@/components/rackly/transito/LectorQR'
 import { leerContextoSalidaRq, detectarRqParaSalida, type ContextoSalidaRq, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
 import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
@@ -122,7 +121,8 @@ function codigosConMultiplesLotes(stock: StockEnUbicacion[]): Set<string> {
 // Calcula ocupación desde movimientos — stock POR CÓDIGO (no por lote).
 // f_vencimiento es SOLO para FEFO (ordenamiento), NO para particionar stock.
 // IMPORTANTE: Los movimientos INC se EXCLUYEN del stock normal.
-// La detección INC se hace por separado con fetchIncPorUbicacion().
+// La detección INC se hace por separado (fetchIncPorUbicacionConReintento, mapa-inc.ts)
+// y se fusiona con fusionarIncEnCeldas.
 function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
   // Mapa: ubicacion_key → (codigo → stock)
   const cellMap = new Map<string, Map<string, number>>()
@@ -336,27 +336,11 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   const [incLote, setIncLote] = useState('')
   const [incSinLote, setIncSinLote] = useState(false)
 
-  // ── Helper: construir celdaMap con merge de INC ──
-  function buildCellMap(
-    celdas: OcupacionCelda[],
-    incMap: Map<string, IncEnCelda[]>
-  ): Map<string, OcupacionCelda> {
-    const map = new Map<string, OcupacionCelda>()
-    for (const cell of celdas) {
-      map.set(`${cell.bloque}-${cell.torre}-${cell.piso}-${cell.posicion}`, cell)
-    }
-    for (const [key, incItems] of incMap) {
-      const existing = map.get(key)
-      if (existing) {
-        existing.tieneInc = true
-        existing.incItems = incItems
-      } else {
-        const [bloque, torre, piso, posicion] = key.split('-')
-        map.set(key, { bloque, torre, piso, posicion, stock: 0, codigos: incItems.map(i => i.codigo), lotes: incItems.length, tieneInc: true, incItems })
-      }
-    }
-    return map
-  }
+  // FIX 2026-11-02 (trace 1a19c8089fb5fba5): estado honesto de la consulta INC.
+  // true mientras el mapa INC no pudo consultarse (fallo de red/BD): las celdas
+  // «Vacío» pueden esconder INC → se muestran neutras + banner, nunca verdes
+  // con la promesa «sin stock ni INC».
+  const [incError, setIncError] = useState(false)
 
   // ── Data refresh ──
   // Estrategia: RPC v2 (rápido) → verificar que tenga TODOS los bloques
@@ -367,16 +351,21 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
   // varias corrían en paralelo y la más vieja podía pisar al estado final.
   const refreshInFlightRef = useRef(false)
   const doRefreshData = useCallback(async () => {
-    const incPromise = fetchIncPorUbicacion()
-    let incMap: Awaited<typeof incPromise>
+    // FIX 2026-11-02 (trace 1a19c8089fb5fba5): (a) la consulta INC lleva
+    // reintento automático — un fallo transitorio de red ya no deja el mapa
+    // pintado sin INC (celdas INC en verde) hasta el siguiente ciclo;
+    // (b) el fallback RPC v1 TAMBIÉN fusiona el mapa INC (v1 no trae INC).
+    const incPromise = fetchIncPorUbicacionConReintento()
+    let incMap: Awaited<typeof incPromise> | undefined
 
     try {
       // ── INTENTO 1: RPC v2 + verificación de completitud ──
       const [rpcCeldas, incResult] = await Promise.all([fetchOcupacionCeldasV2(), incPromise])
       incMap = incResult
       if (!mountedRef.current) return
+      setIncError(!!incMap._error)
       if (incMap._error) {
-        toast.error('No se pudo cargar información INC. Los datos INC pueden estar incompletos.')
+        console.warn('[Ocupacion] Datos INC no disponibles tras reintento — las celdas vacías se muestran como INC desconocido')
       } else if (incMap._truncated) {
         toast.warning('Muchos movimientos INC: el mapa puede mostrar datos parciales.', { duration: 6000 })
       }
@@ -388,9 +377,8 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
 
         if (missingBlocks.length === 0) {
           // RPC completo → usarlo (el camino más rápido)
-          setDataSource('RPC v2 (' + rpcCeldas.length + ')')
-          const celdaMap = buildCellMap(rpcCeldas, incMap)
-          setOcupacion(Array.from(celdaMap.values()))
+          setDataSource('RPC v2 (' + rpcCeldas.length + ')' + (incMap._error ? ' · INC falló' : ''))
+          setOcupacion(fusionarIncEnCeldas(rpcCeldas, incMap))
           return
         }
 
@@ -404,16 +392,18 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
       if (!mountedRef.current) return
 
       const celdas = calcularOcupacion(movs)
-      setDataSource('Client (' + movs.length + ' movs)')
-      const celdaMap = buildCellMap(celdas, incMap)
-      setOcupacion(Array.from(celdaMap.values()))
+      setDataSource('Client (' + movs.length + ' movs)' + (incMap._error ? ' · INC falló' : ''))
+      setOcupacion(fusionarIncEnCeldas(celdas, incMap))
     } catch {
-      // ── FALLBACK: RPC v1 legacy ──
+      // ── FALLBACK: RPC v1 legacy + MERGE INC (v1 no trae INC — sin el merge
+      // todas las celdas solo-INC se pintaban «Vacío» verde) ──
       console.warn('[Ocupacion] Client-side falló, fallback RPC v1 legacy')
       setDataSource('RPC v1 legacy')
       try {
+        if (!incMap) incMap = await incPromise
+        if (mountedRef.current) setIncError(!!incMap._error)
         const celdas = await fetchOcupacionCeldas()
-        if (mountedRef.current) setOcupacion(celdas)
+        if (mountedRef.current) setOcupacion(fusionarIncEnCeldas(celdas, incMap))
       } catch (err: unknown) {
         const msg = mensajeError(err)
         if (mountedRef.current) toast.error('Error al cargar ocupación', { description: msg })
@@ -1248,22 +1238,36 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
         <div className="rounded-xl border border-emerald-600/30 bg-gradient-to-br from-emerald-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center"><Activity className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest">Vacías</p></div>
           <p className="text-2xl font-bold text-emerald-300">{empty.toLocaleString()}</p>
-          <p className="text-[10px] text-sky-600/60 mt-0.5">Sin stock ni INC{incOnly > 0 ? ` · ${incOnly} INC aparte` : ''}</p>
+          <p className="text-[10px] text-sky-600/60 mt-0.5">{incError ? 'Sin stock · INC no verificado' : <>Sin stock ni INC{incOnly > 0 ? ` · ${incOnly} INC aparte` : ''}</>}</p>
         </div>
         <div className="rounded-xl border border-rose-600/30 bg-gradient-to-br from-rose-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-rose-400 to-pink-600 flex items-center justify-center"><AlertTriangle className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-rose-400/80 uppercase tracking-widest">Con INC</p></div>
-          <p className="text-2xl font-bold text-rose-300">{totalInc}</p>
-          <p className="text-[10px] text-rose-600/60 mt-0.5">{occupiedInc > 0 ? `${occupiedInc} con stock` : ''}{occupiedInc > 0 && incOnly > 0 ? ' · ' : ''}{incOnly > 0 ? `${incOnly} solo INC` : ''}{totalInc === 0 ? 'Sin INC' : ''}</p>
+          <p className="text-2xl font-bold text-rose-300">{incError ? '—' : totalInc}</p>
+          <p className="text-[10px] text-rose-600/60 mt-0.5">{incError ? 'Dato no disponible' : <>{occupiedInc > 0 ? `${occupiedInc} con stock` : ''}{occupiedInc > 0 && incOnly > 0 ? ' · ' : ''}{incOnly > 0 ? `${incOnly} solo INC` : ''}{totalInc === 0 ? 'Sin INC' : ''}</>}</p>
         </div>
         <div className="rounded-xl border border-violet-600/30 bg-gradient-to-br from-violet-950/40 to-slate-900 p-4 shadow-md">
           <div className="flex items-center gap-2 mb-2"><div className="w-6 h-6 rounded-lg bg-gradient-to-br from-violet-400 to-violet-600 flex items-center justify-center"><Building2 className="w-3 h-3 text-white" /></div><p className="text-[10px] font-semibold text-violet-400/80 uppercase tracking-widest">Ocupación</p></div>
           <p className="text-2xl font-bold text-violet-300">{pct}<span className="text-base">%</span></p>
           <div className="mt-2 h-1.5 rounded-full bg-slate-700/60 overflow-hidden"><div className="h-full rounded-full transition-all duration-700" style={{ width: `${Math.min(pct, 100)}%`, background: pct > 80 ? 'linear-gradient(90deg,#ef4444,#f97316)' : pct > 50 ? 'linear-gradient(90deg,#f59e0b,#f97316)' : 'linear-gradient(90deg,#0ea5e9,#3b82f6)' }} /></div>
           {/* Ecuación explícita: ocupadas + INC aparte + vacías = total.
-              Deja claro que las VACÍAS NO incluyen las celdas con INC. */}
-          <p className="text-[10px] text-violet-300/70 mt-1.5 tabular-nums">{occupied} + {incOnly} INC + {empty} = {total}</p>
+              Deja claro que las VACÍAS NO incluyen las celdas con INC.
+              Oculta si la consulta INC falló: el conteo sería falso. */}
+          <p className="text-[10px] text-violet-300/70 mt-1.5 tabular-nums">{incError ? 'INC no verificado' : `${occupied} + ${incOnly} INC + ${empty} = ${total}`}</p>
         </div>
       </div>
+
+      {/* Banner honesto: consulta INC fallida (FIX 2026-11-02, trace 1a19c8089fb5fba5).
+          Mientras dure, las celdas «Vacío» se muestran neutras (INC desconocido)
+          porque podrían estar bloqueadas por mercadería INC pendiente de disponer. */}
+      {incError && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-amber-400">Datos INC no disponibles</p>
+            <p className="text-[11px] text-amber-300/80 mt-0.5">No se pudo consultar qué celdas tienen mercadería INC (fallo de conexión). Las celdas se muestran grises hasta verificar; el mapa se actualiza solo cada 10 segundos.</p>
+          </div>
+        </div>
+      )}
 
       {/* ═══ RESUMEN POR BLOQUE ═══ */}
       <div className="rounded-xl border border-slate-600/30 bg-slate-800/60 shadow-md overflow-hidden">
@@ -1357,10 +1361,14 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                                     if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
                                     else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+                                    // FIX 2026-11-02: con la consulta INC caída, «vacío» no está
+                                    // verificado — gris neutro en vez de verde (no promete «libre»).
+                                    else if (incError) cls += 'bg-slate-700/60 text-slate-400 shadow-[0_1px_2px_rgba(15,23,42,0.2)] border-slate-500/25 h-11'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
                                     let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
                                     if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
                                     else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+                                    else if (incError) { title += ' · INC desconocido (fallo de datos)' }
                                     else { title += ' · Vacío' }
                                     const firstInc = isInc ? cell!.incItems[0] : null
                                     return (
@@ -1390,10 +1398,14 @@ export function OcupacionTab({ targetUbicacion, onVolverAStock, volverLabel }: {
                                     if (isInc) cls += 'bg-gradient-to-br from-rose-400 to-pink-600 text-white shadow-[0_1px_3px_rgba(244,63,94,0.3)] hover:shadow-[0_2px_8px_rgba(244,63,94,0.5)] hover:scale-105 active:scale-95 border-rose-300/30 min-h-[50px]'
                                     else if (isMultiArt) cls += 'bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-[0_1px_3px_rgba(245,158,11,0.25)] hover:shadow-[0_2px_6px_rgba(245,158,11,0.35)] hover:scale-105 active:scale-95 border-amber-300/25 h-11'
                                     else if (isOcc) cls += 'bg-gradient-to-br from-blue-400 to-blue-600 text-white shadow-[0_1px_3px_rgba(59,130,246,0.25)] hover:shadow-[0_2px_6px_rgba(59,130,246,0.35)] hover:scale-105 active:scale-95 border-blue-300/25 h-11'
+                                    // FIX 2026-11-02: con la consulta INC caída, «vacío» no está
+                                    // verificado — gris neutro en vez de verde (no promete «libre»).
+                                    else if (incError) cls += 'bg-slate-700/60 text-slate-400 shadow-[0_1px_2px_rgba(15,23,42,0.2)] border-slate-500/25 h-11'
                                     else cls += 'bg-gradient-to-br from-emerald-400/60 to-green-600/60 text-white/60 shadow-[0_1px_2px_rgba(16,185,129,0.1)] hover:shadow-[0_2px_4px_rgba(16,185,129,0.2)] hover:from-emerald-400 hover:to-green-500 hover:text-white hover:scale-105 active:scale-95 border-emerald-400/15 h-11'
                                     let title = `B${bloque}-T${torre}-P${piso}-Pos${pos}`
                                     if (isInc) { const ii = cell!.incItems.map(i => `${i.codigo} - ${i.descripcion || 'Sin descripción'} (INC: ${i.codigoInc}) Cantidad: ${i.cantidad}`).join('\n'); title += `\nINC:\n${ii}` + (isOcc ? `\nStock normal: ${cell!.stock}` : '(Solo INC)') }
                                     else if (isOcc) { title += ` · Stock: ${cell!.stock}${isMultiArt ? ` · ${cell!.codigos.length} artículos` : ''}${isMultiLote ? ` · ${cell!.lotes} lotes` : ''}` }
+                                    else if (incError) { title += ' · INC desconocido (fallo de datos)' }
                                     else { title += ' · Vacío' }
                                     const firstInc = isInc ? cell!.incItems[0] : null
                                     return (

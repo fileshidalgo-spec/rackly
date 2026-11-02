@@ -24,6 +24,13 @@
  * destino, aunque físicamente están bloqueadas por mercadería pendiente de
  * disponer. Ahora se mergea el mapa INC (mismo criterio que Ocupación de
  * racks) y una celda con INC activo se comporta como ocupada.
+ *
+ * FIX 2026-11-02 (trace 1a19c8089fb5fba5): si la CONSULTA INC falla (red/BD),
+ * antes el merge llegaba vacío y las celdas solo-INC volvían a pintarse
+ * «Libre» y a sugerirse como destino. Ahora la consulta lleva reintento
+ * automático y, si aún así falla, el mapa entra en modo «INC no verificado»:
+ * banner ámbar, SIN sugerencia automática y con confirmación obligatoria al
+ * elegir cualquier celda que parezca libre.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -39,7 +46,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { CheckCircle2, Loader2, MapPin, RefreshCw, Sparkles } from 'lucide-react'
+import { CheckCircle2, AlertTriangle, Loader2, MapPin, RefreshCw, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   BLOQUES,
@@ -53,7 +60,8 @@ import {
   etiquetaRack,
   type OcupacionCelda,
 } from '@/lib/rackly/transito'
-import { fetchIncPorUbicacion, type IncEnCelda } from '@/lib/rackly/kardex'
+import { fetchIncPorUbicacionConReintento, fusionarIncEnCeldas } from '@/lib/rackly/mapa-inc'
+import type { IncEnCelda } from '@/lib/rackly/kardex'
 
 export type SeleccionRack = {
   rack: { bloque: string; torre: string; piso: string; posicion: string }
@@ -75,44 +83,6 @@ function tieneIncActiva(c: OcupacionCelda | undefined): boolean {
   return !!c && c.tieneInc && c.incItems.length > 0
 }
 
-/** ¿La celda está físicamente disponible? Solo si no tiene stock normal NI INC. */
-function esCeldaLibre(c: OcupacionCelda | undefined): boolean {
-  return !c || (c.stock <= EPS && !tieneIncActiva(c))
-}
-
-/**
- * Fusiona el mapa INC (por ubicación) sobre las celdas del RPC.
- * Mismo criterio que OcupacionTab.buildCellMap: la celda existente gana
- * tieneInc + incItems; la celda que solo existe en el mapa INC se añade con
- * stock 0 y sus códigos INC (físicamente bloqueada, no libre).
- */
-function fusionarInc(
-  celdas: OcupacionCelda[],
-  incMap: Map<string, IncEnCelda[]>,
-): OcupacionCelda[] {
-  if (incMap.size === 0) return celdas
-  const mapa = new Map<string, OcupacionCelda>()
-  for (const c of celdas) mapa.set(claveCeldaRack(c), c)
-  for (const [key, incItems] of incMap) {
-    const existente = mapa.get(key)
-    if (existente) {
-      existente.tieneInc = true
-      existente.incItems = incItems
-    } else {
-      const [bloque, torre, piso, posicion] = key.split('-')
-      mapa.set(key, {
-        bloque, torre, piso, posicion,
-        stock: 0,
-        codigos: incItems.map((i) => i.codigo),
-        lotes: incItems.length,
-        tieneInc: true,
-        incItems,
-      })
-    }
-  }
-  return Array.from(mapa.values())
-}
-
 export function MapaRackSelector({
   codigoMarca,
   onConfirm,
@@ -123,6 +93,8 @@ export function MapaRackSelector({
 }) {
   const [celdas, setCeldas] = useState<OcupacionCelda[] | null>(null)
   const [cargando, setCargando] = useState(true)
+  // FIX 2026-11-02: consulta INC caída — modo «INC no verificado».
+  const [incError, setIncError] = useState(false)
   const [bloque, setBloque] = useState<string>('1')
   const [sel, setSel] = useState<SeleccionRack | null>(null)
   const [sugerida, setSugerida] = useState<string | null>(null)
@@ -133,8 +105,13 @@ export function MapaRackSelector({
     try {
       // FIX 2026-11-01: ocupación (RPC v2) + mapa INC en paralelo, merge antes
       // de pintar — sin esto las celdas solo-INC aparecían libres/sugeridas.
-      const [res, incMap] = await Promise.all([ocupacionRacks(), fetchIncPorUbicacion()])
-      setCeldas(fusionarInc(res ?? [], incMap))
+      // FIX 2026-11-02: la consulta INC lleva reintento automático (fallos
+      // transitorios de red) y si aún así falla se activa el modo «INC no
+      // verificado» en vez de pintar celdas INC como libres.
+      const [res, incMap] = await Promise.all([ocupacionRacks(), fetchIncPorUbicacionConReintento()])
+      setIncError(!!incMap._error)
+      if (incMap._error) console.warn('[MapaRack] Datos INC no disponibles tras reintento — no se sugieren celdas y se exige confirmación')
+      setCeldas(fusionarIncEnCeldas(res ?? [], incMap))
     } catch (err) {
       console.error('[MapaRack] Error cargando ocupación:', err)
       toast.error('No se pudo cargar la ocupación de racks')
@@ -156,14 +133,16 @@ export function MapaRackSelector({
 
   // Sugerencia: primera celda libre (bloque asc, torre 1ª, piso más bajo, posición 1ª)
   useEffect(() => {
-    if (!celdas || sugerida) return
+    // FIX 2026-11-02: con la consulta INC caída NO se sugiere ninguna celda —
+    // una celda que parece libre podría estar bloqueada por INC.
+    if (!celdas || sugerida || incError) return
     for (const b of BLOQUES) {
       for (const t of torresDeBloque(b)) {
         for (const p of PISOS) {
           for (const pos of posicionesDeBloque(b)) {
             const c = mapa.get(claveCeldaRack({ bloque: b, torre: t, piso: p, posicion: pos }))
             // Solo se sugieren celdas REALMENTE libres: sin stock normal NI INC
-            if (esCeldaLibre(c)) {
+            if (!c || (c.stock <= EPS && !tieneIncActiva(c))) {
               const r = { bloque: b, torre: t, piso: p, posicion: pos }
               setSugerida(claveCeldaRack(r))
               setBloque(b)
@@ -175,7 +154,7 @@ export function MapaRackSelector({
       }
     }
     // Sin celdas libres: no se sugiere (co-ubicar sigue siendo posible)
-  }, [celdas, mapa, sugerida])
+  }, [celdas, mapa, sugerida, incError])
 
   const clickCelda = (rack: SeleccionRack['rack']) => {
     const c = mapa.get(claveCeldaRack(rack))
@@ -191,12 +170,14 @@ export function MapaRackSelector({
     }
     setSel(s)
     setBloque(rack.bloque)
-    if (ocupada) setPedirConfirmCoUbicar(true)
+    // FIX 2026-11-02: con INC no verificado, incluso una celda «libre» exige
+    // confirmación (podría estar bloqueada por mercadería INC invisible).
+    if (ocupada || incError) setPedirConfirmCoUbicar(true)
   }
 
   const confirmar = () => {
     if (!sel) return
-    if (sel.ocupada) {
+    if (sel.ocupada || incError) {
       setPedirConfirmCoUbicar(true)
       return
     }
@@ -236,6 +217,19 @@ export function MapaRackSelector({
           </button>
         ))}
       </div>
+
+      {/* FIX 2026-11-02: banner honesto cuando la consulta INC falla. */}
+      {incError && !cargando && (
+        <div className="rounded-lg border border-amber-400 bg-amber-50 p-3 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-amber-800">Datos INC no disponibles</p>
+            <p className="text-[11px] text-amber-700 mt-0.5">
+              No se pudo consultar qué celdas tienen mercadería INC (fallo de conexión). No se sugiere ninguna celda y al elegir cualquiera se pedirá confirmación. Toca «Actualizar» para reintentar.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Grid del bloque: filas = pisos (4 arriba → 1 abajo), columnas = torre×posición.
           Encabezado TORRE N alineado con cada grupo de columnas (v2 2026-10-20:
@@ -311,7 +305,9 @@ export function MapaRackSelector({
                                 ? `${c!.codigos.join(', ')} — INC: ${c!.incItems.map((i) => `${i.codigo} (INC: ${i.codigoInc}) ×${i.cantidad}`).join(', ')}${c!.stock > EPS ? ` · stock normal ${formatearStock(c!.stock)}` : ' · (solo INC)'}`
                                 : ocupada
                                   ? `${nCodigos > 1 ? `${nCodigos} artículos` : '1 artículo'} · ${c!.codigos.join(', ')} · stock ${formatearStock(c!.stock)}`
-                                  : 'Libre — sin artículo'
+                                  : incError
+                                    ? '¿Libre? — datos INC no disponibles'
+                                    : 'Libre — sin artículo'
                             }
                             className={`relative w-9 h-9 sm:w-10 sm:h-10 rounded-md text-[9px] font-bold transition-all flex flex-col items-center justify-center leading-none ${
                               esSel
@@ -387,15 +383,16 @@ export function MapaRackSelector({
         </div>
       )}
 
-      {/* Confirmación de co-ubicación (regla: ocupada SIEMPRE pide confirmación) */}
+      {/* Confirmación de co-ubicación (regla: ocupada SIEMPRE pide confirmación;
+          FIX 2026-11-02: con INC no verificado TAMBIÉN se pide confirmación) */}
       <AlertDialog open={pedirConfirmCoUbicar} onOpenChange={setPedirConfirmCoUbicar}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Esta posición ya tiene stock</AlertDialogTitle>
+            <AlertDialogTitle>{sel?.ocupada ? 'Esta posición ya tiene stock' : 'Estado INC no verificado'}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 <p className="font-semibold text-slate-900">{sel?.etiqueta}</p>
-                {sel && sel.codigos.length > 0 ? (
+                {sel && sel.ocupada && sel.codigos.length > 0 ? (
                   <ul className="list-disc pl-5 space-y-0.5">
                     {sel.codigos.map((codigo) => (
                       <li key={codigo}>
@@ -409,8 +406,12 @@ export function MapaRackSelector({
                     )}
                     <li className="text-slate-600">Stock total en la celda: {formatearStock(sel.stockTotal)}</li>
                   </ul>
-                ) : null}
-                <p>¿Deseas co-ubicar aquí tu mercadería junto a lo existente?</p>
+                ) : (
+                  <p>
+                    Los datos INC no están disponibles en este momento (fallo de conexión). Esta celda parece libre, pero podría tener mercadería INC pendiente de disponer. Si confirmas, se registrará el traslado a esta ubicación.
+                  </p>
+                )}
+                <p>{sel?.ocupada ? '¿Deseas co-ubicar aquí tu mercadería junto a lo existente?' : '¿Deseas usarla de todos modos?'}</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -423,7 +424,7 @@ export function MapaRackSelector({
                 if (sel) onConfirm(sel)
               }}
             >
-              Sí, co-ubicar aquí
+              {sel?.ocupada ? 'Sí, co-ubicar aquí' : 'Sí, usar de todos modos'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

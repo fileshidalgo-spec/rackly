@@ -1,4 +1,24 @@
 ---
+Task ID: rendimiento-incremental-20261104
+Agent: Main Agent
+Task: «La app demora mucho en procesar» — auditoría de rendimiento + salud integral (Módulos: todos) — 9 pasos
+
+Work Log (1.1–9):
+- 1.1 (hallazgo, medido en producción): fetchMovimientos() descarga la TABLA COMPLETA de movimientos — 28,130 filas / 14.5 MB / 21.0 s medidos en red real — en el montaje de FEFO/Traslado/Stock/Movimientos/Descarga y en el fallback client-side de Ocupación; el hook realtime re-descargaba TODO tras cada escritura de CUALQUIER usuario (realtime y pollCheck con fuerza:true). Reporte Atención: 0.56 MB / 2.7 s en CADA montaje del dashboard. BD sana: movimientos 10 MB (372 B/fila), índices correctos (codigo, f_modificacion DESC, ubicacion, codigo_inc parcial), funciones RLS STABLE y SELECT plegados a `true`; RPCs server-side vivos (ocupacion_celdas_v2 2.44 s, inc_por_ubicacion 0.46 s, stock_por_codigo_kardex 0.41 s); 788K seq_scans de movimientos = COUNT/DESCARGAS del cliente, no RLS
+- 2 (causa): arquitectura de stock calculado en cliente sobre dataset completo + sincronización por re-descarga total por evento; con almacén activo, N usuarios conectados × cada escritura = 14.5 MB por cambio por usuario
+- 3 (repetición): el mismo patrón alimenta 5 pestañas vía el hook singleton (punto único de estrangulamiento) + el dashboard de Atención re-descargaba 3 tablas en cada montaje y exportación
+- 4/5 (procedimiento sin conflictos): sincronización INCREMENTAL en el punto único (useMovimientosRealtime) — las 5 pestañas NO cambian (siguen recibiendo Movimiento[] con el mismo orden global). Realtime aplica el payload directo (INSERT/UPDATE upsert por id, DELETE por id — replica identity default); pollCheck usa fetch incremental por marca de agua (f_modificacion > máx del caché, índice idx_movimientos_fmod); la descarga COMPLETA queda como auto-reparación cuando el conteo local ≠ BD (verificarYAutoReparar tras cada delta + en cada verificación de poll). Dashboard Atención: caché TTL 60 s con {forzar:true} solo desde el botón «Actualizar»
+- 6/7 (código experto y ordenado): NUEVO src/lib/rackly/movs-sync.ts (motor puro: fusionarDeltas/eliminarPorIds/ordenarMovs/marcaAgua/resumenDelta — sin I/O, testeable); kardex.ts: descargaPaginadaMovs() compartida por fetchMovimientos y NUEVO fetchMovimientosDesde(desdeFmod) + movimientoDesdeFila exportado; hook reestructurado (cola coalescida 150 ms, aplicadores, auto-verificación); atencion-reporte.ts: cacheReporte TTL
+- 8 (accesos + QA): 41/41 suites (39 previas + NUEVA test_movs_sync_delta con invariante «cadena de deltas ≡ dataset completo», 15 checks) · tsc 0 · eslint 0 · build OK · push bbc8369 · deploy verificado v=202611041709-bbc8369 · delta medido en producción: 1.23 s / 0 MB vs 21.0 s / 14.5 MB (×17) · E2E navegador (admin Miguel Hidalgo): login OK, Racks 9 pestañas, FEFO con 1,324 lotes reales en 5 rangos de vencimiento, Dashboard Atención con datos, 0 errores de consola
+- 9 (módulos): Racks (FEFO/Traslado/Stock/Movimientos/Descarga/Ocupación-fallback), Atención (Dashboard/Excel), infra compartida (hook singleton) — Recepción/Tránsito/Piso/Usuarios sin cambios (no consumen el dataset)
+
+Stage Summary:
+- Re-sincronización tras cada cambio: 21.0 s / 14.5 MB → 1.23 s / ~0 MB (delta 0 filas) o ~1.5 s / ≤0.3 MB (delta ≤500 filas) — ×17 más rápido; la primera carga de sesión sigue igual (una sola vez, caché de sesión ya existente)
+- Auto-reparación: cualquier deriva del caché (borrados sin WS, delta truncado) degrada a descarga completa verificada — el dataset jamás queda stale silenciosamente
+- Salud integral verificada: BD índices OK · RLS STABLE OK · RPCs server-side OK · 0 errores de consola E2E · 41/41 suites
+- Sin regresiones: las 5 pestañas conservan su lógica íntegra (contrato de orden global preservado por movs-sync)
+
+---
 Task ID: verificacion-accesos-20261104-b
 Agent: Main Agent
 Task: Restauración del acceso Supabase MAPI con nuevo token (entregado por el usuario)

@@ -1,4 +1,19 @@
 ---
+Task ID: verificacion-accesos-20261104-b
+Agent: Main Agent
+Task: Restauración del acceso Supabase MAPI con nuevo token (entregado por el usuario)
+
+Work Log:
+- Nuevo sbp_ token probado contra la API real: GET /v1/projects → 200 (proyecto «Rackly» owjryvcr…, estado ACTIVE_HEALTHY); SQL real → 200
+- scripts/sb_config.py actualizado con el nuevo token; SQL de diagnóstico verificado: movimientos=28,130 · profiles=30 · catalogo=1,106
+- scripts/verifica_accesos.py: query de prueba corregida (usuarios→profiles; la tabla se llama profiles en el esquema)
+- Nota: endpoint /projects/{ref}/health devuelve 400 (parámetros no soportados por esta versión de API) — no afecta: el camino real de diagnósticos es la query SQL, que responde
+
+Stage Summary:
+- Los TRES accesos quedan operativos: GitHub push ✅ · Cloudflare ACTIVE ✅ · Supabase MAPI + SQL ✅
+- Cadena completa de despliegue y diagnóstico restaurada; app en producción sin cambios (v=202611021408-88c25a7)
+
+---
 Task ID: verificacion-accesos-20261104
 Agent: Main Agent
 Task: Verificación de accesos GitHub / Cloudflare / Supabase (pedido del usuario) — 9 pasos

@@ -1,4 +1,24 @@
 ---
+Task ID: verificacion-accesos-20261104
+Agent: Main Agent
+Task: Verificación de accesos GitHub / Cloudflare / Supabase (pedido del usuario) — 9 pasos
+
+Work Log (1.1–9):
+- 1.1 (hallazgo): el PAT en el remote de git (ghp_CqrC…AJ7N) estaba MUERTO — push «Invalid username or token» (la lectura funcionaba solo por fallback anónimo del repo público); los 4 tokens Supabase MAPI guardados en scripts/ (incl. sb_config.py sbp_fc54…9e2e) devuelven 401 «Invalid access token»; el script audit_accesos.py daba falsos 401 de Cloudflare porque usa /user/tokens/verify (endpoint de usuario) sobre un token de nivel-cuenta
+- 2 (causa): el remote fue dejado en una sesión previa con un PAT revocado; los sbp_ (Personal Access Tokens de Supabase) fueron revocados/rotados desde el dashboard; Cloudflare exige verificación a nivel cuenta (/accounts/{id}/tokens/verify) para tokens account-owned
+- 3 (repetición): barrido de credenciales en scripts/ — 1 PAT GH, 2 cfat_, 4 sbp_, 0 JWT service_role en local (service_role vive solo como secret de GitHub); anon key viva
+- 4/5 (procedimiento sin conflictos): remote reparado con el PAT vivo verificado (ghp_TQGT…VI2W, scopes repo+workflow, push=true); local estaba re-inicializado en 0fde678 (= tip del branch remoto backup/agosto-ocupacion, nada perdido) y quedó 578 commits atrás → git reset --hard origin/main (88c25a7 = producción); sin conflictos con ningún módulo (solo infra)
+- 6/7 (código): nuevo scripts/verifica_accesos.py — prueba las credenciales EN USO (remote git, sb_config.py, cf_config.py, anon_key.json) contra sus APIs reales sin imprimirlas; cero cambios en la app
+- 8 (accesos): GitHub OK tras reparación (secrets del workflow 5/5: NEXT_PUBLIC_SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY + TU_TOKEN_DE_API_CLOUDFLARE + ID_DE_CUENTA_CLOUDFLARE; CI verde — últimos deploys 88c25a7/03a93af/b60c0d4 success); Cloudflare OK (token ACTIVE, Pages rackly OK, producción v=202611021408-88c25a7); Supabase MAPI MUERTO (401 en los 4 sbp_) — diagnósticos SQL por Management API bloqueados hasta nuevo token del dashboard; anon key viva (auth/v1/health 200) → la APP en producción sin impacto
+- 9 (módulos): infraestructura (GitHub / Cloudflare / Supabase); app Rackly sin cambios
+
+Stage Summary:
+- GitHub: PUSH RESTABLECIDO — el commit de esta entrada es la prueba real de publicación; repo local resincronizado con producción
+- Cloudflare: token ACTIVE (verify a nivel cuenta), producción viva; falso negativo documentado para audit_accesos.py
+- Supabase: app OK (anon key viva); acceso MAPI para diagnósticos SQL requiere que el usuario genere un nuevo Access Token (Supabase → Account → Access Tokens) y se actualice scripts/sb_config.py
+- Continuidad: los traces 1a1976a1b9d39725 (Task 3 auditoría integral), 1a1978d198de5c91 (Task 5 ocupación INC) y 1a19c8089fb5fba5 (Task 6 mapa INC) ya estaban resueltos y desplegados por sesiones previas — el repo local quedó atrás y fue resincronizado
+
+---
 Task ID: 3
 Agent: Main Agent
 Task: Auditoría integral 2026-11-01 — «revisa toda la app que no tenga errores ni bugs» (trace 1a1976a1b9d39725 · Módulos: todos) — 9 pasos

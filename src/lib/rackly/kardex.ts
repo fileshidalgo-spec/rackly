@@ -32,6 +32,41 @@ export type Movimiento = {
   lote?: string // Código de lote FÍSICO digitado en ingresos/devoluciones (ej: AP-304501210021). Informativo: no afecta stock ni FEFO.
 }
 
+/** ── Rendimiento 2026-11-05 ── Refresco tras escritura INCREMENTAL.
+ *
+ * Antes CADA escritura (ingreso, salida, devolución, INC, traslado,
+ * eliminación) devolvía el dataset re-descargando la TABLA COMPLETA de
+ * movimientos (28K+ filas ≈ 14.5 MB ≈ 21 s en red real) — el usuario esperaba
+ * ese tiempo extra tras cada operación. Ahora el hook singleton
+ * (useMovimientosRealtime) registra su refresco por DELTA (marca de agua
+ * f_modificacion + fusión por id) y las escrituras bajan solo las filas
+ * nuevas/actualizadas (~1 s). Si el hook no cargó (tests/SSR) o el delta
+ * falla, se mantiene la descarga completa de siempre.
+ *
+ * `bajas` = ids que el escritor SABE que se eliminaron (el delta por
+ * f_modificacion no puede detectar DELETE — p. ej. deleteMovimiento). */
+type RefrescadorMovs = (bajas?: string[]) => Promise<Movimiento[]>
+let refrescadorMovs: RefrescadorMovs | null = null
+
+/** Punto de inyección usado por useMovimientosRealtime al cargar (sin
+ * registro el comportamiento es exactamente el previo: fetch completo). */
+export function registrarRefrescadorMovs(fn: RefrescadorMovs | null): void {
+  refrescadorMovs = fn
+}
+
+/** Refresco canónico post-escritura: incremental si hay refrescador
+ * registrado (nunca lanza — degrada a descarga completa). */
+async function refrescarPostEscritura(bajas?: string[]): Promise<Movimiento[]> {
+  if (refrescadorMovs) {
+    try {
+      return await refrescadorMovs(bajas)
+    } catch (err) {
+      console.warn('[kardex] Refresco incremental falló — descarga completa:', err)
+    }
+  }
+  return fetchMovimientos()
+}
+
 export type IncEnCelda = {
   codigo: string
   descripcion: string
@@ -96,9 +131,11 @@ function fromRow(r: Record<string, unknown>): Movimiento {
 async function descargaPaginadaMovs(
   opciones: { desdeFmod?: string } = {}
 ): Promise<Record<string, unknown>[]> {
-  const CONCURRENCY = 8
+  // ── Rendimiento 2026-11-05: 12 concurrentes + páginas de PAGE_SIZE (1000).
+  // Con 28K filas: 57 páginas × 8 concurrentes → ~29 páginas en 3 oleadas.
+  const CONCURRENCY = 12
 
-  function pagina(from: number, conCount: boolean) {
+  function pagina(from: number, hasta: number, conCount: boolean) {
     let q = dataClient.from('movimientos').select('*', conCount ? { count: 'exact' } : undefined)
     // Delta incremental (rendimiento 2026-11-04): el índice idx_movimientos_fmod
     // sirve este rango; en jornada normal el delta son 0-2 páginas pequeñas.
@@ -106,16 +143,21 @@ async function descargaPaginadaMovs(
     return q
       .order('f_modificacion', { ascending: false })
       .order('id', { ascending: true })
-      .range(from, from + PAGE_SIZE - 1)
+      .range(from, hasta)
   }
 
-  // 1ª página: datos + total real (content-range) para calcular las páginas restantes
-  const primera = await pagina(0, true)
+  // 1ª página: datos + total real (content-range). El tamaño EFECTIVO es el
+  // que el servidor realmente entrega — si el proyecto tiene un tope de
+  // max-rows menor al solicitado, la paginación se adapta a lo observado y
+  // JAMÁS trunca silenciosamente (defecto potencial del corte previo por
+  // «primera < PAGE_SIZE»). El criterio es el count real, no el tamaño pedido.
+  const primera = await pagina(0, PAGE_SIZE - 1, true)
   if (primera.error) throw primera.error
   const primeraData = (primera.data ?? []) as Record<string, unknown>[]
-  if (primeraData.length < PAGE_SIZE) return primeraData // tabla pequeña o delta chico: 1 página
   const total = primera.count ?? primeraData.length
-  const totalPaginas = Math.min(Math.ceil(total / PAGE_SIZE), FETCH_MOV_MAX_PAGES)
+  if (primeraData.length === 0 || primeraData.length >= total) return primeraData
+  const efectivo = Math.max(1, primeraData.length)
+  const totalPaginas = Math.min(Math.ceil(total / efectivo), FETCH_MOV_MAX_PAGES)
 
   const paginas: Record<string, unknown>[][] = [primeraData]
   const numerosPagina: number[] = []
@@ -126,8 +168,8 @@ async function descargaPaginadaMovs(
     const lote = numerosPagina.slice(cursor, cursor + CONCURRENCY)
     const resultados = await Promise.all(
       lote.map(async (p) => {
-        const from = p * PAGE_SIZE
-        const r = await pagina(from, false)
+        const from = p * efectivo
+        const r = await pagina(from, from + efectivo - 1, false)
         if (r.error) throw r.error
         return (r.data ?? []) as Record<string, unknown>[]
       })
@@ -359,9 +401,9 @@ async function addMovimientoFallback(
   if (insErr) throw insErr
   if (!refetch) return []
   try {
-    return await fetchMovimientos()
+    return await refrescarPostEscritura()
   } catch (fetchErr) {
-    console.warn('[addMovimientoFallback] Insert exitoso pero fetchMovimientos() falló.', fetchErr)
+    console.warn('[addMovimientoFallback] Insert exitoso pero refresco falló.', fetchErr)
     return []
   }
 }
@@ -411,7 +453,7 @@ export async function addMovimiento(
     if (exists) {
       console.warn('[addMovimiento] Movimiento ya existe (uuid_sync), saltando insert:', uuidSync)
       // Ya existe: refrescar y retornar como si hubiera sido exitoso
-      return refetch ? await fetchMovimientos() : []
+      return refetch ? await refrescarPostEscritura() : []
     }
   }
 
@@ -477,9 +519,9 @@ export async function addMovimiento(
     // NO propagar el error — el movimiento ya está guardado. Retornar array vacío
     // para que el caller no reciba null (evita crashes en .map()).
     try {
-      return await fetchMovimientos()
+      return await refrescarPostEscritura()
     } catch (fetchErr) {
-      console.warn('[addMovimiento] RPC exitosa pero fetchMovimientos() falló. Movimiento ya registrado.', fetchErr)
+      console.warn('[addMovimiento] RPC exitosa pero refresco falló. Movimiento ya registrado.', fetchErr)
       return []
     }
   } catch (err: unknown) {
@@ -508,7 +550,9 @@ export async function deleteMovimiento(id: string): Promise<Movimiento[]> {
     1,
     'El movimiento NO se eliminó (tu rol no permite borrar, o ya fue eliminado por otro usuario). Recarga el kardex.'
   )
-  return fetchMovimientos()
+  // Rendimiento 2026-11-05: el refresco incremental necesita saber la BAJA
+  // (el delta por f_modificacion no ve DELETE) — se pasa el id eliminado.
+  return refrescarPostEscritura([id])
 }
 
 export async function calcularStockUbicacion(
@@ -1205,9 +1249,9 @@ async function trasladarMovimientoFallback(
   if (insErr) throw insErr
   if (!refetch) return []
   try {
-    return await fetchMovimientos()
+    return await refrescarPostEscritura()
   } catch (fetchErr) {
-    console.warn('[trasladarMovimientoFallback] Insert exitoso pero fetchMovimientos() falló.', fetchErr)
+    console.warn('[trasladarMovimientoFallback] Insert exitoso pero refresco falló.', fetchErr)
     return []
   }
 }
@@ -1293,9 +1337,9 @@ export async function trasladarMovimiento(
     // Con refetch:false el caller refresca por su cuenta → retornar YA.
     if (!refetch) return []
     try {
-      return await fetchMovimientos()
+      return await refrescarPostEscritura()
     } catch (fetchErr) {
-      console.warn('[trasladarMovimiento] RPC exitosa pero fetchMovimientos() falló. Traslado ya registrado.', fetchErr)
+      console.warn('[trasladarMovimiento] RPC exitosa pero refresco falló. Traslado ya registrado.', fetchErr)
       return []
     }
   } catch (err: unknown) {
@@ -1556,10 +1600,9 @@ export async function eliminarUbicacion(
       `La eliminación NO se completó: se borraron ${borradasTotal} de ${ids.length} movimiento(s) (tu rol no permite borrarlos). Recarga el kardex.`
     )
   }
-  return fetchMovimientos()
+  // Rendimiento 2026-11-05: refresco incremental con las bajas conocidas
+  return refrescarPostEscritura(ids)
 }
-
-// ═══════════════════════════════════════════════════════════════════
 // EDITAR LOTE / F. VENCIMIENTO de artículos (2026-10-20, v2)
 // v1: completar datos de artículos SIN lote/fechas.
 // v2: también CORREGIR artículos que ya tienen lote/fechas — se apunta al

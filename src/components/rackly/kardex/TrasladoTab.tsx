@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import {
-  fetchMovimientos,
   trasladarMovimiento,
   stockEnUbicacion,
   addMovimiento,
@@ -13,7 +12,7 @@ import {
 import { calcularTurno } from '@/lib/rackly/turno'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
 import { useAuth } from '@/hooks/useAuth'
-import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
+import { useMovimientosRealtime, reintentarMovimientos, refrescarMovimientosIncremental, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
 import { detectarRqParaSalida, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
 import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
 import { EstadoCargaMovs } from './EstadoCargaMovs'
@@ -340,7 +339,7 @@ export function TrasladoTab() {
       // FIX auditoría 2026-10-21 (P3): limpiar la cantidad digitada — sin esto,
       // un segundo clic repetía la salida sin re-tipear.
       setSalidaParcialCant((prev) => ({ ...prev, [itemKey]: '' }))
-      setMovs(await fetchMovimientos())
+      setMovs(await refrescarMovimientosIncremental())
       const updated = await stockEnUbicacion(destBloque, destTorre, destPiso || '1', destPos)
       // Validar fila-marker _error (como IngresoForm): sin esto se mostraba una
       // fila fantasma con código vacío y stock 0 cuando la consulta fallaba
@@ -469,7 +468,7 @@ export function TrasladoTab() {
           // Traslado PARCIAL: informar con precisión
           const pendientes = llamadas.slice(hechas).reduce((s, l) => s + l.cantidad, 0)
           toast.error(`Traslado PARCIAL: ${llamadas.slice(0, hechas).reduce((s, l) => s + l.cantidad, 0)} ${origin.un} llegaron al destino. NO se trasladaron ${round3(pendientes)} ${origin.un} — reintenta el traslado para completarlo.`, { duration: 10000 })
-          setMovs(await fetchMovimientos())
+          setMovs(await refrescarMovimientosIncremental())
           return
         }
       }
@@ -502,7 +501,7 @@ export function TrasladoTab() {
       if (faltaStock && !corregirDiferencia) {
         toast.info(`Queda un saldo de ${round3(saldoRestante)} ${origin.un} en la ubicación de origen`, { duration: 6000 })
       }
-      setMovs(await fetchMovimientos())
+      setMovs(await refrescarMovimientosIncremental())
       resetForm()
     } catch (err: unknown) {
       if (isInsufficientStockError(err)) {

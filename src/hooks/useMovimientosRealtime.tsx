@@ -14,6 +14,8 @@ import {
   marcaAgua as marcaAguaDe,
   resumenDelta,
 } from '@/lib/rackly/movs-sync'
+import { guardarCacheMovs, leerCacheMovs } from '@/lib/rackly/movs-cache'
+import { registrarRefrescadorMovs } from '@/lib/rackly/kardex'
 import { POLLING_INTERVAL, MOV_FETCH_TTL_MS } from '@/lib/rackly/constants'
 
 /**
@@ -86,6 +88,36 @@ let marcaAguaCache: string | null = null
 let colaInserts: Record<string, unknown>[] = []
 let colaBorrados: string[] = []
 
+/** ── Rendimiento 2026-11-05 ── Guardado en IndexedDB del caché (debounce
+ * 2 s coalesce ráfagas de deltas; cada guardado escribe ~15 MB clonados en
+ * hilo de fondo — sin jank visible). El arranque caliente (F5/recarga)
+ * siembra desde aquí y valida por delta en segundos. */
+const GUARDADO_IDB_DEBOUNCE_MS = 2000
+let guardadoTimer: ReturnType<typeof setTimeout> | null = null
+
+function programarGuardadoIdb(): void {
+  if (!cacheMovs) return
+  if (guardadoTimer) clearTimeout(guardadoTimer)
+  guardadoTimer = setTimeout(() => {
+    guardadoTimer = null
+    if (!cacheMovs) return
+    void guardarCacheMovs(cacheMovs, marcaAguaCache)
+  }, GUARDADO_IDB_DEBOUNCE_MS)
+}
+
+// Flush best-effort al cerrar/minimizar: reduce a ~0 la ventana de deltas sin
+// guardar. Si el navegador no completa la escritura, la validación por conteo
+// del arranque caliente repara igual.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (guardadoTimer) {
+      clearTimeout(guardadoTimer)
+      guardadoTimer = null
+    }
+    if (cacheMovs) void guardarCacheMovs(cacheMovs, marcaAguaCache)
+  })
+}
+
 /** Aplica deltas (INSERT/UPDATE) al caché y difunde. false si no hay caché. */
 function aplicarDeltas(deltas: Movimiento[]): boolean {
   if (!cacheMovs) return false
@@ -96,6 +128,7 @@ function aplicarDeltas(deltas: Movimiento[]): boolean {
     ultimoFetchOk = Date.now()
     broadcast(cacheMovs)
     broadcastEstado('listo')
+    programarGuardadoIdb()
     console.info(
       `[Realtime] Delta aplicado: +${resumen.nuevos} nuevos (${resumen.antes} → ${resumen.despues} filas)`
     )
@@ -108,8 +141,10 @@ function aplicarEliminaciones(ids: string[]): boolean {
   if (!cacheMovs) return false
   if (ids.length > 0) {
     cacheMovs = eliminarPorIds(cacheMovs, ids)
+    marcaAguaCache = marcaAguaDe(cacheMovs)
     broadcast(cacheMovs)
     broadcastEstado('listo')
+    programarGuardadoIdb()
   }
   return true
 }
@@ -215,6 +250,7 @@ function refreshAndBroadcast(opciones: { fuerza?: boolean } = {}) {
       marcaAguaCache = marcaAguaDe(movs)
       broadcast(movs)
       broadcastEstado('listo')
+      programarGuardadoIdb()
       // Sincronizar el snapshot del poll con la BD recién leída: evita que el
       // primer tic del polling re-descargue todo solo porque head ≠ snapshot(-1).
       void leerHead().then((h) => { if (h) headSnapshot = h })
@@ -234,6 +270,97 @@ function refreshAndBroadcast(opciones: { fuerza?: boolean } = {}) {
 /** Reintento manual para las pestañas (botón cuando estado === 'error'). */
 export function reintentarMovimientos() {
   refreshAndBroadcast({ fuerza: true })
+}
+
+/** ── Rendimiento 2026-11-05 ── Refresco INCREMENTAL canónico tras una
+ * escritura. Las funciones de escritura de kardex (addMovimiento,
+ * trasladarMovimiento, deleteMovimiento, …) devuelven el dataset actualizado
+ * — antes re-descargaban la TABLA COMPLETA (28K filas ≈ 14.5 MB ≈ 21 s en
+ * red real) tras CADA operación; ahora este refresco fusiona sobre el caché
+ * del singleton (a) las bajas conocidas (`bajas` — el delta por
+ * f_modificacion no puede ver DELETE) y (b) el delta por marca de agua
+ * (filas nuevas/actualizadas de esta y otras sesiones, ~1 s). El resultado
+ * se difunde a todas las pestañas y se retorna. Sin caché (o delta fallido)
+ * → descarga completa: comportamiento previo intacto. */
+export async function refrescarMovimientosIncremental(bajas?: string[]): Promise<Movimiento[]> {
+  if (!cacheMovs) return fetchMovimientos()
+  let base = bajas && bajas.length > 0 ? eliminarPorIds(cacheMovs, bajas) : cacheMovs
+  try {
+    const desde = marcaAguaDe(base)
+    if (desde) base = fusionarDeltas(base, await fetchMovimientosDesde(desde))
+  } catch (err) {
+    console.warn('[Realtime] Delta del refresco post-escritura falló — descarga completa:', err)
+    const completa = await fetchMovimientos()
+    cacheMovs = completa
+    marcaAguaCache = marcaAguaDe(completa)
+    ultimoFetchOk = Date.now()
+    broadcast(completa)
+    programarGuardadoIdb()
+    return completa
+  }
+  cacheMovs = base
+  marcaAguaCache = marcaAguaDe(base)
+  ultimoFetchOk = Date.now()
+  broadcast(base)
+  programarGuardadoIdb()
+  return base
+}
+
+// Inyección: todas las escrituras de kardex pasan a refrescarse por delta.
+// Sin el hook cargado (tests/SSR) kardex mantiene su descarga completa.
+registrarRefrescadorMovs(refrescarMovimientosIncremental)
+
+/** ── Rendimiento 2026-11-05 ── ARRANQUE CALIENTE: sembrar el caché desde
+ * IndexedDB (guardado por el cierre de la sesión anterior) y mostrar datos
+ * AL INSTANTE, validando contra la BD en segundo plano por delta. Convierte
+ * la recarga de página (F5/cierre de navegador) de «21 s esperando» a
+ * «datos en ~0 s + actualización en ~1-2 s». */
+async function arranqueCaliente(): Promise<void> {
+  const c = await leerCacheMovs()
+  if (cacheMovs) return // una descarga completa (poll/realtime) ganó la carrera
+  if (!c) {
+    refreshAndBroadcast({ fuerza: true }) // sin caché persistido: camino frío de siempre
+    return
+  }
+  cacheMovs = c.movs as Movimiento[]
+  marcaAguaCache = c.marcaAgua ?? marcaAguaDe(cacheMovs)
+  // ultimoFetchOk fresco: el refresco de cortesía con TTL NO re-descarga la
+  // tabla; la validación por delta de abajo es la que actualiza.
+  ultimoFetchOk = Date.now()
+  broadcast(cacheMovs)
+  broadcastEstado('listo')
+  console.info(
+    `[Realtime] Arranque caliente: ${cacheMovs.length} movimientos del caché persistido — validando contra BD`
+  )
+  void validarArranqueCaliente()
+}
+
+/** Validación en segundo plano del caché sembrado: conteo vs BD (borrados sin
+ * realtime) + delta por marca de agua (altas/cambios mientras la app estuvo
+ * cerrada). Cualquier descuadre degrada a descarga completa que repara. */
+async function validarArranqueCaliente(): Promise<void> {
+  try {
+    const head = await leerHead()
+    if (!head) return // red caída: el polling de 8 s tomará el relevo
+    if (head.count !== (cacheMovs?.length ?? -1)) {
+      console.warn(
+        `[Realtime] Caché persistido ${cacheMovs?.length} ≠ BD ${head.count} — descarga de reparación`
+      )
+      headSnapshot = head
+      refreshAndBroadcast({ fuerza: true })
+      return
+    }
+    headSnapshot = head
+    if (marcaAguaCache) {
+      const deltas = await fetchMovimientosDesde(marcaAguaCache)
+      aplicarDeltas(deltas)
+      const h2 = await leerHead()
+      if (h2 && h2.count !== (cacheMovs?.length ?? -1)) refreshAndBroadcast({ fuerza: true })
+      else if (h2) headSnapshot = h2
+    }
+  } catch (err) {
+    console.warn('[Realtime] Validación del arranque caliente falló — el polling tomará el relevo:', err)
+  }
 }
 
 async function pollCheck() {
@@ -272,14 +399,20 @@ async function pollCheck() {
 function startSharedPolling() {
   if (pollInterval) return // Ya corriendo
 
-  // Carga inicial: si hay caché de sesión, difundirla AL INSTANTE (pestañas
-  // con datos reales en 0 ms) y dejar que el refresco de fondo la actualice;
-  // el TTL evita re-descargar si el caché es reciente (flapping de pestañas).
+  // Carga inicial: si hay caché de sesión (memoria), difundirla AL INSTANTE
+  // (pestañas con datos reales en 0 ms) y dejar que el refresco de fondo la
+  // actualice; el TTL evita re-descargar si el caché es reciente (flapping).
   if (cacheMovs) {
     broadcast(cacheMovs)
     broadcastEstado('listo')
+    refreshAndBroadcast()
+  } else {
+    // ── Rendimiento 2026-11-05: ARRANQUE CALIENTE ── intenta sembrar desde
+    // IndexedDB (datos en ~0 s tras un F5/recarga) y valida por delta en
+    // segundo plano; sin caché persistido cae a la descarga completa de siempre.
+    broadcastEstado('cargando')
+    void arranqueCaliente()
   }
-  refreshAndBroadcast()
 
   // Polling barato: compara count + última f_modificacion y solo descarga
   // la tabla completa cuando detecta cambios (interval centralizado en constants)

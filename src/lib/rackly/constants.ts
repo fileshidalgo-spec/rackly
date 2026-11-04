@@ -56,7 +56,7 @@ export const PROVEEDORES_FILM = [
 ] as const
 
 // ── Paginación y Polling ────────────────────────────────
-export const PAGE_SIZE = 500                // Tamaño de página para queries paginadas
+export const PAGE_SIZE = 1000               // Tamaño de página solicitado para queries paginadas (rendimiento 2026-11-05: 28K movs = ~29 páginas en vez de 57; la descarga adapta el tamaño al que el servidor realmente entrega — jamás trunca)
 export const POLLING_INTERVAL = 8000      // ms — refresco de datos en tiempo real
 export const POLLING_TURNO = 60000        // ms — refresco del turno
 export const POLLING_OCUPACION = 10000    // ms — refresco de ocupación

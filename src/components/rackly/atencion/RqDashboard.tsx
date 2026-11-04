@@ -78,11 +78,14 @@ export function RqDashboard() {
   const [hora, setHora] = useState('')
   const genRef = useRef(0)
 
-  const cargar = useCallback(async () => {
+  // forzar=true SOLO desde el botón «Actualizar» (el usuario pide datos
+  // frescos); el montaje y la exportación aprovechan la caché TTL de 60 s
+  // de cargarReporteAtencion (rendimiento 2026-11-04).
+  const cargar = useCallback(async (forzar = false) => {
     const gen = ++genRef.current
     setLoading(true)
     try {
-      const d = await cargarReporteAtencion()
+      const d = await cargarReporteAtencion(5000, { forzar })
       if (gen !== genRef.current) return
       setDatos(d)
       setHora(new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' }))
@@ -157,7 +160,7 @@ export function RqDashboard() {
         <h3 className="text-sm font-extrabold text-slate-800">Dashboard · Atención a Líneas</h3>
         {hora && <span className="text-xs text-slate-400">actualizado {hora}</span>}
         <div className="ml-auto flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => void cargar()} disabled={loading} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => void cargar(true)} disabled={loading} className="gap-1.5">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Actualizar
           </Button>

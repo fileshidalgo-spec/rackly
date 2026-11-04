@@ -84,18 +84,25 @@ function fromRow(r: Record<string, unknown>): Movimiento {
   }
 }
 
-export async function fetchMovimientos(): Promise<Movimiento[]> {
-  // ── FIX Task 24 (pestañas sin datos) ──
-  // La descarga completa era SECUENCIAL (51 páginas de 500 en serie ≈ 30-60 s
-  // con 25K+ filas): FEFO/Traslado/Stock/Movimientos parecían "sin datos"
-  // durante todo ese lapso. Ahora se descarga la 1ª página con `count: exact`
-  // para dimensionar la tabla y el resto se pide en OLEADAS CONCURRENTES
-  // (8 en paralelo). Mismo orden (f_modificacion DESC, id ASC), mismo
-  // resultado y mismos topes (FETCH_MOV_MAX_PAGES) — solo más rápido (~6-8×).
+/**
+ * Descarga paginada de movimientos en OLEADAS CONCURRENTES (8 en paralelo).
+ * ── FIX Task 24 (pestañas sin datos) ── la descarga era SECUENCIAL (51
+ * páginas de 500 en serie ≈ 30-60 s): ahora la 1ª página trae `count: exact`
+ * para dimensionar y el resto va en oleadas concurrentes (~6-8× más rápido).
+ * Compartida por:
+ *  - fetchMovimientos()      → tabla completa (orden f_modificacion DESC, id ASC)
+ *  - fetchMovimientosDesde() → solo filas con f_modificacion > desdeFmod (delta)
+ */
+async function descargaPaginadaMovs(
+  opciones: { desdeFmod?: string } = {}
+): Promise<Record<string, unknown>[]> {
   const CONCURRENCY = 8
 
   function pagina(from: number, conCount: boolean) {
     let q = dataClient.from('movimientos').select('*', conCount ? { count: 'exact' } : undefined)
+    // Delta incremental (rendimiento 2026-11-04): el índice idx_movimientos_fmod
+    // sirve este rango; en jornada normal el delta son 0-2 páginas pequeñas.
+    if (opciones.desdeFmod) q = q.gt('f_modificacion', opciones.desdeFmod)
     return q
       .order('f_modificacion', { ascending: false })
       .order('id', { ascending: true })
@@ -106,7 +113,7 @@ export async function fetchMovimientos(): Promise<Movimiento[]> {
   const primera = await pagina(0, true)
   if (primera.error) throw primera.error
   const primeraData = (primera.data ?? []) as Record<string, unknown>[]
-  if (primeraData.length < PAGE_SIZE) return primeraData.map(fromRow) // tabla pequeña: 1 página
+  if (primeraData.length < PAGE_SIZE) return primeraData // tabla pequeña o delta chico: 1 página
   const total = primera.count ?? primeraData.length
   const totalPaginas = Math.min(Math.ceil(total / PAGE_SIZE), FETCH_MOV_MAX_PAGES)
 
@@ -128,7 +135,30 @@ export async function fetchMovimientos(): Promise<Movimiento[]> {
     paginas.push(...resultados)
   }
 
-  return paginas.flat().map(fromRow)
+  return paginas.flat()
+}
+
+export async function fetchMovimientos(): Promise<Movimiento[]> {
+  return (await descargaPaginadaMovs()).map(fromRow)
+}
+
+/**
+ * FIX rendimiento 2026-11-04 — descarga INCREMENTAL por marca de agua:
+ * solo filas con f_modificacion > desdeFmod (mismo orden global que
+ * fetchMovimientos, así movs-sync.fusionarDeltas puede mezclar ambas fuentes
+ * sin que FEFO/Traslado/Stock/Movimientos noten la diferencia). Sustituye la
+ * re-descarga de la tabla completa (~21 s / 14.5 MB medidos) por un delta de
+ * segundos en cada cambio detectado por polling.
+ */
+export async function fetchMovimientosDesde(desdeFmod: string): Promise<Movimiento[]> {
+  return (await descargaPaginadaMovs({ desdeFmod })).map(fromRow)
+}
+
+/** Fila cruda de BD → Movimiento normalizado. Exportado para el motor de
+ * deltas: los eventos realtime `postgres_changes` entregan la fila cruda
+ * (payload.new) y deben pasar por la MISMA normalización que el fetch. */
+export function movimientoDesdeFila(r: Record<string, unknown>): Movimiento {
+  return fromRow(r)
 }
 
 export async function fetchMovimientosByCodigo(codigo: string): Promise<Movimiento[]> {

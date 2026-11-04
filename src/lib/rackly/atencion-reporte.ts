@@ -232,8 +232,23 @@ async function resolverVencimientos(tomas: ReporteToma[]): Promise<Map<string, s
  * Carga TODO el reporte en una tirada: encabezados + materiales + ledger de
  * salidas + vencimientos. Volúmenes de jornada (decenas de RQ, centenas de
  * filas) — un select completo por tabla con tope holgado.
+ *
+ * ── Rendimiento 2026-11-04: caché de sesión con TTL ──
+ * El dashboard re-descargaba las 3 tablas (~0.6 MB) en cada montaje y tras
+ * cada exportación. Ahora el resultado vive 60 s en memoria de módulo:
+ * re-montar el dashboard dentro del minuto es instantáneo. El botón
+ * «Actualizar» pasa { forzar: true } y SIEMPRE re-descarga.
  */
-export async function cargarReporteAtencion(limiteRqs = 5000): Promise<DatosReporte> {
+const TTL_REPORTE_MS = 60_000
+let cacheReporte: { datos: DatosReporte; ts: number } | null = null
+
+export async function cargarReporteAtencion(
+  limiteRqs = 5000,
+  opciones: { forzar?: boolean } = {}
+): Promise<DatosReporte> {
+  if (!opciones.forzar && cacheReporte && Date.now() - cacheReporte.ts < TTL_REPORTE_MS) {
+    return cacheReporte.datos
+  }
   const [{ data: filasRq, error: eRq }, { data: filasIt, error: eIt }, { data: filasTo, error: eTo }] =
     await Promise.all([
       dataClient.from('rq_atenciones').select('*').order('fecha', { ascending: false }).limit(limiteRqs),
@@ -248,7 +263,9 @@ export async function cargarReporteAtencion(limiteRqs = 5000): Promise<DatosRepo
   const items = ((filasIt ?? []) as Fila[]).map(filaAItem)
   const tomas = ((filasTo ?? []) as Fila[]).map(filaAToma)
   const vencimientos = await resolverVencimientos(tomas)
-  return { rqs, items, tomas, vencimientos }
+  const datos: DatosReporte = { rqs, items, tomas, vencimientos }
+  cacheReporte = { datos, ts: Date.now() }
+  return datos
 }
 
 // ═══════════════════════════════════════════════════════════════════

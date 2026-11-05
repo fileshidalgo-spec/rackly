@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { dataClient } from '@/lib/supabase/client'
 import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
+import { normalizarCodigoInc } from '@/lib/rackly/inc-norm'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -133,7 +134,8 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
       for (const r of data as Record<string, unknown>[]) {
         const posKey = `${r.bloque}-${r.torre}-${r.piso}-${r.posicion}`
         const code = String(r.codigo ?? '').trim().toUpperCase()
-        const codeInc = String(r.codigo_inc ?? '').trim()
+        // Normalización INC (auditoría 2026-11-05): agrupar «Inc26-577» y «INC26-577» como UNO
+        const codeInc = normalizarCodigoInc(r.codigo_inc as string) ?? ''
         const desc = String(r.descripcion ?? '')
         const un = String(r.un ?? '')
         const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0

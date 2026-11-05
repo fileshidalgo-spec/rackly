@@ -3,6 +3,7 @@
 import { dataClient } from '@/lib/supabase/client'
 import { QUERY_TIMEOUT_MS } from '@/lib/rackly/constants'
 import { isLoteUnsupportedError } from '@/lib/rackly/kardex'
+import { normalizarCodigoInc } from '@/lib/rackly/inc-norm'
 import { exigirBorradas, avisarBorradoFiltrado } from '@/lib/rackly/eliminacion-honesta'
 
 /** Genera un UUID v4 simple (no requiere crypto.randomUUID que no está en todos los browsers) */
@@ -1708,7 +1709,7 @@ async function insertarCabeceraSimple(
     uuid_sync: uuidSync,
   }
   if (opts?.posicion_id) insertPayload.posicion_id = opts.posicion_id
-  if (opts?.codigo_inc) insertPayload.codigo_inc = opts.codigo_inc
+  if (opts?.codigo_inc) insertPayload.codigo_inc = normalizarCodigoInc(opts.codigo_inc)
 
   const { data: movData, error: movErr } = await dataClient
     .from('piso_movimientos')
@@ -1838,7 +1839,7 @@ export async function registrarIngresoPosicion(
     _turno: turno,
     _detalles: detallesParaRpc(detalles),
     _uuid_sync: uuidSync,
-    _codigo_inc: opts?.codigo_inc ?? null,
+    _codigo_inc: normalizarCodigoInc(opts?.codigo_inc),
     _usuario_id: usuarioId,
     _usuario_nombre: usuarioNombre,
     _usuario_correo: usuarioCorreo,

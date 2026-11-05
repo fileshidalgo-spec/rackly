@@ -6,6 +6,7 @@ import { impactoStock } from '@/lib/utils'
 import { toast } from 'sonner'
 import { exigirBorradas } from '@/lib/rackly/eliminacion-honesta'
 import { ERR_ELIMINAR_BLOQUEADO, errorControlado } from '@/lib/rackly/errores'
+import { normalizarCodigoInc } from '@/lib/rackly/inc-norm'
 
 export type Turno = typeof TURNO_DIA | typeof TURNO_NOCHE
 export type TipoMovimiento = 'ingreso' | 'salida' | 'devolucion' | 'traslado'
@@ -379,7 +380,7 @@ async function addMovimientoFallback(
     usuario_correo: m.usuarioCorreo ?? null,
     proveedor: m.proveedor ? m.proveedor : null,
     uuid_sync: uuidSync || null,
-    codigo_inc: m.codigoInc || null,
+    codigo_inc: normalizarCodigoInc(m.codigoInc),
   }
   // Lote físico: solo se envía si el usuario digitó uno. Si la columna aún no existe
   // (migración pendiente) se reintenta SIN lote para que el movimiento nunca falle.
@@ -480,7 +481,7 @@ export async function addMovimiento(
     p_usuario_correo: m.usuarioCorreo ?? null,
     p_proveedor: m.proveedor ? m.proveedor : null,
     p_uuid_sync: uuidSync || null,
-    p_codigo_inc: m.codigoInc || null,
+    p_codigo_inc: normalizarCodigoInc(m.codigoInc),
   }
   if (loteClean) rpcArgs.p_lote = loteClean
 
@@ -994,7 +995,9 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
     for (const r of allRows) {
       const key = `${norm(r.bloque)}-${norm(r.torre)}-${norm(r.piso)}-${norm(r.posicion)}`
       const code = String(r.codigo ?? '').trim().toUpperCase()
-      const codeInc = String(r.codigo_inc ?? '').trim()
+      // Normalización INC (auditoría 2026-11-05): la agrupación por cadena EXACTA
+      // partía el mismo INC en dos si fue registrado como «Inc26-577»/«INC026-451».
+      const codeInc = normalizarCodigoInc(r.codigo_inc as string) ?? ''
       const incKey = `${code}||${codeInc}`
       let locMap = map.get(key)
       if (!locMap) { locMap = new Map(); map.set(key, locMap) }
@@ -1189,7 +1192,7 @@ async function trasladarMovimientoFallback(
     usuario_nombre: t.usuarioNombre ?? null,
     usuario_correo: t.usuarioCorreo ?? null,
     proveedor: t.proveedor ? t.proveedor : null,
-    codigo_inc: t.codigoInc || null,
+    codigo_inc: normalizarCodigoInc(t.codigoInc),
   }
   // Lote físico del material: solo si el usuario/origen lo aporta. Si la columna aún no
   // existe (migración pendiente) se reintenta SIN lote para que el traslado nunca falle.
@@ -1295,7 +1298,7 @@ export async function trasladarMovimiento(
     p_f_vencimiento: t.fVencimiento || null,
     p_proveedor: t.proveedor ? t.proveedor : null,
     p_cantidad_ajuste: t.cantidadAjuste ?? 0,
-    p_codigo_inc: t.codigoInc || null,
+    p_codigo_inc: normalizarCodigoInc(t.codigoInc),
     p_uuid_sync: t.uuidSync || null,
   }
   if (loteClean) rpcArgs.p_lote = loteClean
@@ -1496,7 +1499,7 @@ export async function addMovimientosBatch(
       usuario_nombre: usuarioNombre ?? null,
       usuario_correo: usuarioCorreo ?? null,
       proveedor: r.proveedor ? r.proveedor : null,
-      codigo_inc: r.codigoInc ? r.codigoInc.trim() : null,
+      codigo_inc: normalizarCodigoInc(r.codigoInc),
       })
     }
 

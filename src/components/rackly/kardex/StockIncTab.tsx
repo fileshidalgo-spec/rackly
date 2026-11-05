@@ -50,7 +50,10 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
     if (loading) return // evita búsquedas concurrentes (Enter repetido)
     // Saneo igual que en Recepción/Atención: la coma/paréntesis del término
     // rompía el filtro .or() de PostgREST y la pestaña quedaba en error.
-    const upper = terminoBusquedaSeguro(term.toUpperCase())
+    // Normalización INC (auditoría 2026-11-05): «INC026-1108» (hábito antiguo,
+    // cero extra) encuentra el INC normalizado «INC26-1108»; términos que no son
+    // INC solo salen en mayúsculas (ilike es case-insensitive).
+    const upper = terminoBusquedaSeguro(normalizarCodigoInc(term) ?? '')
     if (!upper) return
     setLoading(true)
     setError(false)
@@ -208,7 +211,7 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
-            placeholder="Buscar INC (ej: INC026-1108) o código de artículo..."
+            placeholder="Buscar INC (ej: INC26-1108) o código de artículo..."
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleSearch() }}
@@ -318,7 +321,7 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
         <div className="flex flex-col items-center justify-center py-12 text-slate-400">
           <Search className="h-10 w-10 mb-2" />
           <p className="text-sm font-medium">Escribe un código INC o código de artículo y presiona Buscar</p>
-          <p className="text-xs mt-1">Ejemplo: INC026-1108</p>
+          <p className="text-xs mt-1">Ejemplo: INC26-1108</p>
         </div>
       )}
     </div>

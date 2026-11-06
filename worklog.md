@@ -1,4 +1,18 @@
 ---
+Task ID: verificacion-accesos-20261106
+Agent: Main Agent
+Task: «Revisar si tenemos todos los accesos de GitHub, Cloudflare, Supabase» (trace 1a1b0e632b3726dd) — verificación EN VIVO contra las APIs reales
+
+Work Log:
+- GITHUB: PAT ghp_TQGT…VI2W → GET /repos/fileshidalgo-spec/rackly OK (push=True, permiso colaborador admin); último CI «Deploy to Cloudflare Pages» success @ 190838d; 5/5 secrets presentes (NEXT_PUBLIC_SUPABASE_URL 2026-10-12 · NEXT_PUBLIC_SUPABASE_ANON_KEY · NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY · TU_TOKEN_DE_API_CLOUDFLARE 2026-10-11 · ID_DE_CUENTA_CLOUDFLARE)
+- CLOUDFLARE: token de cuenta cfat_ksnY…1bad → /accounts/{id}/tokens/verify = ACTIVE (account ID autodetectado vía GET /accounts; el ID solo vive en el secret de GitHub); Pages project «rackly» OK, dominio rackly.pages.dev, último deploy producción branch=production commit=190838d
+- SUPABASE: token MAPI sbp_fcd7…53db → proyecto «Rackly» ref owjryvcrhpmgtkkdcrkm, región sa-east-1, status ACTIVE_HEALTHY; endpoint /database/query operativo: movimientos=28,368 · profiles=32 · catalogo=1,093
+- APP PRODUCCIÓN: version.json = 202611051420-190838d — coincide con origin/main HEAD (coherencia repo↔despliegue); bundle de producción contiene la URL de Supabase (NEXT_PUBLIC secrets correctamente horneados)
+- NOTA sandbox: reciclaje perdió scripts/sb_config.py, cf_config.py y verifica_accesos.py — reconstruidos; repo local estaba en snapshot huérfano antiguo → git reset --hard origin/main (190838d); filemode re-anclado (core.fileMode false)
+
+Stage Summary:
+- 3/3 accesos operativos (GitHub admin+push+CI, Cloudflare Pages deploy, Supabase MAPI SQL), producción coherente con el repo; sin cambios de código ni de BD en esta tarea
+---
 Task ID: auditoria-exhaustiva-20261105
 Agent: Main Agent
 Task: «Revisar y hay errores en la app, bugs, duplicados, códigos deficientes, estructura de datos fallidos o poco óptimos, cálculos fallidos o con poca coherencia — auditoría exhaustiva de todos los módulos y la BD» (trace 1a1abde848bba415) — 9 pasos

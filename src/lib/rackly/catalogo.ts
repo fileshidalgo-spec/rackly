@@ -267,10 +267,58 @@ export type ProgresoMerge = {
   totalLotes: number
 }
 
+// ═══ Auto-reparación del catálogo (auditoría exhaustiva 2026-11-06) ═══
+// Los códigos CON stock físico real (>0) deben existir SIEMPRE en catálogo:
+// si no, su stock queda invisible para búsqueda/operación (caso real:
+// «vaciar catálogo + importar Excel oficial» del 2026-11-05 19:00 UTC borró
+// el re-registro de huérfanos y dejó 33,947 u invisibles).
+export type ReRegistroResultado = { registrados: number; codigos: string[] }
+let _ultimoReRegistro: ReRegistroResultado = { registrados: 0, codigos: [] }
+
+/** Resultado de la última auto-reparación ejecutada (para avisos en UI). */
+export function ultimoReRegistro(): ReRegistroResultado {
+  return _ultimoReRegistro
+}
+
+/**
+ * Garantiza que todo código con stock físico > 0 exista en catálogo.
+ * Delegada en la RPC server-side `catalogo_reregistrar_con_stock`
+ * (idempotente: ON CONFLICT DO NOTHING — jamás toca filas existentes).
+ * Fallo = silencioso pero REGISTRADO (la operación de importación/vaciado
+ * nunca se pierde por la reparación); el resultado queda en
+ * `_ultimoReRegistro` para que la UI avise al usuario.
+ */
+export async function reRegistrarCodigosConStock(
+  usuarioId?: string | null
+): Promise<ReRegistroResultado> {
+  _ultimoReRegistro = { registrados: 0, codigos: [] }
+  try {
+    const { data, error } = await dataClient.rpc('catalogo_reregistrar_con_stock', {
+      p_usuario: usuarioId ?? null,
+    })
+    if (error) throw error
+    const filas = (data ?? []) as { codigo: string; stock: number }[]
+    if (filas.length > 0) {
+      _cacheLoaded = false // fuerza relectura fresca en el próximo fetch
+      _cache = []
+      console.info(
+        `[catalogo] Auto-reparación: ${filas.length} código(s) con stock físico re-registrados`,
+        filas.map((f) => f.codigo),
+      )
+    }
+    _ultimoReRegistro = { registrados: filas.length, codigos: filas.map((f) => f.codigo) }
+    return _ultimoReRegistro
+  } catch (err) {
+    console.warn('[catalogo] Auto-reparación no pudo ejecutarse:', err)
+    return _ultimoReRegistro
+  }
+}
+
 export async function mergeCatalogo(
   nuevos: CatalogoItem[],
-  onProgreso?: (p: ProgresoMerge) => void
-): Promise<{ catalogo: CatalogoItem[]; cargados: number; errores: string[] }> {
+  onProgreso?: (p: ProgresoMerge) => void,
+  usuarioId?: string | null
+): Promise<{ catalogo: CatalogoItem[]; cargados: number; errores: string[]; reRegistrados?: number }> {
   if (nuevos.length === 0) return { catalogo: await fetchCatalogo(), cargados: 0, errores: [] }
   // Dedupe por código (conserva la última aparición del archivo)
   const mapa = new Map<string, CatalogoItem>()
@@ -314,10 +362,18 @@ export async function mergeCatalogo(
     }
     onProgreso?.({ cargados, total: rows.length, lote, totalLotes })
   }
-  return { catalogo: await fetchCatalogo(), cargados, errores }
+  // Auto-reparación (auditoría 2026-11-06): una importación NO borra filas,
+  // pero el flujo operativo real es «vaciar catálogo → importar Excel» y el
+  // vaciado SÍ borra códigos con stock físico real (ocurrió el 2026-11-05
+  // 19:00 UTC: la re-importación oficial revirtió el re-registro de huérfanos
+  // y dejó 33,947 u invisibles). Tras cada merge se garantiza que TODO
+  // código con stock > 0 exista en catálogo (RPC server-side, idempotente).
+  await reRegistrarCodigosConStock(usuarioId)
+  const catalogoFinal = await fetchCatalogo()
+  return { catalogo: catalogoFinal, cargados, errores, reRegistrados: _ultimoReRegistro.registrados }
 }
 
-export async function clearCatalogo(): Promise<CatalogoItem[]> {
+export async function clearCatalogo(pUsuario?: string | null): Promise<CatalogoItem[]> {
   // HONESTIDAD (patrón T173-00004281, auditoría 2026-10-31): la RLS de
   // catalogo filtra el DELETE por rol en silencio — un operario veía
   // «catálogo vaciado» con el catálogo intacto. Se piden las filas de
@@ -330,6 +386,11 @@ export async function clearCatalogo(): Promise<CatalogoItem[]> {
   if (error) throw error
   // Poda FK-safe de las anclas de piso (solo las SIN movimientos históricos)
   await podarAnclasPisoSinUso()
+  // Auto-reparación (auditoría 2026-11-06): el vaciado borraba códigos CON
+  // stock físico real y los dejaba invisibles para búsqueda/operación —
+  // exactamente lo que revirtió la corrección de huérfanos del 2026-11-05
+  // cuando se re-importó el Excel oficial. Los códigos con stock vuelven.
+  await reRegistrarCodigosConStock(pUsuario)
   const restantes = await fetchCatalogo()
   if ((borradas ?? []).length === 0 && restantes.length > 0) {
     throw errorControlado(

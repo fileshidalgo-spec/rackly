@@ -7,6 +7,7 @@ import {
   parseCatalogoExcelRows,
   mergeCatalogo,
   clearCatalogo,
+  ultimoReRegistro,
   type CatalogoItem,
   type ParseStats,
   type ProgresoMerge,
@@ -108,9 +109,10 @@ export function CatalogoTab() {
     setProgreso(null)
     try {
       // Merge por lotes con dedupe: reporta el conteo REAL cargado y las filas con problema
-      const res = await mergeCatalogo(items, setProgreso)
+      const res = await mergeCatalogo(items, setProgreso, perfil?.id ?? null)
       setCatalogo(res.catalogo)
       setText('')
+      avisoAutoReparacion()
       if (res.errores.length > 0) {
         toast.warning(`Cargados ${res.cargados} ítem(s) con ${res.errores.length} con problema`, {
           description: res.errores.slice(0, 5).join('\n'),
@@ -152,8 +154,9 @@ export function CatalogoTab() {
         toast.error('No se encontraron columnas válidas (CÓDIGO, DESCRIPCIÓN, UN, STOCK BIG MAGIC)')
         return
       }
-      const res = await mergeCatalogo(items, setProgreso)
+      const res = await mergeCatalogo(items, setProgreso, perfil?.id ?? null)
       setCatalogo(res.catalogo)
+      avisoAutoReparacion()
       if (res.errores.length > 0) {
         toast.warning(`Cargados ${res.cargados} ítem(s) con ${res.errores.length} con problema`, {
           description: res.errores.slice(0, 5).join('\n'),
@@ -178,12 +181,28 @@ export function CatalogoTab() {
   async function handleClear() {
     if (!confirm('¿Eliminar todo el catálogo?')) return
     try {
-      const data = await clearCatalogo()
+      const data = await clearCatalogo(perfil?.id ?? null)
       setCatalogo(data)
       toast.success('Catálogo eliminado')
+      avisoAutoReparacion()
     } catch (err: unknown) {
       const message = mensajeError(err)
       toast.error('Error al eliminar', { description: message })
+    }
+  }
+
+  // Auditoría 2026-11-06: si la operación (importar/vaciar) dejó fuera códigos
+  // con stock físico real, la auto-reparación los re-registró — se avisa.
+  function avisoAutoReparacion() {
+    const rr = ultimoReRegistro()
+    if (rr.registrados > 0) {
+      toast.info(
+        `Auto-reparación: ${rr.registrados} código(s) con stock físico re-registrados`,
+        {
+          description: `Tenían stock en almacén y no estaban en el catálogo: ${rr.codigos.slice(0, 5).join(', ')}${rr.codigos.length > 5 ? '…' : ''}`,
+          duration: 10000,
+        },
+      )
     }
   }
 

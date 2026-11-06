@@ -1,0 +1,50 @@
+[
+ {
+  "id": "130a2a34-f93e-4bb5-92ed-5edc9db417e8",
+  "tipo": "ingreso",
+  "bloque": "3",
+  "torre": "1",
+  "piso": "1",
+  "posicion": "5",
+  "codigo": "57260",
+  "cantidad": "241.800",
+  "f_modificacion": "2026-06-25 13:06:14.423746+00",
+  "usuario_id": "aefcc539-0ec0-4f54-b67b-225714c12f99"
+ },
+ {
+  "id": "a269c25c-119a-475e-b2f2-5024b2b88a4e",
+  "tipo": "ingreso",
+  "bloque": "3",
+  "torre": "1",
+  "piso": "1",
+  "posicion": "5",
+  "codigo": "57260",
+  "cantidad": "241.800",
+  "f_modificacion": "2026-06-25 13:06:14.423746+00",
+  "usuario_id": "aefcc539-0ec0-4f54-b67b-225714c12f99"
+ },
+ {
+  "id": "c294bb0c-f266-4112-8194-a4d2473ab227",
+  "tipo": "ingreso",
+  "bloque": "7",
+  "torre": "2",
+  "piso": "1",
+  "posicion": "11",
+  "codigo": "42975",
+  "cantidad": "80.000",
+  "f_modificacion": "2026-06-25 13:06:15.111832+00",
+  "usuario_id": "aefcc539-0ec0-4f54-b67b-225714c12f99"
+ },
+ {
+  "id": "0319116c-1e3b-4307-b511-926ee7459cc6",
+  "tipo": "ingreso",
+  "bloque": "7",
+  "torre": "2",
+  "piso": "1",
+  "posicion": "11",
+  "codigo": "42975",
+  "cantidad": "80.000",
+  "f_modificacion": "2026-06-25 13:06:15.111832+00",
+  "usuario_id": "aefcc539-0ec0-4f54-b67b-225714c12f99"
+ }
+]

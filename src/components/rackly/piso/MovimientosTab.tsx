@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { listarMovimientos, eliminarMovimientoConPar, type Sector } from '@/lib/piso/api'
+import { listarMovimientosPage, listarUsuariosMovimientos, eliminarMovimientoConPar, type Sector } from '@/lib/piso/api'
 import { usePisoRealtime } from '@/hooks/usePisoRealtime'
 import { useAuth } from '@/hooks/useAuth'
 import { puede } from '@/lib/rackly/permisos'
@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/table'
 import {
   Loader2, Filter, X, ArrowDownToLine, ArrowUpFromLine, RotateCcw,
-  ArrowLeftRight, BarChart3, Search, ChevronDown, Package,
+  ArrowLeftRight, BarChart3, Search, ChevronDown, ChevronLeft, ChevronRight, Package,
   TrendingUp, Archive, Activity, Trash2, TriangleAlert, AlertTriangle,
 } from 'lucide-react'
 import {
@@ -75,6 +75,8 @@ function useAnimatedCounter(target: number, duration = 600) {
   return count
 }
 
+const PAGE_SIZE = 50
+
 export function MovimientosTab() {
   const [movimientos, setMovimientos] = useState<
     {
@@ -103,8 +105,23 @@ export function MovimientosTab() {
   const [filtroDesde, setFiltroDesde] = useState<string>('')
   const [filtroHasta, setFiltroHasta] = useState<string>('')
   const [filtroTexto, setFiltroTexto] = useState<string>('')
+  const [qDebounced, setQDebounced] = useState<string>('')
+  const [page, setPage] = useState(0)
+  const [total, setTotal] = useState(0)
+  const [totalIngreso, setTotalIngreso] = useState(0)
+  const [totalSalida, setTotalSalida] = useState(0)
+  const [totalDevolucion, setTotalDevolucion] = useState(0)
+  const [usuariosUnicos, setUsuariosUnicos] = useState<string[]>([])
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; op: number; tipo: string; uuidSync?: string } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+
+  // Búsqueda de texto debounced server-side (350ms)
+  useEffect(() => {
+    const t = setTimeout(() => setQDebounced(filtroTexto.trim()), 350)
+    return () => clearTimeout(t)
+  }, [filtroTexto])
+
+  const totalPaginas = Math.max(Math.ceil(total / PAGE_SIZE), 1)
 
   // Refresh function for realtime + polling
   const cargaGenRef = useRef(0)
@@ -120,9 +137,21 @@ export function MovimientosTab() {
     // orden y el VIEJO pisaba al nuevo (lista sin el último movimiento).
     const gen = ++cargaGenRef.current
     try {
-      const data = await listarMovimientos()
+      const res = await listarMovimientosPage({
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+        tipo: filtroTipo || undefined,
+        usuario: filtroUsuario || undefined,
+        desde: filtroDesde || undefined,
+        hasta: filtroHasta || undefined,
+        q: qDebounced || undefined,
+      })
       if (mountedRef.current && gen === cargaGenRef.current) {
-        setMovimientos(data)
+        setMovimientos(res.items)
+        setTotal(res.total)
+        setTotalIngreso(res.total_ingreso)
+        setTotalSalida(res.total_salida)
+        setTotalDevolucion(res.total_devolucion)
         setLoadError(false)
       }
     } catch (err) {
@@ -134,7 +163,7 @@ export function MovimientosTab() {
     } finally {
       if (mountedRef.current) setLoading(false)
     }
-  }, [])
+  }, [page, filtroTipo, filtroUsuario, filtroDesde, filtroHasta, qDebounced])
 
   const mountedRef = useRef(true)
   const movimientosRef = useRef(movimientos)
@@ -155,52 +184,28 @@ export function MovimientosTab() {
   // Realtime: auto-refresh when piso_movimientos changes (8s polling + Supabase Realtime)
   usePisoRealtime(refreshMovimientos)
 
-  // Extract unique users from loaded data
-  const usuariosUnicos = useMemo(() => {
-    return [...new Set(movimientos.map((m) => m.usuario_nombre).filter(Boolean))] as string[]
-  }, [movimientos])
+  // Usuarios para el filtro — resuelto server-side una sola vez (mejoras-piso
+  // 20261107: con paginación server-side el dropdown ya no depende de la página)
+  useEffect(() => {
+    listarUsuariosMovimientos()
+      .then((us) => { if (mountedRef.current) setUsuariosUnicos(us.map((u) => u.usuario_nombre)) })
+      .catch(() => { /* filtro de usuario degradado a vacío */ })
+  }, [])
 
-  // Filter movements
-  const movimientosFiltrados = useMemo(() => {
-    return movimientos.filter((m) => {
-      if (filtroTipo && m.tipo !== filtroTipo) return false
-      if (filtroUsuario && m.usuario_nombre !== filtroUsuario) return false
+  // Reiniciar a la primera página cuando cambian los filtros
+  useEffect(() => { setPage(0) }, [filtroTipo, filtroUsuario, filtroDesde, filtroHasta, qDebounced])
 
-      if (filtroDesde) {
-        const fechaMov = new Date(m.fecha)
-        const desde = new Date(filtroDesde + 'T00:00:00')
-        if (fechaMov < desde) return false
-      }
-      if (filtroHasta) {
-        const fechaMov = new Date(m.fecha)
-        const hasta = new Date(filtroHasta + 'T23:59:59')
-        if (fechaMov > hasta) return false
-      }
+  // Los datos ya llegan filtrados desde el servidor (RPC piso_listar_movimientos)
+  const movimientosFiltrados = movimientos
 
-      if (filtroTexto.trim()) {
-        const q = filtroTexto.trim().toLowerCase()
-        const matchesOp = String(m.numero_operacion).includes(q)
-        const matchesUser = (m.usuario_nombre ?? '').toLowerCase().includes(q)
-        const matchesDetalle = m.detalles.some(
-          (d) => (d.bloque_codigo ?? '').toLowerCase().includes(q) || String(d.cantidad).includes(q)
-        )
-        const matchesInc = (m.codigo_inc ?? '').toLowerCase().includes(q)
-        if (!matchesOp && !matchesUser && !matchesDetalle && !matchesInc) return false
-      }
-
-      return true
-    })
-  }, [movimientos, filtroTipo, filtroUsuario, filtroDesde, filtroHasta, filtroTexto])
-
-  // Summary counts
-  const conteos = useMemo(() => {
-    const total = movimientosFiltrados.length
-    const ingreso = movimientosFiltrados.filter((m) => m.tipo === 'ingreso').length
-    const salida = movimientosFiltrados.filter((m) => m.tipo === 'salida').length
-    const devolucion = movimientosFiltrados.filter((m) => m.tipo === 'devolucion').length
-    const traslado = movimientosFiltrados.filter((m) => m.tipo === 'traslado').length
-    return { total, ingreso, salida, devolucion, traslado }
-  }, [movimientosFiltrados])
+  // Summary counts — server-side sobre el conjunto FILTRADO completo
+  const conteos = useMemo(() => ({
+    total,
+    ingreso: totalIngreso,
+    salida: totalSalida,
+    devolucion: totalDevolucion,
+    traslado: 0, // los traslados se registran como par salida+ingreso (no hay tipo 'traslado')
+  }), [total, totalIngreso, totalSalida, totalDevolucion])
 
   // Animated counters for stats
   const animTotal = useAnimatedCounter(conteos.total)
@@ -224,18 +229,8 @@ export function MovimientosTab() {
       // de un traslado (salida+ingreso comparten uuid_sync): borrar solo una mitad
       // dejaba el stock inconsistente sin ningún aviso.
       const eliminados = await eliminarMovimientoConPar(deleteTarget.id)
-      const idsAEliminar = new Set<string>()
-      if (eliminados > 1 && deleteTarget.uuidSync) {
-        // borrar también la cabecera hermana del estado local
-        setMovimientos((prev) => {
-          for (const m of prev) if (m.uuid_sync === deleteTarget.uuidSync) idsAEliminar.add(m.id)
-          return prev.filter((m) => !idsAEliminar.has(m.id))
-        })
-      } else {
-        idsAEliminar.add(deleteTarget.id)
-        setMovimientos((prev) => prev.filter((m) => m.id !== deleteTarget.id))
-      }
       setDeleteTarget(null)
+      await refreshMovimientos() // el servidor actualiza saldo (snapshot) + paginación
       toast.success(eliminados > 1 ? 'Traslado completo eliminado (salida + ingreso)' : 'Movimiento eliminado')
     } catch (err) {
       // Antes el error solo iba a console: el modal se cerraba sin borrar ni avisar
@@ -299,7 +294,7 @@ export function MovimientosTab() {
   return (
     <div className="space-y-5">
       {/* ── Summary cards — gradient borders + animated counters ── */}
-      {!loading && movimientos.length > 0 && (
+      {!loading && total > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {/* Total */}
           <div className="group rounded-2xl p-[1px] bg-gradient-to-br from-slate-600/30 to-slate-700/15 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300">
@@ -369,7 +364,7 @@ export function MovimientosTab() {
       )}
 
       {/* ── Toolbar: search + filters toggle ── */}
-      {!loading && movimientos.length > 0 && (
+      {!loading && total > 0 && (
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           {/* Search input */}
           <div className="relative flex-1 w-full max-w-md">
@@ -414,7 +409,7 @@ export function MovimientosTab() {
 
             {tieneFiltrosActivos && (
               <span className="text-xs text-slate-500 bg-slate-800/40 rounded-lg px-2.5 py-1 border border-slate-700/30">
-                {movimientosFiltrados.length} de {movimientos.length}
+                {total} resultado{total === 1 ? '' : 's'}
               </span>
             )}
           </div>
@@ -424,7 +419,7 @@ export function MovimientosTab() {
       {/* ── Filter panel — collapsible with smooth animation ── */}
       <div
         className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 overflow-hidden transition-all duration-400 ease-out ${
-          showFilters && !loading && movimientos.length > 0
+          showFilters && !loading && total > 0
             ? 'max-h-[300px] opacity-100 mt-0'
             : 'max-h-0 opacity-0 -mt-3'
         }`}
@@ -536,7 +531,7 @@ export function MovimientosTab() {
       )}
 
       {/* ── Empty state — animated icon ── */}
-      {!loading && !loadError && movimientos.length === 0 && (
+      {!loading && !loadError && total === 0 && !tieneFiltrosActivos && (
         <div className="flex flex-col items-center justify-center py-16 gap-4">
           <div className="relative">
             <div className="rounded-2xl bg-slate-800/60 p-5 border border-slate-700/30 animate-bounce">
@@ -551,7 +546,7 @@ export function MovimientosTab() {
       )}
 
       {/* ── Filtered empty state — animated icon ── */}
-      {!loading && movimientos.length > 0 && movimientosFiltrados.length === 0 && (
+      {!loading && !loadError && total === 0 && tieneFiltrosActivos && (
         <div className="flex flex-col items-center justify-center py-12 gap-4">
           <div className="relative">
             <div className="rounded-2xl bg-slate-800/60 p-5 border border-slate-700/30">
@@ -611,7 +606,7 @@ export function MovimientosTab() {
       </AlertDialog>
 
       {/* ── Table — alternating row colors, modern badges ── */}
-      {!loading && movimientosFiltrados.length > 0 && (
+      {!loading && movimientos.length > 0 && (
         <div className="rounded-2xl border border-slate-700/40 overflow-hidden shadow-xl shadow-black/10">
           <div className="max-h-[600px] overflow-y-auto custom-scrollbar">
             <Table>
@@ -630,7 +625,7 @@ export function MovimientosTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {movimientosFiltrados.map((m, idx) => (
+                {movimientos.map((m, idx) => (
                   <TableRow
                     key={m.id}
                     className={`border-b border-slate-700/30 hover:bg-slate-700/40 transition-all duration-300 hover:shadow-inner ${
@@ -721,6 +716,37 @@ export function MovimientosTab() {
               </TableBody>
             </Table>
           </div>
+        </div>
+      )}
+
+      {/* ── Paginación server-side (mejoras-piso 20261107) ── */}
+      {!loading && total > PAGE_SIZE && (
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page === 0}
+            onClick={() => setPage((p) => Math.max(p - 1, 0))}
+            className="gap-1 rounded-xl border-slate-700 text-slate-300 bg-slate-800/60 hover:bg-slate-700 hover:text-white disabled:opacity-40 transition-all duration-300"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Anterior
+          </Button>
+          <span className="text-xs text-slate-400">
+            Página <strong className="text-slate-200">{page + 1}</strong> de {totalPaginas}
+            <span className="text-slate-600"> · </span>
+            {total} movimientos
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page + 1 >= totalPaginas}
+            onClick={() => setPage((p) => p + 1)}
+            className="gap-1 rounded-xl border-slate-700 text-slate-300 bg-slate-800/60 hover:bg-slate-700 hover:text-white disabled:opacity-40 transition-all duration-300"
+          >
+            Siguiente
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
       )}
     </div>

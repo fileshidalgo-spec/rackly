@@ -17,8 +17,13 @@ import { POLLING_INTERVAL } from '@/lib/rackly/constants'
  * - Si WebSocket se conecta: DETIENE el polling
  * - Si WebSocket falla/timeout: REANUDA el polling como respaldo
  * - Al desmontar: limpia intervalo y canal
+ * - Coalescing (mejoras-piso 20261107): ráfagas de eventos (un traslado genera
+ *   2 cabeceras + N detalles; N operarios concurrentes multiplican) se colapsan
+ *   en UN solo refresh (mín 50 ms, techo 1.2 s anti-hambre).
  */
 const CHANNEL_NAME = 'piso-realtime-sync'
+const DEBOUNCE_LEAD_MS = 50   // primer evento: espera mínima para agrupar la ráfaga
+const DEBOUNCE_MAX_MS = 1200  // techo anti-hambre: refresca aunque sigan llegando eventos
 
 // Referencia a nivel de módulo para limpiar el canal correctamente entre remounts
 let moduleChannel: ReturnType<typeof supabase.channel> | null = null
@@ -35,8 +40,26 @@ export function usePisoRealtime(onChange: () => void) {
     if (onChangeRef.current) onChangeRef.current()
   }, [])
 
+  // Coalescing: agrupa ráfagas de eventos en un solo refresh (crítico con
+  // varios operarios concurrentes: cada atención no debe refrescar N veces)
+  const debounceRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; first: number } | null>(null)
+  const activeRef = useRef(false)
+  const scheduleRefresh = useCallback(() => {
+    const state = debounceRef.current ?? { timer: null, first: 0 }
+    if (state.timer) clearTimeout(state.timer)
+    const now = Date.now()
+    if (!state.first) state.first = now
+    const delay = Math.max(DEBOUNCE_LEAD_MS, DEBOUNCE_MAX_MS - (now - state.first))
+    state.timer = setTimeout(() => {
+      debounceRef.current = null
+      if (activeRef.current) refresh()
+    }, delay)
+    debounceRef.current = state
+  }, [refresh])
+
   useEffect(() => {
     let active = true
+    activeRef.current = active
     let wsConnected = false
 
     // Polling como respaldo — solo corre cuando WebSocket NO está conectado
@@ -76,16 +99,12 @@ export function usePisoRealtime(onChange: () => void) {
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'piso_movimientos' },
-          () => {
-            setTimeout(() => { if (active) refresh() }, 150)
-          }
+          () => scheduleRefresh()
         )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'piso_movimiento_detalles' },
-          () => {
-            setTimeout(() => { if (active) refresh() }, 150)
-          }
+          () => scheduleRefresh()
         )
         .subscribe((status, err) => {
           if (!active) return
@@ -105,7 +124,10 @@ export function usePisoRealtime(onChange: () => void) {
 
     return () => {
       active = false
+      activeRef.current = false
       stopPolling()
+      if (debounceRef.current?.timer) clearTimeout(debounceRef.current.timer)
+      debounceRef.current = null
       if (moduleChannel) {
         try { dataClient.removeChannel(moduleChannel) } catch { /* ignore */ }
         moduleChannel = null

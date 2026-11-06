@@ -1,4 +1,32 @@
 ---
+Task ID: mejoras-piso-20261107
+Agent: Main Agent
+Task: «Implementar las mejoras mostradas en la consulta» — las 7 mejoras estructurales del módulo Piso para atenciones masivas (metodología 9 pasos, alcance PISOS; el usuario resuelve los 4 INC manualmente, no se tocaron)
+
+Work Log (1.1–9):
+- 1.1/1.2 (sobre origin/main 768fab1): el módulo Piso es event-sourcing puro — cada lectura de stock reconstruía el historial completo en cliente; 12 RPCs en BD con solo 3 usados; escritura cliente en 2 pasos sin transacción (la migración a RPCs llegó por las sesiones paralelas); listarMovimientos descargaba hasta 25.000 cabeceras + ~8 queries de resolución por evento realtime; stockPisoGlobal hasta 40.000 detalles al browser (con truncado silencioso que sobreestimaba stock); ubicación reconstruida en cliente duplicada en 4+ funciones.
+- BD-M1 (LIVE): Vista piso_v_niveles_ubicacion — ubicación "B-A1-Pos N" resuelta en servidor (misma lógica de cleanSubcolCode y del formato de labels).
+- BD-M2 (LIVE): Tabla snapshot piso_stock_nivel (nivel_id, bloque_id, cantidad, CHECK >= 0) + triggers AFTER INSERT/DELETE/UPDATE en piso_movimiento_detalles (aritmética +ingreso/devolucion/stock_inicial, −salida/transferencia; cualquier path de escritura la mantiene) + backfill 131 filas + verificación snapshot vs replay = 0 diferencias. Backfill previo: VACUUM/ANALYZE no requerido (tamaños pequeños).
+- BD-M3 (LIVE): RPC piso_listar_movimientos(_limit,_offset,_tipo,_usuario,_desde,_hasta,_q) → total + conteos por tipo sobre el conjunto filtrado + detalles con bloque_codigo/ubicación vía vista; RPC piso_usuarios_movimientos(). Correcciones durante el deploy: ORDER BY dentro de jsonb_agg y cast numero_operacion::bigint. Validada: total 2.042 = 757+1.172+113; paginación offset OK; filtros tipo/fecha/texto OK.
+- BD-M4 (LIVE): piso_stock_sector_grid reescrito sobre el snapshot (Plan 109ms; antes replay del historial por sector); validación de stock en piso_salida_posicion y piso_traslado_posicion ahora O(1) vía snapshot con fallback a replay si la clave no existe.
+- BD-M5 (LIVE): DROP de piso_registrar_salida y piso_registrar_traslado (generación anterior de piso_salida_posicion/piso_traslado_posicion; 0 referencias reales en src — solo un comentario). 16 RPCs piso restantes, todos con propósito.
+- BUG CRÍTICO #1 descubierto y corregido: piso_stock_detalle_posicion fallaba SIEMPRE desde su creación (COALESCE(fecha_vencimiento, '') mezclando date con texto → error de plan) — el cliente lo enmascaraba con su fallback client-side.
+- BUG CRÍTICO #2 descubierto y corregido: jsonb_set con ruta anidada NO crea objetos intermedios sobre '{}' (limitación PostgreSQL 17) → el pool de ingresos del RPC quedaba vacío y devolvía 0 lotes incluso tras el fix #1. Fix: crear contenedor por bloque antes de la asignación anidada. Validado contra datos reales: posición prueba → 40 @2027-06-30 y 66.000 @2027-08-10 = exactamente el neto SQL y el snapshot.
+- DELTA CLI-M1 (sobre 768fab1): eliminarMovimiento y eliminarMovimientoConPar ahora usan el RPC piso_eliminar_movimiento (transacción única; el trigger del snapshot actualiza el saldo en la misma transacción; falla ruidosa si el saldo resultante sería negativo — antes stock negativo silencioso). Se conserva el descubrimiento del PAR por uuid_sync.
+- DELTA CLI-M3: MovimientosTab server-side — paginación 50/pág (Anterior/Siguiente + "Página X de Y · N movimientos"), filtros tipo/usuario/fecha/texto resueltos en BD (texto debounced 350ms), cards con conteos server-side del conjunto filtrado completo, filtro de usuarios vía RPC. Conservados: loadError con reintento, gate puedeEliminar, eliminación en par, guard generacional y skip con pestaña oculta. El listado de 25K filas por evento realtime queda reemplazado por 1 RPC de 50 filas.
+- DELTA CLI-M4: usePisoRealtime con coalescing de ráfagas (mín 50 ms, techo 1.2 s anti-hambre) — una atención de N operarios colapsa en 1 refresh por pestaña en vez de N×M refetches completos.
+- DELTA CLI-M5: fix O(detalles×posiciones×niveles) → Map nivel→posición en el fallback de cargarPosicionesSector.
+- NO TOCADO (evaluado, decisión por paso 5): stockPisoGlobal sigue en cliente porque StockPisoItem ahora lleva deep-links (sector_id/posicion_id/columna_letra) que el RPC no devuelve — migrar degradaría la navegación Stock→Sectores; stockDetallePosicion sigue en cliente por diseño de las sesiones paralelas (salida dirigida al lote elegido + desborde FEFO, lote-aware). Ambos quedan como trabajo futuro (extender RPCs con lote + deep-links).
+- QA: tsc --noEmit OK (deps nuevas instaladas), eslint OK en los 3 archivos tocados, next build OK.
+- Verificación de coherencia global post-migración: snapshot 131 filas = replay con 0 diffs; RPC global devuelve 154 lotes coherentes; grid del primer sector 15 posiciones con stock.
+
+Stage Summary:
+- Lecturas O(1) por sector (snapshot), listado paginado server-side sin truncado, escritura ya transaccional (sesiones paralelas) ahora con validación O(1) y borrado atómico con integridad de saldo, realtime con coalescing.
+- Integridad: imposibilidad técnica de stock negativo por concurrencia (locks server-side + validación + CHECK snapshot); borrar historial que dejaría saldo negativo ahora falla con error claro (semántica correcta de event-sourcing).
+- 2 bugs latentes de RPC corregidos en BD con validación contra datos reales.
+- Commit: (ver git log) · Deploy: CI Cloudflare Pages tras push a main.
+
+---
 Task ID: auditoria-exhaustiva-20261107
 Agent: Main Agent
 Task: «Revisar y hay errores en la app, bugs, duplicados, códigos deficientes, estructura de datos fallidos o poco óptimos, cálculos fallidos o con poca coherencia — auditoría exhaustiva, Módulos: todos» (ronda de re-verificación; los 4 INC texto libre los resuelve el usuario manualmente) — 9 pasos

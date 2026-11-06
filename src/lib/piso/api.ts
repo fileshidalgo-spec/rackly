@@ -596,25 +596,14 @@ export async function registrarMovimiento(
 }
 
 export async function eliminarMovimiento(movimientoId: string): Promise<void> {
-  // First delete details, then the movement header
-  const { error: detErr } = await dataClient
-    .from('piso_movimiento_detalles')
-    .delete()
-    .eq('movimiento_id', movimientoId)
-  if (detErr) throw detErr
-  // HONESTIDAD (auditoría 2026-10-31): RLS por rol puede filtrar el delete
-  // del header en silencio — se pide la fila de vuelta y se verifica.
-  const { data: borrado, error: movErr } = await dataClient
-    .from('piso_movimientos')
-    .delete()
-    .eq('id', movimientoId)
-    .select('id')
-  if (movErr) throw movErr
-  exigirBorradas(
-    borrado,
-    1,
-    'El movimiento de piso NO se eliminó (tu rol no permite borrar, o ya fue eliminado por otro usuario). Recarga la lista.'
-  )
+  // RPC atómico server-side (mejoras-piso 20261107): detalles + cabecera en una
+  // transacción; el trigger del snapshot piso_stock_nivel actualiza el saldo en
+  // la misma transacción. Falla ruidosamente si el movimiento no existe o el
+  // saldo resultante sería negativo (antes: stock negativo silencioso).
+  const { error } = await dataClient.rpc('piso_eliminar_movimiento', {
+    p_movimiento_id: movimientoId,
+  })
+  if (error) throw error
 }
 
 /**
@@ -642,26 +631,16 @@ export async function eliminarMovimientoConPar(movimientoId: string): Promise<nu
     const ids = (hermanos ?? []).map((h: { id: string }) => h.id)
     if (ids.length > 1) idsAEliminar = ids // traslado: salida + ingreso
   }
-  const { data: borradas, error: detErr } = await dataClient
-    .from('piso_movimiento_detalles')
-    .delete()
-    .in('movimiento_id', idsAEliminar)
-    .select('id')
-  if (detErr) throw detErr
-  const { data: borradasMov, error: movErr } = await dataClient
-    .from('piso_movimientos')
-    .delete()
-    .in('id', idsAEliminar)
-    .select('id')
-  if (movErr) throw movErr
-  // HONESTIDAD (auditoría 2026-10-31): devolver lo REALMENTE eliminado —
-  // si la RLS filtró el delete del header (0 filas), NO reportar éxito.
-  exigirBorradas(
-    borradasMov,
-    1,
-    'El movimiento NO se eliminó (tu rol no permite borrar movimientos de piso). Pide la eliminación a un supervisor/administrador.'
-  )
-  return (borradasMov ?? []).length
+  // RPC atómico por movimiento (mejoras-piso 20261107): cada cabecera se
+  // elimina con sus detalles en una transacción y el snapshot de stock se
+  // actualiza con triggers. El RPC falla si el saldo resultante sería negativo.
+  for (const id of idsAEliminar) {
+    const { error } = await dataClient.rpc('piso_eliminar_movimiento', {
+      p_movimiento_id: id,
+    })
+    if (error) throw error
+  }
+  return idsAEliminar.length
 }
 
 /**
@@ -689,269 +668,94 @@ export async function selectIn<T>(
   return out
 }
 
-export async function listarMovimientos(
-  sectorId?: string,
-  columnaId?: string,
-  bloqueId?: string,
-  desde?: string,
+export type MovimientosFiltros = {
+  limit?: number
+  offset?: number
+  tipo?: string
+  usuario?: string
+  /** 'YYYY-MM-DD' → se expande a inicio/fin de día (UTC-5, Perú) */
+  desde?: string
   hasta?: string
-): Promise<MovimientoConDetalles[]> {
-  // ── Pre-filtrado server-side: resolver nivel_ids relevantes ──
-  // Si se filtra por bloqueId, encontrar los nivel_ids que tienen detalles con ese bloque
-  let filterNivelIds: string[] | null = null
-  if (bloqueId) {
-    const { data: detFilter } = await dataClient
-      .from('piso_movimiento_detalles')
-      .select('movimiento_id')
-      .eq('bloque_id', bloqueId)
-    if (detFilter && detFilter.length > 0) {
-      const movIds = [...new Set((detFilter as { movimiento_id: string }[]).map(d => d.movimiento_id))]
-      filterNivelIds = movIds // Usamos movIds como filtro (se reasigna abajo)
-    } else {
-      return []
-    }
-  }
+  q?: string
+}
 
-  // Construir query base con filtros de fecha
-  let query = dataClient
-    .from('piso_movimientos')
-    .select('*')
-    .order('fecha', { ascending: false })
-    .order('numero_operacion', { ascending: false })
+export type MovimientosPage = {
+  items: MovimientoConDetalles[]
+  total: number
+  total_ingreso: number
+  total_salida: number
+  total_devolucion: number
+}
 
-  if (desde) query = query.gte('fecha', desde)
-  if (hasta) query = query.lte('fecha', hasta + 'T23:59:59')
-
-  // Paginación con límite razonable (máx 25,000 cabeceras — FIX auditoría
-  // 2026-10-21: 5,000 truncaba silenciosamente la lista y los contadores
-  // animados cuando la tabla creciera; hoy hay ~1,600)
-  const PAGE_SIZE = 500
-  const MAX_PAGES = 50
-  let all: PisoMovimiento[] = []
-  let from = 0
-  let pages = 0
-  while (pages++ < MAX_PAGES) {
-    const to = from + PAGE_SIZE - 1
-    const { data, error } = await query.range(from, to)
-    if (error) throw error
-    const rows = (data ?? []) as PisoMovimiento[]
-    all.push(...rows)
-    if (rows.length < PAGE_SIZE) break
-    from += PAGE_SIZE
-  }
-
-  if (all.length === 0) return []
-
-  // ── Filtro por bloqueId (post-query) ──
-  if (bloqueId && filterNivelIds) {
-    const filterSet = new Set(filterNivelIds)
-    all = all.filter(m => filterSet.has(m.id))
-  }
-
-  // ── Filtro por sectorId (sin columnaId): resolver columnas → subcolumnas → posiciones → niveles → detalles ──
-  if (sectorId && !columnaId && !bloqueId) {
-    const { data: colData, error: colErr } = await dataClient
-      .from('piso_columnas')
-      .select('id')
-      .eq('sector_id', sectorId)
-    if (colErr) throw colErr
-    if (!colData || colData.length === 0) return []
-    const colIds = (colData as { id: string }[]).map(c => c.id)
-
-    const { data: subData, error: subErr } = await dataClient
-      .from('piso_subcolumnas')
-      .select('id')
-      .in('columna_id', colIds)
-    if (subErr) throw subErr
-    if (!subData || subData.length === 0) return []
-    const subIds = new Set((subData as { id: string }[]).map(s => s.id))
-
-    const { data: posData, error: posErr } = await dataClient
-      .from('piso_posiciones')
-      .select('id')
-      .in('subcolumna_id', [...subIds])
-    if (posErr) throw posErr
-    if (!posData || posData.length === 0) return []
-    const posIds = new Set((posData as { id: string }[]).map(p => p.id))
-
-    const { data: nivData, error: nivErr } = await dataClient
-      .from('piso_niveles')
-      .select('id')
-      .in('posicion_id', [...posIds])
-    if (nivErr) throw nivErr
-    if (!nivData || nivData.length === 0) return []
-    const nivIds = (nivData as { id: string }[]).map(n => n.id)
-
-    const { data: detFilter, error: detFilterErr } = await dataClient
-      .from('piso_movimiento_detalles')
-      .select('movimiento_id')
-      .in('nivel_id', nivIds)
-    if (detFilterErr) throw detFilterErr
-    if (detFilter && detFilter.length > 0) {
-      const validMovIds = new Set((detFilter as { movimiento_id: string }[]).map(d => d.movimiento_id))
-      all = all.filter(m => validMovIds.has(m.id))
-    } else {
-      all = []
-    }
-  }
-
-  // ── Filtro por columnaId: validar pertenencia a sector + resolver posiciones ──
-  if (columnaId) {
-    // Verificar que columnaId pertenece al sector (si se proporcionó sectorId)
-    if (sectorId) {
-      const { data: colCheck } = await dataClient
-        .from('piso_columnas')
-        .select('id')
-        .eq('id', columnaId)
-        .eq('sector_id', sectorId)
-      if (!colCheck || colCheck.length === 0) return []
-    }
-    // Obtener posiciones de esta columna → niveles → detalles → movimientos
-    const { data: subData } = await dataClient
-      .from('piso_subcolumnas')
-      .select('id')
-      .eq('columna_id', columnaId)
-    const subIdsOfCol = new Set<string>()
-    if (subData) {
-      for (const s of subData as { id: string }[]) subIdsOfCol.add(s.id)
-    }
-    if (subIdsOfCol.size === 0) { return [] }
-    const { data: posData } = await dataClient
-      .from('piso_posiciones')
-      .select('id')
-      .in('subcolumna_id', [...subIdsOfCol])
-    const posIdsOfCol = new Set<string>()
-    if (posData) {
-      for (const p of posData as { id: string }[]) posIdsOfCol.add(p.id)
-    }
-    if (posIdsOfCol.size > 0) {
-      const { data: nivData } = await dataClient
-        .from('piso_niveles')
-        .select('id')
-        .in('posicion_id', [...posIdsOfCol])
-      if (nivData && nivData.length > 0) {
-        const nivIds = (nivData as { id: string }[]).map(n => n.id)
-        const { data: detFilter } = await dataClient
-          .from('piso_movimiento_detalles')
-          .select('movimiento_id')
-          .in('nivel_id', nivIds)
-        if (detFilter && detFilter.length > 0) {
-          const validMovIds = new Set((detFilter as { movimiento_id: string }[]).map(d => d.movimiento_id))
-          all = all.filter(m => validMovIds.has(m.id))
-        } else {
-          all = []
-        }
-      } else {
-        all = []
-      }
-    } else {
-      all = []
-    }
-  }
-
-  if (all.length === 0) return []
-
-  const movIds = all.map((m) => m.id)
-  // Detalles por lotes: con hasta 5000 cabeceras, una única URL .in() podía
-  // reventar por longitud o truncarse a max_rows (movimientos sin detalles).
-  const detalles = await selectIn<MovimientoDetalle>('piso_movimiento_detalles', '*', 'movimiento_id', movIds)
-
-  const detalleMap = new Map<
-    string,
-    (MovimientoDetalle & { bloque_codigo?: string; nivel_codigo?: string })[]
-  >()
-  for (const d of detalles) {
-    if (!detalleMap.has(d.movimiento_id)) detalleMap.set(d.movimiento_id, [])
-    detalleMap.get(d.movimiento_id)!.push(d)
-  }
-
-  const blockIds = [...new Set(detalles.map((d) => d.bloque_id))]
-  const nivelIds = [...new Set(detalles.map((d) => d.nivel_id))]
-
-  const [bloquesRows, nivelesRows] = await Promise.all([
-    blockIds.length > 0
-      ? selectIn<{ id: string; codigo: string }>('piso_bloques', 'id, codigo', 'id', blockIds)
-      : Promise.resolve([] as { id: string; codigo: string }[]),
-    nivelIds.length > 0
-      ? selectIn<{ id: string; codigo_ubicacion: string | null; posicion_id: string }>('piso_niveles', 'id, codigo_ubicacion, posicion_id', 'id', nivelIds)
-      : Promise.resolve([] as { id: string; codigo_ubicacion: string | null; posicion_id: string }[]),
-  ])
-
-  const bloqueMap = new Map<string, string>()
-  bloquesRows.forEach((b) => bloqueMap.set(b.id, b.codigo))
-  const nivelMap = new Map<string, string | null>()
-  const nivelToPos = new Map<string, string>()
-  nivelesRows.forEach((n) => {
-    nivelMap.set(n.id, n.codigo_ubicacion)
-    nivelToPos.set(n.id, n.posicion_id)
+/**
+ * Lista movimientos con filtros y paginación SERVER-SIDE (RPC piso_listar_movimientos).
+ * Los conteos por tipo son sobre el conjunto FILTRADO completo (no solo la página).
+ * Reemplaza la descarga cliente de hasta 25.000 cabeceras + cadena de ~8 queries:
+ * bajo movimientos masivos esa versión crece linealmente y saturaba cada evento
+ * realtime. El RPC resuelve ubicación vía piso_v_niveles_ubicacion.
+ */
+export async function listarMovimientosPage(f: MovimientosFiltros = {}): Promise<MovimientosPage> {
+  const { data, error } = await dataClient.rpc('piso_listar_movimientos', {
+    _limit: f.limit ?? 50,
+    _offset: f.offset ?? 0,
+    _tipo: f.tipo || null,
+    _usuario: f.usuario || null,
+    _desde: f.desde ? `${f.desde}T00:00:00-05:00` : null,
+    _hasta: f.hasta ? `${f.hasta}T23:59:59.999-05:00` : null,
+    _q: f.q || null,
   })
-
-  // Resolve sector and position for each nivel
-  const posIds = [...new Set(nivelToPos.values())]
-  let sectorPosMap = new Map<string, { sector_nombre: string; posicion_label: string }>()
-  if (posIds.length > 0) {
-    const posRows = await selectIn<{ id: string; numero: number; subcolumna_id: string }>('piso_posiciones', 'id, numero, subcolumna_id', 'id', posIds)
-    const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
-    posRows.forEach((p) => posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id }))
-    const subIds = [...new Set([...posMap.values()].map((p) => p.subcolumna_id))]
-    if (subIds.length > 0) {
-      const subRows = await selectIn<{ id: string; codigo: string; columna_id: string }>('piso_subcolumnas', 'id, codigo, columna_id', 'id', subIds)
-      const subMap = new Map<string, { codigo: string; columna_id: string }>()
-      subRows.forEach((s) => subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id }))
-      const colIds = [...new Set([...subMap.values()].map((s) => s.columna_id))]
-      if (colIds.length > 0) {
-        const colRows = await selectIn<{ id: string; letra: string; sector_id: string }>('piso_columnas', 'id, letra, sector_id', 'id', colIds)
-        const colMap = new Map<string, { letra: string; sector_id: string }>()
-        colRows.forEach((c) => colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id }))
-        const sIds = [...new Set([...colMap.values()].map((c) => c.sector_id))]
-        if (sIds.length > 0) {
-          const secRows = await selectIn<{ id: string; nombre: string; n_columnas: number; n_subcolumnas: number }>('piso_sectores', 'id, nombre, n_columnas, n_subcolumnas', 'id', sIds)
-          const secInfoMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
-          secRows.forEach(
-            (s) => secInfoMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
-          )
-          // Build final map: nivel_id -> { sector_nombre, posicion_label }
-          for (const [nivId, posId] of nivelToPos) {
-            const pos = posMap.get(posId)
-            if (!pos) continue
-            const sub = subMap.get(pos.subcolumna_id)
-            if (!sub) continue
-            const col = colMap.get(sub.columna_id)
-            if (!col) continue
-            const secInfo = secInfoMap.get(col.sector_id)
-            const secName = secInfo?.nombre ?? ''
-            const label = !secInfo
-              ? `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
-              : secInfo.nCol === 1 && secInfo.nSub === 1
-                ? `Pos ${pos.numero}`
-                : secInfo.nSub === 1
-                  ? `${col.letra}-Pos ${pos.numero}`
-                  : `${col.letra}-${cleanSubcolCode(sub.codigo, col.letra)}-Pos ${pos.numero}`
-            sectorPosMap.set(nivId, {
-              sector_nombre: secName,
-              posicion_label: label,
-            })
-          }
-        }
-      }
-    }
-  }
-
-  const result = all.map((m) => ({
-    ...m,
-    detalles: (detalleMap.get(m.id) ?? []).map((d) => {
-      const locInfo = sectorPosMap.get(d.nivel_id)
-      return {
-        ...d,
-        bloque_codigo: bloqueMap.get(d.bloque_id),
-        nivel_codigo: nivelMap.get(d.nivel_id) ?? undefined,
-        sector_nombre: locInfo?.sector_nombre ?? '',
-        posicion_label: locInfo?.posicion_label ?? (d.nivel_codigo || ''),
-      }
-    }),
+  if (error) throw error
+  const rows = (Array.isArray(data) ? data : []) as unknown as {
+    total: number | string
+    total_ingreso: number | string
+    total_salida: number | string
+    total_devolucion: number | string
+    id: string
+    numero_operacion: number
+    tipo: string
+    fecha: string
+    turno: string | null
+    usuario_id: string | null
+    usuario_nombre: string | null
+    usuario_correo: string | null
+    codigo_inc: string | null
+    detalles: (MovimientoDetalle & {
+      bloque_codigo?: string
+      nivel_codigo?: string
+      sector_nombre?: string
+      posicion_label?: string
+    })[]
+  }[]
+  const first = rows[0]
+  const items: MovimientoConDetalles[] = rows.map((m) => ({
+    id: m.id,
+    numero_operacion: m.numero_operacion,
+    tipo: m.tipo,
+    fecha: m.fecha,
+    turno: m.turno ?? '',
+    usuario_id: m.usuario_id,
+    usuario_nombre: m.usuario_nombre,
+    usuario_correo: m.usuario_correo,
+    codigo_inc: m.codigo_inc ?? undefined,
+    detalles: (Array.isArray(m.detalles) ? m.detalles : []).map((d) => ({ ...d })),
   }))
+  const toNum = (v: number | string | undefined) =>
+    typeof v === 'number' ? v : parseInt(String(v ?? '0'), 10) || 0
+  return {
+    items,
+    total: toNum(first?.total),
+    total_ingreso: toNum(first?.total_ingreso),
+    total_salida: toNum(first?.total_salida),
+    total_devolucion: toNum(first?.total_devolucion),
+  }
+}
 
-  return result
+/** Usuarios que registraron movimientos (para el filtro de usuario del UI). */
+export async function listarUsuariosMovimientos(): Promise<{ usuario_nombre: string; total: number }[]> {
+  const { data, error } = await dataClient.rpc('piso_usuarios_movimientos')
+  if (error) throw error
+  return ((Array.isArray(data) ? data : []) as unknown as { usuario_nombre: string; total: number }[])
+    .map((r) => ({ usuario_nombre: r.usuario_nombre, total: Number(r.total) || 0 }))
 }
 
 export async function calcularStockNivel(
@@ -1230,31 +1034,29 @@ export async function cargarPosicionesSector(
     nivelesPorPosicion.set(n.posicion_id, arr)
   }
 
-  // Agrupar stock por posición
+  // Agrupar stock por posición — Map nivel→posición (O(1) por detalle;
+  // antes: triple loop con includes() = O(detalles × posiciones × niveles))
+  const nivelToPosicion = new Map<string, string>()
+  for (const n of niveles) nivelToPosicion.set(n.id, n.posicion_id)
   const stockPorPosicion = new Map<string, { bloque_id: string; bloque_codigo: string; cantidad: number }[]>()
   for (const s of stockPorNivel) {
-    // Encontrar la posición de este nivel
-    for (const pos of posiciones) {
-      const posNivIds = nivelesPorPosicion.get(pos.id) ?? []
-      if (posNivIds.includes(s.nivel_id)) {
-        const arr = stockPorPosicion.get(pos.id) ?? []
-        const existing = arr.find((e) => e.bloque_id === s.bloque_id)
-        if (existing) {
-          existing.cantidad += s.cantidad
-        } else {
-          arr.push({
-            bloque_id: s.bloque_id,
-            bloque_codigo: bloqueMap.get(s.bloque_id) ?? s.bloque_id,
-            cantidad: s.cantidad,
-          })
-        }
-        stockPorPosicion.set(pos.id, arr)
-        break
-      }
+    const posId = nivelToPosicion.get(s.nivel_id)
+    if (!posId) continue
+    const arr = stockPorPosicion.get(posId) ?? []
+    const existing = arr.find((e) => e.bloque_id === s.bloque_id)
+    if (existing) {
+      existing.cantidad += s.cantidad
+    } else {
+      arr.push({
+        bloque_id: s.bloque_id,
+        bloque_codigo: bloqueMap.get(s.bloque_id) ?? s.bloque_id,
+        cantidad: s.cantidad,
+      })
     }
+    stockPorPosicion.set(posId, arr)
   }
 
-  const result: PosicionConStock[] = posiciones.map((pos) => {
+    const result: PosicionConStock[] = posiciones.map((pos) => {
     const sub = subMap.get(pos.subcolumna_id)
     const bloques = (stockPorPosicion.get(pos.id) ?? []).filter((b) => b.cantidad > 0)
     const totalStock = bloques.reduce((sum, b) => sum + b.cantidad, 0)

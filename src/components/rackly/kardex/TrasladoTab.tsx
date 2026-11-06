@@ -50,7 +50,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { Loader2, ArrowRightLeft, PackageSearch, AlertTriangle, ArrowUpFromLine, Package, MapPin, TriangleAlert, CheckCircle2 } from 'lucide-react'
-import { formatDate, isExpired, isExpiringSoon, extractError, isInsufficientStockError } from '@/lib/utils'
+import { formatDate, isExpired, isExpiringSoon, extractError, isInsufficientStockError, esTipoEntrada } from '@/lib/utils'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 
 type LocStock = {
@@ -146,7 +146,7 @@ export function TrasladoTab() {
     // FEFO — la igualdad estricta excluía filas cuyo codigo viniera con espacios
     // o minúsculas en BD (clase entera de "no me da información")
     const relevant = movs.filter((m) => m.codigo.trim().toUpperCase() === code && !m.codigoInc)
-    const POS_TYPES = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
+    // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
     for (const m of relevant) {
       const qty = m.cantidad
       if (isNaN(qty) || !isFinite(qty) || qty <= 0) continue
@@ -162,7 +162,7 @@ export function TrasladoTab() {
       }
       if (!cur.proveedor && m.proveedor) cur.proveedor = m.proveedor
       const venc = m.fVencimiento || ''
-      if (POS_TYPES.includes(m.tipo)) {
+      if (esTipoEntrada(m.tipo)) {
         cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
         // Registrar el código de lote físico si el ingreso lo trajo
         if (m.lote) {

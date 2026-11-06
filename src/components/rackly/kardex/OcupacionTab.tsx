@@ -43,7 +43,7 @@ import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque, totalCeldas } from 
 import { supabase, dataClient } from '@/lib/supabase/client'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { useAuth } from '@/hooks/useAuth'
-import { requiereProveedor, extractError, isInsufficientStockError, isExpired, isExpiringSoon } from '@/lib/utils'
+import { requiereProveedor, extractError, isInsufficientStockError, isExpired, isExpiringSoon, impactoStock } from '@/lib/utils'
 import { PROVEEDORES_FILM } from '@/lib/rackly/constants'
 import { CatalogoSearchInput } from './CatalogoSearchInput'
 import {
@@ -133,7 +133,7 @@ function calcularOcupacion(movs: Movimiento[]): OcupacionCelda[] {
     const code = m.codigo.trim().toUpperCase()
     let codeMap = cellMap.get(key)
     if (!codeMap) { codeMap = new Map(); cellMap.set(key, codeMap) }
-    const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
+    const delta = impactoStock(m.tipo, m.cantidad)
     const current = codeMap.get(code) ?? 0
     // Redondeo a 3 decimales (precisión de la BD) en cada acumulación: evita que
     // residuos binarios (~1e-14) dejen celdas "ocupadas" con stock invisible 0.

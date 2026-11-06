@@ -6,6 +6,7 @@ import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '
 import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { hoyISO } from '@/lib/rackly/formato'
+import { esTipoEntrada } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -134,7 +135,7 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
   // desborde FEFO (calcularLotesRemanentes). Ningún lote queda en negativo y
   // la suma de lotes mostrados = stock neto de la posición en Stock/Ocupación.
   const fefoData = useMemo(() => {
-    const ENTRADAS = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
+    // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
 
     // Pools por (ubicación + código), excluyendo INC (igual que Stock/Ocupación)
     const ingresosMap = new Map<string, Map<string, number>>() // key → (fv → qty)
@@ -156,7 +157,7 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
         metaMap.set(key, { posKey, code, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined })
       }
       const venc = m.fVencimiento || ''
-      if (ENTRADAS.includes(m.tipo)) {
+      if (esTipoEntrada(m.tipo)) {
         const pool = ingresosMap.get(key) ?? new Map<string, number>()
         pool.set(venc, (pool.get(venc) ?? 0) + qty)
         ingresosMap.set(key, pool)

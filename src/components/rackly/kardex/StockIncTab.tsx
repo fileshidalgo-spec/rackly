@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { dataClient } from '@/lib/supabase/client'
 import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
+import { impactoStock } from '@/lib/utils'
 import { normalizarCodigoInc } from '@/lib/rackly/inc-norm'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { Input } from '@/components/ui/input'
@@ -143,7 +144,7 @@ export function StockIncTab({ onGotoUbicacion }: StockIncTabProps) {
         const un = String(r.un ?? '')
         const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
         const tipo = String(r.tipo ?? '')
-        const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(tipo) ? qty : -qty
+        const delta = impactoStock(tipo, qty)
         const mapKey = `${posKey}||${code}||${codeInc}`
 
         const existing = stockMap.get(mapKey)

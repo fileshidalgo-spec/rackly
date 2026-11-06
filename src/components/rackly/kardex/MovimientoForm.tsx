@@ -24,6 +24,7 @@ import {
   isExpiringSoon,
   extractError,
   isInsufficientStockError,
+  esTipoEntrada,
 } from '@/lib/utils'
 import { aNumero } from '@/lib/rackly/formato'
 import { detectarRqParaSalida, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
@@ -834,7 +835,7 @@ function SalidaForm({
       const relevant = movs.filter((m) => m.codigo === upperCode && !m.codigoInc)
       let desc = ''
       let un = ''
-      const POS_TYPES = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
+      // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
       for (const m of relevant) {
         if (!desc && m.descripcion) desc = m.descripcion
         if (!un && m.un) un = m.un
@@ -852,7 +853,7 @@ function SalidaForm({
         }
         if (!cur.proveedor && m.proveedor) cur.proveedor = m.proveedor
         const venc = m.fVencimiento || ''
-        if (POS_TYPES.includes(m.tipo)) {
+        if (esTipoEntrada(m.tipo)) {
           cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
           // Registrar el código de lote físico si el ingreso lo trajo
           if (m.lote) {
@@ -1633,7 +1634,7 @@ function SalidaIncForm({
       const relevant = movs.filter((m) => m.codigo === upperCode && !!m.codigoInc)
       let desc = ''
       let un = ''
-      const POS_TYPES_INC = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
+      // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
       for (const m of relevant) {
         if (!desc && m.descripcion) desc = m.descripcion
         if (!un && m.un) un = m.un
@@ -1651,7 +1652,7 @@ function SalidaIncForm({
         }
         if (!cur.proveedor && m.proveedor) cur.proveedor = m.proveedor
         const venc = m.fVencimiento || ''
-        if (POS_TYPES_INC.includes(m.tipo)) {
+        if (esTipoEntrada(m.tipo)) {
           cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
           // Registrar el código de lote físico si el ingreso lo trajo
           if (m.lote) {

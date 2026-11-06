@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react'
 import { fetchMovimientos, addMovimientosBatch, listarMovimientoIds, eliminarMovimientosPorIds, calcularLotesRemanentes, proveedorPorVenc, compararFEFO, compararUbicacionNum, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
 import { aNumero, hoyISO } from '@/lib/rackly/formato'
+import { esTipoEntrada } from '@/lib/utils'
 import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
 import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { useAuth } from '@/hooks/useAuth'
@@ -61,7 +62,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
       // proveedor era el del PRIMER movimiento (lote ya consumido). Ahora usa
       // el MISMO algoritmo que Stock/Ocupación/FEFO (calcularLotesRemanentes)
       // y el proveedor del ingreso más reciente de cada lote remanente.
-      const ENTRADA_TYPES = new Set(['ingreso', 'devolucion', 'traslado', 'stock_inicial'])
+      // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
       type PoolRow = {
         code: string; desc: string; un: string;
         bloque: string; torre: string; piso: string; posicion: string;
@@ -83,7 +84,7 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
         }
         if (!p.desc && m.descripcion) p.desc = m.descripcion
         const vencKey = m.fVencimiento || ''
-        if (ENTRADA_TYPES.has(m.tipo)) {
+        if (esTipoEntrada(m.tipo)) {
           p.ing.set(vencKey, (p.ing.get(vencKey) ?? 0) + qty)
           if (m.proveedor) p.provIn.push({ venc: vencKey, proveedor: m.proveedor, ts: m.fModificacion })
         } else {

@@ -2,7 +2,7 @@
 
 import { dataClient } from '@/lib/supabase/client'
 import { PAGE_SIZE, MAX_ITERATIONS, FETCH_MOV_MAX_PAGES, MOVIMIENTOS_ENTRADA, TURNO_DIA, TURNO_NOCHE } from './constants'
-import { impactoStock } from '@/lib/utils'
+import { impactoStock, esTipoEntrada } from '@/lib/utils'
 import { toast } from 'sonner'
 import { exigirBorradas } from '@/lib/rackly/eliminacion-honesta'
 import { ERR_ELIMINAR_BLOQUEADO, errorControlado } from '@/lib/rackly/errores'
@@ -264,7 +264,7 @@ export async function buscarStockRacksPorCodigo(codigo: string): Promise<StockRa
 
 /** Núcleo puro de buscarStockRacksPorCodigo (testeable sin BD). */
 export function calcularStockRacksDesdeMovs(movs: Movimiento[]): StockRacksPorCodigoItem[] {
-  const ENTRADAS = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
+  // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
   // Pools por posición (excluye INC): ingresos por venc + salidas ordenadas
   const ingMap = new Map<string, Map<string, number>>()
   const salMap = new Map<string, Array<{ venc: string; qty: number; ts: string; id: string }>>()
@@ -283,7 +283,7 @@ export function calcularStockRacksDesdeMovs(movs: Movimiento[]): StockRacksPorCo
       })
     }
     const venc = m.fVencimiento || ''
-    if (ENTRADAS.includes(m.tipo)) {
+    if (esTipoEntrada(m.tipo)) {
       const pool = ingMap.get(posKey) ?? new Map<string, number>()
       pool.set(venc, (pool.get(venc) ?? 0) + qty)
       ingMap.set(posKey, pool)
@@ -818,7 +818,7 @@ export async function stockEnUbicacion(
       usuarioPrimerNombre: string; proveedor: string; codigoInc: string;
     }>()
 
-    const isPosTipo = (t: string) => ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(t)
+    // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
 
     for (const r of allRows) {
       const m = fromRow(r)
@@ -839,7 +839,7 @@ export async function stockEnUbicacion(
       }
 
       const venc = m.fVencimiento || ''
-      if (isPosTipo(m.tipo)) {
+      if (esTipoEntrada(m.tipo)) {
         const pool = ingresosMap.get(key) ?? new Map<string, number>()
         pool.set(venc, (pool.get(venc) ?? 0) + qty)
         ingresosMap.set(key, pool)
@@ -1002,7 +1002,7 @@ export async function fetchIncPorUbicacion(): Promise<Map<string, IncEnCelda[]> 
       let locMap = map.get(key)
       if (!locMap) { locMap = new Map(); map.set(key, locMap) }
       const qty = typeof r.cantidad === 'number' ? r.cantidad : parseFloat(String(r.cantidad ?? '0')) || 0
-      const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(String(r.tipo)) ? qty : -qty
+      const delta = impactoStock(String(r.tipo), qty)
       // Redondeo a 3 decimales (precisión de la BD) ANTES de acumular/filtrar:
       // sin esto, un residuo binario (ej. 1.4e-14) pasaba el filtro > 0 y mostraba
       // INC fantasma con stock 0 (misma clase de bug que calcularLotesRemanentes).

@@ -18,6 +18,7 @@ import {
   searchCatalogo,
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
+import { esTipoEntrada, impactoStock } from '@/lib/utils'
 import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
 import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { Input } from '@/components/ui/input'
@@ -123,7 +124,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
     if (!selectedCodigo) return info
     const code = selectedCodigo.trim().toUpperCase()
     const isIncMode = stockFilter === 'inc'
-    const ENTRADAS = ['ingreso', 'devolucion', 'traslado', 'stock_inicial']
+    // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
     const fmtInfo = (rem: { venc: string; cantidad: number }[], provPorVenc: Map<string, string>) => ({
       fVencimiento: rem[0]?.venc || '',
       lotesInfo: rem.map(l => `${l.venc || 'S/F'}: ${Math.round(l.cantidad * 1000) / 1000}`).join(' | '),
@@ -145,7 +146,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
         if (!(qty > 0)) continue
         const venc = m.fVencimiento || ''
-        if (ENTRADAS.includes(m.tipo)) {
+        if (esTipoEntrada(m.tipo)) {
           let p = pools.get(key)
           if (!p) { p = { ing: new Map(), sal: [] }; pools.set(key, p) }
           p.ing.set(venc, (p.ing.get(venc) ?? 0) + qty)
@@ -185,7 +186,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
         if (!(qty > 0)) continue
         const venc = m.fVencimiento || ''
-        if (ENTRADAS.includes(m.tipo)) {
+        if (esTipoEntrada(m.tipo)) {
           const pool = ing.get(posKey) ?? new Map<string, number>()
           pool.set(venc, (pool.get(venc) ?? 0) + qty)
           ing.set(posKey, pool)
@@ -233,7 +234,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       const mCode = m.codigo.trim().toUpperCase()
       let codeMap = cellMap.get(posKey)
       if (!codeMap) { codeMap = new Map(); cellMap.set(posKey, codeMap) }
-      const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
+      const delta = impactoStock(m.tipo, m.cantidad)
       // Redondeo a 3 decimales (precisión BD) para evitar residuos binarios que
       // se muestran como stock fantasma (ej. 12.000000000000002) o filas con ~0.
       const current = codeMap.get(mCode) ?? 0
@@ -262,17 +263,17 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         const mCode = m.codigo.trim().toUpperCase()
         if (mCode !== code) continue
         const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-        const delta = ['ingreso', 'devolucion', 'traslado', 'stock_inicial'].includes(m.tipo) ? m.cantidad : -m.cantidad
-        incCellMap.set(posKey, Math.round(((incCellMap.get(posKey) ?? 0) + delta) * 1000) / 1000)
+        incCellMap.set(posKey, Math.round(((incCellMap.get(posKey) ?? 0) + impactoStock(m.tipo, m.cantidad)) * 1000) / 1000)
         if (!descMap.has(posKey)) {
           descMap.set(posKey, { descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined })
         }
       }
       for (const [posKey, stock] of incCellMap) {
-        // FIX Task 19: la búsqueda lista SOLO stock > 0. Las ubicaciones donde el
-        // INC ya no está (stock 0 con historial) y las negativas NO se muestran
-        // (Task 18 las mostraba en verde; generaba listas 82% ruido histórico).
-        if (stock <= 0) continue
+        // Task 19: el stock 0 (historial sin existencia) NO se lista — era 82%
+        // de ruido. Auditoría 2026-11-07: los NEGATIVOS SÍ se listan — son un
+        // estado de error ACCIONABLE (salidas históricas superaron lo registrado;
+        // caso real 42975 en 7-2-1-11) que debe verse para pedir conteo físico.
+        if (!stock) continue
         const desc = descMap.get(posKey)
         if (!desc) continue
         const [bloque, torre, piso, posicion] = posKey.split('-')
@@ -287,13 +288,13 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
         })
       }
     } else {
-      // Modo normal: SOLO celdas del código con stock > 0. Las ubicaciones donde
-      // el producto YA NO ESTÁ (stock 0 con historial de movimientos) no se
-      // listan — Task 19: "posiciones donde estuvo el producto con stock 0 no
-      // deberían mostrarse". Negativas tampoco (estado de error).
+      // Modo normal: celdas del código con stock ≠ 0. Las de stock 0 (el producto
+      // YA NO ESTÁ) no se listan — Task 19. Los NEGATIVOS SÍ: estado de error
+      // accionable (auditoría 2026-11-07 — antes quedaban invisibles y la celda
+      // ni siquiera aparecía con el filtro "Todos").
       for (const [posKey, codeMap] of cellMap) {
         const posStock = codeMap.get(code)
-        if (!posStock || posStock <= 0) continue
+        if (!posStock) continue
         const desc = descMap.get(posKey)
         if (!desc) continue
         const [bloque, torre, piso, posicion] = posKey.split('-')
@@ -628,7 +629,7 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
           <Warehouse className="h-3.5 w-3.5" />
-          {displayStock.length > 0 ? 'Stock por ubicación en RACKLY · toca la ubicación para ir a Ocupación · solo ubicaciones con stock' : 'Sin stock en ubicaciones de RACKLY'}
+          {displayStock.length > 0 ? 'Stock por ubicación en RACKLY · toca la ubicación para ir a Ocupación · los stock negativos se marcan en rojo como inconsistencia' : 'Sin stock en ubicaciones de RACKLY'}
         </p>
       </div>
       <div className="flex gap-2">
@@ -678,9 +679,10 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                     <ExternalLink className="h-2.5 w-2.5 text-violet-400" />
                   </button>
                   <div className="flex items-center gap-2">
-                    {/* Defensa Task 19: una fila en 0 ya no debería llegar aquí
-                        (cliente y RPC filtran > 0); si una carrera realtime la
-                        colara, se pinta VERDE (vacía), nunca como stock real. */}
+                    {/* Task 19: una fila en 0 no debería llegar aquí (cliente y RPC
+                        filtran el 0); si una carrera realtime la colara, VERDE
+                        (vacía), nunca como stock real. Auditoría 2026-11-07: los
+                        NEGATIVOS llegan a propósito — rojo «inconsistencia». */}
                     {s.stock === 0 ? (
                       <Badge
                         variant="outline"
@@ -688,6 +690,15 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                         title="Ubicación vacía · stock 0"
                       >
                         0
+                      </Badge>
+                    ) : s.stock < 0 ? (
+                      <Badge
+                        variant="outline"
+                        className="text-sm bg-red-50 text-red-700 border-red-300 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800 font-bold"
+                        title="STOCK NEGATIVO — inconsistencia: las salidas registradas superan lo ingresado en esta celda. Requiere conteo físico y ajuste."
+                      >
+                        <AlertTriangle className="h-3 w-3 mr-1" />
+                        {s.stock}
                       </Badge>
                     ) : (
                       <Badge variant="default" className="text-sm">{s.stock}</Badge>
@@ -809,7 +820,8 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                       )}
                     </TableCell>
                     <TableCell className="text-right font-medium">
-                      {/* Defensa Task 19 (ver comentario en vista móvil). */}
+                      {/* Task 19 (ver comentario en vista móvil) + negativos visibles
+                          como inconsistencia (auditoría 2026-11-07). */}
                       {s.stock === 0 ? (
                         <Badge
                           variant="outline"
@@ -817,6 +829,15 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
                           title="Ubicación vacía · stock 0"
                         >
                           0
+                        </Badge>
+                      ) : s.stock < 0 ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-red-50 text-red-700 border-red-300 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800 font-bold"
+                          title="STOCK NEGATIVO — inconsistencia: las salidas registradas superan lo ingresado en esta celda. Requiere conteo físico y ajuste."
+                        >
+                          <AlertTriangle className="h-3 w-3 mr-1" />
+                          {s.stock}
                         </Badge>
                       ) : (
                         <Badge variant="default">{s.stock}</Badge>

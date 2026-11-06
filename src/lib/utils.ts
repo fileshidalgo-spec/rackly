@@ -9,14 +9,25 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 // ── Stock ───────────────────────────────────────────────
+/**
+ * ¿Este tipo de movimiento SUMA al stock del Kardex de Racks (tabla movimientos)?
+ * FUENTE ÚNICA de la convención de signos — auditoría 2026-11-07: la regla
+ * estaba copiada a mano en 11 sitios (kardex, FEFO, Ocupación, Stock, Stock INC,
+ * Traslado, Descarga + 3 RPCs SQL) y una copia llegó a omitir 'stock_inicial'.
+ * Cualquier tipo nuevo de entrada se añade SOLO en constants.ts (MOVIMIENTOS_ENTRADA).
+ * Nota: el ledger de PISO (piso_movimientos) tiene su propia convención
+ * (traslado = par salida+ingreso) — NO usar esta función allí.
+ */
+export function esTipoEntrada(tipo: string): boolean {
+  return MOVIMIENTOS_ENTRADA.includes(tipo as typeof MOVIMIENTOS_ENTRADA[number])
+}
+
 /** Calcula el impacto en stock de un movimiento.
- *  INGRESO, DEVOLUCIÓN, TRASLADO = positivo
- *  SALIDA = negativo
+ *  INGRESO, DEVOLUCIÓN, TRASLADO, STOCK_INICIAL = positivo
+ *  SALIDA (y cualquier otro) = negativo
  */
 export function impactoStock(tipo: string, cantidad: number): number {
-  return MOVIMIENTOS_ENTRADA.includes(tipo as typeof MOVIMIENTOS_ENTRADA[number])
-    ? cantidad
-    : -cantidad
+  return esTipoEntrada(tipo) ? cantidad : -cantidad
 }
 
 // ── Formateo ────────────────────────────────────────────

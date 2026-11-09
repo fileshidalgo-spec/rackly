@@ -6,7 +6,8 @@
  *   npx esbuild scripts/test_permisos.js --bundle --platform=node \
  *     --outfile=/tmp/test_permisos.cjs --alias:@=./src --loader:.ts=ts && node /tmp/test_permisos.cjs
  *
- * Escenarios (v2 — cuadro módulo × acción, 27 permisos):
+ * Escenarios (v3 — cuadro módulo × acción, 31 permisos: 27 de Insumos +
+ * 4 de Repuestos añadidos en 20261110):
  *   1. Catálogo: códigos únicos con modulo/accion/etiqueta/descripción, 26.
  *   2. MATRIZ: 8 módulos, celdas — solo códigos del catálogo, columnas válidas,
  *      cada fila con al menos una celda; PERMISO_VER_MODULO cubre los módulos.
@@ -46,10 +47,10 @@ function verificar(condicion, mensaje) {
 
 // ═══ 1 · Catálogo ═══
 console.log('1 · Catálogo del cuadro de permisos')
-verificar(PERMISOS.length === 27, `debe tener 27 permisos (tiene ${PERMISOS.length})`)
+verificar(PERMISOS.length === 31, `debe tener 31 permisos — 27 de Insumos + 4 de Repuestos (tiene ${PERMISOS.length})`)
 const codigos = PERMISOS.map((p) => p.codigo)
 verificar(new Set(codigos).size === codigos.length, 'códigos únicos (sin duplicados)')
-const MODULOS_VALIDOS = ['racks', 'catalogo', 'descarga', 'piso', 'recepcion', 'atencion', 'transito', 'usuarios']
+const MODULOS_VALIDOS = ['racks', 'catalogo', 'descarga', 'piso', 'recepcion', 'atencion', 'transito', 'usuarios', 'repuestos']
 const ACCIONES_VALIDAS = ['ver', 'crear', 'editar', 'eliminar', 'aprobar']
 for (const p of PERMISOS) {
   verificar(!!p.etiqueta && !!p.descripcion, `permiso ${p.codigo} con etiqueta/descripción`)
@@ -63,7 +64,7 @@ verificar(etiquetaPermiso('no-existe') === 'no-existe', 'etiquetaPermiso cae al 
 
 // ═══ 2 · MATRIZ del cuadro ═══
 console.log('2 · MATRIZ: módulo × acción')
-verificar(MATRIZ.length === 8, `8 filas de módulos (tiene ${MATRIZ.length})`)
+verificar(MATRIZ.length === 9, `9 filas de módulos — 8 de Insumos + Repuestos (tiene ${MATRIZ.length})`)
 verificar(COLUMNAS_MATRIZ.map((c) => c.accion).join(',') === 'ver,crear,editar,eliminar,aprobar', 'columnas del cuadro: Ver/Crear/Editar/Eliminar/Aprobar')
 const codigosEnMatriz = new Set()
 for (const fila of MATRIZ) {
@@ -79,7 +80,7 @@ for (const fila of MATRIZ) {
     verificar(def && def.accion === clave, `código ${codigo} coincide con la acción ${clave}`)
   }
 }
-verificar(codigosEnMatriz.size === 27, `la matriz usa los 27 permisos (usa ${codigosEnMatriz.size})`)
+verificar(codigosEnMatriz.size === 31, `la matriz usa los 31 permisos (usa ${codigosEnMatriz.size})`)
 for (const [vista, req] of Object.entries(PERMISO_VER_MODULO)) {
   verificar(codigos.includes(req), `PERMISO_VER_MODULO[${vista}] → ${req} en catálogo`)
   verificar(req.endsWith('.ver'), `PERMISO_VER_MODULO[${vista}] es un permiso de Ver`)

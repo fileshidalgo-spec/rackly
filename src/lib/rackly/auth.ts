@@ -14,6 +14,11 @@ export type Perfil = {
   mustChangePassword: boolean
   /** Overrides de permisos (excepciones al rol) — null si no se cargaron */
   permisosExtra?: Record<string, boolean> | null
+  /** Almacenes autorizados (pre-ingreso). El admin los alterna en Usuarios
+   *  (RPC establecer_acceso_almacen). Defaults BD: insumos=true, repuestos=false.
+   *  undefined = columnas aún no cargadas (no debería pasar en producción). */
+  accesoInsumos?: boolean
+  accesoRepuestos?: boolean
 }
 
 /**
@@ -224,7 +229,7 @@ export async function getPerfilActual(): Promise<Perfil | null> {
   const [perfilRes, rolesRes, permisosRes] = await Promise.all([
     dataClient
       .from('profiles')
-      .select('id, correo, nombre, aprobado, must_change_password')
+      .select('id, correo, nombre, aprobado, must_change_password, acceso_insumos, acceso_repuestos')
       .eq('id', u.user.id)
       .maybeSingle(),
     dataClient.from('user_roles').select('role').eq('user_id', u.user.id),
@@ -261,7 +266,7 @@ export async function getPerfilActual(): Promise<Perfil | null> {
         { id: u.user.id, correo: u.user.email ?? '', nombre, aprobado: false },
         { onConflict: 'id' }
       )
-      .select('id, correo, nombre, aprobado, must_change_password')
+      .select('id, correo, nombre, aprobado, must_change_password, acceso_insumos, acceso_repuestos')
       .maybeSingle()
     if (upsertErr) {
       console.error('[RACKLY] profile upsert error:', upsertErr.message)
@@ -275,6 +280,8 @@ export async function getPerfilActual(): Promise<Perfil | null> {
       aprobado: perfilCreado.aprobado ?? false,
       mustChangePassword: perfilCreado.must_change_password ?? false,
       permisosExtra: overrides,
+      accesoInsumos: perfilCreado.acceso_insumos ?? true,
+      accesoRepuestos: perfilCreado.acceso_repuestos ?? false,
     }
   }
 
@@ -289,6 +296,8 @@ export async function getPerfilActual(): Promise<Perfil | null> {
     aprobado: perfil.aprobado ?? false,
     mustChangePassword: perfil.must_change_password ?? false,
     permisosExtra: esAdmin ? null : overrides, // admin: sin overrides (siempre todo)
+    accesoInsumos: (perfil.acceso_insumos as boolean | null) ?? true,
+    accesoRepuestos: (perfil.acceso_repuestos as boolean | null) ?? false,
   }
 }
 
@@ -296,7 +305,7 @@ export async function getTodosLosPerfiles(): Promise<Perfil[]> {
   const [perfilesRes, rolesRes, permisosRes] = await Promise.all([
     dataClient
       .from('profiles')
-      .select('id, correo, nombre, aprobado, must_change_password')
+      .select('id, correo, nombre, aprobado, must_change_password, acceso_insumos, acceso_repuestos')
       .order('nombre'),
     dataClient.from('user_roles').select('user_id, role'),
     // Overrides de todos (la RLS devuelve los propios si el caller no es
@@ -336,6 +345,8 @@ export async function getTodosLosPerfiles(): Promise<Perfil[]> {
       aprobado: (p.aprobado as boolean) ?? false,
       mustChangePassword: (p.must_change_password as boolean) ?? false,
       permisosExtra: rol === 'admin' ? null : overridesPorUsuario.get(p.id as string) ?? null,
+      accesoInsumos: (p.acceso_insumos as boolean | null) ?? true,
+      accesoRepuestos: (p.acceso_repuestos as boolean | null) ?? false,
     }
   })
 }
@@ -394,6 +405,25 @@ export async function cambiarRol(userId: string, rol: Rol) {
   const { error } = await dataClient.rpc('cambiar_rol_usuario', {
     p_user_id: userId,
     p_rol: rol,
+  })
+  if (error) throw error
+}
+
+/**
+ * Autoriza (o retira) el acceso de un usuario a un almacén del pre-ingreso.
+ * p_almacen: 'insumos' | 'repuestos'. RPC SECURITY DEFINER
+ * `establecer_acceso_almacen` (migración 20261110b) con el mismo guard que
+ * cambiar_rol_usuario: service_role o usuarios.gestionar_roles (admin).
+ */
+export async function establecerAccesoAlmacen(
+  userId: string,
+  almacen: 'insumos' | 'repuestos',
+  acceso: boolean
+): Promise<void> {
+  const { error } = await dataClient.rpc('establecer_acceso_almacen', {
+    p_user_id: userId,
+    p_almacen: almacen,
+    p_acceso: acceso,
   })
   if (error) throw error
 }

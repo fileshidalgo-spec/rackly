@@ -18,6 +18,7 @@ import {
   getTodosLosPerfiles,
   cambiarRol,
   cambiarAprobado,
+  establecerAccesoAlmacen,
   eliminarPerfil,
   type Perfil,
   type Rol,
@@ -61,6 +62,8 @@ import {
   RefreshCw,
   ShieldCheck,
   Trash2,
+  Warehouse,
+  Wrench,
 } from 'lucide-react'
 import { mensajeError } from '@/lib/rackly/errores'
 
@@ -77,6 +80,43 @@ const ROLES_DISPONIBLES: { valor: Rol; etiqueta: string }[] = [
 /** Cantidad de excepciones de permisos guardadas para un usuario */
 function totalExcepciones(p: Perfil): number {
   return p.permisosExtra ? Object.keys(p.permisosExtra).length : 0
+}
+
+/**
+ * Toggle de «Almacenes autorizados» (migración 20261110b). La RPC de BD
+ * exige usuarios.gestionar_roles (admin): la UI solo lo muestra a quien
+ * ya puede gestionar. El propio usuario no se toca (anti auto-bloqueo,
+ * mismo guard que aprobado/rol).
+ */
+function ToggleAlmacen({
+  icono: Icono,
+  etiqueta,
+  activo,
+  disabled,
+  onToggle,
+}: {
+  icono: typeof Warehouse
+  etiqueta: string
+  activo: boolean
+  disabled: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={disabled}
+      title={`${activo ? 'Quitar' : 'Conceder'} acceso al almacén ${etiqueta}${disabled ? ' (no editable)' : ''}`}
+      className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[10px] font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+        activo
+          ? 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+          : 'border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100'
+      }`}
+    >
+      <Icono className={`h-3 w-3 ${activo ? '' : 'opacity-50'}`} />
+      {etiqueta}
+    </button>
+  )
 }
 
 export function UsuariosTab() {
@@ -192,6 +232,28 @@ export function UsuariosTab() {
     }
   }
 
+  async function handleAccesoAlmacen(userId: string, almacen: 'insumos' | 'repuestos', valor: boolean) {
+    if (busyId) return
+    if (userId === perfil?.id) {
+      toast.error('Operación no permitida', {
+        description: 'No puedes cambiar tus propios accesos a almacenes.',
+      })
+      return
+    }
+    setBusyId(userId)
+    try {
+      await establecerAccesoAlmacen(userId, almacen, valor)
+      toast.success(valor ? `Acceso a ${almacen === 'insumos' ? 'INSUMOS' : 'REPUESTOS'} concedido` : `Acceso a ${almacen === 'insumos' ? 'INSUMOS' : 'REPUESTOS'} retirado`)
+      const data = await getTodosLosPerfiles()
+      setPerfiles(data)
+    } catch (err: unknown) {
+      const message = mensajeError(err)
+      toast.error('Error al cambiar el acceso', { description: message })
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <Button onClick={load} variant="outline" className="gap-2">
@@ -208,6 +270,7 @@ export function UsuariosTab() {
               <TableHead className="min-w-[200px] max-w-[260px]">Correo</TableHead>
               <TableHead className="w-[160px]">Rol</TableHead>
               <TableHead className="w-[120px]">Estado</TableHead>
+              {puedeGestionar && <TableHead className="w-[130px]">Almacenes</TableHead>}
               {puedeGestionar && <TableHead className="w-[90px]">Permisos</TableHead>}
               {puedeGestionar && <TableHead className="w-[100px] text-right">Acciones</TableHead>}
             </TableRow>
@@ -259,6 +322,26 @@ export function UsuariosTab() {
                     </Badge>
                   )}
                 </TableCell>
+                {puedeGestionar && (
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      <ToggleAlmacen
+                        icono={Warehouse}
+                        etiqueta="INS"
+                        activo={p.accesoInsumos !== false}
+                        disabled={busyId === p.id || p.id === perfil?.id}
+                        onToggle={() => handleAccesoAlmacen(p.id, 'insumos', !(p.accesoInsumos !== false))}
+                      />
+                      <ToggleAlmacen
+                        icono={Wrench}
+                        etiqueta="REP"
+                        activo={p.accesoRepuestos === true}
+                        disabled={busyId === p.id || p.id === perfil?.id}
+                        onToggle={() => handleAccesoAlmacen(p.id, 'repuestos', !(p.accesoRepuestos === true))}
+                      />
+                    </div>
+                  </TableCell>
+                )}
                 {puedeGestionar && (
                   <TableCell>
                     <Button
@@ -398,6 +481,27 @@ export function UsuariosTab() {
                 </div>
               )}
             </div>
+
+            {/* Fila 2.5: almacenes autorizados (solo gestión) */}
+            {puedeGestionar && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Almacenes:</span>
+                <ToggleAlmacen
+                  icono={Warehouse}
+                  etiqueta="Insumos"
+                  activo={p.accesoInsumos !== false}
+                  disabled={busyId === p.id || p.id === perfil?.id}
+                  onToggle={() => handleAccesoAlmacen(p.id, 'insumos', !(p.accesoInsumos !== false))}
+                />
+                <ToggleAlmacen
+                  icono={Wrench}
+                  etiqueta="Repuestos"
+                  activo={p.accesoRepuestos === true}
+                  disabled={busyId === p.id || p.id === perfil?.id}
+                  onToggle={() => handleAccesoAlmacen(p.id, 'repuestos', !(p.accesoRepuestos === true))}
+                />
+              </div>
+            )}
 
             {/* Fila 3 (opcional): excepciones activas */}
             {totalExcepciones(p) > 0 && (

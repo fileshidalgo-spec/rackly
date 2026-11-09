@@ -55,6 +55,7 @@ import {
   Upload,
   Users,
   Warehouse,
+  Wrench,
   X,
 } from 'lucide-react'
 import { mensajeError } from '@/lib/rackly/errores'
@@ -68,6 +69,7 @@ const ICONOS_FILA = {
   heart: HeartHandshake,
   truck: Truck,
   users: Users,
+  wrench: Wrench,
 } as const
 
 type Props = {

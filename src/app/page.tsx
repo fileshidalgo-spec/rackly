@@ -21,6 +21,7 @@ import { FefoPisoTab } from '@/components/rackly/piso/FefoPisoTab'
 import { StockIncTab } from '@/components/rackly/kardex/StockIncTab'
 import { StockIncPisoTab } from '@/components/rackly/piso/StockIncPisoTab'
 import { ModulosHome, type VistaModulo } from '@/components/rackly/inicio/ModulosHome'
+import { PreIngreso, type AlmacenRuta } from '@/components/rackly/inicio/PreIngreso'
 import { type PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { VersionBanner } from '@/components/rackly/VersionBanner'
 import { SELLO_VERSION } from '@/lib/rackly/version-sello'
@@ -32,6 +33,17 @@ import { deleteMovimiento, type Movimiento } from '@/lib/rackly/kardex'
 import { limpiarContextoSalidaRq } from '@/lib/rackly/rq-contexto-salida'
 import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
 import { EstadoCargaMovs } from '@/components/rackly/kardex/EstadoCargaMovs'
+import { RepuestosHome } from '@/components/rackly/rep/RepuestosHome'
+import { CatalogoModule } from '@/components/rackly/rep/catalogo/CatalogoModule'
+import { UbicacionesModule } from '@/components/rackly/rep/ubicaciones/UbicacionesModule'
+import { RecepcionModule as RecepcionRepModule } from '@/components/rackly/rep/recepcion/RecepcionModule'
+import { MovimientosModule } from '@/components/rackly/rep/movimientos/MovimientosModule'
+import {
+  esVistaRep,
+  type RepVista,
+  type RepVistaHub,
+} from '@/lib/rackly/rep/rep-vistas'
+import type { RepTarget } from '@/lib/rackly/rep/rep-navegacion'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -86,6 +98,7 @@ import {
   PackageCheck,
   HeartHandshake,
   Truck,
+  Wrench,
 } from 'lucide-react'
 import { mensajeError } from '@/lib/rackly/errores'
 
@@ -102,7 +115,15 @@ function formatDateTime(iso: string) {
 function RacklyApp() {
   const { perfil } = useAuth()
   // Pantalla de ingreso de módulos: 'inicio' por defecto; cada módulo navega independiente.
-  const [view, setView] = useState<'inicio' | VistaModulo>('inicio')
+  // El estado `view` acepta vistas de INSUMOS (VistaModulo) y de REPUESTOS
+  // (RepVistaHub, con prefijo rep- para no chocar: recepcion/atencion/transito
+  // existen en ambos almacenes).
+  const [view, setView] = useState<'inicio' | VistaModulo | RepVistaHub>('inicio')
+  // Pre-ingreso: almacén activo mientras view === 'inicio' (null = elegir almacén).
+  const [almacen, setAlmacen] = useState<AlmacenRuta | null>(null)
+  // Puente Repuestos: target de deep-link entre módulos del almacén + origen
+  // (contrato rep-navegacion; el módulo destino lo consume y avisa).
+  const [repTarget, setRepTarget] = useState<RepTarget | null>(null)
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [expandMovs, setExpandMovs] = useState(false)
   // Task 24: estado honesto de sincronización de movimientos (spinner en la
@@ -207,6 +228,31 @@ function RacklyApp() {
     setView('racks')
   }
 
+  // ── ALMACÉN REPUESTOS: navegación + puente entre módulos ──
+  // Las vistas rep- viven en el mismo `view` (prefijo evita colisiones) y el
+  // almacén queda marcado para el header/fallback mientras se navega dentro.
+  function abrirRep(vista: RepVista) {
+    setAlmacen('repuestos')
+    setView(`rep-${vista}` as RepVistaHub)
+  }
+
+  /** Deep-link dentro de Repuestos: aterriza en la vista destino del target
+   *  con su origen guardado (para el botón «Volver» del módulo destino). */
+  function saltarARep(t: RepTarget) {
+    setRepTarget(t)
+    setAlmacen('repuestos')
+    const destino: RepVista = t.tipo === 'articulo' ? 'catalogo' : t.tipo === 'ubicacion' ? 'ubicaciones' : 'atencion'
+    setView(`rep-${destino}` as RepVistaHub)
+  }
+
+  /** «Volver» del módulo destino: regresa a la vista de origen del target. */
+  function volverOrigenRep() {
+    const t = repTarget
+    if (!t) return
+    setRepTarget(null)
+    setView(`rep-${t.origen.vista}` as RepVistaHub)
+  }
+
   useMovimientosRealtime(setMovs, setEstadoMovs)
 
   // Los flujos masivos llaman onCreated([]) solo para forzar re-render: si se
@@ -286,7 +332,7 @@ function RacklyApp() {
                 viven en ModulosHome; el header no duplica accesos directos) */}
             <div className="flex items-center bg-white/10 rounded-lg p-0.5 ml-2 sm:ml-4">
               <button
-                onClick={() => setView('inicio')}
+                onClick={() => { setView('inicio'); setAlmacen(null); setRepTarget(null) }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                   view === 'inicio'
                     ? 'bg-white text-slate-900 shadow-sm'
@@ -322,6 +368,12 @@ function RacklyApp() {
                 <span className="hidden sm:inline">Tránsito</span>
               </Badge>
             )}
+            {esVistaRep(view) && (
+              <Badge variant="outline" className="ml-2 border-cyan-400/40 bg-cyan-400/10 text-cyan-200 gap-1.5 font-semibold">
+                <Wrench className="h-3 w-3" />
+                <span className="hidden sm:inline">Repuestos</span>
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <SesionBar />
@@ -330,14 +382,38 @@ function RacklyApp() {
       </header>
 
       <div className="mx-auto max-w-7xl p-4 md:p-6 relative z-10">
-        {/* ═══ PANTALLA DE INGRESO DE MÓDULOS ═══ */}
+        {/* ═══ PRE-INGRESO: elegir almacén (capa neutra) ═══ */}
         {/* Cuadro de permisos: si el usuario perdió el permiso «Ver» del módulo
             mientras estaba dentro, la BD ya le bloquearía los datos; aquí lo
-            devolvemos al inicio en lugar de dejarlo en una pantalla muerta. */}
+            devolvemos al pre-ingreso (o a las puertas de Insumos) en lugar de
+            dejarlo en una pantalla muerta. */}
         {view !== 'inicio' && !puede(perfil, PERMISO_VER_MODULO[view] ?? '') && (
-          <ModulosHome onEntrar={setView} />
+          view === 'usuarios' || esVistaRep(view) ? (
+            <PreIngreso
+              onEntrarAlmacen={(a) => setAlmacen(a)}
+              onAbrirUsuarios={() => setView('usuarios')}
+            />
+          ) : (
+            <ModulosHome onEntrar={setView} onVolver={() => setAlmacen(null)} />
+          )
         )}
-        {view === 'inicio' && <ModulosHome onEntrar={(v) => setView(v)} />}
+
+        {view === 'inicio' && !almacen && (
+          <PreIngreso
+            onEntrarAlmacen={(a) => setAlmacen(a)}
+            onAbrirUsuarios={() => setView('usuarios')}
+          />
+        )}
+
+        {/* ═══ ALMACÉN INSUMOS: puertas ═══ */}
+        {view === 'inicio' && almacen === 'insumos' && (
+          <ModulosHome onEntrar={setView} onVolver={() => setAlmacen(null)} />
+        )}
+
+        {/* ═══ ALMACÉN REPUESTOS: puertas ═══ */}
+        {view === 'inicio' && almacen === 'repuestos' && (
+          <RepuestosHome onEntrar={abrirRep} onVolver={() => setAlmacen(null)} />
+        )}
 
         {/* ═══ MÓDULO USUARIOS (TRANSVERSAL) ═══ */}
         {view === 'usuarios' && (
@@ -424,6 +500,99 @@ function RacklyApp() {
               </div>
             </CardHeader>
             <CardContent><TransitoModule /></CardContent>
+          </Card>
+        )}
+
+        {/* ═══ REPUESTOS · CATÁLOGO ═══ */}
+        {view === 'rep-catalogo' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-md shadow-amber-500/20">
+                  <BookOpen className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Repuestos · Catálogo</CardTitle>
+                  <CardDescription>
+                    Artículos del almacén (código BIG MAGIC). La carga Excel hace UPSERT: re-subir no duplica.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent><CatalogoModule /></CardContent>
+          </Card>
+        )}
+
+        {/* ═══ REPUESTOS · UBICACIONES (mapa con loncheras A/B) ═══ */}
+        {view === 'rep-ubicaciones' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-md shadow-violet-500/20">
+                  <LayoutGrid className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Repuestos · Ubicaciones</CardTitle>
+                  <CardDescription>
+                    Mapa físico: pisos, niveles, posiciones con loncheras A/B, pasillos, zonas y pre-picking.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <UbicacionesModule
+                target={repTarget}
+                onTargetConsumido={() => setRepTarget(null)}
+                onVolverOrigen={volverOrigenRep}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ═══ REPUESTOS · RECEPCIÓN ═══ */}
+        {view === 'rep-recepcion' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-md shadow-emerald-500/20">
+                  <PackageCheck className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Repuestos · Recepción</CardTitle>
+                  <CardDescription>
+                    Ingreso a lonchera con validación de capacidad (15 artículos) y kardex automático.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <RecepcionRepModule
+                onIrACatalogo={() => abrirRep('catalogo')}
+                onVerEnMapa={(ubicacionId, codigo) =>
+                  saltarARep({ tipo: 'ubicacion', ubicacionId, codigo, origen: { vista: 'recepcion', label: 'Recepción' } })
+                }
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ═══ REPUESTOS · MOVIMIENTOS (kardex) ═══ */}
+        {view === 'rep-movimientos' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center shadow-md shadow-sky-500/20">
+                  <History className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Repuestos · Movimientos</CardTitle>
+                  <CardDescription>
+                    Kardex del almacén: cada salto registra origen→destino, RAL y usuario.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent><MovimientosModule /></CardContent>
           </Card>
         )}
 

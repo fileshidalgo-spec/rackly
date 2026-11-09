@@ -25,6 +25,12 @@ const insertCalls = []
 const updateCalls = []
 /** Captura de llamadas rpc {name, args} — aditivo 2026-10-31. */
 const rpcCalls = []
+/** Aditivo 2026-11-10 (Repuestos): captura de upserts {table, payload, opts}.
+ *  La carga del catálogo repuestos usa upsert por código en lotes — los
+ *  tests verifican loteo y normalización sin red. */
+const upsertCalls = []
+/** Cola FIFO de resultados para upsert (error simulado una vez). */
+const upsertQueue = []
 /** Resultado pendiente para update().select().maybeSingle() (un uso). */
 let updateResult = null
 /** El próximo maybeSingle pertenece a un update (sirve updateResult, no tabla). */
@@ -82,7 +88,11 @@ function builder(table) {
       return Promise.resolve({ data: rows[0] ?? null, error: null })
     },
     single() { return Promise.resolve({ data: null, error: null }) },
-    upsert() { return Promise.resolve({ data: null, error: null }) },
+    upsert(payload, opts) {
+      upsertCalls.push({ table, payload, opts })
+      const r = upsertQueue.length ? upsertQueue.shift() : { data: null, error: null }
+      return Promise.resolve(r)
+    },
     insert(payload) { insertCalls.push({ table, payload }); return Promise.resolve({ data: null, error: null }) },
     update(payload) {
       updateCalls.push({ table, payload })
@@ -142,6 +152,10 @@ module.exports = {
   },
   /** Captura de llamadas rpc {name, args} — para verificar el permiso pedido. */
   __rpcCalls() { return rpcCalls.slice() },
+  /** Captura de llamadas upsert {table, payload, opts} — Repuestos. */
+  __upsertCalls() { return upsertCalls.slice() },
+  /** Encola el resultado del PRÓXIMO upsert (FIFO) — ej. error de lote. */
+  __setUpsertResult(r) { upsertQueue.push(r) },
   __clear() {
     for (const k of Object.keys(tables)) delete tables[k]
     orCalls.length = 0
@@ -149,6 +163,8 @@ module.exports = {
     insertCalls.length = 0
     updateCalls.length = 0
     rpcCalls.length = 0
+    upsertCalls.length = 0
+    upsertQueue.length = 0
     for (const k of Object.keys(rpcQueue)) delete rpcQueue[k]
     updateResult = null
     pendingUpdate = false

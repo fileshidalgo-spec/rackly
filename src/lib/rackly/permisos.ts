@@ -33,6 +33,7 @@ export type ModuloPermiso =
   | 'atencion'
   | 'transito'
   | 'usuarios'
+  | 'repuestos'
 
 export type PermisoDef = {
   codigo: string
@@ -82,6 +83,13 @@ export const PERMISOS: PermisoDef[] = [
   { codigo: 'usuarios.gestionar_roles', modulo: 'usuarios', accion: 'editar', etiqueta: 'Gestionar roles y permisos', descripcion: 'Cambiar roles, enviar recuperación de contraseña y gestionar permisos de otros.' },
   { codigo: 'usuarios.eliminar', modulo: 'usuarios', accion: 'eliminar', etiqueta: 'Eliminar usuarios', descripcion: 'Eliminar perfiles y cuentas de acceso de otros usuarios.' },
   { codigo: 'usuarios.aprobar', modulo: 'usuarios', accion: 'aprobar', etiqueta: 'Aprobar accesos', descripcion: 'Aprobar o revocar el acceso de usuarios a la app.' },
+  // ── Repuestos (almacén independiente) ──
+  // repuestos.crear cubre TODO el flujo operativo: recepción a lonchera,
+  // registro de RAL, picking a tránsito y despachos (espejo BD).
+  { codigo: 'repuestos.ver', modulo: 'repuestos', accion: 'ver', etiqueta: 'Ver Repuestos', descripcion: 'Abrir los módulos del almacén Repuestos (catálogo, ubicaciones, recepción, atención, tránsito y movimientos).' },
+  { codigo: 'repuestos.crear', modulo: 'repuestos', accion: 'crear', etiqueta: 'Operar Repuestos', descripcion: 'Registrar ingresos a lonchera, RAL, picking y despachos en el almacén Repuestos.' },
+  { codigo: 'repuestos.gestionar', modulo: 'repuestos', accion: 'editar', etiqueta: 'Gestionar Repuestos', descripcion: 'Crear/editar catálogo y ubicaciones (layout, loncheras) del almacén Repuestos.' },
+  { codigo: 'repuestos.eliminar', modulo: 'repuestos', accion: 'eliminar', etiqueta: 'Eliminar en Repuestos', descripcion: 'Borrar artículos, ubicaciones y registros del almacén Repuestos.' },
 ]
 
 export type Permiso = string
@@ -91,7 +99,7 @@ export type FilaMatriz = {
   modulo: ModuloPermiso
   etiqueta: string
   /** icono lucide por nombre (el diálogo mapea el nombre al componente) */
-  icono: 'warehouse' | 'book' | 'upload' | 'layers' | 'package' | 'heart' | 'truck' | 'users'
+  icono: 'warehouse' | 'book' | 'upload' | 'layers' | 'package' | 'heart' | 'truck' | 'users' | 'wrench'
   celdas: Partial<Record<AccionPermiso, string>>
 }
 
@@ -112,6 +120,7 @@ export const MATRIZ: FilaMatriz[] = [
   { modulo: 'atencion', etiqueta: 'Atención', icono: 'heart', celdas: { ver: 'atencion.ver', crear: 'atencion.crear', editar: 'atencion.editar', eliminar: 'atencion.eliminar' } },
   { modulo: 'transito', etiqueta: 'Tránsito', icono: 'truck', celdas: { ver: 'transito.ver', crear: 'transito.crear' } },
   { modulo: 'usuarios', etiqueta: 'Usuarios', icono: 'users', celdas: { ver: 'usuarios.ver', editar: 'usuarios.gestionar_roles', eliminar: 'usuarios.eliminar', aprobar: 'usuarios.aprobar' } },
+  { modulo: 'repuestos', etiqueta: 'Repuestos', icono: 'wrench', celdas: { ver: 'repuestos.ver', crear: 'repuestos.crear', editar: 'repuestos.gestionar', eliminar: 'repuestos.eliminar' } },
 ]
 
 /** Permiso que la UI usa para decidir si el MÓDULO se ve (celda Ver) */
@@ -122,6 +131,15 @@ export const PERMISO_VER_MODULO: Record<string, string> = {
   atencion: 'atencion.ver',
   transito: 'transito.ver',
   usuarios: 'usuarios.ver',
+  // Módulos del almacén REPUESTOS (vistas rep-*): la celda Ver del cuadro
+  // gatea la entrada; las acciones finas (crear/gestionar/eliminar) se
+  // evalúan dentro de cada módulo con puede().
+  'rep-catalogo': 'repuestos.ver',
+  'rep-ubicaciones': 'repuestos.ver',
+  'rep-recepcion': 'repuestos.ver',
+  'rep-atencion': 'repuestos.ver',
+  'rep-transito': 'repuestos.ver',
+  'rep-movimientos': 'repuestos.ver',
 }
 
 /** Roles de supervisión (defaults de los permisos restringidos) */
@@ -131,12 +149,13 @@ const PERMISOS_VER_TODOS = new Set(
   PERMISOS.filter((p) => p.accion === 'ver').map((p) => p.codigo)
 )
 const PERMISOS_CREAR_TODOS = new Set(
-  ['movimientos.crear', 'piso_movimientos.crear', 'recepcion.crear', 'atencion.crear', 'transito.crear']
+  ['movimientos.crear', 'piso_movimientos.crear', 'recepcion.crear', 'atencion.crear', 'transito.crear', 'repuestos.crear']
 )
 const PERMISOS_SUPERVISION = new Set([
   'catalogo.crear', 'catalogo.editar', 'catalogo.eliminar',
   'movimientos.eliminar', 'piso_movimientos.eliminar', 'recepcion.eliminar',
   'atencion.eliminar', 'usuarios.aprobar',
+  'repuestos.gestionar', 'repuestos.eliminar',
 ])
 
 /**

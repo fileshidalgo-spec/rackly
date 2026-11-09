@@ -1,10 +1,14 @@
 'use client'
 
 /**
- * RACKLY — Pantalla de ingreso de módulos (home tras el login).
+ * RACKLY — Pantalla de módulos del almacén INSUMOS.
  *
- * Muestra las 6 puertas de entrada del sistema:
- *   Racks · Piso · Usuarios · Recepción · Atención · Tránsito
+ * Muestra las 5 puertas del almacén:
+ *   Racks · Piso · Recepción · Atención · Tránsito
+ *
+ * (La puerta USUARIOS subió al PRE-INGRESO como capa neutra/transversal:
+ * no pertenece a ningún almacén. Dentro de Racks sigue existiendo su
+ * pestaña Usuarios de siempre.)
  *
  * Cada tarjeta navega a su módulo de forma independiente: este componente
  * no carga datos de ningún módulo, solo enruta (aislamiento total).
@@ -19,12 +23,12 @@ import { Card, CardContent } from '@/components/ui/card'
 import {
   Warehouse,
   Layers3,
-  Users,
   PackageCheck,
   HeartHandshake,
   Truck,
   ChevronRight,
   CalendarDays,
+  ArrowLeft,
 } from 'lucide-react'
 
 export type VistaModulo = 'racks' | 'piso' | 'usuarios' | 'recepcion' | 'atencion' | 'transito'
@@ -64,17 +68,6 @@ const MODULOS: ModuloDef[] = [
     etiquetaClase: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   },
   {
-    vista: 'usuarios',
-    nombre: 'Usuarios',
-    descripcion:
-      'Gestión central de usuarios, roles y accesos, con la actividad de cada usuario en todos los módulos.',
-    icono: Users,
-    gradiente: 'from-slate-500 to-slate-700',
-    sombra: 'shadow-slate-500/25',
-    etiqueta: 'Transversal',
-    etiquetaClase: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-  },
-  {
     vista: 'recepcion',
     nombre: 'Recepción',
     descripcion:
@@ -109,7 +102,14 @@ const MODULOS: ModuloDef[] = [
   },
 ]
 
-export function ModulosHome({ onEntrar }: { onEntrar: (vista: VistaModulo) => void }) {
+type Props = {
+  onEntrar: (vista: VistaModulo) => void
+  /** Volver al pre-ingreso (cambiar de almacén). Opcional para no romper
+   *  a los fallbacks existentes. */
+  onVolver?: () => void
+}
+
+export function ModulosHome({ onEntrar, onVolver }: Props) {
   const { perfil } = useAuth()
 
   const hoy = new Date().toLocaleDateString('es-PE', {
@@ -121,6 +121,13 @@ export function ModulosHome({ onEntrar }: { onEntrar: (vista: VistaModulo) => vo
 
   return (
     <div className="space-y-6">
+      {onVolver && (
+        <Button onClick={onVolver} variant="ghost" className="gap-2 text-slate-600 font-semibold">
+          <ArrowLeft className="h-4 w-4" />
+          Cambiar de almacén
+        </Button>
+      )}
+
       {/* ── Bienvenida ── */}
       <div className="rounded-2xl border border-white/60 bg-white/80 backdrop-blur-sm shadow-md shadow-slate-200/50 p-5 sm:p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">

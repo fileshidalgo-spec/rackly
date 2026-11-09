@@ -1549,7 +1549,7 @@ async function registrarIngresoPosicionDirecto(
   usuarioCorreo: string,
   detalles: DetalleInput[],
   uuidSync: string,
-  opts?: { posicion_id?: string; codigo_inc?: string }
+  opts?: { posicion_id?: string; codigo_inc?: string; uuid_sync?: string }
 ): Promise<void> {
   const movimientoId = await insertarCabeceraSimple(
     'ingreso', turno, usuarioId, usuarioNombre, usuarioCorreo, uuidSync, opts
@@ -1632,9 +1632,11 @@ export async function registrarIngresoPosicion(
   usuarioNombre: string,
   usuarioCorreo: string,
   detalles: DetalleInput[],
-  opts?: { posicion_id?: string; codigo_inc?: string }
+  opts?: { posicion_id?: string; codigo_inc?: string; uuid_sync?: string }
 ): Promise<void> {
-  const uuidSync = generateUuidSync()
+  // uuid_sync externo (opcional): un reintento del MISMO guardado no duplica el
+  // movimiento — la RPC lo detecta y devuelve { idempotent: true }.
+  const uuidSync = opts?.uuid_sync || generateUuidSync()
 
   const { error } = await dataClient.rpc('piso_registrar_movimiento', {
     _tipo: 'ingreso',
@@ -1666,9 +1668,11 @@ export async function registrarSalidaPosicion(
   usuarioId: string,
   usuarioNombre: string,
   usuarioCorreo: string,
-  detalles: DetalleInput[]
+  detalles: DetalleInput[],
+  opts?: { uuid_sync?: string }
 ): Promise<void> {
-  const uuidSync = generateUuidSync()
+  // uuid_sync externo (opcional): idempotencia de reintentos (igual que ingreso).
+  const uuidSync = opts?.uuid_sync || generateUuidSync()
 
   // Barrera anti-datos-desactualizados (fail rápido; la RPC re-valida igual)
   await validarStockSuficiente(detalles, 'registrarSalidaPosicion')

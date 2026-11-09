@@ -45,7 +45,8 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { extractError } from '@/lib/utils'
-import { puedeEditarLotePerfil, construirOpcionesLote } from '@/lib/rackly/lote'
+import { puedeEditarLotePerfil, construirOpcionesLote, calcularAjusteCantidad } from '@/lib/rackly/lote'
+import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { leerContextoSalidaRq, detectarRqParaSalida, type ContextoSalidaRq, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
 import { RqSalidaConfirmador } from '@/components/rackly/atencion/RqSalidaConfirmador'
 import { EditarLoteVencimientoDialog, type ArticuloAEditar } from '@/components/rackly/lote/EditarLoteVencimientoDialog'
@@ -204,11 +205,17 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   } | null>(null)
   const [mode, setMode] = useState<ActionMode>('view')
 
-  // ── Editar lote/fecha de artículos sin esos datos (almacenero/admin) ──
+  // ── Editar lote/fecha/cantidad de artículos (almacenero/admin/supervisores) ──
   const puedeEditarDatosLote = puedeEditarLotePerfil(perfil)
   const [editLoteTarget, setEditLoteTarget] = useState<ArticuloAEditar | null>(null)
   // bloque_id REAL del artículo a editar (los IDs virtuales 'cat_*' no son editables)
   const [editLoteBloqueId, setEditLoteBloqueId] = useState('')
+  // Nivel del bucket elegido: el stock de Piso vive por nivel (piso_movimiento_detalles
+  // apunta a nivel_id), así que el ajuste de cantidad aterriza en ESA fila física.
+  const [editLoteNivelId, setEditLoteNivelId] = useState('')
+  // uuid del ajuste FIJO por sesión de edición: un reintento del guardado tras
+  // fallo de red NO duplica el movimiento compensatorio (idempotencia uuid_sync).
+  const editAjusteUuidRef = useRef('')
   const [editLoteBusy, setEditLoteBusy] = useState(false)
 
   // Ingreso state
@@ -970,9 +977,15 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
   }
 
   /** Guarda lote/fecha del bucket elegido en esta posición (RPC v2: completa O
-   *  corrige — apunta al bucket exacto con loteActual/fVencimientoActual;
-   *  las cantidades quedan intactas en todos los niveles). */
-  async function doEditarLotePiso(lote: string, fecha: string, loteActual: string, fechaActual: string) {
+   *  corrige — apunta al bucket exacto con loteActual/fVencimientoActual) y, si
+   *  la CANTIDAD fue corregida, registra el movimiento compensatorio INMEDIATA-
+   *  MENTE después (paridad con Racks, Task 28): el stock de Piso se deriva del
+   *  kardex (piso_movimientos + FEFO), así que "corregir" = agregar un ingreso/
+   *  salida de ajuste con la identidad FINAL del bucket (fecha/lote ya aplicados
+   *  por la RPC) en el NIVEL de la fila editada.
+   *  Idempotencia: el ajuste viaja con uuid_sync fijo de la sesión de edición —
+   *  un reintento tras fallo de red NO lo duplica (las RPC devuelven idempotent). */
+  async function doEditarLotePiso(lote: string, fecha: string, loteActual: string, fechaActual: string, cantidadNueva?: number | null) {
     if (!detail || !editLoteBloqueId || !editLoteTarget) return
     setEditLoteBusy(true)
     try {
@@ -986,9 +999,54 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
       })
       // La pista de Tránsito solo aplica cuando el bucket ANTES estaba sin datos
       const ganoDatos = !loteActual && !fechaActual
-      toast.success(`Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s).${ganoDatos ? ' El artículo ya puede transferirse por Tránsito.' : ''}`)
+      // ── Ajuste de cantidad ──
+      // Cantidad ACTUAL del bucket editado (opción lote×fecha elegida en el
+      // diálogo; fallback al total de la fila). Cuando la fecha agrega varios
+      // lotes físicos las opciones comparten la cantidad de la FECHA: el ajuste
+      // aterriza en el lote editado y el total de la fecha queda = lo digitado.
+      let ajusteHecho = false
+      if (typeof cantidadNueva === 'number' && perfil && editLoteNivelId) {
+        const opcion = editLoteTarget.opciones?.find(
+          (o) => o.loteFisico === loteActual && o.fecha === fechaActual
+        )
+        const cantidadActual = opcion?.cantidad ?? editLoteTarget.stock ?? 0
+        const ajuste = calcularAjusteCantidad(cantidadActual, cantidadNueva)
+        if (ajuste.tipo) {
+          // Identidad FINAL del bucket (la RPC ya renombró lote/fecha): el
+          // ajuste debe aterrizar en el bucket tal como queda ahora.
+          const detalleAjuste = {
+            nivel_id: editLoteNivelId,
+            bloque_id: editLoteBloqueId,
+            cantidad: ajuste.cantidad,
+            fecha_vencimiento: fecha || null,
+            lote: lote || null,
+          }
+          const uuidAjuste = editAjusteUuidRef.current || nuevoUuid()
+          if (ajuste.tipo === 'ingreso') {
+            await registrarIngresoPosicion(
+              calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '',
+              [detalleAjuste],
+              { posicion_id: detail.posicionId, uuid_sync: uuidAjuste }
+            )
+          } else {
+            await registrarSalidaPosicion(
+              calcularTurno(), perfil.id, perfil.nombre ?? '', perfil.correo ?? '',
+              [detalleAjuste],
+              { uuid_sync: uuidAjuste }
+            )
+          }
+          ajusteHecho = true
+        }
+      }
+      toast.success(
+        ajusteHecho
+          ? `Datos y cantidad guardados — ajuste de stock registrado en el kardex.${ganoDatos ? ' El artículo ya puede transferirse por Tránsito.' : ''}`
+          : `Datos guardados — ${res.filasActualizadas} fila(s) actualizada(s).${ganoDatos ? ' El artículo ya puede transferirse por Tránsito.' : ''}`
+      )
       setEditLoteTarget(null)
       setEditLoteBloqueId('')
+      setEditLoteNivelId('')
+      editAjusteUuidRef.current = ''
       // Refresco idéntico al patrón del INC: detalle + stock por nivel + grid
       const [stock, nivelStocks] = await Promise.all([
         stockDetallePosicion(detail.posicionId),
@@ -1014,16 +1072,22 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
     }
   }
 
-  /** Botón "Editar" de lote/fecha para TODA fila de stock real (no virtual cat_):
-   *  completa artículos sin datos y corrige artículos ya etiquetados
-   *  (almacenero/admin/supervisores). Con varios lotes/fechas, el diálogo
-   *  muestra el selector de bucket exacto. */
-  function renderBotonEditarLote(s: DetailStock) {
+  /** Botón "Editar" de lote/fecha/cantidad para TODA fila de stock real (no
+   *  virtual cat_): completa artículos sin datos y corrige artículos ya
+   *  etiquetados (almacenero/admin/supervisores). Con varios lotes/fechas, el
+   *  diálogo muestra el selector de bucket exacto. `nivelId` = nivel de la fila
+   *  renderizada (vista "Todos" itera por nivel; vista de un nivel usa el tab
+   *  activo) — sin él no se puede aterrar el ajuste de cantidad. */
+  function renderBotonEditarLote(s: DetailStock, nivelId?: string) {
     if (!puedeEditarDatosLote || s.bloque_id.startsWith('cat_')) return null
     return (
       <button
         type="button"
         onClick={() => {
+          // uuid del ajuste FIJO por sesión de edición: reintentos del guardado
+          // no duplican el movimiento compensatorio.
+          editAjusteUuidRef.current = nuevoUuid()
+          setEditLoteNivelId(nivelId ?? '')
           setEditLoteBloqueId(s.bloque_id)
           setEditLoteTarget({
             codigo: s.bloque_codigo,
@@ -2735,7 +2799,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
                                         <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
                                         <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
                                       </div>
-                                      {renderBotonEditarLote(s)}
+                                      {renderBotonEditarLote(s, niv.id)}
                                     </div>
                                   </div>
                                 </div>
@@ -2781,7 +2845,7 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
                               <p className="font-extrabold text-emerald-300 text-lg leading-none">{s.cantidad}</p>
                               <p className="text-[10px] text-slate-300 mt-0.5">{s.bloque_unidad}</p>
                             </div>
-                            {renderBotonEditarLote(s)}
+                            {renderBotonEditarLote(s, viewNivelTab === 'all' ? undefined : viewNivelTab)}
                           </div>
                         </div>
                       </div>
@@ -4107,12 +4171,13 @@ export function PisoSectoresTab({ targetPosicion, onVolverAStock, volverLabel, o
         onCerrar={() => setRqConfirmer(null)}
       />
 
-      {/* ── Editar lote / fecha de vencimiento (almacenero/admin) ── */}
+      {/* ── Editar lote / fecha de vencimiento / cantidad (almacenero/admin) ── */}
       <EditarLoteVencimientoDialog
         open={!!editLoteTarget}
         articulo={editLoteTarget}
         busy={editLoteBusy}
-        onOpenChange={(o) => { if (!o) { setEditLoteTarget(null); setEditLoteBloqueId('') } }}
+        permitirCantidad={!!editLoteNivelId}
+        onOpenChange={(o) => { if (!o) { setEditLoteTarget(null); setEditLoteBloqueId(''); setEditLoteNivelId('') } }}
         onGuardar={doEditarLotePiso}
       />
     </div>

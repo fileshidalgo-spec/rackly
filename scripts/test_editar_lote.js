@@ -25,6 +25,11 @@
  *      envía lote_actual/fecha_actual (v2) y propaga errores RPC.
  *   5. editarLoteVencimientoPiso — normaliza args, envía valores actuales y
  *      propaga errores igual.
+ *   6. calcularAjusteCantidad — compensación pura del kardex (Task 28).
+ *   7. registrarIngresoPosicion/registrarSalidaPosicion con uuid_sync EXTERNO
+ *      (corrección de cantidad en Piso): el ajuste compensatorio viaja con un
+ *      uuid fijo por sesión de edición — un reintento NO duplica el movimiento;
+ *      sin uuid externo generan el suyo (compatibilidad total).
  */
 
 process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://dummy.supabase.co'
@@ -34,7 +39,7 @@ process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY = 'dummy'
 const supabaseStub = require('@/lib/supabase/client')
 const { puedeEditarLote, validarDatosLote, construirOpcionesLote, etiquetaOpcionLote, calcularAjusteCantidad } = require('@/lib/rackly/lote.ts')
 const { editarLoteVencimientoRacks } = require('@/lib/rackly/kardex.ts')
-const { editarLoteVencimientoPiso } = require('@/lib/piso/api.ts')
+const { editarLoteVencimientoPiso, registrarIngresoPosicion, registrarSalidaPosicion } = require('@/lib/piso/api.ts')
 
 let passed = 0
 let failed = 0
@@ -219,6 +224,44 @@ async function main() {
   })
   check('proveedor del LOTE manda sobre el de la fila', opsProvLote[0]?.proveedor === 'PROV-L1')
   check('lote sin proveedor hereda el de la fila', opsProvLote[1]?.proveedor === 'PROV-FILA')
+
+  // ── 7. API Piso: uuid_sync externo (idempotencia del ajuste de cantidad) ──
+  console.log('— 7. registrarIngresoPosicion / registrarSalidaPosicion con uuid_sync externo —')
+  // 7a. Ingreso con uuid fijo: la RPC recibe EXACTAMENTE ese uuid — el reintento
+  //     del mismo guardado devuelve { idempotent: true } y NO duplica filas.
+  rpcCalls.length = 0
+  await registrarIngresoPosicion('T1', 'u1', 'Operario', 'op@x.pe', [
+    { nivel_id: 'niv-1', bloque_id: 'blo-1', cantidad: 5, fecha_vencimiento: '2027-01-31', lote: ' L-9 ' },
+  ], { posicion_id: 'pos-1', uuid_sync: 'uuid-fijo-123' })
+  check('ingreso → RPC piso_registrar_movimiento', rpcCalls[0]?.fn === 'piso_registrar_movimiento')
+  const argsIng = rpcCalls[0]?.args ?? {}
+  check('ingreso usa el uuid_sync EXTERNO (idempotencia del ajuste)', argsIng._uuid_sync === 'uuid-fijo-123')
+  check('ingreso tipo + posicion_id viajan', argsIng._tipo === 'ingreso' && argsIng._posicion_id === 'pos-1')
+  check('ingreso detalle: fecha viaja y lote TRIM', argsIng._detalles?.[0]?.fecha_vencimiento === '2027-01-31' && argsIng._detalles?.[0]?.lote === 'L-9')
+
+  // 7b. Ingreso sin uuid externo: genera uno propio (compatibilidad con TODOS
+  //     los llamadores existentes — ingresos/INC/devoluciones normales).
+  rpcCalls.length = 0
+  await registrarIngresoPosicion('T1', 'u1', 'Operario', 'op@x.pe', [
+    { nivel_id: 'niv-1', bloque_id: 'blo-1', cantidad: 5 },
+  ])
+  const uuidAuto = rpcCalls[0]?.args?._uuid_sync
+  check('ingreso sin uuid externo genera uno propio (compatibilidad)', typeof uuidAuto === 'string' && uuidAuto.length >= 32)
+  check('ingreso sin posicion_id → null', rpcCalls[0]?.args?._posicion_id === null)
+
+  // 7c. Salida con uuid fijo (la salida-ajuste pasa la barrera de stock: el
+  //     delta siempre es ≤ stock del bucket que el usuario está corrigiendo).
+  supabaseStub.__setTable('piso_movimiento_detalles', [
+    { nivel_id: 'niv-1', bloque_id: 'blo-1', cantidad: 50, piso_movimientos: { tipo: 'ingreso' } },
+  ])
+  supabaseStub.__setTable('piso_bloques', [{ id: 'blo-1', codigo: 'ART-1' }])
+  rpcCalls.length = 0
+  await registrarSalidaPosicion('T2', 'u1', 'Operario', 'op@x.pe', [
+    { nivel_id: 'niv-1', bloque_id: 'blo-1', cantidad: 3, fecha_vencimiento: '2027-01-31', lote: 'L-9' },
+  ], { uuid_sync: 'uuid-fijo-456' })
+  check('salida → RPC piso_salida_posicion', rpcCalls[0]?.fn === 'piso_salida_posicion')
+  check('salida usa el uuid_sync EXTERNO (idempotencia del ajuste)', rpcCalls[0]?.args?.p_uuid_sync === 'uuid-fijo-456')
+  check('salida detalle viaja con fecha y lote', rpcCalls[0]?.args?.p_detalles?.[0]?.fecha_vencimiento === '2027-01-31' && rpcCalls[0]?.args?.p_detalles?.[0]?.lote === 'L-9')
 
   console.log('────────────────────────────')
   console.log(`editar_lote: ${passed} OK · ${failed} FAIL`)

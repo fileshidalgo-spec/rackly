@@ -10,7 +10,10 @@ import {
   compararFEFO,
   compararUbicacionNum,
 } from '@/lib/rackly/kardex'
-// Decoupled: Kardex Racks ya no consulta stock de Kardex Piso
+// Panel cruzado con Piso (CrossModuleStock): SOLO LECTURA, carga perezosa y
+// errores visibles — el desacople de 442e7da eliminó el cruce antiguo por
+// mezclar resultados y fallar en silencio; este panel separado respeta la
+// independencia de cálculo de cada módulo (cada uno sigue usando SU fuente).
 import {
   findCatalogoByCodigo,
   fetchCatalogo,
@@ -38,8 +41,16 @@ import { useAuth } from '@/hooks/useAuth'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { puede } from '@/lib/rackly/permisos'
 import { mensajeError } from '@/lib/rackly/errores'
+import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
+import { CrossModuleStock } from '@/components/rackly/CrossModuleStock'
 
-export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string, torre: string, piso: string, posicion: string) => void }) {
+export function StockTab({
+  onGotoUbicacion,
+  onGotoPisoPosicion,
+}: {
+  onGotoUbicacion?: (bloque: string, torre: string, piso: string, posicion: string) => void
+  onGotoPisoPosicion?: (target: PisoTargetPosicion) => void
+}) {
   const { perfil } = useAuth()
   // Eliminar una fila de stock = borrar movimientos de esa ubicación
   // (eliminarUbicacion → tabla movimientos): MISMO permiso que la pestaña de
@@ -912,6 +923,19 @@ export function StockTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: strin
             </div>
           )}
         </div>
+      )}
+
+      {/* ── PANEL CRUZADO: el mismo código en el módulo PISO (ventana inferior) ──
+          Visible también cuando Racks no tiene stock: ahí es MÁS valioso (el
+          material puede estar solo en Piso). Consulta perezosa, 1 por código,
+          con deep-link a Sectores y retorno al módulo Racks. */}
+      {selectedCodigo && (
+        <CrossModuleStock
+          origen="racks"
+          codigos={[selectedCodigo]}
+          onGotoPiso={onGotoPisoPosicion}
+          variante="claro"
+        />
       )}
 
     </div>

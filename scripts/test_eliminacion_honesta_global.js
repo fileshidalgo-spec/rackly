@@ -10,7 +10,10 @@
  * generaliza a RQ, RAL, Kardex (movimientos) y Piso + Catálogo:
  *   · eliminarRq / eliminarRal / deleteMovimiento: exigir ≥1 fila borrada.
  *   · eliminarMovimientosPorIds: contador HONESTO (filas realmente borradas).
- *   · piso: eliminarSector / eliminarMovimiento / eliminarMovimientoConPar.
+ *   · piso: eliminarSector + clearCatalogo + podarAnclasPisoSinUso (client-side).
+ *     eliminarMovimiento/ConPar: desde el refactor 20261107 son la RPC atómica
+ *     piso_eliminar_movimiento — la honestidad vive server-side (RAISE si 0
+ *     filas) y el cliente debe PROPAGAR ese error (secciones [6] y [7]).
  *   · clearCatalogo: si no borró NADA y queda catálogo → error controlado.
  *   · podarAnclasPisoSinUso: contador honesto.
  *   · rollbacks best-effort (registrarRq/registrarRal/rollbackCabeceras):
@@ -120,32 +123,53 @@ async function main() {
   const sectores = await eliminarSector('s1')
   check('sector borrado → listarSectores devuelve lo restante', Array.isArray(sectores) && sectores.length === 1)
 
-  console.log('\n[6] piso.eliminarMovimiento — header filtrado detectado')
+  console.log('\n[6] piso.eliminarMovimiento — RPC atómica: el error del SERVIDOR se propaga')
+  // Refactor mejoras-piso 20261107: el borrado es la RPC piso_eliminar_movimiento
+  // (detalles + cabecera + snapshot en UNA transacción). La honestidad vive
+  // server-side: la RPC RAISE si el movimiento no existe / fue filtrado por RLS
+  // (DELETE 0 filas). El contrato del CLIENTE es propagar ese error, nunca
+  // tragárselo (el éxito falso viejo era borrar cabecera sin ver filas).
   stub.__clear()
-  stub.__setTable('piso_movimientos', [{ id: 'pm1', tipo: 'ingreso' }])
+  stub.__setRpcResult('piso_eliminar_movimiento', {
+    data: null,
+    error: { message: 'Movimiento pm1 no encontrado', code: 'P0001' }, // RAISE real de la RPC
+  })
   const errPm = await capturaError(() => eliminarMovimiento('pm1'))
-  check('mov. de piso no borrado → ELIMINAR_BLOQUEADO', bloqueado(errPm), JSON.stringify(errPm))
-  stub.__setDeleteResult({ data: [], error: null }) // detalles: sin filas (ok)
-  stub.__setDeleteResult({ data: [{ id: 'pm1' }], error: null }) // header: 1 fila
+  check('RPC falla (0 filas / inexistente) → eliminarMovimiento lanza', errPm !== null, JSON.stringify(errPm))
+  const llamadaPm = stub.__rpcCalls().find((c) => c.name === 'piso_eliminar_movimiento')
+  check('llama a piso_eliminar_movimiento con el id pedido', llamadaPm?.args?.p_movimiento_id === 'pm1', JSON.stringify(llamadaPm))
+  stub.__setRpcResult('piso_eliminar_movimiento', { data: { success: true }, error: null })
   await eliminarMovimiento('pm1')
-  check('detalles 0 + header 1 → resuelve sin error', true)
+  check('RPC ok → resuelve sin error', true)
 
-  console.log('\n[7] piso.eliminarMovimientoConPar — cuenta lo REALMENTE borrado')
+  console.log('\n[7] piso.eliminarMovimientoConPar — par por uuid_sync + RPC por cabecera')
   stub.__clear()
   stub.__setTable('piso_movimientos', [
     { id: 'pm1', uuid_sync: 'u1', tipo: 'salida' },
     { id: 'pm2', uuid_sync: 'u1', tipo: 'ingreso' },
   ])
-  stub.__setDeleteResult({ data: [], error: null }) // detalles (sin filas enlatadas)
-  stub.__setDeleteResult({ data: [{ id: 'pm1' }, { id: 'pm2' }], error: null }) // par completo
+  stub.__setRpcResult('piso_eliminar_movimiento', { data: { success: true }, error: null })
+  stub.__setRpcResult('piso_eliminar_movimiento', { data: { success: true }, error: null })
   const nPar = await eliminarMovimientoConPar('pm1')
   check(`traslado completo devuelve 2 cabeceras: ${nPar}`, nPar === 2)
+  const llamadasPar = stub.__rpcCalls().filter((c) => c.name === 'piso_eliminar_movimiento')
+  check('2 llamadas RPC (salida + ingreso del par)', llamadasPar.length === 2, JSON.stringify(llamadasPar.map((c) => c.args)))
+  // La RPC falla en la cabecera → el cliente LANZA (nunca «1 eliminada» falso).
+  // El RAISE server-side cubre el caso que antes se verificaba client-side.
   stub.__clear()
   stub.__setTable('piso_movimientos', [{ id: 'pm3', uuid_sync: null, tipo: 'salida' }])
-  stub.__setDeleteResult({ data: [], error: null }) // detalles
-  stub.__setDeleteResult({ data: [], error: null }) // header FILTRADO
+  stub.__setRpcResult('piso_eliminar_movimiento', {
+    data: null,
+    error: { message: 'Movimiento pm3 no encontrado', code: 'P0001' },
+  })
   const errPar = await capturaError(() => eliminarMovimientoConPar('pm3'))
-  check('header filtrado → ELIMINAR_BLOQUEADO (no «1 eliminada» falso)', bloqueado(errPar), JSON.stringify(errPar))
+  check('RPC con error → lanza (no éxito falso)', errPar !== null, JSON.stringify(errPar))
+  // Sin uuid_sync (movimiento simple) → 1 sola cabecera
+  stub.__clear()
+  stub.__setTable('piso_movimientos', [{ id: 'pm4', uuid_sync: null, tipo: 'salida' }])
+  stub.__setRpcResult('piso_eliminar_movimiento', { data: { success: true }, error: null })
+  const nSolo = await eliminarMovimientoConPar('pm4')
+  check(`movimiento simple devuelve 1 cabecera: ${nSolo}`, nSolo === 1)
 
   console.log('\n[8] clearCatalogo — «catálogo vaciado» falso imposible')
   stub.__clear()

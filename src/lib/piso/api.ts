@@ -2263,19 +2263,40 @@ async function _stockPisoBuscarImpl(term: string): Promise<StockPisoItem[]> {
     ])].filter(Boolean)
     if (codigosCandidatos.length === 0) return []
 
-    // ─── 1b. Anclas reales: solo ellas pueden tener movimientos/stock en piso ───
+    return stockPisoPorCodigos(codigosCandidatos)
+  } catch (err) {
+    console.error('[stockPisoBuscar] Error:', err)
+    throw err
+  }
+}
+
+/**
+ * stockPisoPorCodigos — núcleo de derivación de stock Piso por CÓDIGOS EXACTOS
+ * de bloque (fuente única de derivación: stockPisoBuscar lo usa tras resolver
+ * candidatos por texto, y el panel cruzado CrossModuleStock lo llama directo
+ * desde Racks). Solo lectura. Códigos normalizados (trim+uppercase) consultados
+ * con .in() EXACTO — sin ilike: el costo queda acotado a los bloques pedidos
+ * (el defecto de la búsqueda cruzada antigua era re-replayar todo el historial
+ * por tecleo; aquí 1 batch por consulta, server-side filtrado).
+ */
+export async function stockPisoPorCodigos(codigos: string[]): Promise<StockPisoItem[]> {
+  try {
+    const limpios = [...new Set(codigos.map((c) => (c ?? '').trim().toUpperCase()))].filter(Boolean)
+    if (limpios.length === 0) return []
+
+    // ─── Anclas reales: solo ellas pueden tener movimientos/stock en piso ───
     const { data: anclas, error: errA } = await dataClient
       .from('piso_bloques')
       .select('id, codigo')
-      .in('codigo', codigosCandidatos)
+      .in('codigo', limpios)
     if (errA) throw errA
     if (!anclas || anclas.length === 0) return []
     const bloqueIds = (anclas as { id: string; codigo: string }[]).map((a) => a.id)
 
-    // ─── 1c. Info de artículo: catálogo primero (resolución central) ───
+    // ─── Info de artículo: catálogo primero (resolución central) ───
     const bloqueInfoMap = await resolverInfoBloques(bloqueIds)
 
-    // ─── 2. Detalles SOLO de esos bloques + ubicación resuelta en 1 query ───
+    // ─── Detalles SOLO de esos bloques + ubicación resuelta en 1 query ───
     const { data: detalles, error: errD } = await dataClient
       .from('piso_movimiento_detalles')
       .select(`
@@ -2309,7 +2330,7 @@ async function _stockPisoBuscarImpl(term: string): Promise<StockPisoItem[]> {
     if (errD) throw errD
     if (!detalles || detalles.length === 0) return []
 
-    // ─── 3. FEFO DIRIGIDO por (bloque_id, nivel_id) con orden temporal ───
+    // ─── FEFO DIRIGIDO por (bloque_id, nivel_id) con orden temporal ───
     type BusqRow = {
       bloque_id: string
       nivel_id: string
@@ -2407,7 +2428,7 @@ async function _stockPisoBuscarImpl(term: string): Promise<StockPisoItem[]> {
       }
     }
 
-    // ─── 4. Orden FEFO global: lo más próximo a vencer primero, sin fecha al final ───
+    // ─── Orden FEFO global: lo más próximo a vencer primero, sin fecha al final ───
     return results
       .map((r) => ({ ...r, cantidad: Math.round(r.cantidad * 1000) / 1000 }))
       .filter((r) => r.cantidad > 0)
@@ -2419,7 +2440,7 @@ async function _stockPisoBuscarImpl(term: string): Promise<StockPisoItem[]> {
         return a.ubicacion.localeCompare(b.ubicacion)
       })
   } catch (err) {
-    console.error('[stockPisoBuscar] Error:', err)
+    console.error('[stockPisoPorCodigos] Error:', err)
     throw err
   }
 }

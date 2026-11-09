@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { toast } from 'sonner'
 import { stockPisoBuscar, type StockPisoItem } from '@/lib/piso/api'
 import { targetDesdeStockItem, type PisoTargetPosicion } from '@/lib/piso/navegacion'
@@ -13,8 +13,16 @@ import {
 } from '@/components/ui/table'
 import { Search, PackageSearch, Loader2, MapPin, AlertTriangle, ExternalLink } from 'lucide-react'
 import { mensajeError } from '@/lib/rackly/errores'
+import { CrossModuleStock } from '@/components/rackly/CrossModuleStock'
 
-export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: PisoTargetPosicion) => void }) {
+export function PisoStockTab({
+  onGotoPosicion,
+  onGotoUbicacionRacks,
+}: {
+  onGotoPosicion?: (target: PisoTargetPosicion) => void
+  /** PANEL CRUZADO → Racks · Ocupación (inyectado por page.tsx, con retorno). */
+  onGotoUbicacionRacks?: (bloque: string, torre: string, piso: string, posicion: string) => void
+}) {
   // Estado persistido en sessionStorage (inicializador lazy): al volver desde
   // Sectores (botón de retorno) la búsqueda continúa donde quedó.
   const [query, setQuery] = useState(() => loadTabState('piso.stock', { q: '', filter: 'todos' }).q)
@@ -127,6 +135,17 @@ export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: Pis
   }
 
   const totalFiltered = filtered.reduce((sum, i) => sum + i.cantidad, 0)
+
+  // ── PANEL CRUZADO: códigos candidatos para la ventana inferior (Racks) ──
+  // Prioridad: los códigos que la búsqueda matcheó (agrupados arriba); si la
+  // búsqueda Piso no devolvió nada pero el término es un código EXACTO de
+  // catálogo, ese (el material puede estar SOLO en Racks — el caso más valioso
+  // del panel). Máx 8: el panel muestra selector de chips, 1 consulta a la vez.
+  const codigosCruce = useMemo(() => {
+    if (grouped.size > 0) return [...grouped.keys()].slice(0, 8)
+    if (bmItem?.codigo) return [bmItem.codigo]
+    return []
+  }, [grouped, bmItem])
 
   function vencimientoBadge(fv: string) {
     if (!fv) return <span className="text-xs text-slate-500">—</span>
@@ -365,6 +384,18 @@ export function PisoStockTab({ onGotoPosicion }: { onGotoPosicion?: (target: Pis
 
         </div>
       ) : null}
+
+      {/* ── PANEL CRUZADO: el mismo código en el módulo RACKS (ventana inferior)
+          — arriba los resultados de Piso, abajo Racks; consulta perezosa (1 por
+          código activo), errores visibles con Reintentar y deep-link a Ocupación. */}
+      {!loading && codigosCruce.length > 0 && (
+        <CrossModuleStock
+          origen="piso"
+          codigos={codigosCruce}
+          onGotoRacks={onGotoUbicacionRacks}
+          variante="oscuro"
+        />
+      )}
     </div>
   )
 }

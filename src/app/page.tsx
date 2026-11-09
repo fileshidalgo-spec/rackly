@@ -132,6 +132,12 @@ function RacklyApp() {
       setView('atencion')
       return
     }
+    // Salto desde el PANEL CRUZADO de Piso Stock (CrossModuleStock): el retorno
+    // es al MÓDULO Piso (su búsqueda se restaura sola desde sessionStorage).
+    if (ubicacionOrigen?.tab === '__piso_stock__') {
+      setView('piso')
+      return
+    }
     setRacksTab(ubicacionOrigen?.tab ?? 'stock')
   }
 
@@ -164,6 +170,12 @@ function RacklyApp() {
       setView('atencion')
       return
     }
+    // Salto desde el PANEL CRUZADO de Racks Stock (CrossModuleStock): el retorno
+    // es al MÓDULO Racks (su búsqueda se restaura sola desde sessionStorage).
+    if (pisoOrigen?.tab === '__racks_stock__') {
+      setView('racks')
+      return
+    }
     setPisoTab(pisoOrigen?.tab ?? 'stock')
   }
 
@@ -173,6 +185,26 @@ function RacklyApp() {
     setPisoTarget(target)
     setPisoTab('sectores')
     setView('piso')
+  }
+
+  /** PANEL CRUZADO (Racks Stock → Piso): aterriza en la posición exacta en
+   *  Piso · Sectores. El retorno (sentinel '__racks_stock__') vuelve al MÓDULO
+   *  Racks con su búsqueda restaurada desde sessionStorage. */
+  function gotoPisoPosicionDesdeRacks(target: PisoTargetPosicion) {
+    setPisoOrigen({ tab: '__racks_stock__', label: 'Stock Racks' })
+    setPisoTarget(target)
+    setPisoTab('sectores')
+    setView('piso')
+  }
+
+  /** PANEL CRUZADO (Piso Stock → Racks): aterriza en la celda exacta en
+   *  Racks · Ocupación. El retorno (sentinel '__piso_stock__') vuelve al
+   *  MÓDULO Piso con su búsqueda restaurada desde sessionStorage. */
+  function gotoUbicacionDesdePiso(bloque: string, torre: string, piso: string, posicion: string) {
+    setUbicacionOrigen({ tab: '__piso_stock__', label: 'Stock Piso' })
+    setTargetUbicacion({ bloque, torre, piso, posicion })
+    setRacksTab('ocupacion')
+    setView('racks')
   }
 
   useMovimientosRealtime(setMovs, setEstadoMovs)
@@ -710,7 +742,7 @@ function RacklyApp() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><StockTab onGotoUbicacion={gotoUbicacion} /></CardContent>
+                <CardContent><StockTab onGotoUbicacion={gotoUbicacion} onGotoPisoPosicion={gotoPisoPosicionDesdeRacks} /></CardContent>
               </Card>
             </TabsContent>
 
@@ -869,7 +901,7 @@ function RacklyApp() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent><PisoStockTab onGotoPosicion={gotoPisoPosicion} /></CardContent>
+                <CardContent><PisoStockTab onGotoPosicion={gotoPisoPosicion} onGotoUbicacionRacks={gotoUbicacionDesdePiso} /></CardContent>
               </Card>
             </TabsContent>
 

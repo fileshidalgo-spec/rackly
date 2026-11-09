@@ -1,4 +1,23 @@
 ---
+Task ID: piso-editar-cantidad-20261110
+Agent: Main Agent
+Task: «1.1 revisar que en la función editar también se pueda modificar la cantidad; corregir errores/bugs/duplicados de la app; 1.2 averiguar el error; 2 analizar qué lo genera; 3 que no se repita en otras pestañas; 4 procedimiento más efectivo; 5 sin conflictos; 6-7 código experto y ordenado; 8 usar todos los accesos; 9 Almacén Insumos; 10 Módulo PISO».
+
+Work Log (1.1–8):
+- 1.2 (averiguar el error): en Piso la única función «Editar» es el botón de las filas de stock de Sectores (diálogo compartido EditarLoteVencimientoDialog); solo permitía cambiar lote/fecha de vencimiento — la CANTIDAD quedaba congelada y una cantidad digitada mal exigía fabricar un ingreso/salida manual a mano.
+- 2 (qué lo genera): el diálogo ya tenía el campo de cantidad construido (prop permitirCantidad, Task 28) pero su integración en PisoSectoresTab era anterior: no pasaba la prop, doEditarLotePiso ignoraba el 5º parámetro (cantidadNueva) y las API registrarIngresoPosicion/registrarSalidaPosicion generan su uuid_sync internamente, sin admitir uno externo para reintentos idempotentes. Racks (OcupacionTab) sí pasa permitirCantidad desde Task 28 — la brecha era solo de integración en Piso.
+- 3 (no se repite en otras pestañas): los consumidores del diálogo son exactamente 2 — OcupacionTab (Racks, ya con cantidad) y PisoSectoresTab (Piso, corregido aquí); las pestañas Mov/Stock/FEFO/StockINC de Piso no tienen funciones editar (verificado por grep). El ajuste usa las RPC atómicas propias de Piso, no toca las de Racks.
+- 4 (procedimiento más efectivo): replicar el patrón probado de Racks — el stock de Piso se DERIVA del kardex (piso_movimientos + piso_movimiento_detalles + FEFO client-side), así que corregir cantidad = movimiento compensatorio (ingreso si falta, salida si sobra) con la identidad FINAL del bucket (fecha/lote ya aplicados por la RPC de lote) en el NIVEL de la fila editada. Se descartó extender editar_lote_vencimiento_piso en BD: duplicaría lógica de cabecera+detalle+secuencia+idempotencia que las RPC de Piso ya resuelven (y cambiar la firma de una RPC en uso es riesgo innecesario).
+- 5 (sin conflictos): api.ts gana opts.uuid_sync OPCIONAL en registrarIngresoPosicion/registrarSalidaPosicion — los 9 llamadores existentes usan ≤5 argumentos (verificado por grep), comportamiento por defecto intacto (generan uuid propio); el botón Editar ahora recibe el nivel de la fila (vista «Todos» itera por nivel; vista de un nivel usa el tab activo) y sin nivel el diálogo degrada a lote/fecha puro (graceful); salida-ajuste pasa por la barrera validarStockSuficiente + validación server-side INSUFFICIENT_STOCK (el delta siempre es ≤ stock del bucket corregido).
+- 6/7 (código experto y ordenado): la lógica de ajuste vive en el flujo de guardado existente (doEditarLotePiso) con el helper compartido calcularAjusteCantidad (lib ya existente, cero duplicación); uuid fijo por sesión de edición (editAjusteUuidRef, generado al abrir el diálogo) → un reintento tras fallo de red NO duplica el movimiento (RPCs devuelven idempotent:true); estado limpiado en éxito/cierre. test_editar_lote ampliado con sección 7 (uuid_sync externo ingreso/salida, compatibilidad) → 62 aserciones OK; tsc 0; eslint 0; build OK; 51/51 suites.
+- 8 (todos los accesos): E2E REAL en producción (rackly.pages.dev 202611092105-1110cd4) con la cuenta del usuario — posición CAMARA DE FRIO A1-2-1, artículo 57881 (QUEMACEL, lote QSUM12092613PT, venc 2027-06-11): edición 6→8 → toast «Datos y cantidad guardados — ajuste de stock registrado en el kardex», BD confirma ingreso +2.000 op 2391 con lote/fecha/nivel/posicion_id correctos; edición inversa 8→6 → salida −2.000 op 2392; kardex UI (#2391/#2392) trazado; stock neto final 6.000 = original (efecto neto cero en producción); uuid_sync sin duplicados (COUNT=1 cada uno).
+
+Stage Summary:
+- PISO: la función editar ahora permite modificar lote, fecha de vencimiento Y cantidad, con ajuste compensatorio trazable en el kardex, idempotencia de reintentos y validación de stock en servidor — paridad total con Racks. Insumos fuera de Piso: 0 cambios.
+- Commits: 1110cd4 (feat piso edición de cantidad) · worklog.
+
+
+---
 Task ID: repuestos-implementacion-20261110
 Agent: Main Agent
 Task: «ok, procedamos con la implementación» — Almacén REPUESTOS completo (metodología 8 puntos del usuario): pre-ingreso con 2 tarjetas + Usuarios neutro; 7 tablas rep_* + RPCs; 6 módulos (Catálogo, Ubicaciones, Recepción, Atención RAL, Tránsito, Movimientos); Insumos 100% intacto.

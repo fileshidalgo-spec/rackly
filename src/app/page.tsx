@@ -126,6 +126,10 @@ function RacklyApp() {
   // Puente Repuestos: target de deep-link entre módulos del almacén + origen
   // (contrato rep-navegacion; el módulo destino lo consume y avisa).
   const [repTarget, setRepTarget] = useState<RepTarget | null>(null)
+  // Origen del salto para el botón «Volver»: estado PROPIO (no dentro del
+  // target) porque el módulo destino consume el target al aterrizar — si el
+  // Volver dependiera de él, quedaría muerto (bug cazado en E2E 2026-11-10).
+  const [repOrigen, setRepOrigen] = useState<{ vista: RepVista; label: string } | null>(null)
   const [movs, setMovs] = useState<Movimiento[]>([])
   const [expandMovs, setExpandMovs] = useState(false)
   // Task 24: estado honesto de sincronización de movimientos (spinner en la
@@ -242,17 +246,19 @@ function RacklyApp() {
    *  con su origen guardado (para el botón «Volver» del módulo destino). */
   function saltarARep(t: RepTarget) {
     setRepTarget(t)
+    setRepOrigen(t.origen)
     setAlmacen('repuestos')
     const destino: RepVista = t.tipo === 'articulo' ? 'catalogo' : t.tipo === 'ubicacion' ? 'ubicaciones' : 'atencion'
     setView(`rep-${destino}` as RepVistaHub)
   }
 
-  /** «Volver» del módulo destino: regresa a la vista de origen del target. */
+  /** «Volver» del módulo destino: regresa a la vista de origen del salto. */
   function volverOrigenRep() {
-    const t = repTarget
-    if (!t) return
+    const o = repOrigen
+    if (!o) return
+    setRepOrigen(null)
     setRepTarget(null)
-    setView(`rep-${t.origen.vista}` as RepVistaHub)
+    setView(`rep-${o.vista}` as RepVistaHub)
   }
 
   useMovimientosRealtime(setMovs, setEstadoMovs)
@@ -334,7 +340,7 @@ function RacklyApp() {
                 viven en ModulosHome; el header no duplica accesos directos) */}
             <div className="flex items-center bg-white/10 rounded-lg p-0.5 ml-2 sm:ml-4">
               <button
-                onClick={() => { setView('inicio'); setAlmacen(null); setRepTarget(null) }}
+                onClick={() => { setView('inicio'); setAlmacen(null); setRepTarget(null); setRepOrigen(null) }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                   view === 'inicio'
                     ? 'bg-white text-slate-900 shadow-sm'
@@ -545,7 +551,7 @@ function RacklyApp() {
               <UbicacionesModule
                 target={repTarget}
                 onTargetConsumido={() => setRepTarget(null)}
-                onVolverOrigen={volverOrigenRep}
+                onVolverOrigen={repOrigen ? volverOrigenRep : undefined}
               />
             </CardContent>
           </Card>
@@ -598,7 +604,7 @@ function RacklyApp() {
               <AtencionRepModule
                 target={repTarget}
                 onTargetConsumido={() => setRepTarget(null)}
-                onVolverOrigen={volverOrigenRep}
+                onVolverOrigen={repOrigen ? volverOrigenRep : undefined}
                 onVerEnMapa={(ubicacionId, codigo) =>
                   saltarARep({ tipo: 'ubicacion', ubicacionId, codigo, origen: { vista: 'atencion', label: 'Atención' } })
                 }

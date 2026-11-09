@@ -263,6 +263,7 @@ begin
 
   select s.*, l.lado into v_fila
   from public.rep_stock s
+  join public.rep_loncheras l on l.id = s.lonchera_id
   where s.articulo_id = v_det.articulo_id and s.ral_id = v_det.ral_id
   for update;
   if not found then

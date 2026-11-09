@@ -166,7 +166,11 @@ function ListaArticulos({ puedeGestionar, puedeEliminar }: { puedeGestionar: boo
     try {
       await repEliminarArticulo(t.id)
       toast.success(`Artículo ${t.codigo} eliminado`)
-      cargar(page, busquedaAplicada, soloActivos)
+      // Si la página quedó vacía (se borró la última de la última página),
+      // retrocede una: evita la «página fantasma» con empty-state engañoso
+      // («El catálogo está vacío») y «Página 3 de 2».
+      const paginasRestantes = Math.max(1, Math.ceil((total - 1) / PAGE_SIZE))
+      cargar(Math.min(page, paginasRestantes), busquedaAplicada, soloActivos)
     } catch (err: unknown) {
       toast.error('No se pudo eliminar', { description: mensajeError(err) })
     }

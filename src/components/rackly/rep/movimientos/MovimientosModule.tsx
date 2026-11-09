@@ -40,9 +40,12 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { toast } from 'sonner'
+import { formatDateTime } from '@/lib/utils'
 import { History, Loader2, RefreshCw, Search } from 'lucide-react'
 
 const PAGE_SIZE = 50
+/** Techo del re-fetch acumulativo (límite sano de PostgREST por petición). */
+const MAX_LIMITE = 1000
 
 const CLASE_TIPO: Record<RepTipoMovimiento, string> = {
   ingreso: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -52,24 +55,12 @@ const CLASE_TIPO: Record<RepTipoMovimiento, string> = {
   ajuste: 'bg-violet-50 text-violet-700 border-violet-200',
 }
 
-function fmtFecha(iso: string): string {
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return iso
-  return d.toLocaleString('es-PE', {
-    day: '2-digit',
-    month: '2-digit',
-    year: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 export function MovimientosModule() {
   const [tipo, setTipo] = useState<'todos' | RepTipoMovimiento>('todos')
   const [codigo, setCodigo] = useState('')
   const [filas, setFilas] = useState<RepMovimiento[]>([])
   const [total, setTotal] = useState(0)
-  const [offset, setOffset] = useState(0)
+  const [limite, setLimite] = useState(PAGE_SIZE)
   const [loading, setLoading] = useState(false)
   /** id de ubicación → código (lookup único; cientos de filas como máx.) */
   const [codigosUbi, setCodigosUbi] = useState<Map<string, string>>(new Map())
@@ -80,21 +71,24 @@ export function MovimientosModule() {
     [codigosUbi]
   )
 
-  const cargar = useCallback(async (nuevoOffset: number, reemplazar: boolean) => {
+  const cargar = useCallback(async (nuevoLimite: number) => {
     const gen = ++genRef.current
     setLoading(true)
     try {
-      const page = Math.floor(nuevoOffset / PAGE_SIZE) + 1
+      // Re-fetch ACUMULATIVO: siempre página 1 con pageSize = límite pedido y
+      // REEMPLAZO. Antes «Cargar más» apilaba ventanas por offset y un
+      // movimiento nuevo que entrara entre peticiones desplazaba la ventana
+      // → filas repetidas en el kardex (auditoría 2026-11-10).
       const res = await repListarMovimientos({
         tipo,
         codigo: codigo.trim() || undefined,
-        page,
-        pageSize: PAGE_SIZE,
+        page: 1,
+        pageSize: nuevoLimite,
       })
       if (gen !== genRef.current) return
-      setFilas((prev) => (reemplazar ? res.filas : [...prev, ...res.filas]))
+      setFilas(res.filas)
       setTotal(res.total)
-      setOffset(nuevoOffset)
+      setLimite(nuevoLimite)
     } catch (err: unknown) {
       if (gen !== genRef.current) return
       toast.error('Error al cargar movimientos', { description: mensajeError(err) })
@@ -105,7 +99,7 @@ export function MovimientosModule() {
 
   // Recarga al cambiar filtros (con debounce suave para el código)
   useEffect(() => {
-    const t = setTimeout(() => cargar(0, true), codigo ? 350 : 0)
+    const t = setTimeout(() => cargar(PAGE_SIZE), codigo ? 350 : 0)
     return () => clearTimeout(t)
   }, [cargar])
 
@@ -138,7 +132,7 @@ export function MovimientosModule() {
             onChange={(e) => setCodigo(e.target.value)}
           />
         </div>
-        <Button variant="outline" onClick={() => cargar(0, true)} disabled={loading} className="gap-2">
+        <Button variant="outline" onClick={() => cargar(limite)} disabled={loading} className="gap-2">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           Actualizar
         </Button>
@@ -176,7 +170,7 @@ export function MovimientosModule() {
             )}
             {filas.map((m) => (
               <TableRow key={m.id}>
-                <TableCell className="text-xs text-slate-500">{fmtFecha(m.created_at)}</TableCell>
+                <TableCell className="text-xs text-slate-500">{formatDateTime(m.created_at)}</TableCell>
                 <TableCell>
                   <Badge variant="outline" className={`${CLASE_TIPO[m.tipo]} text-[10px] font-semibold`}>
                     {REP_ETIQUETA_MOV[m.tipo]}
@@ -212,14 +206,19 @@ export function MovimientosModule() {
         </Table>
       </div>
 
-      {/* Paginación acumulativa */}
-      {filas.length < total && (
+      {/* Paginación acumulativa (sin drift: re-fetch página 1 + reemplazo) */}
+      {filas.length < total && limite < MAX_LIMITE && (
         <div className="flex justify-center">
-          <Button variant="outline" onClick={() => cargar(offset + PAGE_SIZE, false)} disabled={loading} className="gap-2">
+          <Button variant="outline" onClick={() => cargar(limite + PAGE_SIZE)} disabled={loading} className="gap-2">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Cargar más ({filas.length.toLocaleString('es-PE')} de {total.toLocaleString('es-PE')})
           </Button>
         </div>
+      )}
+      {filas.length < total && limite >= MAX_LIMITE && (
+        <p className="text-center text-xs text-slate-400">
+          Mostrando {filas.length.toLocaleString('es-PE')} de {total.toLocaleString('es-PE')} — afina el tipo o el código para ver el resto.
+        </p>
       )}
     </div>
   )

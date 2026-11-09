@@ -36,6 +36,7 @@ import {
   type RepMovimiento,
 } from '@/lib/rackly/rep/rep-client'
 import { REP_ETIQUETA_TIPO, REP_MAX_ARTICULOS_LONCHERA } from '@/lib/rackly/rep/rep-tipos'
+import { aNumero } from '@/lib/rackly/formato'
 import { mensajeError } from '@/lib/rackly/errores'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -102,6 +103,9 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
   const [altaOpen, setAltaOpen] = useState(false)
   const [ultimoIngreso, setUltimoIngreso] = useState<{ ubicacionId: string; codigo: string } | null>(null)
   const codigoRef = useRef<HTMLInputElement>(null)
+  // Guard de generación: solo la búsqueda más reciente puede pintar resultados
+  // (evita que la respuesta tardía de un código anterior sobrescriba al nuevo).
+  const busquedaGenRef = useRef(0)
 
   const cargarContexto = useCallback(async () => {
     try {
@@ -147,15 +151,18 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
   async function buscarArticulo(codigoInput?: string) {
     const c = repNormalizarCodigo(codigoInput ?? codigo)
     if (!c) return
+    const gen = ++busquedaGenRef.current
     setBuscando(true)
     setArticulo(null)
     setStockActual([])
     setUltimoIngreso(null)
     try {
       const a = await repArticuloPorCodigo(c)
+      if (gen !== busquedaGenRef.current) return // llegó tarde: el usuario ya buscó otro código
       if (a) {
         setArticulo(a)
         const st = await repStockDeArticulo(a.id)
+        if (gen !== busquedaGenRef.current) return
         setStockActual(st)
       } else {
         toast.warning(`El código ${c} no existe en el catálogo`, {
@@ -169,25 +176,28 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
     } catch (err: unknown) {
       toast.error('Error al buscar el artículo', { description: mensajeError(err) })
     } finally {
-      setBuscando(false)
+      if (gen === busquedaGenRef.current) setBuscando(false)
     }
   }
 
   async function registrar() {
     if (!articulo) return
-    const cant = Number(cantidad.replace(',', '.'))
+    const art = articulo
+    // aNumero (parser probado del repo): "1,500" → 1500, "12,5" → 12.5.
+    const cant = aNumero(cantidad)
     if (!Number.isFinite(cant) || cant <= 0) {
       toast.error('La cantidad debe ser mayor que cero')
       return
     }
     const lonsDestino = loncheras.get(ubicacionId) ?? []
-    const lonchera = lonsDestino.find((l) => l.lado === lado) ?? lonsDestino[0]
+    const ladoEfectivo = (lonsDestino.some((l) => l.lado === lado) ? lado : lonsDestino[0]?.lado ?? 'A') as 'A' | 'B'
+    const lonchera = lonsDestino.find((l) => l.lado === ladoEfectivo) ?? lonsDestino[0]
     if (!lonchera) {
       toast.error('Elige la ubicación de destino')
       return
     }
-    if (ocupadasDestino !== null && ocupadasDestino >= REP_MAX_ARTICULOS_LONCHERA && !stockActual.some((s) => s.ubicacionId === ubicacionId && s.lado === lado)) {
-      toast.error(`La lonchera ${lado} ya tiene ${REP_MAX_ARTICULOS_LONCHERA} artículos distintos`, {
+    if (ocupadasDestino !== null && ocupadasDestino >= REP_MAX_ARTICULOS_LONCHERA && !stockActual.some((s) => s.ubicacionId === ubicacionId && s.lado === ladoEfectivo)) {
+      toast.error(`La lonchera ${ladoEfectivo} ya tiene ${REP_MAX_ARTICULOS_LONCHERA} artículos distintos`, {
         description: 'Elige otra lonchera o posición (la BD también lo valida).',
       })
       return
@@ -195,11 +205,14 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
     setRegistrando(true)
     try {
       const res = await repRegistrarIngreso({
-        articuloId: articulo.id,
+        articuloId: art.id,
         loncheraId: lonchera.id,
         cantidad: cant,
         referencia: referencia.trim(),
       })
+      // El ingreso YA quedó en BD (RPC atómica). Avisar y limpiar el formulario
+      // ANTES de refrescar el contexto: un fallo de red en el refresco no debe
+      // sugerir que el ingreso falló ni provocar un segundo clic que lo duplique.
       if (res.enOtraLonchera) {
         toast.warning(`Ingreso registrado en ${res.ubicacion} lado ${res.lado}`, {
           description: `Ojo: este artículo ya vivía en ${res.enOtraLonchera.ubicacion} lado ${res.enOtraLonchera.lado} (excepción controlada).`,
@@ -208,16 +221,27 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
       } else {
         toast.success(`Ingreso registrado en ${res.ubicacion} lado ${res.lado}`)
       }
-      setUltimoIngreso({ ubicacionId: lonchera.ubicacion_id, codigo: articulo.codigo })
-      // Refresca estado del artículo y últimos ingresos
-      const st = await repStockDeArticulo(articulo.id)
-      setStockActual(st)
-      const movs = await repListarMovimientos({ tipo: 'ingreso', page: 1, pageSize: 8 })
-      setUltimos(movs.filas)
+      // Deep-link al mapa: el contrato pide el CÓDIGO DE LA UBICACIÓN (no el
+      // del artículo — ver rep-navegacion.ts).
+      const ubiDestino = ubicaciones.find((u) => u.id === lonchera.ubicacion_id)
+      setUltimoIngreso({ ubicacionId: lonchera.ubicacion_id, codigo: ubiDestino?.codigo ?? '' })
       setCantidad('')
       setReferencia('')
       setArticulo(null)
       codigoRef.current?.focus()
+      // Refresco de contexto: best-effort, con aviso propio si falla.
+      try {
+        const [st, movs] = await Promise.all([
+          repStockDeArticulo(art.id),
+          repListarMovimientos({ tipo: 'ingreso', page: 1, pageSize: 8 }),
+        ])
+        setStockActual(st)
+        setUltimos(movs.filas)
+      } catch (errRefresco: unknown) {
+        toast.info('Ingreso registrado, pero no se pudo refrescar el panel', {
+          description: mensajeError(errRefresco),
+        })
+      }
     } catch (err: unknown) {
       toast.error('No se pudo registrar el ingreso', { description: mensajeError(err) })
     } finally {
@@ -278,7 +302,7 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
         <div>
           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-1.5">2 · Destino (lonchera)</p>
           <div className="grid gap-2 sm:grid-cols-3">
-            <Select value={tipoFiltro} onValueChange={(v) => { setTipoFiltro(v as typeof tipoFiltro); setUbicacionId('') }}>
+            <Select value={tipoFiltro} onValueChange={(v) => { setTipoFiltro(v as typeof tipoFiltro); setUbicacionId(''); setLado('A') }}>
               <SelectTrigger><SelectValue placeholder="Tipo" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="rack">Racks</SelectItem>
@@ -288,7 +312,16 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
                 <SelectItem value="todos">Todos</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={ubicacionId} onValueChange={setUbicacionId}>
+            <Select
+              value={ubicacionId}
+              onValueChange={(v) => {
+                setUbicacionId(v)
+                // Mantén el lado solo si la nueva ubicación lo tiene; si no,
+                // cae al primero disponible (evita rótulo/pre-chequeo cruzados).
+                const lonsNuevas = loncheras.get(v) ?? []
+                if (lonsNuevas.length > 0 && !lonsNuevas.some((l) => l.lado === lado)) setLado(lonsNuevas[0].lado)
+              }}
+            >
               <SelectTrigger><SelectValue placeholder="Ubicación" /></SelectTrigger>
               <SelectContent>
                 {ubicacionesFiltradas.length === 0 && (
@@ -319,7 +352,7 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
           </div>
           {ubicacionId && (
             <p className={`text-xs mt-1.5 font-semibold ${ocupadasDestino !== null && ocupadasDestino >= REP_MAX_ARTICULOS_LONCHERA ? 'text-rose-600' : 'text-slate-500'}`}>
-              Ocupación de la lonchera {lado}: {ocupadasDestino ?? '…'}/{REP_MAX_ARTICULOS_LONCHERA} artículos distintos
+              Ocupación de la lonchera {ladosDisponibles.some((l) => l.lado === lado) ? lado : ladosDisponibles[0]?.lado ?? 'A'}: {ocupadasDestino ?? '…'}/{REP_MAX_ARTICULOS_LONCHERA} artículos distintos
             </p>
           )}
         </div>

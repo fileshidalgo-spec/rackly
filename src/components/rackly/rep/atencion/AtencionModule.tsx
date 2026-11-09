@@ -37,6 +37,8 @@ import {
   type RepRal,
 } from '@/lib/rackly/rep/rep-client'
 import { mensajeError } from '@/lib/rackly/errores'
+import { aNumero, hoyISO } from '@/lib/rackly/formato'
+import { REP_CLASE_ESTADO_RAL, REP_ETIQUETA_ESTADO_RAL } from '@/lib/rackly/rep/rep-tipos'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -91,18 +93,6 @@ type Props = {
   onVerEnMapa?: (ubicacionId: string, codigo: string) => void
 }
 
-const CLASE_ESTADO: Record<string, string> = {
-  registrado: 'bg-sky-50 text-sky-700 border-sky-200',
-  despachado: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  anulado: 'bg-slate-100 text-slate-500 border-slate-200',
-}
-
-const ETIQUETA_ESTADO: Record<string, string> = {
-  registrado: 'Registrado',
-  despachado: 'Despachado',
-  anulado: 'Anulado',
-}
-
 export function AtencionModule({ target, onTargetConsumido, onVolverOrigen, onVerEnMapa }: Props) {
   const { perfil } = useAuth()
   const puedeCrear = puede(perfil, 'repuestos.crear')
@@ -135,15 +125,22 @@ export function AtencionModule({ target, onTargetConsumido, onVolverOrigen, onVe
     cargar()
   }, [cargar])
 
-  // Deep-link: aterriza con el RAL abierto (desde Tránsito/Movimientos)
+  // Deep-link: aterriza con el RAL abierto (desde Tránsito/Movimientos).
+  // Tolerante al filtro activo: si el RAL no está en la lista (p. ej. está
+  // despachado y el filtro es «Registrados»), amplía a «Todos» y reintenta;
+  // si aun así no existe, consume el target para no dejarlo colgado.
   useEffect(() => {
     if (!target || target.tipo !== 'ral' || loading) return
     const r = rals.find((x) => x.id === target.ralId)
     if (r) {
       setSeleccionado(r)
       onTargetConsumido?.()
+    } else if (filtroEstado !== 'todos') {
+      setFiltroEstado('todos')
+    } else {
+      onTargetConsumido?.()
     }
-  }, [target, loading, rals])
+  }, [target, loading, rals, filtroEstado])
 
   function abrirRal(r: RepRal) {
     setSeleccionado(r)
@@ -177,6 +174,9 @@ export function AtencionModule({ target, onTargetConsumido, onVolverOrigen, onVe
 
           <p className="text-xs text-slate-500">
             <Badge variant="outline" className="font-semibold">{total} RAL(s)</Badge>{' '}
+            {total > rals.length && (
+              <span className="text-amber-700">Mostrando los primeros {rals.length} — afina el filtro de estado para ver el resto. </span>
+            )}
             El número viene de BIG MAGIC: la app lo registra, no lo genera. El picking estaciona los
             artículos en pre-picking (Tránsito) para la salida del día siguiente.
           </p>
@@ -212,8 +212,8 @@ export function AtencionModule({ target, onTargetConsumido, onVolverOrigen, onVe
                     <TableCell className="text-xs text-slate-500">{r.fecha}</TableCell>
                     <TableCell className="text-sm truncate max-w-[240px]" title={r.solicitante}>{r.solicitante || '—'}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={`${CLASE_ESTADO[r.estado]} text-[10px] font-semibold`}>
-                        {ETIQUETA_ESTADO[r.estado]}
+                      <Badge variant="outline" className={`${REP_CLASE_ESTADO_RAL[r.estado]} text-[10px] font-semibold`}>
+                        {REP_ETIQUETA_ESTADO_RAL[r.estado]}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-slate-500">{r.usuario_nombre || '—'}</TableCell>
@@ -279,6 +279,9 @@ function DetalleRal({
   const [prepickingElegido, setPrepickingElegido] = useState('')
   const [prepickingDestinos, setPrepickingDestinos] = useState<Array<{ loncheraId: string; codigo: string; nota: string }>>([])
   const [anulando, setAnulando] = useState(false)
+  // Guard de generación para la búsqueda de líneas (respuestas tardías
+  // de un código anterior nunca deben pintarse).
+  const busquedaGenRef = useRef(0)
 
   const editable = ral.estado === 'registrado' && puedeCrear
 
@@ -311,10 +314,12 @@ function DetalleRal({
 
   async function buscarArticulo() {
     if (!codigoLinea.trim()) return
+    const gen = ++busquedaGenRef.current
     setBuscando(true)
     setArticuloLinea(null)
     try {
       const a = await repArticuloPorCodigo(codigoLinea)
+      if (gen !== busquedaGenRef.current) return
       if (!a) {
         toast.warning(`El código ${codigoLinea.trim().toUpperCase()} no existe en el catálogo`)
         return
@@ -327,13 +332,13 @@ function DetalleRal({
     } catch (err: unknown) {
       toast.error('Error al buscar', { description: mensajeError(err) })
     } finally {
-      setBuscando(false)
+      if (gen === busquedaGenRef.current) setBuscando(false)
     }
   }
 
   async function agregarLinea() {
     if (!articuloLinea) return
-    const cant = Number(cantidadLinea.replace(',', '.'))
+    const cant = aNumero(cantidadLinea)
     if (!Number.isFinite(cant) || cant <= 0) {
       toast.error('La cantidad debe ser mayor que cero')
       return
@@ -426,8 +431,8 @@ function DetalleRal({
         <Button onClick={onVolver} variant="ghost" size="sm" className="gap-2 font-semibold">
           <ArrowLeft className="h-4 w-4" /> RALs
         </Button>
-        <Badge variant="outline" className={`${CLASE_ESTADO[ral.estado]} font-bold`}>
-          {ETIQUETA_ESTADO[ral.estado]}
+        <Badge variant="outline" className={`${REP_CLASE_ESTADO_RAL[ral.estado]} font-bold`}>
+          {REP_ETIQUETA_ESTADO_RAL[ral.estado]}
         </Badge>
         {editable && !conTransito && (
           <Button onClick={anular} variant="ghost" size="sm" className="gap-1.5 text-slate-500 hover:text-rose-600 ml-auto" disabled={anulando}>
@@ -626,7 +631,10 @@ function DialogoNuevoRal({
   onCreado: (r: RepRal) => void
 }) {
   const { perfil } = useAuth()
-  const hoy = new Date().toISOString().slice(0, 10)
+  // hoyISO(): fecha LOCAL (Lima) — toISOString() usaba UTC y después de las
+  // 19:00 el RAL nacía con la fecha de "mañana" (regresión del fix P3 del
+  // 2026-10-22 que este módulo había omitido).
+  const hoy = hoyISO()
   const [numero, setNumero] = useState('')
   const [fecha, setFecha] = useState(hoy)
   const [solicitante, setSolicitante] = useState('')

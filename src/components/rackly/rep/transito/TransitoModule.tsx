@@ -26,6 +26,7 @@ import {
   type RepRal,
 } from '@/lib/rackly/rep/rep-client'
 import { mensajeError } from '@/lib/rackly/errores'
+import { REP_CLASE_ESTADO_RAL, REP_ETIQUETA_ESTADO_RAL } from '@/lib/rackly/rep/rep-tipos'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -52,18 +53,6 @@ type VistaRal = {
   lineas: Linea[]
   /** articuloId → cantidad estacionada en pre-picking */
   transito: Map<string, number>
-}
-
-const CLASE_ESTADO: Record<string, string> = {
-  registrado: 'bg-sky-50 text-sky-700 border-sky-200',
-  despachado: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  anulado: 'bg-slate-100 text-slate-500 border-slate-200',
-}
-
-const ETIQUETA_ESTADO: Record<string, string> = {
-  registrado: 'Registrado',
-  despachado: 'Despachado',
-  anulado: 'Anulado',
 }
 
 export function TransitoModule() {
@@ -206,8 +195,8 @@ export function TransitoModule() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Truck className={`h-4 w-4 ${pendienteDespacho ? 'text-amber-600' : 'text-slate-400'}`} />
                   <span className="font-mono font-extrabold text-sm text-slate-900">{v.ral.numero}</span>
-                  <Badge variant="outline" className={`${CLASE_ESTADO[v.ral.estado]} text-[10px] font-semibold`}>
-                    {ETIQUETA_ESTADO[v.ral.estado]}
+                  <Badge variant="outline" className={`${REP_CLASE_ESTADO_RAL[v.ral.estado]} text-[10px] font-semibold`}>
+                    {REP_ETIQUETA_ESTADO_RAL[v.ral.estado]}
                   </Badge>
                   <span className="text-xs text-slate-500">{v.ral.fecha} · {v.ral.solicitante || 'sin solicitante'}</span>
                   {pendienteDespacho && puedeOperar && (

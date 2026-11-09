@@ -158,3 +158,19 @@ export function repCodigoUbicacion(
       return `PP-P${p}-N${n}`
   }
 }
+
+/**
+ * Clase/etiqueta del estado de un RAL — FUENTE ÚNICA compartida por los
+ * módulos Atención y Tránsito (antes duplicada en ambos; auditoría 2026-11-10).
+ */
+export const REP_CLASE_ESTADO_RAL: Record<string, string> = {
+  registrado: 'bg-sky-50 text-sky-700 border-sky-200',
+  despachado: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  anulado: 'bg-slate-100 text-slate-500 border-slate-200',
+}
+
+export const REP_ETIQUETA_ESTADO_RAL: Record<string, string> = {
+  registrado: 'Registrado',
+  despachado: 'Despachado',
+  anulado: 'Anulado',
+}

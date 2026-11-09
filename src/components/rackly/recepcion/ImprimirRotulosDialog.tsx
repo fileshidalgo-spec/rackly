@@ -178,6 +178,9 @@ export function ImprimirRotulosDialog({
   /** Se dispara UNA vez cuando el trabajo de impresión se ENVIÓ con
    *  éxito (no en el Plan B .zpl). Marca la guía como 'Recepcionado'. */
   onImpreso,
+  /** Subtítulo del modal (opcional). Default: el de Insumos. REPUESTOS
+   *  pasa su propia redacción sin tocar el texto compartido. */
+  subtitulo,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -187,6 +190,7 @@ export function ImprimirRotulosDialog({
   nota?: string
   refDocumento?: { guiaId?: string | null; tipoDocumento: string; numeroDocumento: string; fecha?: string; proveedor?: string }
   onImpreso?: () => void | Promise<void>
+  subtitulo?: string
 }) {
   const [estado, setEstado] = useState<EstadoServicio>('verificando')
   /** Por qué falló la detección (guía diferenciada en el panel amber). */
@@ -347,7 +351,7 @@ export function ImprimirRotulosDialog({
               <Printer className="h-4 w-4 text-amber-600" /> Imprimir rótulos
             </DialogTitle>
             <DialogDescription className="text-xs">
-              {rotulos.length} artículo(s) de la guía · etiqueta horizontal 15 × 10 cm · formato PERECIBLE de la empresa.
+              {subtitulo ?? `${rotulos.length} artículo(s) de la guía · etiqueta horizontal 15 × 10 cm · formato PERECIBLE de la empresa.`}
             </DialogDescription>
           </DialogHeader>
           <FichaGuia encabezado={encabezado} />

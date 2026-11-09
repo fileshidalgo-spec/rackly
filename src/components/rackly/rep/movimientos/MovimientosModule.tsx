@@ -194,8 +194,15 @@ export function MovimientosModule() {
                     '—'
                   )}
                 </TableCell>
-                <TableCell className="text-xs text-slate-500 truncate max-w-[140px]" title={m.referencia}>
-                  {m.referencia || '—'}
+                <TableCell
+                  className="text-xs text-slate-500 truncate max-w-[160px]"
+                  title={m.guia ? `Guía ${m.guia}${m.oc ? ` · OC ${m.oc}` : ''}${m.dam ? ` · DAM ${m.dam}` : ''}${m.proveedor ? ` · ${m.proveedor}` : ''}` : m.referencia}
+                >
+                  {m.guia ? (
+                    <span className="font-mono">G. {m.guia}{m.oc ? ` · OC ${m.oc}` : ''}</span>
+                  ) : (
+                    m.referencia || '—'
+                  )}
                 </TableCell>
                 <TableCell className="text-xs">
                   <span className="block truncate max-w-[140px]" title={m.usuario_nombre}>{m.usuario_nombre || '—'}</span>

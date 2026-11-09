@@ -97,6 +97,10 @@ export type DatosRotulo = {
   cantidad: string
   unidad: string
   lote: string
+  /** Título de la banda del lote (default 'LOTE:'). REPUESTOS pasa 'GUÍA:'
+   *  con `lote` = N° de guía — en repuestos no hay lote; la traza física del
+   *  rótulo es el documento que trajo la pieza (2026-11-11). */
+  loteEtiqueta?: string
   fechaProduccion: string
   fechaVencimiento: string
   /** Marca "Paleta i/N" cuando el artículo se DIVIDIÓ (opcional). */
@@ -750,6 +754,10 @@ export function construirZPLRotulo(
   const cantidad = sanearZPL(datos.cantidad)
   const unidad = sanearZPL(datos.unidad)
   const lote = sanearZPL(datos.lote)
+  // Título de la banda (Insumos 'LOTE:' · Repuestos 'GUÍA:'): mismo tamaño
+  // que el hardcodeado para 5 caracteres (altoParaCaja clava 76) y degrada
+  // si alguien pasa un título más largo.
+  const loteTitulo = sanearZPL(datos.loteEtiqueta ?? 'LOTE:')
   const paleta = datos.paleta ? sanearZPL(datos.paleta) : ''
   const fProd = datos.fechaProduccion ? fechaCorta(datos.fechaProduccion) : ''
   const fVenc = datos.fechaVencimiento ? fechaCorta(datos.fechaVencimiento) : ''
@@ -834,9 +842,10 @@ export function construirZPLRotulo(
   lineas.push(cajaApaisada(0, 400, 250, 545, 3)) // caja "LOTE:"
   lineas.push(cajaApaisada(250, 400, paleta ? 950 : 1200, 545, 3)) // caja valor
   if (paleta) lineas.push(cajaApaisada(950, 400, 1200, 545, 2)) // caja paleta
-  // Etiqueta "LOTE:" un poco más grande (pedido 2026-10-28) sin salir de
-  // su caja de 145 de alto: em 76 → tinta ~59, sobra margen.
-  lineas.push(...campoApaisado(0, 400 + Math.floor((145 - 76) / 2), 76, 58, 'LOTE:', { fbAncho: 250 }))
+  // Etiqueta de la banda (pedido 2026-10-28) sin salir de su caja de 145 de
+  // alto: para 5 chars altoParaCaja devuelve exactamente 76 (tinta ~59).
+  const altoTitulo = altoParaCaja(loteTitulo || 'LOTE:', 250, 76)
+  lineas.push(...campoApaisado(0, 400 + Math.floor((145 - altoTitulo) / 2), altoTitulo, Math.round(altoTitulo * 0.76), loteTitulo || 'LOTE:', { fbAncho: 250 }))
   if (lote) {
     const anchoValor = paleta ? 700 : 950
     // Dígitos MÁS SEPARADOS (pedido 2026-10-28: "muy pegados, no se

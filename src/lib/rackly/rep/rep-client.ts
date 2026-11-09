@@ -433,18 +433,30 @@ export type RepResultadoIngreso = {
  * Ingreso a lonchera con TODAS las validaciones en BD (atómico):
  * capacidad 15 · artículo activo · upsert de cantidad · kardex.
  * Errores controlados: LONCHERA_LLENA, ARTICULO_INACTIVO, NO_AUTORIZADO…
+ *
+ * Documento de guía (2026-11-11): guía/OC/DAM/proveedor viajan al kardex
+ * (rep_movimientos) para la reimpresión de rótulos por documento. Son
+ * OPCIONALES — sin ellos la RPC es exactamente la de siempre.
  */
 export async function repRegistrarIngreso(params: {
   articuloId: string
   loncheraId: string
   cantidad: number
   referencia?: string
+  guia?: string
+  oc?: string
+  dam?: string
+  proveedor?: string
 }): Promise<RepResultadoIngreso> {
   const { data, error } = await dataClient.rpc('rep_registrar_ingreso', {
     p_articulo_id: params.articuloId,
     p_lonchera_id: params.loncheraId,
     p_cantidad: params.cantidad,
     p_referencia: params.referencia ?? '',
+    p_guia: params.guia ?? '',
+    p_oc: params.oc ?? '',
+    p_dam: params.dam ?? '',
+    p_proveedor: params.proveedor ?? '',
   })
   lanzar(error)
   const d = (data ?? {}) as {
@@ -469,6 +481,8 @@ export async function repRegistrarIngreso(params: {
 export type RepFiltroMovimientos = {
   tipo?: RepTipoMovimiento | 'todos'
   codigo?: string
+  /** N° de guía EXACTO (reimpresión de rótulos de un documento). */
+  guia?: string
   page?: number
   pageSize?: number
 }
@@ -488,6 +502,8 @@ export async function repListarMovimientos(f: RepFiltroMovimientos = {}): Promis
   if (f.tipo && f.tipo !== 'todos') q = q.eq('tipo', f.tipo)
   const codigo = (f.codigo ?? '').trim().toUpperCase()
   if (codigo) q = q.ilike('codigo', `%${codigo}%`)
+  const guia = (f.guia ?? '').trim()
+  if (guia) q = q.eq('guia', guia)
 
   const { data, error, count } = await q
   lanzar(error)

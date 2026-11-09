@@ -102,6 +102,11 @@ export type RepMovimiento = {
   referencia: string
   usuario_id: string | null
   usuario_nombre: string
+  /** Documento de la guía (SOLO en tipo 'ingreso'; demás operaciones ''). */
+  guia: string
+  oc: string
+  dam: string
+  proveedor: string
 }
 
 // ═══════════════════════════════════════════════════════════════════

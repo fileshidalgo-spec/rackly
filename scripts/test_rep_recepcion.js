@@ -111,6 +111,41 @@ async function main() {
   const eqCodigo = stub.__eqCalls().filter((c) => c.table === 'rep_articulos' && c.col === 'codigo').map((c) => c.val)
   check('consulta filtró con código normalizado', eqCodigo.includes('BJ-109-003') && eqCodigo.includes('INEXISTENTE-99'), JSON.stringify(eqCodigo))
 
+  // ── [5] Documento de guía (2026-11-11): la RPC recibe guia/OC/DAM/proveedor ──
+  console.log('\n[5] Documento de guía viaja a la RPC (columnas nuevas del kardex)')
+  stub.__clear()
+  stub.__setRpcResult('rep_registrar_ingreso', {
+    data: { ok: true, movimiento_id: 'mov-g1', ubicacion: 'R-P1-N1-P01', lado: 'A', en_otra_lonchera: null },
+    error: null,
+  })
+  await repRegistrarIngreso({
+    articuloId: ART,
+    loncheraId: LON,
+    cantidad: 4,
+    guia: 'GR-12345',
+    oc: 'OC-7788',
+    dam: 'DAM-001',
+    proveedor: 'ACME S.A.',
+  })
+  const callGuia = stub.__rpcCalls().filter((c) => c.name === 'rep_registrar_ingreso')[0]
+  check('p_guia = "GR-12345"', callGuia.args.p_guia === 'GR-12345')
+  check('p_oc = "OC-7788"', callGuia.args.p_oc === 'OC-7788')
+  check('p_dam = "DAM-001"', callGuia.args.p_dam === 'DAM-001')
+  check('p_proveedor = "ACME S.A."', callGuia.args.p_proveedor === 'ACME S.A.')
+
+  // Sin documento (llamador antiguo): los campos van vacíos, la RPC es la misma
+  stub.__clear()
+  stub.__setRpcResult('rep_registrar_ingreso', {
+    data: { ok: true, movimiento_id: 'mov-g2', ubicacion: 'R-P1-N1-P01', lado: 'A', en_otra_lonchera: null },
+    error: null,
+  })
+  await repRegistrarIngreso({ articuloId: ART, loncheraId: LON, cantidad: 1 })
+  const callSin = stub.__rpcCalls().filter((c) => c.name === 'rep_registrar_ingreso')[0]
+  check('sin guía → p_guia "" (compatibilidad)', callSin.args.p_guia === '')
+  check('sin OC → p_oc ""', callSin.args.p_oc === '')
+  check('sin DAM → p_dam ""', callSin.args.p_dam === '')
+  check('sin proveedor → p_proveedor ""', callSin.args.p_proveedor === '')
+
   // ── Resumen ──
   console.log(`\n════════ RESULTADO: ${ok} pasados ════════`)
   if (process.exitCode !== 1) console.log('OK test_rep_recepcion')

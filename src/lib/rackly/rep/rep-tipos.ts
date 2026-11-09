@@ -85,6 +85,14 @@ export type RepRalDetalle = {
 
 export type RepTipoMovimiento = 'ingreso' | 'salida' | 'devolucion' | 'traslado' | 'ajuste'
 
+/**
+ * Estado de una LÍNEA de recepción (rep_recepcion_lineas):
+ *   en_transito → guardada en Recepción, esperando que Tránsito decida
+ *                 a qué lonchera va (NO tiene stock ni kardex aún);
+ *   ubicado     → con lonchera, stock y movimiento de ingreso en el kardex.
+ */
+export type RepEstadoLinea = 'en_transito' | 'ubicado'
+
 export type RepMovimiento = {
   id: string
   created_at: string
@@ -178,4 +186,18 @@ export const REP_ETIQUETA_ESTADO_RAL: Record<string, string> = {
   registrado: 'Registrado',
   despachado: 'Despachado',
   anulado: 'Anulado',
+}
+
+/**
+ * Clase/etiqueta del estado de una LÍNEA de recepción — fuente única
+ * compartida por Recepción (últimas recepciones) y Tránsito (por ubicar).
+ */
+export const REP_CLASE_ESTADO_LINEA: Record<string, string> = {
+  en_transito: 'bg-amber-50 text-amber-700 border-amber-200',
+  ubicado: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+}
+
+export const REP_ETIQUETA_ESTADO_LINEA: Record<string, string> = {
+  en_transito: 'En tránsito',
+  ubicado: 'Ubicado',
 }

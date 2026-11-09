@@ -1,37 +1,45 @@
 'use client'
 
 /**
- * RACKLY · ALMACÉN REPUESTOS — Módulo Recepción (con DOCUMENTO de guía).
+ * RACKLY · ALMACÉN REPUESTOS — Módulo Recepción (DOCUMENTO de guía, sin
+ * destino).
  *
- * MODELO (2026-11-11): el ingreso viaja bajo una GUÍA con N° de Guía, N° de
- * OC, N° de DAM y Proveedor. Si toda la guía es de UN proveedor, este se
- * repite en cada artículo (modo único); si trae VARIOS, cada artículo lleva
- * el suyo (modo múltiple). Cada artículo = código + descripción + UM (jalados
- * del catálogo rep_articulos al escanear) + cantidad + destino (lonchera).
+ * MODELO (2026-11-11, paridad Almacén Insumos): el ingreso viaja bajo una
+ * GUÍA con N° de Guía, N° de OC, N° de DAM y Proveedor. Si toda la guía es
+ * de UN proveedor, este se repite en cada artículo (modo único); si trae
+ * VARIOS, cada artículo lleva el suyo (modo múltiple). Cada artículo =
+ * código + cantidad; la DESCRIPCIÓN y la UM se JALAN del catálogo
+ * rep_articulos al digitar/escanear el código (como la ficha de referencia
+ * del usuario: «Se autocompleta al escribir el código»).
  *
- * GUARDAR: cada línea → RPC atómica rep_registrar_ingreso (capacidad 15,
- * upsert de cantidad, kardex con el documento) y el lote guardado abre el
- * modal «Imprimir rótulos» (Zebra directa o archivo .zpl — 1 rótulo por
- * artículo, QR único por rótulo con el uuid de SU movimiento). Las líneas
- * fallidas QUEDAN en la lista con su error: el guardado es secuencial y
- * honesto (nunca se celebra un lote parcial como éxito completo).
+ * SIN DESTINO (cambio de flujo): aquí NO se elige dónde se almacena. Al
+ * guardar, el documento completo viaja en 1 RPC atómica e IDEMPOTENTE
+ * (rep_registrar_recepcion) a rep_recepciones/rep_recepcion_lineas con
+ * estado «en tránsito» — y es el módulo TRÁNSITO el que lista lo recibido
+ * y decide a qué lonchera va cada artículo (rep_ubicar_desde_transito:
+ * ahí se escribe stock + kardex). El rótulo tampoco lleva ubicación.
  *
- * REIMPRESIÓN: «Últimos ingresos» lista la guía de cada ingreso y permite
- * regenerar sus rótulos desde la BD (repListarMovimientos por guia exacta).
+ * RÓTULOS: al guardar se abre «Imprimir rótulos» (Zebra directa o archivo
+ * .zpl) — 1 rótulo por artículo con el CÓDIGO EN GRANDE (banda superior
+ * del ZPL) y QR único con el uuid de SU línea de recepción.
+ *
+ * REIMPRESIÓN: «Últimas recepciones» lista los documentos (guía, OC, DAM,
+ * estado) y regenera sus rótulos desde la BD (repLineasPorGuia; fallback a
+ * rep_movimientos para guías del flujo anterior con destino directo).
  *
  * Avisos honestos:
- *   · «El artículo ya vive en otra lonchera» (excepción controlada, no
- *     bloquea).
+ *   · «Ya está en…» — stock EXISTENTE del artículo (información, no destino).
  *   · Código desconocido → alta rápida IN-LINE (si el usuario puede
  *     gestionar el catálogo) o puente al módulo Catálogo.
  *
  * Lección de la auditoría 2026-11-10 aplicada: el formulario se limpia
  * ANTES del refresco del contexto — un fallo de red en el refresco no
- * sugiere que el guardado falló ni provoca un segundo clic que duplique.
+ * sugiere que el guardado falló ni provoca un segundo clic que duplique
+ * (y el uuid_sync del lote hace que el reintento sea idempotente en BD).
  *
  * Puentes (contrato rep-navegacion):
  *   · onIrACatalogo  → Catálogo (alta manual completa).
- *   · onVerEnMapa    → Ubicaciones con la posición enfocada (deep-link).
+ *   · onIrATransito  → Tránsito (ubicar lo recibido).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -40,18 +48,15 @@ import { puede } from '@/lib/rackly/permisos'
 import { formatDateTime } from '@/lib/utils'
 import {
   repArticuloPorCodigo,
-  repRegistrarIngreso,
+  repRegistrarRecepcion,
   repStockDeArticulo,
-  repListarUbicaciones,
-  repListarLoncheras,
-  repContarArticulosLonchera,
+  repListarRecepciones,
+  repLineasPorGuia,
   repListarMovimientos,
   repCrearArticulo,
   repNormalizarCodigo,
   type RepArticulo,
-  type RepUbicacion,
-  type RepLonchera,
-  type RepMovimiento,
+  type RepRecepcion,
 } from '@/lib/rackly/rep/rep-client'
 import {
   validarRecepcionRep,
@@ -62,7 +67,6 @@ import {
   type CabeceraRecepcionRep,
   type LineaRecepcionRep,
 } from '@/lib/rackly/rep/recepcion-guia'
-import { REP_ETIQUETA_TIPO, REP_MAX_ARTICULOS_LONCHERA } from '@/lib/rackly/rep/rep-tipos'
 import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
 import type { RotuloAImprimir } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
 import { ImprimirRotulosDialog } from '@/components/rackly/recepcion/ImprimirRotulosDialog'
@@ -80,19 +84,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { toast } from 'sonner'
 import {
   PackageCheck,
   Search,
   Loader2,
-  MapPin,
   AlertTriangle,
   CheckCircle2,
   BookOpen,
@@ -100,13 +96,14 @@ import {
   Printer,
   X,
   FileText,
+  Truck,
 } from 'lucide-react'
 
 type Props = {
   /** Puente: abrir Catálogo (alta manual completa). */
   onIrACatalogo?: () => void
-  /** Puente: ver la ubicación en el mapa (deep-link con retorno). */
-  onVerEnMapa?: (ubicacionId: string, codigo: string) => void
+  /** Puente: ir a Tránsito a ubicar lo recibido. */
+  onIrATransito?: () => void
 }
 
 /** Estado del modal de rótulos (guardado o reimpresión). */
@@ -116,21 +113,19 @@ type ModalRotulos = {
   nota: string
 } | null
 
-/** clave local de línea (uuid; fallback por navegadores sin randomUUID). */
-function claveLinea(): string {
+/** uuid v4 local (clave de línea / uuid_sync del lote; fallback sin crypto). */
+function uuidLocal(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `l-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
+export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
   const { perfil } = useAuth()
   const puedeGestionar = puede(perfil, 'repuestos.gestionar')
 
-  // ── Contexto del almacén ──
-  const [ubicaciones, setUbicaciones] = useState<RepUbicacion[]>([])
-  const [loncheras, setLoncheras] = useState<RepLonchera[]>([])
-  const [ultimos, setUltimos] = useState<RepMovimiento[]>([])
+  // ── Panel lateral ──
+  const [recepciones, setRecepciones] = useState<RepRecepcion[]>([])
 
   // ── Cabecera de la guía ──
   const [guia, setGuia] = useState('')
@@ -139,16 +134,12 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
   const [multiProveedor, setMultiProveedor] = useState(false)
   const [proveedorGeneral, setProveedorGeneral] = useState('')
 
-  // ── Constructor de línea ──
+  // ── Constructor de línea (ficha del artículo, como la imagen de referencia) ──
   const [codigo, setCodigo] = useState('')
   const [articulo, setArticulo] = useState<RepArticulo | null>(null)
   const [stockActual, setStockActual] = useState<Awaited<ReturnType<typeof repStockDeArticulo>>>([])
   const [cantidad, setCantidad] = useState('')
   const [proveedorLinea, setProveedorLinea] = useState('')
-  const [tipoFiltro, setTipoFiltro] = useState<'todos' | 'rack' | 'pasillo' | 'zona' | 'prepicking'>('rack')
-  const [ubicacionId, setUbicacionId] = useState('')
-  const [lado, setLado] = useState<'A' | 'B'>('A')
-  const [ocupadasDestino, setOcupadasDestino] = useState<number | null>(null)
 
   // ── Líneas de la guía ──
   const [lineas, setLineas] = useState<LineaRecepcionRep[]>([])
@@ -157,54 +148,29 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
   const [guardando, setGuardando] = useState(false)
   const [altaOpen, setAltaOpen] = useState(false)
   const [modal, setModal] = useState<ModalRotulos>(null)
-  const [imprimiendoGuia, setImprimiendoGuia] = useState('')
-  const [ultimoIngreso, setUltimoIngreso] = useState<{ ubicacionId: string; codigo: string } | null>(null)
+  const [imprimiendo, setImprimiendo] = useState('')
   const codigoRef = useRef<HTMLInputElement>(null)
   // Guard de generación: solo la búsqueda más reciente puede pintar resultados
   // (evita que la respuesta tardía de un código anterior sobrescriba al nuevo).
   const busquedaGenRef = useRef(0)
+  // uuid_sync del lote: ESTABLE entre reintentos del mismo formulario — la BD
+  // hace el guardado idempotente (reintento de red ≠ filas duplicadas).
+  const loteRef = useRef<string | null>(null)
 
   const cabecera: CabeceraRecepcionRep = { guia, oc, dam, multiProveedor, proveedorGeneral }
 
   const cargarContexto = useCallback(async () => {
     try {
-      const [ubs, lons, movs] = await Promise.all([
-        repListarUbicaciones(),
-        repListarLoncheras(),
-        repListarMovimientos({ tipo: 'ingreso', page: 1, pageSize: 8 }),
-      ])
-      setUbicaciones(ubs)
-      setLoncheras(lons)
-      setUltimos(movs.filas)
+      const recs = await repListarRecepciones(8)
+      setRecepciones(recs)
     } catch (err: unknown) {
-      toast.error('Error al cargar ubicaciones', { description: mensajeError(err) })
+      toast.error('Error al cargar recepciones', { description: mensajeError(err) })
     }
   }, [])
 
   useEffect(() => {
     cargarContexto()
   }, [cargarContexto])
-
-  // Ocupación del destino seleccionado (capacidad 15 en vivo)
-  useEffect(() => {
-    const lonchera = loncheraDestino()
-    if (!lonchera) {
-      setOcupadasDestino(null)
-      return
-    }
-    let vivo = true
-    repContarArticulosLonchera(lonchera.id)
-      .then((n) => { if (vivo) setOcupadasDestino(n) })
-      .catch(() => { if (vivo) setOcupadasDestino(null) })
-    return () => { vivo = false }
-  }, [ubicacionId, lado, loncheras])
-
-  /** Lonchera destino resuelta (ubicación + lado; cae al primer lado disponible). */
-  function loncheraDestino(): RepLonchera | null {
-    const lons = loncheras.filter((l) => l.ubicacion_id === ubicacionId)
-    if (lons.length === 0) return null
-    return lons.find((l) => l.lado === lado) ?? lons[0]
-  }
 
   async function buscarArticulo(codigoInput?: string) {
     const c = repNormalizarCodigo(codigoInput ?? codigo)
@@ -221,6 +187,7 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
         const st = await repStockDeArticulo(a.id)
         if (gen !== busquedaGenRef.current) return
         setStockActual(st)
+        codigoRef.current?.focus()
       } else {
         toast.warning(`El código ${c} no existe en el catálogo`, {
           description: puedeGestionar
@@ -245,20 +212,8 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
       toast.error('La cantidad debe ser mayor que cero')
       return
     }
-    const lonchera = loncheraDestino()
-    if (!lonchera) {
-      toast.error('Elige la ubicación de destino')
-      return
-    }
-    const ubi = ubicaciones.find((u) => u.id === lonchera.ubicacion_id)
     if (multiProveedor && !proveedorLinea.trim()) {
       toast.error('Ingresa el proveedor de este artículo')
-      return
-    }
-    if (ocupadasDestino !== null && ocupadasDestino >= REP_MAX_ARTICULOS_LONCHERA && !stockActual.some((s) => s.loncheraId === lonchera.id)) {
-      toast.error(`La lonchera ${lonchera.lado} ya tiene ${REP_MAX_ARTICULOS_LONCHERA} artículos distintos`, {
-        description: 'Elige otra lonchera o posición (la BD también lo valida).',
-      })
       return
     }
     setLineas((prev) => [
@@ -271,12 +226,9 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
         und: articulo.und,
         cantidad: cant,
         proveedor: multiProveedor ? proveedorLinea.trim() : '',
-        loncheraId: lonchera.id,
-        destinoEtiqueta: `${ubi?.codigo ?? '?'} · lado ${lonchera.lado}`,
       },
     ])
-    // La línea quedó lista: limpiar SOLO artículo/cantidad/proveedor de línea —
-    // el destino queda fijo (recepciones consecutivas suelen ir al mismo rack).
+    // La línea quedó lista: limpiar SOLO artículo/cantidad/proveedor de línea.
     setCodigo('')
     setCantidad('')
     setProveedorLinea('')
@@ -297,14 +249,7 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
     setProveedorGeneral('')
   }
 
-  /** Proveedores únicos de un conjunto de líneas (para la ficha del modal). */
-  function etiquetaProveedores(vals: string[]): string {
-    const unicos = [...new Set(vals.map((v) => v.trim()).filter(Boolean))]
-    if (unicos.length === 0) return ''
-    return unicos.length === 1 ? unicos[0] : `${unicos.length} proveedores`
-  }
-
-  /** Guarda TODAS las líneas bajo el documento de la guía (secuencial). */
+  /** Guarda el DOCUMENTO completo (1 RPC atómica, idempotente por uuid_sync). */
   async function guardar() {
     const errores = validarRecepcionRep(cabecera, lineas)
     const total = errores.cabecera.length + errores.lineas.size
@@ -316,57 +261,41 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
       return
     }
     setGuardando(true)
-    const exitosas: Array<{ linea: LineaRecepcionRep; movimientoId: string; ubicacionId: string; ubicacionCodigo: string }> = []
-    const fallos: Array<{ codigo: string; error: string }> = []
-    let avisosOtraLonchera = 0
-
-    // SECUENCIAL (no Promise.all): deterministic, reporte honesto por línea
-    // y las RPC de la misma lonchera no compiten por el upsert de stock.
-    for (const l of lineas) {
-      try {
-        const res = await repRegistrarIngreso({
-          articuloId: l.articuloId,
-          loncheraId: l.loncheraId,
-          cantidad: l.cantidad,
-          guia: cabecera.guia.trim(),
-          oc: cabecera.oc.trim(),
-          dam: cabecera.dam.trim(),
-          proveedor: proveedorDeLinea(cabecera, l),
-        })
-        if (res.enOtraLonchera) avisosOtraLonchera++
-        const lon = loncheras.find((x) => x.id === l.loncheraId)
-        const ubiCod = ubicaciones.find((u) => u.id === lon?.ubicacion_id)?.codigo ?? res.ubicacion
-        exitosas.push({ linea: l, movimientoId: res.movimientoId, ubicacionId: lon?.ubicacion_id ?? '', ubicacionCodigo: ubiCod })
-      } catch (err: unknown) {
-        fallos.push({ codigo: l.codigo, error: mensajeError(err) })
-      }
-    }
-
     const guiaGuardada = cabecera.guia.trim()
-    // Limpieza ANTES del refresco (lección auditoría 2026-11-10): las líneas
-    // OK salen de la lista aunque el refresco falle — un segundo clic ya no
-    // puede duplicarlas.
-    if (exitosas.length > 0) {
-      const keysOk = new Set(exitosas.map((e) => e.linea.key))
-      const lineasOk = exitosas.map((e) => e.linea)
-      setLineas((prev) => prev.filter((l) => !keysOk.has(l.key)))
-      if (fallos.length === 0) limpiarCabecera()
-      // Deep-link al mapa: la ÚLTIMA lonchera guardada (contrato
-      // rep-navegacion: el CÓDIGO DE LA UBICACIÓN, no el del artículo).
-      const ultima = exitosas[exitosas.length - 1]
-      if (ultima.ubicacionId) setUltimoIngreso({ ubicacionId: ultima.ubicacionId, codigo: ultima.ubicacionCodigo })
-      toast.success(`Guía ${guiaGuardada}: ${exitosas.length} artículo(s) registrados`, {
-        description: fallos.length > 0 ? `${fallos.length} línea(s) NO se registraron: revisa la lista.` : undefined,
-        duration: fallos.length > 0 ? 10000 : undefined,
+    try {
+      if (!loteRef.current) loteRef.current = uuidLocal()
+      const res = await repRegistrarRecepcion({
+        guia: guiaGuardada,
+        oc: cabecera.oc.trim(),
+        dam: cabecera.dam.trim(),
+        lineas: lineas.map((l) => ({
+          articuloId: l.articuloId,
+          cantidad: l.cantidad,
+          proveedor: proveedorDeLinea(cabecera, l),
+        })),
+        uuidSync: loteRef.current,
       })
-      if (avisosOtraLonchera > 0) {
-        toast.warning(`${avisosOtraLonchera} artículo(s) ya vivían en otra lonchera`, {
-          description: 'Excepción controlada: el ingreso se registró igual. Revísalo en el mapa.',
-          duration: 10000,
+
+      const lineasOk = [...lineas]
+      // Limpieza ANTES del refresco (lección auditoría 2026-11-10): las líneas
+      // salen de la lista aunque el refresco falle — y el lote liberado hace
+      // que un siguiente guardado sea un documento NUEVO, no un eco.
+      setLineas([])
+      limpiarCabecera()
+      loteRef.current = null
+
+      if (res.duplicado) {
+        toast.info('La recepción ya estaba guardada', {
+          description: 'Un reintento anterior llegó a la base de datos — no se duplicó nada.',
+        })
+      } else {
+        toast.success(`Guía ${guiaGuardada}: ${lineasOk.length} artículo(s) en tránsito`, {
+          description: 'Asígnalos a su lonchera desde el módulo TRÁNSITO.',
+          duration: 9000,
         })
       }
       setModal({
-        rotulos: lineasARotulosRep(lineasOk, exitosas.map((e) => e.movimientoId), guiaGuardada),
+        rotulos: lineasARotulosRep(lineasOk, res.lineaIds, guiaGuardada),
         encabezado: {
           fecha: formatDateTime(new Date().toISOString()),
           numeroDocumento: guiaGuardada,
@@ -375,36 +304,55 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
           registradoPor: perfil?.nombre ?? undefined,
           tipoDocumento: 'Guía',
         },
-        nota: `Recepción guardada — ${exitosas.length} artículo(s) de la guía ${guiaGuardada}. Descarga el archivo .zpl o imprime directo.`,
+        nota: `Recepción guardada — ${lineasOk.length} artículo(s) de la guía ${guiaGuardada} en tránsito. Descarga el archivo .zpl o imprime directo.`,
       })
-    }
 
-    // Refresco best-effort con aviso propio (nunca enmascara el guardado).
-    try {
-      await cargarContexto()
-    } catch (errRefresco: unknown) {
-      toast.info('Guardado, pero no se pudo refrescar el panel', { description: mensajeError(errRefresco) })
+      // Refresco best-effort con aviso propio (nunca enmascara el guardado).
+      try {
+        await cargarContexto()
+      } catch (errRefresco: unknown) {
+        toast.info('Guardado, pero no se pudo refrescar el panel', { description: mensajeError(errRefresco) })
+      }
+    } catch (err: unknown) {
+      // Las líneas quedan en la lista: corregir y reintentar es un clic.
+      toast.error('No se pudo guardar la recepción', { description: mensajeError(err) })
+    } finally {
+      setGuardando(false)
     }
-    setGuardando(false)
   }
 
   /** Reimpresión: rótulos de una guía YA guardada, releídos de la BD. */
   async function reimprimirGuia(numGuia: string) {
-    setImprimiendoGuia(numGuia)
+    setImprimiendo(numGuia)
     try {
-      const { filas } = await repListarMovimientos({ tipo: 'ingreso', guia: numGuia, pageSize: 200 })
+      // Fuente principal: el DOCUMENTO de recepción (rótulos aunque la línea
+      // aún no esté ubicada). Fallback honesto: guías del flujo anterior
+      // (destino directo) solo existen en rep_movimientos.
+      let filas = await repLineasPorGuia(numGuia)
       if (filas.length === 0) {
-        toast.warning(`La guía ${numGuia} ya no tiene ingresos registrados`)
+        const movs = await repListarMovimientos({ tipo: 'ingreso', guia: numGuia, pageSize: 200 })
+        filas = movs.filas.map((m) => ({
+          id: m.id,
+          created_at: m.created_at,
+          codigo: m.codigo,
+          descripcion: m.descripcion,
+          und: m.und,
+          cantidad: Number(m.cantidad),
+          guia: m.guia,
+        }))
+      }
+      if (filas.length === 0) {
+        toast.warning(`La guía ${numGuia} ya no tiene artículos registrados`)
         return
       }
       setModal({
         rotulos: movimientosARotulosRep(filas),
         encabezado: {
-          fecha: formatDateTime(filas[0].created_at),
+          fecha: formatDateTime(filas[0].created_at ?? new Date().toISOString()),
           numeroDocumento: numGuia,
-          empresaOrigen: etiquetaProveedores(filas.map((m) => m.proveedor)),
+          empresaOrigen: etiquetaProveedores(filas.map((f) => '')),
           placa: '',
-          registradoPor: filas[0].usuario_nombre || undefined,
+          registradoPor: perfil?.nombre ?? undefined,
           tipoDocumento: 'Guía',
         },
         nota: `Reimpresión — ${filas.length} artículo(s) de la guía ${numGuia} (leídos de la base de datos).`,
@@ -412,17 +360,19 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
     } catch (err: unknown) {
       toast.error('No se pudo releer la guía', { description: mensajeError(err) })
     } finally {
-      setImprimiendoGuia('')
+      setImprimiendo('')
     }
   }
 
-  const ubicacionesFiltradas = ubicaciones.filter((u) => (tipoFiltro === 'todos' ? true : u.tipo === tipoFiltro))
-  const ladosDisponibles = loncheras.filter((l) => l.ubicacion_id === ubicacionId)
-  const listaDestinos = ubicacionesFiltradas.flatMap((u) => {
-    const lons = loncheras.filter((l) => l.ubicacion_id === u.id)
-    return lons.map((l) => ({ lonchera: l, ubi: u }))
-  })
+  /** Proveedores únicos de un conjunto de valores (etiqueta compacta). */
+  function etiquetaProveedores(vals: string[]): string {
+    const unicos = [...new Set(vals.map((v) => v.trim()).filter(Boolean))]
+    if (unicos.length === 0) return ''
+    return unicos.length === 1 ? unicos[0] : `${unicos.length} proveedores`
+  }
+
   const puedeGuardar = lineas.length > 0 && !guardando
+  const pendientesTotal = recepciones.reduce((s, r) => s + r.pendientes, 0)
 
   return (
     <div className="space-y-4">
@@ -468,136 +418,119 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
         </div>
       </div>
 
-      {/* ═══ 2 · AGREGAR ARTÍCULO ═══ */}
+      {/* ═══ 2 · AGREGAR ARTÍCULO (ficha como la imagen de referencia) ═══ */}
       <div className="rounded-xl border bg-white p-4 space-y-4">
-        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">2 · Agregar artículo {multiProveedor && '(con su proveedor)'}</p>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">
+          2 · Agregar artículo <span className="text-slate-300">· #{lineas.length + 1}</span>
+          {multiProveedor && ' (con su proveedor)'}
+        </p>
 
-        {/* Código → catálogo */}
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input
-              ref={codigoRef}
-              className="pl-9 font-mono uppercase"
-              placeholder="Escanea o escribe el código BIG MAGIC…"
-              value={codigo}
-              onChange={(e) => setCodigo(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') buscarArticulo() }}
-            />
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+          {/* Código del artículo */}
+          <div className="grid gap-1">
+            <Label htmlFor="art-codigo" className="text-xs font-semibold text-slate-600">Código del artículo</Label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  id="art-codigo"
+                  ref={codigoRef}
+                  className="pl-9 font-mono uppercase text-base font-bold"
+                  placeholder="Ej: 5653"
+                  value={codigo}
+                  onChange={(e) => setCodigo(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') buscarArticulo() }}
+                />
+              </div>
+              <Button onClick={() => buscarArticulo()} disabled={buscando || !codigo.trim()} className="gap-2">
+                {buscando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                <span className="hidden sm:inline">Buscar</span>
+              </Button>
+            </div>
           </div>
-          <Button onClick={() => buscarArticulo()} disabled={buscando || !codigo.trim()} className="gap-2">
-            {buscando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            Buscar
-          </Button>
+
+          {/* Descripción (se autocompleta) */}
+          <div className="grid gap-1">
+            <Label htmlFor="art-desc" className="text-xs font-semibold text-slate-600">Descripción</Label>
+            <div
+              className={`flex min-h-[2.4rem] items-center rounded-md border px-3 text-sm ${
+                articulo ? 'border-emerald-200 bg-emerald-50/60 text-slate-700' : 'border-dashed border-slate-200 bg-slate-50/50 text-slate-400'
+              }`}
+            >
+              {articulo ? (
+                <span className="truncate" title={articulo.descripcion}>{articulo.descripcion}</span>
+              ) : (
+                <span className="text-xs">Se autocompleta al escribir el código</span>
+              )}
+            </div>
+          </div>
         </div>
 
-        {articulo && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 space-y-1.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              <span className="font-mono text-sm font-extrabold text-emerald-900">{articulo.codigo}</span>
-              <span className="text-sm text-slate-700 flex-1 min-w-[160px]">{articulo.descripcion}</span>
-              {articulo.und && <Badge variant="outline" className="text-[10px]">{articulo.und}</Badge>}
-            </div>
-            {stockActual.length > 0 && (
-              <p className="text-xs text-slate-600">
-                <strong>Ya está en:</strong>{' '}
-                {stockActual
-                  .map((s) => `${s.ubicacionCodigo} lado ${s.lado} (${s.cantidad.toLocaleString('es-PE')})`)
-                  .join(' · ')}
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Destino + cantidad (+ proveedor de línea) */}
-        <div className="grid gap-2 sm:grid-cols-4">
-          <Select value={tipoFiltro} onValueChange={(v) => { setTipoFiltro(v as typeof tipoFiltro); setUbicacionId(''); setLado('A') }}>
-            <SelectTrigger><SelectValue placeholder="Tipo" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="rack">Racks</SelectItem>
-              <SelectItem value="pasillo">Pasillos</SelectItem>
-              <SelectItem value="zona">Zonas</SelectItem>
-              <SelectItem value="prepicking">Pre-picking</SelectItem>
-              <SelectItem value="todos">Todos</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select
-            value={ubicacionId}
-            onValueChange={(v) => {
-              setUbicacionId(v)
-              // Mantén el lado solo si la nueva ubicación lo tiene; si no,
-              // cae al primero disponible (evita rótulo/pre-chequeo cruzados).
-              const lonsNuevas = loncheras.filter((l) => l.ubicacion_id === v)
-              if (lonsNuevas.length > 0 && !lonsNuevas.some((l) => l.lado === lado)) setLado(lonsNuevas[0].lado)
-            }}
-          >
-            <SelectTrigger><SelectValue placeholder="Ubicación" /></SelectTrigger>
-            <SelectContent>
-              {ubicacionesFiltradas.length === 0 && (
-                <div className="px-3 py-2 text-xs text-slate-400">Sin ubicaciones de este tipo</div>
-              )}
-              {ubicacionesFiltradas.map((u) => (
-                <SelectItem key={u.id} value={u.id}>
-                  <span className="font-mono">{u.codigo}</span>
-                  <span className="text-slate-400 ml-1.5 text-xs">{REP_ETIQUETA_TIPO[u.tipo]} P{u.piso}·N{u.nivel}</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Input
-            inputMode="decimal"
-            placeholder="Cantidad *"
-            value={cantidad}
-            onChange={(e) => setCantidad(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') agregarLinea() }}
-          />
-          {multiProveedor ? (
+        <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid gap-1">
+            <Label htmlFor="art-cant" className="text-xs font-semibold text-slate-600">Cantidad</Label>
             <Input
-              placeholder="Proveedor de este artículo *"
-              value={proveedorLinea}
-              onChange={(e) => setProveedorLinea(e.target.value)}
+              id="art-cant"
+              inputMode="decimal"
+              placeholder="0"
+              value={cantidad}
+              onChange={(e) => setCantidad(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') agregarLinea() }}
             />
-          ) : (
-            <Button onClick={agregarLinea} disabled={!articulo} className="gap-2">
+          </div>
+          <div className="grid gap-1">
+            <Label className="text-xs font-semibold text-slate-600">Unidad</Label>
+            <div className="flex h-9 items-center rounded-md border border-dashed border-slate-200 bg-slate-50/50 px-3">
+              {articulo?.und ? (
+                <span className="font-mono text-sm font-bold text-slate-700">{articulo.und}</span>
+              ) : (
+                <span className="text-xs text-slate-400">Se jala del catálogo</span>
+              )}
+            </div>
+          </div>
+          {multiProveedor && (
+            <div className="grid gap-1 sm:col-span-2">
+              <Label htmlFor="art-prov" className="text-xs font-semibold text-slate-600">Proveedor de este artículo *</Label>
+              <Input
+                id="art-prov"
+                placeholder="Proveedor del artículo"
+                value={proveedorLinea}
+                onChange={(e) => setProveedorLinea(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') agregarLinea() }}
+              />
+            </div>
+          )}
+          <div className={`grid gap-1 ${multiProveedor ? 'sm:col-span-4' : 'sm:col-span-2'}`}>
+            <Button onClick={agregarLinea} disabled={!articulo} className="gap-2 w-full sm:w-auto sm:justify-self-end self-end">
               <Plus className="h-4 w-4" /> Agregar a la guía
             </Button>
-          )}
+          </div>
         </div>
-        {multiProveedor && (
-          <Button onClick={agregarLinea} disabled={!articulo} className="gap-2 w-full sm:w-auto">
-            <Plus className="h-4 w-4" /> Agregar a la guía
-          </Button>
-        )}
-        {ubicacionId && (
-          <p className={`text-xs font-semibold ${ocupadasDestino !== null && ocupadasDestino >= REP_MAX_ARTICULOS_LONCHERA ? 'text-rose-600' : 'text-slate-500'}`}>
-            Ocupación de la lonchera {ladosDisponibles.some((l) => l.lado === lado) ? lado : ladosDisponibles[0]?.lado ?? 'A'}: {ocupadasDestino ?? '…'}/{REP_MAX_ARTICULOS_LONCHERA} artículos distintos
+
+        {articulo && stockActual.length > 0 && (
+          <p className="text-xs text-slate-500 rounded-lg bg-slate-50 border border-slate-100 px-2.5 py-1.5">
+            <strong>Ya está en</strong> (stock existente, no destino):{' '}
+            {stockActual
+              .map((s) => `${s.ubicacionCodigo} lado ${s.lado} (${s.cantidad.toLocaleString('es-PE')})`)
+              .join(' · ')}
           </p>
         )}
-        {listaDestinos.length === 0 && (
-          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-            No hay loncheras para este filtro. Crea ubicaciones en el módulo <b>Ubicaciones</b>.
+        {multiProveedor && (
+          <p className="text-[11px] text-slate-400">
+            El proveedor de la guía se repite en cada artículo; con «Varios proveedores» activado, cada artículo lleva el suyo.
           </p>
         )}
       </div>
 
       {/* ═══ 3 · ARTÍCULOS DE LA GUÍA + GUARDAR ═══ */}
       <div className="rounded-xl border bg-white p-4 space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">
-            3 · Artículos de la guía ({lineas.length})
-          </p>
-          {ultimoIngreso && onVerEnMapa && (
-            <Button variant="outline" size="sm" onClick={() => onVerEnMapa(ultimoIngreso.ubicacionId, ultimoIngreso.codigo)} className="gap-2 h-7 text-xs">
-              <MapPin className="h-3.5 w-3.5" /> Ver en el mapa
-            </Button>
-          )}
-        </div>
+        <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">
+          3 · Artículos de la guía ({lineas.length})
+        </p>
 
         {lineas.length === 0 ? (
           <p className="text-xs text-slate-400 py-3 text-center">
-            Aún no hay artículos. Escanea el primer código arriba — la descripción y la UM se jalan solas del catálogo.
+            Aún no hay artículos. Escribe el código del primero — la descripción y la UM se jalan solas del catálogo.
           </p>
         ) : (
           <div className="overflow-x-auto rounded-lg border">
@@ -610,7 +543,6 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
                   <th className="px-2.5 py-2 font-semibold">UM</th>
                   <th className="px-2.5 py-2 font-semibold text-right">Cantidad</th>
                   {(multiProveedor || lineas.some((l) => l.proveedor)) && <th className="px-2.5 py-2 font-semibold">Proveedor</th>}
-                  <th className="px-2.5 py-2 font-semibold">Destino</th>
                   <th className="px-2.5 py-2 w-8"></th>
                 </tr>
               </thead>
@@ -619,13 +551,12 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
                   <tr key={l.key} className="hover:bg-slate-50/60">
                     <td className="px-2.5 py-1.5 text-slate-400">{i + 1}</td>
                     <td className="px-2.5 py-1.5 font-mono font-bold text-slate-800">{l.codigo}</td>
-                    <td className="px-2.5 py-1.5 text-slate-600 max-w-[220px] truncate" title={l.descripcion}>{l.descripcion}</td>
+                    <td className="px-2.5 py-1.5 text-slate-600 max-w-[260px] truncate" title={l.descripcion}>{l.descripcion}</td>
                     <td className="px-2.5 py-1.5 text-slate-500">{l.und || '—'}</td>
                     <td className="px-2.5 py-1.5 text-right font-bold text-slate-900">{l.cantidad.toLocaleString('es-PE')}</td>
                     {(multiProveedor || lineas.some((l2) => l2.proveedor)) && (
                       <td className="px-2.5 py-1.5 text-slate-600 max-w-[140px] truncate" title={l.proveedor}>{l.proveedor || '—'}</td>
                     )}
-                    <td className="px-2.5 py-1.5 font-mono text-slate-500 whitespace-nowrap">{l.destinoEtiqueta}</td>
                     <td className="px-2.5 py-1.5">
                       <button
                         onClick={() => quitarLinea(l.key)}
@@ -644,7 +575,7 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
           </div>
         )}
 
-        <div className="flex flex-wrap gap-2 justify-end">
+        <div className="flex flex-wrap items-center gap-2 justify-end">
           {!articulo && !codigo && puedeGestionar && (
             <Button variant="outline" onClick={() => setAltaOpen(true)} className="gap-2">
               <Plus className="h-4 w-4" /> Alta rápida
@@ -662,42 +593,64 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
         </div>
         {guardando && (
           <p className="text-[11px] text-slate-500 text-right">
-            Registrando artículos en la base de datos… no cierres ni hagas clic de nuevo.
+            Registrando el documento… no cierres ni hagas clic de nuevo.
           </p>
         )}
+        <p className="text-[11px] text-slate-400">
+          Al guardar, los artículos quedan <b>en tránsito</b>: ni este formulario ni el rótulo muestran ubicación —
+          el destino se decide en el módulo Tránsito.
+        </p>
       </div>
 
-      {/* ═══ ÚLTIMOS INGRESOS (+ reimpresión por guía) ═══ */}
-      <div className="rounded-xl border bg-white p-4">
-        <p className="text-sm font-extrabold text-slate-900 mb-2">Últimos ingresos</p>
-        {ultimos.length === 0 ? (
-          <p className="text-xs text-slate-400 py-3 text-center">Aún no hay ingresos registrados.</p>
+      {/* ═══ ÚLTIMAS RECEPCIONES (+ reimpresión) ═══ */}
+      <div className="rounded-xl border bg-white p-4 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-extrabold text-slate-900">Últimas recepciones</p>
+          {onIrATransito && pendientesTotal > 0 && (
+            <Button variant="outline" size="sm" onClick={onIrATransito} className="gap-2 h-7 text-xs border-amber-300 text-amber-700 hover:bg-amber-50">
+              <Truck className="h-3.5 w-3.5" />
+              Ir a Tránsito ({pendientesTotal} por ubicar)
+            </Button>
+          )}
+        </div>
+        {recepciones.length === 0 ? (
+          <p className="text-xs text-slate-400 py-3 text-center">Aún no hay recepciones guardadas.</p>
         ) : (
           <ul className="space-y-1">
-            {ultimos.map((m) => (
-              <li key={m.id} className="flex items-center gap-2 text-xs border-b border-slate-100 pb-1 last:border-0">
-                <span className="font-mono font-bold text-slate-700 shrink-0">{m.codigo}</span>
-                <span className="text-slate-500 truncate flex-1" title={m.descripcion}>{m.descripcion}</span>
-                {m.guia && (
-                  <Badge variant="outline" className="text-[10px] shrink-0 border-sky-200 bg-sky-50 text-sky-700" title="Guía del ingreso">
-                    G. {m.guia}
-                  </Badge>
+            {recepciones.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center gap-2 text-xs border-b border-slate-100 pb-1 last:border-0">
+                <span className="font-mono font-bold text-slate-700 shrink-0" title={`Guía ${r.guia}`}>{r.guia}</span>
+                {(r.oc || r.dam) && (
+                  <span className="text-slate-400 shrink-0 hidden sm:inline font-mono text-[10px]">
+                    {r.oc && <>OC {r.oc}</>}{r.oc && r.dam && ' · '}{r.dam && <>DAM {r.dam}</>}
+                  </span>
                 )}
-                <span className="font-bold text-slate-900 shrink-0">{Number(m.cantidad).toLocaleString('es-PE')} {m.und}</span>
-                <span className="text-slate-400 shrink-0 hidden sm:inline">{new Date(m.created_at).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}</span>
-                {m.guia && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-6 px-1.5 shrink-0"
-                    onClick={() => reimprimirGuia(m.guia)}
-                    disabled={imprimiendoGuia !== ''}
-                    title={`Reimprimir los rótulos de la guía ${m.guia}`}
-                    aria-label={`Reimprimir rótulos de la guía ${m.guia}`}
-                  >
-                    {imprimiendoGuia === m.guia ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
-                  </Button>
+                {r.proveedores.length > 0 && (
+                  <span className="text-slate-500 truncate flex-1 min-w-[100px]" title={r.proveedores.join(' · ')}>
+                    {r.proveedores.length === 1 ? r.proveedores[0] : `${r.proveedores.length} proveedores`}
+                  </span>
                 )}
+                <Badge variant="outline" className="text-[10px] shrink-0">{r.totalLineas} art.</Badge>
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] shrink-0 ${
+                    r.pendientes > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  }`}
+                >
+                  {r.pendientes > 0 ? `En tránsito (${r.pendientes})` : 'Ubicado'}
+                </Badge>
+                <span className="text-slate-400 shrink-0 hidden sm:inline">{new Date(r.created_at).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-1.5 shrink-0"
+                  onClick={() => reimprimirGuia(r.guia)}
+                  disabled={imprimiendo !== ''}
+                  title={`Reimprimir los rótulos de la guía ${r.guia}`}
+                  aria-label={`Reimprimir rótulos de la guía ${r.guia}`}
+                >
+                  {imprimiendo === r.guia ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
+                </Button>
               </li>
             ))}
           </ul>
@@ -726,6 +679,11 @@ export function RecepcionModule({ onIrACatalogo, onVerEnMapa }: Props) {
       />
     </div>
   )
+}
+
+/** Clave local de línea (uuid; fallback por navegadores sin randomUUID). */
+function claveLinea(): string {
+  return uuidLocal()
 }
 
 /* ═══════════════════════════════════════════════════════════════════

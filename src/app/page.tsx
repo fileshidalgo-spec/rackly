@@ -568,7 +568,7 @@ function RacklyApp() {
                 <div>
                   <CardTitle className="text-lg">Repuestos · Recepción</CardTitle>
                   <CardDescription>
-                    Ingreso a lonchera con validación de capacidad (15 artículos) y kardex automático.
+                    Registro del documento (Guía/OC/DAM/Proveedor) con catálogo automático — los artículos quedan en Tránsito hasta asignarles ubicación.
                   </CardDescription>
                 </div>
               </div>
@@ -576,9 +576,7 @@ function RacklyApp() {
             <CardContent>
               <RecepcionRepModule
                 onIrACatalogo={() => abrirRep('catalogo')}
-                onVerEnMapa={(ubicacionId, codigo) =>
-                  saltarARep({ tipo: 'ubicacion', ubicacionId, codigo, origen: { vista: 'recepcion', label: 'Recepción' } })
-                }
+                onIrATransito={() => abrirRep('transito')}
               />
             </CardContent>
           </Card>
@@ -624,7 +622,7 @@ function RacklyApp() {
                 <div>
                   <CardTitle className="text-lg">Repuestos · Tránsito</CardTitle>
                   <CardDescription>
-                    Carga estacionada en pre-picking: despacho del día siguiente o devolución a lonchera.
+                    Por ubicar (lo que llegó de Recepción, sin destino) + despacho RAL del día siguiente o devolución a lonchera.
                   </CardDescription>
                 </div>
               </div>

@@ -40,6 +40,7 @@ export type {
   RepMovimiento,
   RepTipoMovimiento,
   RepTipoUbicacion,
+  RepEstadoLinea,
 } from './rep-tipos'
 
 // ═══════════════════════════════════════════════════════════════════
@@ -686,4 +687,244 @@ export async function repPrepickings(): Promise<Array<{ loncheraId: string; ubic
     codigo: u.codigo,
     nota: u.nota,
   })).filter((p) => p.loncheraId !== '')
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RECEPCIÓN CON DOCUMENTO (sin destino) + TRÁNSITO que UBICA
+// Paridad Insumos: Recepción SOLO registra el documento (rep_recepciones
+// + rep_recepcion_lineas, estado en_transito); el stock y el kardex se
+// escriben cuando TRÁNSITO ubica cada línea (rep_ubicar_desde_transito).
+// ═══════════════════════════════════════════════════════════════════
+
+/** Cabecera de una recepción guardada (documento de guía). */
+export type RepRecepcion = {
+  id: string
+  created_at: string
+  guia: string
+  oc: string
+  dam: string
+  usuario_nombre: string
+  /** Resumen de sus líneas (llenado en cliente con el embed `lineas`). */
+  totalLineas: number
+  pendientes: number
+  /** Proveedores distintos de sus líneas (la cabecera no tiene proveedor:
+   *  en modo múltiple cada línea lleva el suyo). */
+  proveedores: string[]
+}
+
+/** Línea de una recepción guardada (1 artículo de la guía). */
+export type RepLineaRecepcion = {
+  id: string
+  created_at: string
+  recepcion_id: string
+  articulo_id: string
+  codigo: string
+  descripcion: string
+  und: string
+  cantidad: number
+  proveedor: string
+  estado: 'en_transito' | 'ubicado'
+  /** Solo en estado 'ubicado' */
+  lonchera_id: string | null
+  ubicacion_id: string | null
+  movimiento_id: string | null
+}
+
+/** Documento de la guía embebido en cada línea (para listar en Tránsito). */
+export type RepLineaConDocumento = RepLineaRecepcion & {
+  guia: string
+  oc: string
+  dam: string
+  fechaRecepcion: string
+}
+
+/**
+ * Guarda el DOCUMENTO de recepción completo (1 RPC atómica):
+ *   · valida todas las líneas en BD ANTES de insertar (todo-o-nada);
+ *   · codigo/descripcion/und se copian DESDE el catálogo (fuente de verdad);
+ *   · IDEMPOTENTE por uuid_sync: el reintento del MISMO formulario devuelve
+ *     el documento ya guardado (duplicado=true) sin crear filas nuevas.
+ * NO escribe stock ni kardex: eso ocurre al ubicar en Tránsito.
+ */
+export async function repRegistrarRecepcion(params: {
+  guia: string
+  oc: string
+  dam: string
+  lineas: Array<{ articuloId: string; cantidad: number; proveedor: string }>
+  uuidSync: string
+}): Promise<{ recepcionId: string; lineaIds: string[]; duplicado: boolean }> {
+  const { data, error } = await dataClient.rpc('rep_registrar_recepcion', {
+    p_guia: params.guia,
+    p_oc: params.oc,
+    p_dam: params.dam,
+    p_lineas: params.lineas.map((l) => ({
+      articulo_id: l.articuloId,
+      cantidad: l.cantidad,
+      proveedor: l.proveedor,
+    })),
+    p_uuid_sync: params.uuidSync,
+  })
+  lanzar(error)
+  const d = (data ?? {}) as { recepcion_id?: string; linea_ids?: string[]; duplicado?: boolean }
+  return {
+    recepcionId: d.recepcion_id ?? '',
+    lineaIds: d.linea_ids ?? [],
+    duplicado: Boolean(d.duplicado),
+  }
+}
+
+/**
+ * UBICA una línea en tránsito a la lonchera elegida (RPC atómica):
+ * capacidad 15 · upsert de stock · kardex 'ingreso' con el documento ·
+ * línea marcada como ubicada. Errores controlados: LONCHERA_LLENA,
+ * LINEA_YA_UBICADA, ARTICULO_INACTIVO, NO_AUTORIZADO…
+ */
+export async function repUbicarDesdeTransito(params: {
+  lineaId: string
+  loncheraId: string
+}): Promise<RepResultadoIngreso> {
+  const { data, error } = await dataClient.rpc('rep_ubicar_desde_transito', {
+    p_linea_id: params.lineaId,
+    p_lonchera_id: params.loncheraId,
+  })
+  lanzar(error)
+  const d = (data ?? {}) as {
+    movimiento_id?: string
+    ubicacion?: string
+    lado?: 'A' | 'B'
+    en_otra_lonchera?: { lado: string; ubicacion: string } | null
+  }
+  return {
+    movimientoId: d.movimiento_id ?? '',
+    ubicacion: d.ubicacion ?? '',
+    lado: d.lado ?? 'A',
+    enOtraLonchera: d.en_otra_lonchera ?? null,
+  }
+}
+
+/** Últimas recepciones guardadas (para el panel de Recepción). */
+export async function repListarRecepciones(limit = 10): Promise<RepRecepcion[]> {
+  const { data, error } = await dataClient
+    .from('rep_recepciones')
+    .select(
+      'id, created_at, guia, oc, dam, usuario_nombre, lineas:rep_recepcion_lineas(estado, proveedor)'
+    )
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  lanzar(error)
+  return ((data ?? []) as unknown as Array<{
+    id: string
+    created_at: string
+    guia: string
+    oc: string
+    dam: string
+    usuario_nombre: string
+    lineas: Array<{ estado: string; proveedor: string }>
+  }>).map((r) => ({
+    id: r.id,
+    created_at: r.created_at,
+    guia: r.guia,
+    oc: r.oc,
+    dam: r.dam,
+    usuario_nombre: r.usuario_nombre,
+    totalLineas: r.lineas.length,
+    pendientes: r.lineas.filter((l) => l.estado === 'en_transito').length,
+    proveedores: [...new Set(r.lineas.map((l) => l.proveedor.trim()).filter(Boolean))],
+  }))
+}
+
+/**
+ * Líneas EN TRÁNSITO con su documento (la lista de trabajo de Tránsito).
+ * Ordenadas por recepción (más vieja primero: lo que llegó antes, se ubica
+ * antes) y con un tope generoso de líneas.
+ */
+export async function repLineasEnTransito(limit = 300): Promise<RepLineaConDocumento[]> {
+  const { data, error } = await dataClient
+    .from('rep_recepcion_lineas')
+    .select(
+      'id, created_at, recepcion_id, articulo_id, codigo, descripcion, und, cantidad, proveedor, estado, lonchera_id, ubicacion_id, movimiento_id, recepcion:rep_recepciones(guia, oc, dam, created_at)'
+    )
+    .eq('estado', 'en_transito')
+    .order('created_at', { ascending: true })
+    .limit(limit)
+  lanzar(error)
+  return ((data ?? []) as unknown as Array<{
+    id: string
+    created_at: string
+    recepcion_id: string
+    articulo_id: string
+    codigo: string
+    descripcion: string
+    und: string
+    cantidad: number
+    proveedor: string
+    estado: string
+    lonchera_id: string | null
+    ubicacion_id: string | null
+    movimiento_id: string | null
+    recepcion: { guia: string; oc: string; dam: string; created_at: string } | Array<{ guia: string; oc: string; dam: string; created_at: string }>
+  }>).map((l) => {
+    const rec = Array.isArray(l.recepcion) ? l.recepcion[0] : l.recepcion
+    return {
+      id: l.id,
+      created_at: l.created_at,
+      recepcion_id: l.recepcion_id,
+      articulo_id: l.articulo_id,
+      codigo: l.codigo,
+      descripcion: l.descripcion,
+      und: l.und,
+      cantidad: Number(l.cantidad) || 0,
+      proveedor: l.proveedor,
+      estado: l.estado === 'ubicado' ? 'ubicado' : 'en_transito',
+      lonchera_id: l.lonchera_id,
+      ubicacion_id: l.ubicacion_id,
+      movimiento_id: l.movimiento_id,
+      guia: rec?.guia ?? '',
+      oc: rec?.oc ?? '',
+      dam: rec?.dam ?? '',
+      fechaRecepcion: rec?.created_at ?? '',
+    }
+  })
+}
+
+/**
+ * Líneas de UNA guía (por el número de documento) — reimpresión de rótulos
+ * desde el documento de recepción. Devuelve la forma mínima que consume
+ * movimientosARotulosRep (uuid de la LÍNEA como identidad del QR).
+ */
+export async function repLineasPorGuia(guia: string): Promise<Array<{
+  id: string
+  created_at: string
+  codigo: string
+  descripcion: string
+  und: string
+  cantidad: number
+  guia: string
+}>> {
+  const { data, error } = await dataClient
+    .from('rep_recepcion_lineas')
+    .select('id, created_at, codigo, descripcion, und, cantidad, recepcion:rep_recepciones!inner(guia)')
+    .eq('recepcion.guia', guia)
+    .order('created_at', { ascending: true })
+  lanzar(error)
+  return ((data ?? []) as unknown as Array<{
+    id: string
+    created_at: string
+    codigo: string
+    descripcion: string
+    und: string
+    cantidad: number
+    recepcion: { guia: string } | Array<{ guia: string }>
+  }>).map((l) => {
+    const rec = Array.isArray(l.recepcion) ? l.recepcion[0] : l.recepcion
+    return {
+      id: l.id,
+      created_at: l.created_at,
+      codigo: l.codigo,
+      descripcion: l.descripcion,
+      und: l.und,
+      cantidad: Number(l.cantidad) || 0,
+      guia: rec?.guia ?? '',
+    }
+  })
 }

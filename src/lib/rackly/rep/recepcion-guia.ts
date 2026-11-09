@@ -11,9 +11,16 @@
  *     lleva el suyo (modo «múltiple»).
  *   · Cada artículo de la guía: código + descripción + UM (jalados del
  *     catálogo rep_articulos al digitar/escanear el código) + cantidad.
- *   · Al guardar: cada línea = 1 RPC rep_registrar_ingreso con el documento,
- *     y el lote de líneas guardadas abre la impresión de rótulos (archivo
- *     .zpl / Zebra), 1 rótulo por artículo.
+ *   · SIN DESTINO (paridad Insumos, 2026-11-11): la recepción NO elige
+ *     ubicación — al guardar, el documento queda «en tránsito» (tablas
+ *     rep_recepciones / rep_recepcion_lineas) y es el módulo TRÁNSITO el
+ *     que decide a qué lonchera va cada artículo (RPC
+ *     rep_ubicar_desde_transito: ahí se escribe stock + kardex ingreso).
+ *     El rótulo tampoco imprime ubicación (aún no la tiene).
+ *   · Al guardar: 1 RPC rep_registrar_recepcion (documento completo,
+ *     idempotente por uuid_sync) y el lote guardado abre la impresión de
+ *     rótulos (archivo .zpl / Zebra), 1 rótulo por artículo con el código
+ *     en GRANDE (banda superior del ZPL).
  */
 
 import type { DatosRotulo } from '@/lib/rackly/zebra'
@@ -38,7 +45,8 @@ export type CabeceraRecepcionRep = {
 }
 
 /**
- * Una línea de la guía: un artículo con destino y cantidad ya validados.
+ * Una línea de la guía: un artículo con cantidad ya validada (SIN destino:
+ * la ubicación la decide Tránsito después de guardar — paridad Insumos).
  * `cantidad` llega ya parseada (aNumero) y > 0 — el builder no agrega
  * líneas inválidas, así el guardado solo trata con datos limpios.
  */
@@ -53,10 +61,6 @@ export type LineaRecepcionRep = {
   cantidad: number
   /** Proveedor de ESTA línea (vacío en modo proveedor único). */
   proveedor: string
-  /** Lonchera destino (ubicación + lado resueltos). */
-  loncheraId: string
-  /** Rótulo de destino para la tabla, p. ej. «R-P1-N1-P01 · lado A». */
-  destinoEtiqueta: string
 }
 
 /** Resultado de validar cabecera + líneas (mensajes listos para el usuario). */
@@ -74,8 +78,8 @@ export type ErroresRecepcionRep = {
 /**
  * Valida la recepción completa ANTES de tocar la BD:
  *   · cabecera: guía, OC, DAM y (en modo único) proveedor = obligatorios;
- *   · líneas: al menos una, con cantidad > 0, destino y — en modo múltiple —
- *     proveedor propio.
+ *   · líneas: al menos una, con cantidad > 0 y — en modo múltiple —
+ *     proveedor propio. NO hay destino: eso lo resuelve Tránsito.
  * Devuelve TODOS los errores (no el primero): la UI los muestra de una vez.
  */
 export function validarRecepcionRep(
@@ -95,10 +99,6 @@ export function validarRecepcionRep(
   for (const l of lineas) {
     if (!(l.cantidad > 0)) {
       res.lineas.set(l.key, `Cantidad inválida (${l.codigo || 'sin código'})`)
-      continue
-    }
-    if (!l.loncheraId) {
-      res.lineas.set(l.key, `Falta el destino (${l.codigo})`)
       continue
     }
     if (cab.multiProveedor && !l.proveedor.trim()) {
@@ -134,20 +134,23 @@ export function parsearCantidadLinea(texto: string): number | null {
 export type RotuloAImprimirRep = DatosRotulo & { copias: number }
 
 /**
- * Mapea las líneas YA GUARDADAS (con su uuid de rep_movimientos) a rótulos.
+ * Mapea las líneas YA GUARDADAS (con su uuid de rep_recepcion_lineas) a
+ * rótulos.
  *
- *   · recepcionId = uuid del MOVIMIENTO → QR ÚNICO POR RÓTULO (mismo espacio
- *     uuid4 que Insumos; el escaneo resuelve a ESA fila exacta).
+ *   · recepcionId = uuid de la LÍNEA → QR ÚNICO POR RÓTULO (mismo espacio
+ *     uuid4 que Insumos; el escaneo resuelve a ESA fila exacta). La línea
+ *     es la identidad estable del rótulo: existe desde la recepción y
+ *     conserva su uuid cuando Tránsito la ubica.
  *   · Banda «LOTE» → «GUÍA: <número>»: en repuestos no hay lote; la traza
  *     física del rótulo es el documento que trajo la pieza.
  *   · F.P / F.V quedan vacías (no aplican a repuestos).
  *
- * `movimientoId` vacío (no debería pasar: la RPC siempre devuelve
- * movimiento_id) degrada a QR de guía — nunca un rótulo sin identidad.
+ * `lineaId` vacío (no debería pasar: la RPC siempre devuelve linea_ids)
+ * degrada a QR de guía — nunca un rótulo sin identidad.
  */
 export function lineasARotulosRep(
   lineas: LineaRecepcionRep[],
-  movimientoIds: string[],
+  lineaIds: string[],
   guia: string
 ): RotuloAImprimirRep[] {
   return lineas.map((l, i) => ({
@@ -159,14 +162,19 @@ export function lineasARotulosRep(
     loteEtiqueta: 'GUÍA:',
     fechaProduccion: '',
     fechaVencimiento: '',
-    recepcionId: movimientoIds[i] || undefined,
+    recepcionId: lineaIds[i] || undefined,
     copias: 1,
   }))
 }
 
 /**
- * Rótulos desde movimientos YA EN BD (reimpresión desde «Últimos ingresos»).
- * Solo filas tipo 'ingreso' con guía; cada rótulo porta SU uuid de fila.
+ * Rótulos desde filas YA EN BD (reimpresión). Sirve para AMBAS fuentes:
+ *   · líneas de rep_recepcion_lineas (documento de la recepción) — fuente
+ *     principal: el rótulo existe aunque la línea aún no esté ubicada;
+ *   · rep_movimientos tipo 'ingreso' (legacy: guías con destino directo
+ *     anteriores al flujo Tránsito).
+ * Cada rótulo porta SU uuid de fila (línea o movimiento — mismo espacio
+ * uuid4).
  */
 export function movimientosARotulosRep(
   filas: Array<{

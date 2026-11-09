@@ -31,7 +31,7 @@ function check(nombre, cond, detalle = '') {
 const CAB_OK = { guia: 'GR-12345', oc: 'OC-7788', dam: 'DAM-001', multiProveedor: false, proveedorGeneral: 'ACME S.A.' }
 const LINEA_OK = {
   key: 'k1', articuloId: 'a1', codigo: 'BJ-109-003', descripcion: 'Filtro de aire',
-  und: 'UND', cantidad: 4, proveedor: '', loncheraId: 'lon-1', destinoEtiqueta: 'R-P1-N1-P01 · lado A',
+  und: 'UND', cantidad: 4, proveedor: '',
 }
 
 async function main() {
@@ -67,14 +67,12 @@ async function main() {
   // En modo multi el proveedor general NO se exige
   check('modo multi no exige proveedor general', validarRecepcionRep(cabMulti, [conProv]).cabecera.length === 0)
 
-  // ── [4] Validación: cantidad y destino por línea ──
-  console.log('\n[4] Cantidad inválida y destino faltante')
-  const e4 = validarRecepcionRep(CAB_OK, [
-    { ...LINEA_OK, key: 'k4', cantidad: 0 },
-    { ...LINEA_OK, key: 'k5', loncheraId: '' },
-  ])
+  // ── [4] Validación: cantidad por línea (SIN destino — eso lo resuelve Tránsito) ──
+  console.log('\n[4] Cantidad inválida (sin destino: el modelo ya no lo pide)')
+  const e4 = validarRecepcionRep(CAB_OK, [{ ...LINEA_OK, key: 'k4', cantidad: 0 }])
   check('cantidad 0 → error de línea k4', e4.lineas.get('k4')?.includes('Cantidad') === true)
-  check('sin destino → error de línea k5', e4.lineas.get('k5')?.includes('destino') === true)
+  check('una línea válida sin loncheraId NO genera error (sin destino)',
+    validarRecepcionRep(CAB_OK, [LINEA_OK]).lineas.size === 0)
 
   // ── [5] Proveedor efectivo de una línea ──
   console.log('\n[5] proveedorDeLinea')
@@ -92,21 +90,23 @@ async function main() {
   check('"" → null', parsearCantidadLinea('') === null)
 
   // ── [7] Rótulos desde líneas guardadas ──
-  console.log('\n[7] lineasARotulosRep — 1 rótulo por línea, QR único por movimiento')
+  console.log('\n[7] lineasARotulosRep — 1 rótulo por línea, QR único por LÍNEA')
   const rot = lineasARotulosRep(
     [LINEA_OK, { ...LINEA_OK, key: 'k7', codigo: 'ZZ-001', und: 'GLN', cantidad: 2.5, descripcion: 'Aceite' }],
-    ['mov-aaaa', 'mov-bbbb'],
+    ['lin-aaaa', 'lin-bbbb'],
     ' GR-12345 '
   )
   check('2 rótulos', rot.length === 2)
   check('rotulo[0]: código correcto', rot[0].codigo === 'BJ-109-003')
   check('rotulo[0]: lote = N° de guía (trim)', rot[0].lote === 'GR-12345')
   check('rotulo[0]: banda GUÍA:', rot[0].loteEtiqueta === 'GUÍA:')
-  check('rotulo[0]: QR único = uuid del movimiento', rot[0].recepcionId === 'mov-aaaa')
+  check('rotulo[0]: QR único = uuid de la LÍNEA de recepción', rot[0].recepcionId === 'lin-aaaa')
   check('rotulo[0]: cantidad como texto', rot[0].cantidad === '4')
   check('rotulo[0]: sin F.P/F.V (no aplican a repuestos)', rot[0].fechaProduccion === '' && rot[0].fechaVencimiento === '')
   check('rotulo[1]: decimal honesto', rot[1].cantidad === '2.5')
-  check('rotulo[1]: SU uuid', rot[1].recepcionId === 'mov-bbbb')
+  check('rotulo[1]: SU uuid', rot[1].recepcionId === 'lin-bbbb')
+  check('id vacío → sin QR de fila (degrada a guía, nunca sin identidad)',
+    lineasARotulosRep([LINEA_OK], [''], 'GR-1')[0].recepcionId === undefined)
 
   // ── [8] Rótulos desde la BD (reimpresión) ──
   console.log('\n[8] movimientosARotulosRep — reimpresión por guía')

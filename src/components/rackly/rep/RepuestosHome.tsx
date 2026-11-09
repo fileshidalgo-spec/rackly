@@ -7,8 +7,6 @@
  *   Catálogo · Ubicaciones · Recepción · Atención · Tránsito · Movimientos
  *
  * Aislamiento: este componente NO carga datos de ningún módulo, solo enruta.
- * Incremento 2 (Atención + Tránsito) llega deshabilitado con etiqueta
- * honesta — la puerta existe, el módulo se construye en la siguiente ola.
  */
 
 import { useAuth } from '@/hooks/useAuth'
@@ -36,8 +34,6 @@ type PuertaDef = {
   icono: typeof BookOpen
   gradiente: string
   sombra: string
-  /** Incremento 2: puerta visible pero todavía no construida. */
-  proximo?: boolean
 }
 
 const PUERTAS: PuertaDef[] = [
@@ -76,7 +72,6 @@ const PUERTAS: PuertaDef[] = [
     icono: HeartHandshake,
     gradiente: 'from-teal-500 to-cyan-600',
     sombra: 'shadow-teal-500/25',
-    proximo: true,
   },
   {
     vista: 'transito',
@@ -86,7 +81,6 @@ const PUERTAS: PuertaDef[] = [
     icono: Truck,
     gradiente: 'from-fuchsia-500 to-purple-600',
     sombra: 'shadow-fuchsia-500/25',
-    proximo: true,
   },
   {
     vista: 'movimientos',
@@ -142,9 +136,7 @@ export function RepuestosHome({ onEntrar, onVolver }: Props) {
         {PUERTAS.map((p) => (
           <Card
             key={p.vista}
-            className={`group border border-white/60 bg-white/90 backdrop-blur-sm shadow-md shadow-slate-200/50 transition-all duration-200 ${
-              p.proximo ? 'opacity-70' : 'hover:shadow-xl hover:-translate-y-0.5'
-            }`}
+            className="group border border-white/60 bg-white/90 backdrop-blur-sm shadow-md shadow-slate-200/50 transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5"
           >
             <CardContent className="p-5 flex flex-col h-full gap-4">
               <div className="flex items-start justify-between gap-3">
@@ -153,15 +145,9 @@ export function RepuestosHome({ onEntrar, onVolver }: Props) {
                 >
                   <p.icono className="h-6 w-6 text-white" />
                 </div>
-                {p.proximo ? (
-                  <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200 font-semibold">
-                    Inc. 2
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold">
-                    Listo
-                  </Badge>
-                )}
+                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold">
+                  Listo
+                </Badge>
               </div>
 
               <div className="flex-1 space-y-1.5">
@@ -169,20 +155,14 @@ export function RepuestosHome({ onEntrar, onVolver }: Props) {
                 <p className="text-sm text-slate-500 leading-snug">{p.descripcion}</p>
               </div>
 
-              {p.proximo ? (
-                <Button disabled variant="outline" className="w-full font-semibold">
-                  Disponible próximamente
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => onEntrar(p.vista)}
-                  className="w-full gap-2 font-semibold"
-                  variant="outline"
-                >
-                  Entrar al módulo
-                  <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                </Button>
-              )}
+              <Button
+                onClick={() => onEntrar(p.vista)}
+                className="w-full gap-2 font-semibold"
+                variant="outline"
+              >
+                Entrar al módulo
+                <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </Button>
             </CardContent>
           </Card>
         ))}

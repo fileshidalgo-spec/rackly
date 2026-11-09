@@ -37,6 +37,8 @@ import { RepuestosHome } from '@/components/rackly/rep/RepuestosHome'
 import { CatalogoModule } from '@/components/rackly/rep/catalogo/CatalogoModule'
 import { UbicacionesModule } from '@/components/rackly/rep/ubicaciones/UbicacionesModule'
 import { RecepcionModule as RecepcionRepModule } from '@/components/rackly/rep/recepcion/RecepcionModule'
+import { AtencionModule as AtencionRepModule } from '@/components/rackly/rep/atencion/AtencionModule'
+import { TransitoModule as TransitoRepModule } from '@/components/rackly/rep/transito/TransitoModule'
 import { MovimientosModule } from '@/components/rackly/rep/movimientos/MovimientosModule'
 import {
   esVistaRep,
@@ -573,6 +575,55 @@ function RacklyApp() {
                 }
               />
             </CardContent>
+          </Card>
+        )}
+
+        {/* ═══ REPUESTOS · ATENCIÓN (RAL + picking) ═══ */}
+        {view === 'rep-atencion' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center shadow-md shadow-teal-500/20">
+                  <HeartHandshake className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Repuestos · Atención</CardTitle>
+                  <CardDescription>
+                    Registro del RAL (número BIG MAGIC) y picking hacia pre-picking para la salida.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <AtencionRepModule
+                target={repTarget}
+                onTargetConsumido={() => setRepTarget(null)}
+                onVolverOrigen={volverOrigenRep}
+                onVerEnMapa={(ubicacionId, codigo) =>
+                  saltarARep({ tipo: 'ubicacion', ubicacionId, codigo, origen: { vista: 'atencion', label: 'Atención' } })
+                }
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ═══ REPUESTOS · TRÁNSITO (despacho/retorno) ═══ */}
+        {view === 'rep-transito' && (
+          <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 flex items-center justify-center shadow-md shadow-fuchsia-500/20">
+                  <Truck className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Repuestos · Tránsito</CardTitle>
+                  <CardDescription>
+                    Carga estacionada en pre-picking: despacho del día siguiente o devolución a lonchera.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent><TransitoRepModule /></CardContent>
           </Card>
         )}
 

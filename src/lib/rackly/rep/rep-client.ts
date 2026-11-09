@@ -572,9 +572,102 @@ export async function repAgregarDetalleRal(ralId: string, articuloId: string, ca
 
 export async function repEliminarDetalleRal(detalleId: string): Promise<void> {
   // FIX espejo del UPDATE: count exacto para que exigirEliminadas sea real.
+  // La RLS solo permite borrar líneas de un RAL en estado 'registrado'.
   const res = await dataClient
     .from('rep_ral_detalle')
     .delete({ count: 'exact' })
     .eq('id', detalleId)
   await exigirEliminadas(res, 'la línea del RAL')
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ATENCIÓN / TRÁNSITO — RPCs atómicas (migración 20261110d)
+//   picking → pre-picking (Tránsito) · despacho · devolución · anulación
+// ═══════════════════════════════════════════════════════════════════
+
+export type RepResultadoPicking = {
+  prepicking: string
+  cantidad: number
+  /** Lo que efectivamente había en lonchera (puede ser menor) */
+  tomadoDeAlmacen: number
+  /** cantidad − tomadoDeAlmacen: faltante de stock (aviso, no bloquea) */
+  faltante: number
+}
+
+/** Pickea una línea del RAL: lonchera → pre-picking con ral_id (atómico). */
+export async function repPickearLinea(detalleId: string, prepickingLoncheraId?: string): Promise<RepResultadoPicking> {
+  const { data, error } = await dataClient.rpc('rep_pickear_linea', {
+    p_detalle_id: detalleId,
+    p_prepicking_lonchera_id: prepickingLoncheraId ?? null,
+  })
+  lanzar(error)
+  const d = (data ?? {}) as { prepicking?: string; cantidad?: number; tomado_de_almacen?: number; faltante?: number }
+  return {
+    prepicking: d.prepicking ?? '',
+    cantidad: Number(d.cantidad) || 0,
+    tomadoDeAlmacen: Number(d.tomado_de_almacen) || 0,
+    faltante: Number(d.faltante) || 0,
+  }
+}
+
+/** Despacha el RAL completo: salida física + kardex + estado despachado. */
+export async function repDespacharRal(ralId: string): Promise<{ lineas: number; cantidad: number }> {
+  const { data, error } = await dataClient.rpc('rep_despachar_ral', { p_ral_id: ralId })
+  lanzar(error)
+  const d = (data ?? {}) as { lineas?: number; cantidad?: number }
+  return { lineas: Number(d.lineas) || 0, cantidad: Number(d.cantidad) || 0 }
+}
+
+/** Devuelve UNA línea del RAL de pre-picking a su lonchera de origen. */
+export async function repDevolverLinea(detalleId: string): Promise<{ destino: string }> {
+  const { data, error } = await dataClient.rpc('rep_devolver_linea', { p_detalle_id: detalleId })
+  lanzar(error)
+  return { destino: ((data ?? {}) as { destino?: string }).destino ?? '' }
+}
+
+/** Anula un RAL registrado sin carga estacionada. */
+export async function repAnularRal(ralId: string): Promise<void> {
+  const { error } = await dataClient.rpc('rep_anular_ral', { p_ral_id: ralId })
+  lanzar(error)
+}
+
+/** Filas del RAL que están estacionadas en pre-picking (Tránsito). */
+export async function repTransitoDeRal(ralId: string): Promise<Array<{ articuloId: string; codigo: string; cantidad: number }>> {
+  const { data, error } = await dataClient
+    .from('rep_stock')
+    .select('cantidad, articulo:rep_articulos(id, codigo)')
+    .eq('ral_id', ralId)
+  lanzar(error)
+  return ((data ?? []) as unknown as Array<{
+    cantidad: number
+    articulo: { id: string; codigo: string }
+  }>).map((r) => ({
+    articuloId: r.articulo.id,
+    codigo: r.articulo.codigo,
+    cantidad: Number(r.cantidad) || 0,
+  }))
+}
+
+/** Ubicaciones de pre-picking con su lonchera (para elegir destino del picking). */
+export async function repPrepickings(): Promise<Array<{ loncheraId: string; ubicacionId: string; codigo: string; nota: string }>> {
+  const { data, error } = await dataClient
+    .from('rep_ubicaciones')
+    .select('id, codigo, nota, loncheras:rep_loncheras(id)')
+    .eq('tipo', 'prepicking')
+    .eq('activo', true)
+    .order('piso')
+    .order('nivel')
+    .order('secuencia')
+  lanzar(error)
+  return ((data ?? []) as unknown as Array<{
+    id: string
+    codigo: string
+    nota: string
+    loncheras: Array<{ id: string }>
+  }>).map((u) => ({
+    loncheraId: u.loncheras[0]?.id ?? '',
+    ubicacionId: u.id,
+    codigo: u.codigo,
+    nota: u.nota,
+  })).filter((p) => p.loncheraId !== '')
 }

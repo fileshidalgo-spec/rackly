@@ -896,3 +896,23 @@ Stage Summary:
 - 10 archivos, +524/−242 · Commit: 0fee283
 
 ---
+Task ID: auditoria-panel-cruzado-20261109
+Agent: Main Agent
+Task: «1.1 revisar que la mejora no haya generado errores en la app, bugs, duplicados, procesos por módulo, estructura de datos eficiente y segura, BD correcta; 1.2 averiguar el error; 2 analizar qué lo genera; 3 revisar que no se repita en otras pestañas; 4 procedimiento más efectivo; 5 sin conflictos; 6-7 código experto y ordenado; 8 usar todos los accesos; 9 Módulos: RACK Y PISO» (auditoría post-deploy del panel cruzado 0fee283)
+
+Work Log (1.1–9):
+- 1.1 RESULTADO: SIN errores funcionales atribuibles a la mejora. QA local re-ejecutado íntegro sobre 8b98074: tsc 0 · eslint 0 · 45/45 suites · build OK. Producción: version.json = 202611091359-8b98074 y el SELLO compilado dentro del bundle coincide (1 ocurrencia exacta en los chunks servidos) → el aviso «Nueva versión» NO se dispara en falso; el version-sello.ts comprometido queda 1 commit atrás POR DISEÑO (gen_version.mjs lo regenera en el build de Cloudflare con el hash del build).
+- BD (owjryvcrhpmgtkkdcrkm): Supabase ACTIVE_HEALTHY; RPC stock_por_codigo_kardex(p_codigo text, p_solo_inc boolean DEFAULT false) y piso_eliminar_movimiento(p_movimiento_id uuid) vigentes; snapshot piso_stock_nivel = 178 buckets, 0 negativos, actualizada 2026-11-09 13:08 UTC; catálogo 1,107. La mejora fue 100% frontend: 0 DDL, RLS/policies intactas, rutas de escritura intactas.
+- E2E navegador en producción (cuenta propia, 0 page errors; 1 warning de consola pre-existente aria-describedby de DialogContent, ajeno): (a) Racks·Stock 56203 → panel «Stock en Piso» Total 220 → deep-link «Pos 10» → Piso·Sectores con diálogo de la posición EXACTA A·A1·Pos 10 (56203, lote 1E3462, vence 2026-11-14) → «← Volver a Stock Racks» restaura la búsqueda; (b) Piso·Stock 56746 → panel «Stock en Racks» Total 3,500,550 con 9 deep-links → celda B6·T2·P1·Pos 10 seleccionada con diálogo de acciones abierto → «← Volver a Stock Piso» restaura la búsqueda 56746.
+- Duplicados: 0 código residual (solo comentario documental en test_buscar_stock_fefo.js explicando las secciones retiradas); núcleo ÚNICO stockPisoPorCodigos compartido por stockPisoBuscar y el panel (ambas vistas muestran SIEMPRE lo mismo); callers cruzados = 6 archivos con responsabilidad distinta (page.tsx navegación, CrossModuleStock UI, StockTab/PisoStockTab integración, piso/api.ts núcleo, cruce.ts capa de datos). fetchMovimientosByCodigo conservada (viva en MovimientoForm ×2).
+- Aislamiento de errores verificado en código: el panel captura sus propios errores (visibles con Reintentar), guard seqRef evita que una respuesta lenta pise la del código activo, «sin stock» se muestra como dato válido y ninguna falla del panel afecta la pestaña principal ni la consulta del módulo local.
+- 2 (causa) / 3 (no repetición) / 4 (procedimiento) / 5 (conflictos): sin error que trazar — metodología aplicada como verificación negativa. Revisión del diff completo de 0fee283: sentinelas de navegación nuevos ('__racks_stock__'/'__piso_stock__') no alteran flujos existentes ('__atencion__'); props nuevas son OPCIONALES (callers previos no se rompen); panel solo lectura.
+- Observaciones NO-bug documentadas: (1) panel Piso→Racks consulta p_solo_inc=false → muestra SOLO stock sin INC (coherente con «INC = flujo aparte gestionado manualmente»; la vista autoritativa es el deep-link a Ocupación / pestaña Stock INC); (2) warning aria-describedby de DialogContent pre-existe a la mejora; (3) PisoStockTab.tsx termina sin newline (cosmético).
+- 8 (accesos): GitHub push, Cloudflare Pages (deploy + sello verificados en bundle servido), Supabase MAPI (definiciones RPC + salud snapshot), navegador E2E con cuenta propia.
+- QA: tsc 0 · eslint 0 · 45/45 suites · build OK · producción 202611091359-8b98074 con E2E de las 2 direcciones en verde.
+
+Stage Summary:
+- Auditoría post-deploy del panel cruzado: SIN errores funcionales, SIN duplicados, SIN cambios de código requeridos; 2 decisiones de diseño documentadas (sello 1 commit atrás por diseño; panel muestra solo stock sin INC en la dirección Piso→Racks).
+- Evidencia: QA completo local + verificación de sello en el bundle real + E2E navegador producción de Racks→Piso y Piso→Racks con retorno y búsqueda restaurada.
+
+---

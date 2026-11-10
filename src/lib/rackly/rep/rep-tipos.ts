@@ -30,15 +30,30 @@ export type RepArticulo = {
 
 export type RepTipoUbicacion = 'rack' | 'pasillo' | 'zona' | 'prepicking'
 
+/**
+ * Sector físico del layout (Excel «LAYOUT REPUESTOS», migración
+ * 20261110_rep_ubicaciones_sectores): el almacén tiene DOS sectores.
+ *   · racks — R01..R36 (piso 1 y 2), posición = rack→nivel→secuencia.
+ *   · zonas — Zonas A/B/C/D (tercer piso) + CONTENEDOR N° 3 +
+ *     PRE-PICKING + RECEPCIÓN (piso 1), posición = zona→secuencia.
+ */
+export type RepSector = 'racks' | 'zonas'
+
 export type RepUbicacion = {
   id: string
   created_at: string
   tipo: RepTipoUbicacion
+  sector: RepSector
+  /** Nº de rack 1..36 (sector 'racks'; null en 'zonas'). */
+  rack: number | null
+  /** Nombre de zona: 'A'..'D' · 'CONTENEDOR N° 3' · 'PRE-PICKING' ·
+ *  'RECEPCIÓN' (sector 'zonas'; '' en 'racks'). */
+  zona: string
   piso: number
-  /** 1..n; para pasillo vale 0 (fila de pasillos BAJO el nivel 1) */
+  /** 1..5 (racks; 0 = posición de piso/bajo rack); zonas = 1 */
   nivel: number
   secuencia: number
-  /** Código normalizado: R-P1-N3-P05 · PAS-P1-01 · Z-P1-N3-01 · PP-P1-N1 */
+  /** Código físico del Excel: R01-02-17 · A-01 · CN3-07 · PP-02 · REC-08 */
   codigo: string
   nota: string
   activo: boolean
@@ -136,6 +151,28 @@ export const REP_ETIQUETA_TIPO: Record<RepTipoUbicacion, string> = {
   prepicking: 'Pre-picking',
 }
 
+export const REP_ETIQUETA_SECTOR: Record<RepSector, string> = {
+  racks: 'Racks',
+  zonas: 'Zonas',
+}
+
+/**
+ * Orden canónico de las zonas del sector 'zonas' (hoja UBICACIÓN ZONA:
+ * primero las 4 zonas del tercer piso, luego contenedor/prepicking/recepción).
+ */
+export const REP_ORDEN_ZONAS = ['A', 'B', 'C', 'D', 'CONTENEDOR N° 3', 'PRE-PICKING', 'RECEPCIÓN'] as const
+
+/** Prefijo de código por zona (se pinta junto al nombre en la UI). */
+export const REP_PREFIJO_ZONA: Record<string, string> = {
+  A: 'A',
+  B: 'B',
+  C: 'C',
+  D: 'D',
+  'CONTENEDOR N° 3': 'CN3',
+  'PRE-PICKING': 'PP',
+  RECEPCIÓN: 'REC',
+}
+
 export const REP_ETIQUETA_MOV: Record<RepTipoMovimiento, string> = {
   ingreso: 'Ingreso',
   salida: 'Salida',
@@ -145,11 +182,11 @@ export const REP_ETIQUETA_MOV: Record<RepTipoMovimiento, string> = {
 }
 
 /**
- * Código normalizado de una ubicación (misma regla que rotulará el QR):
- *   rack       → R-P<piso>-N<nivel>-P<secuencia, 2 dígitos>
- *   pasillo    → PAS-P<piso>-<secuencia, 2 dígitos>          (nivel 0)
- *   zona       → Z-P<piso>-N<nivel>-<secuencia, 2 dígitos>
- *   prepicking → PP-P<piso>-N<nivel>
+ * [LEGADO — el layout canónico 2026-11 se define en la migración
+ * 20261110_rep_ubicaciones_sectores y ya NO se crean ubicaciones a mano:
+ * los códigos los construye la migración (R{rack}-{nivel}-{pos} ·
+ * {prefijo}-{pos}). Esta función solo queda para reconstruir el código
+ * desde sus partes en herramientas internas.]
  */
 export function repCodigoUbicacion(
   tipo: RepTipoUbicacion,

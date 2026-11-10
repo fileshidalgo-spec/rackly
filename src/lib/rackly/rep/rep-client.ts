@@ -20,11 +20,11 @@ import {
   type RepUbicacion,
   type RepLonchera,
   type RepTipoUbicacion,
+  type RepSector,
   type RepMovimiento,
   type RepTipoMovimiento,
   type RepRal,
   type RepEstadoRal,
-  repCodigoUbicacion,
 } from './rep-tipos'
 
 // Puerta única de tipos para los módulos UI: importan TODO (funciones +
@@ -40,6 +40,7 @@ export type {
   RepMovimiento,
   RepTipoMovimiento,
   RepTipoUbicacion,
+  RepSector,
   RepEstadoLinea,
 } from './rep-tipos'
 
@@ -69,6 +70,28 @@ async function exigirEliminadas(res: { count: number | null; error: { message: s
   lanzar(res.error)
   if (!res.count) {
     throw errorControlado(ERR_ELIMINAR_BLOQUEADO, `No se pudo eliminar ${que} (permiso o registro ya no existe).`)
+  }
+}
+
+// ── PAGINACIÓN DE LISTADOS GRANDES ──
+// Supabase (PostgREST) trunca cada request a max_rows=1000. Con el layout
+// canónico 2026-11 (1 869 ubicaciones · 3 642 loncheras · su ocupación),
+// bajarlas en UNA ronda perdería filas EN SILENCIO. Este helper pagina en
+// servidor con .range() hasta una página corta (patrón PAGE_SIZE de Insumos).
+const REP_TODAS_PAGE = 1000
+
+type ResPagina<T> = { data: T[] | null; error: { message: string } | null }
+
+async function repTodas<T>(
+  pagina: (from: number, to: number) => PromiseLike<ResPagina<T>>
+): Promise<T[]> {
+  const filas: T[] = []
+  for (let from = 0; ; from += REP_TODAS_PAGE) {
+    const res = await pagina(from, from + REP_TODAS_PAGE - 1)
+    lanzar(res.error)
+    const lote = (res.data ?? []) as T[]
+    filas.push(...lote)
+    if (lote.length < REP_TODAS_PAGE) return filas
   }
 }
 
@@ -234,61 +257,29 @@ export async function repUpsertArticulosLote(
 // UBICACIONES + LONCHERAS — rep_ubicaciones / rep_loncheras
 // ═══════════════════════════════════════════════════════════════════
 
-export async function repListarUbicaciones(): Promise<RepUbicacion[]> {
-  const { data, error } = await dataClient
-    .from('rep_ubicaciones')
-    .select('*')
-    .order('piso')
-    .order('nivel')
-    .order('tipo')
-    .order('secuencia')
-  lanzar(error)
-  return (data ?? []) as RepUbicacion[]
-}
-
-export async function repListarLoncheras(): Promise<RepLonchera[]> {
-  const { data, error } = await dataClient.from('rep_loncheras').select('*')
-  lanzar(error)
-  return (data ?? []) as RepLonchera[]
-}
-
-export type RepNuevaUbicacion = {
-  tipo: RepTipoUbicacion
-  piso: number
-  nivel: number
-  secuencia: number
-  nota?: string
-}
-
 /**
- * Crea la ubicación con código normalizado; las LONCHERAS las crea el
- * trigger en BD (rack → A+B, resto → A). Devuelve la fila creada.
+ * Todas las ubicaciones (paginado en servidor — 1 869 filas). Orden:
+ * sector → rack → zona → nivel → secuencia (el mapa agrupa por sector).
  */
-export async function repCrearUbicacion(input: RepNuevaUbicacion): Promise<RepUbicacion> {
-  const codigo = repCodigoUbicacion(input.tipo, input.piso, input.nivel, input.secuencia)
-  const { data, error } = await dataClient
-    .from('rep_ubicaciones')
-    .insert({
-      tipo: input.tipo,
-      piso: input.piso,
-      nivel: input.nivel,
-      secuencia: input.secuencia,
-      codigo,
-      nota: input.nota?.trim() ?? '',
-    })
-    .select('*')
-    .single()
-  lanzar(error)
-  return data as RepUbicacion
+export async function repListarUbicaciones(): Promise<RepUbicacion[]> {
+  return repTodas<RepUbicacion>((from, to) =>
+    dataClient
+      .from('rep_ubicaciones')
+      .select('*')
+      .order('sector')
+      .order('rack', { nullsFirst: false })
+      .order('zona')
+      .order('nivel')
+      .order('secuencia')
+      .range(from, to)
+  )
 }
 
-export async function repEliminarUbicacion(id: string): Promise<void> {
-  // FIX espejo del UPDATE: count exacto para que exigirEliminadas sea real.
-  const res = await dataClient
-    .from('rep_ubicaciones')
-    .delete({ count: 'exact' })
-    .eq('id', id)
-  await exigirEliminadas(res, 'la ubicación')
+/** Todas las loncheras (paginado en servidor — 3 642 filas). */
+export async function repListarLoncheras(): Promise<RepLonchera[]> {
+  return repTodas<RepLonchera>((from, to) =>
+    dataClient.from('rep_loncheras').select('*').range(from, to)
+  )
 }
 
 // ── MAPA DEL ALMACÉN: ubicaciones + loncheras + ocupación por lonchera ──
@@ -304,30 +295,28 @@ export type RepMapaAlmacen = {
 }
 
 /**
- * Una sola ronda de 3 consultas para pintar el mapa completo. La ocupación
- * se AGREGA EN BD (RPC rep_ocupacion_loncheras, GROUP BY): el navegador
- * jamás descarga las filas de stock (crecen con la operación diaria).
+ * Una sola ronda (3 lecturas paralelas, cada una paginada en servidor)
+ * para pintar el mapa completo. La ocupación se AGREGA EN BD (RPC
+ * rep_ocupacion_loncheras, GROUP BY): el navegador jamás descarga las
+ * filas de stock (crecen con la operación diaria).
  */
 export async function repMapaAlmacen(): Promise<RepMapaAlmacen> {
-  const [ubicRes, lonchRes, ocupRes] = await Promise.all([
-    dataClient.from('rep_ubicaciones').select('*').order('piso').order('nivel').order('tipo').order('secuencia'),
-    dataClient.from('rep_loncheras').select('*'),
-    dataClient.rpc('rep_ocupacion_loncheras'),
+  const [ubicaciones, loncherasArr, ocupacionArr] = await Promise.all([
+    repListarUbicaciones(),
+    repListarLoncheras(),
+    repTodas<{
+      lonchera_id: string
+      articulos: number | string
+      cantidad: number | string
+      en_transito: number | string
+    }>((from, to) => dataClient.rpc('rep_ocupacion_loncheras').range(from, to)),
   ])
-  lanzar(ubicRes.error)
-  lanzar(lonchRes.error)
-  lanzar(ocupRes.error)
 
   const loncheras = new Map<string, RepLonchera>()
-  for (const l of (lonchRes.data ?? []) as RepLonchera[]) loncheras.set(l.id, l)
+  for (const l of loncherasArr) loncheras.set(l.id, l)
 
   const ocupacion = new Map<string, RepOcupacionLonchera>()
-  for (const o of (ocupRes.data ?? []) as Array<{
-    lonchera_id: string
-    articulos: number | string
-    cantidad: number | string
-    en_transito: number | string
-  }>) {
+  for (const o of ocupacionArr) {
     ocupacion.set(o.lonchera_id, {
       articulos: Number(o.articulos) || 0,
       cantidad: Number(o.cantidad) || 0,
@@ -335,7 +324,7 @@ export async function repMapaAlmacen(): Promise<RepMapaAlmacen> {
     })
   }
 
-  return { ubicaciones: (ubicRes.data ?? []) as RepUbicacion[], loncheras, ocupacion }
+  return { ubicaciones, loncheras, ocupacion }
 }
 
 // ═══════════════════════════════════════════════════════════════════

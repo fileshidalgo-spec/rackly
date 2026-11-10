@@ -48,7 +48,8 @@ import {
   type RepLineaConDocumento,
 } from '@/lib/rackly/rep/rep-client'
 import { mensajeError } from '@/lib/rackly/errores'
-import { REP_CLASE_ESTADO_RAL, REP_ETIQUETA_ESTADO_RAL, repLadosDeTipo, REP_ETIQUETA_TIPO } from '@/lib/rackly/rep/rep-tipos'
+import { REP_CLASE_ESTADO_RAL, REP_ETIQUETA_ESTADO_RAL, repLadosDeTipo } from '@/lib/rackly/rep/rep-tipos'
+import { SelectorUbicacionRep } from '@/components/rackly/rep/ubicaciones/SelectorUbicacionRep'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -396,26 +397,14 @@ export function TransitoModule() {
                         </div>
                         {puedeOperar && (
                           <div className="flex flex-wrap items-center gap-2">
-                            <Select
+                            {/* Selector con búsqueda: el layout canónico tiene
+                                1 869 posiciones — un <Select> plano es inusable */}
+                            <SelectorUbicacionRep
+                              ubicaciones={ubicaciones}
                               value={d?.ubicacionId ?? ''}
-                              onValueChange={(v) => fijarDestino(l.id, { ubicacionId: v })}
+                              onChange={(v) => fijarDestino(l.id, { ubicacionId: v })}
                               disabled={ubicando === l.id}
-                            >
-                              <SelectTrigger className="h-8 w-[230px] text-xs">
-                                <SelectValue placeholder="Ubicación destino" />
-                              </SelectTrigger>
-                              <SelectContent className="max-h-72">
-                                {ubicaciones.length === 0 && (
-                                  <div className="px-3 py-2 text-xs text-slate-400">Sin ubicaciones</div>
-                                )}
-                                {ubicaciones.map((u) => (
-                                  <SelectItem key={u.id} value={u.id}>
-                                    <span className="font-mono">{u.codigo}</span>
-                                    <span className="text-slate-400 ml-1.5 text-[10px]">{REP_ETIQUETA_TIPO[u.tipo]} P{u.piso}·N{u.nivel}</span>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            />
                             {lons.length > 1 && (
                               <Select
                                 value={d?.lado ?? 'A'}

@@ -665,6 +665,7 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
         encabezado={modal?.encabezado ?? { fecha: '', numeroDocumento: '', empresaOrigen: '', placa: '' }}
         nota={modal?.nota}
         subtitulo={`${modal?.rotulos.length ?? 0} artículo(s) de la guía · etiqueta 15 × 10 cm · almacén Repuestos`}
+        formato="rep"
       />
 
       {/* ═══ ALTA RÁPIDA (puente Recepción → Catálogo) ═══ */}

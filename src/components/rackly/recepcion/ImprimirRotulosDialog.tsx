@@ -181,6 +181,10 @@ export function ImprimirRotulosDialog({
   /** Subtítulo del modal (opcional). Default: el de Insumos. REPUESTOS
    *  pasa su propia redacción sin tocar el texto compartido. */
   subtitulo,
+  /** Formato del ZPL del rótulo (2026-11-11): 'insumos' = PERECIBLE
+   *  completo (default — Insumos no cambia NADA); 'rep' = REPUESTOS:
+   *  solo Código grande · Descripción · Cantidad · UM · QR grande. */
+  formato = 'insumos',
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -191,6 +195,7 @@ export function ImprimirRotulosDialog({
   refDocumento?: { guiaId?: string | null; tipoDocumento: string; numeroDocumento: string; fecha?: string; proveedor?: string }
   onImpreso?: () => void | Promise<void>
   subtitulo?: string
+  formato?: 'insumos' | 'rep'
 }) {
   const [estado, setEstado] = useState<EstadoServicio>('verificando')
   /** Por qué falló la detección (guía diferenciada en el panel amber). */
@@ -281,7 +286,7 @@ export function ImprimirRotulosDialog({
     return construirZPLRotulos(rotulos, copias, encabezado, {
       guiaId: refDocumento?.guiaId ?? null,
       numeroDocumento: encabezado.numeroDocumento || refDocumento?.numeroDocumento || '',
-    })
+    }, formato)
   }
 
   async function imprimir() {

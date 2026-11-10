@@ -141,9 +141,10 @@ export type RotuloAImprimirRep = DatosRotulo & { copias: number }
  *     uuid4 que Insumos; el escaneo resuelve a ESA fila exacta). La línea
  *     es la identidad estable del rótulo: existe desde la recepción y
  *     conserva su uuid cuando Tránsito la ubica.
- *   · Banda «LOTE» → «GUÍA: <número>»: en repuestos no hay lote; la traza
- *     física del rótulo es el documento que trajo la pieza.
- *   · F.P / F.V quedan vacías (no aplican a repuestos).
+ *   · lote/loteEtiqueta portan el N° de guía (la traza del documento que
+ *     trajo la pieza). El FORMATO REP del rótulo (2026-11-11: solo código,
+ *     descripción, cantidad, UM y QR grande) ya NO imprime esa banda ni
+ *     F.P/F.V — los campos viajan por compatibilidad con DatosRotulo.
  *
  * `lineaId` vacío (no debería pasar: la RPC siempre devuelve linea_ids)
  * degrada a QR de guía — nunca un rótulo sin identidad.

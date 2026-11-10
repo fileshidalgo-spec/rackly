@@ -432,6 +432,31 @@ function modulosQR(len: number): number {
 const INTERIOR_QR = ZONA_QR_LADO - 2 * 3
 
 /**
+ * Zona cuadrada del QR (coordenadas VISUALES apaisadas), parametrizable:
+ * Insumos imprime en el cuadrante 4×4 (Task 28) y REPUESTOS en una zona
+ * GRANDE de 560×560 (2026-11-11, pedido «el código QR grande»). `magMax`
+ * acota la magnificación — la fórmula de mag garantiza SIEMPRE quiet zone
+ * ≥ 3 módulos (recortar la mag solo agranda el margen, jamás lo encoge).
+ */
+type ZonaQR = {
+  /** Lado UTILIZABLE de la zona (sin las líneas de caja que la rodean). */
+  interior: number
+  /** X visual del límite IZQUIERDO (la separadora de la zona). */
+  xLimiteIzq: number
+  /** Y visual del borde SUPERIOR de la zona. */
+  yBandaSup: number
+  /** Tope de magnificación (default 10 — el del cuadrante 4×4). */
+  magMax?: number
+}
+
+const ZONA_QR_INSUMOS: ZonaQR = {
+  interior: INTERIOR_QR,
+  xLimiteIzq: X_ZONA_QR,
+  yBandaSup: 0,
+  magMax: 10,
+}
+
+/**
  * ZPL del QR 4 × 4 cm centrado en el CUADRANTE superior derecho
  * (X_ZONA_QR..1200 × Y 0..400 visual).
  * EC 'Q' (25% de recuperación): rótulos que pasan por manos y polvo.
@@ -447,23 +472,26 @@ const INTERIOR_QR = ZONA_QR_LADO - 2 * 3
  *   (4.2). Todos ≥ 3.5 cm y el dominante clava el "4 × 4 cm" pedido.
  *
  * POSICIÓN (mapeo apaisado — el campo NO rota, el QR es simétrico):
- *   · y físico = X_vis izquierdo     = X_ZONA_QR + 3 + margen
- *   · x físico = 800 − Y_vis superior = 800 − (3 + margen + lado)
+ *   · y físico = X_vis izquierdo de la zona + margen
+ *   · x físico = 800 − Y_vis superior del símbolo − lado
  * (lección 2026-10-17: usar `800 − ZONA + m` pegaba el símbolo a la línea
  * y destruía la quiet zone — mantener siempre el mapeo por esquinas).
+ *
+ * GENERALIZACIÓN (2026-11-11): la zona es PARÁMETRO con default
+ * ZONA_QR_INSUMOS — el comportamiento de Insumos queda bit a bit.
  */
-function campoQR(payload: string): string {
+function campoQR(payload: string, zona: ZonaQR = ZONA_QR_INSUMOS): string {
   // DEFENSA FINAL (Z2): cualquier payload por encima de la v8 (99 bytes) se
   // trunca — el encoder jamás debe salirse de la versión planeada. Con los
   // caps de payloadQRRotulo esto es inalcanzable hoy; protege llamadores
   // futuros.
   const dato = payload.length > 99 ? payload.slice(0, 99) : payload
   const mods = modulosQR(dato.length)
-  const mag = Math.max(3, Math.min(10, Math.floor(INTERIOR_QR / (mods + 6))))
+  const mag = Math.max(3, Math.min(zona.magMax ?? 10, Math.floor(zona.interior / (mods + 6))))
   const ladoEsp = mods * mag
-  const margen = Math.floor((INTERIOR_QR - ladoEsp) / 2)
-  const yVisSup = 3 + margen // desde el borde superior visual (Y 0)
-  const xVisIzq = X_ZONA_QR + 3 + margen // desde el límite (línea en X_ZONA_QR)
+  const margen = Math.floor((zona.interior - ladoEsp) / 2)
+  const yVisSup = zona.yBandaSup + 3 + margen
+  const xVisIzq = zona.xLimiteIzq + 3 + margen
   const xFis = ANCHO_FISICO - yVisSup - ladoEsp
   const yFis = xVisIzq
   return `^FO${xFis},${yFis}^BQN,2,${mag}^FDQA,${dato}^FS`
@@ -641,11 +669,21 @@ type LayoutDescripcion = {
  * imprime como campo propio centrado por ^FB de 1 línea.
  * Devuelve null solo si `texto` es vacío.
  */
-export function layoutDescripcion(texto: string, anchoLinea: number): LayoutDescripcion | null {
+export function layoutDescripcion(
+  texto: string,
+  anchoLinea: number,
+  /** Banda vertical (Y visual) donde centrar la tinta. Default: la de
+   *  Insumos (Y 240..400). REPUESTOS pasa la SUYA (Y 240..560 — más alta:
+   *  el texto crece de fuente al haber repartido el rótulo de otro modo). */
+  zona?: { sup: number; inf: number }
+): LayoutDescripcion | null {
   if (!texto.trim()) return null
   const fondo = /[a-zµ,;Q]/.test(texto) ? DESC_FONDO : DESC_BASE
   const utilAncho = anchoLinea - 2 * DESC_MARGEN_X
-  const utilAlto = DESC_ZONA_INF - DESC_ZONA_SUP
+  const zSup = zona?.sup ?? DESC_ZONA_SUP
+  const zInf = zona?.inf ?? DESC_ZONA_INF
+  const centroBanda = (zSup + zInf) / 2
+  const utilAlto = zInf - zSup
   let mejor: LayoutDescripcion | null = null
   let respaldo: LayoutDescripcion | null = null
   for (const n of [1, 2, 3] as const) {
@@ -668,7 +706,7 @@ export function layoutDescripcion(texto: string, anchoLinea: number): LayoutDesc
       em,
       w,
       paso,
-      y1: Math.round(DESC_CENTRO_BANDA - altoTinta / 2),
+      y1: Math.round(centroBanda - altoTinta / 2),
       llenado: altoTinta / utilAlto,
     }
     if (!respaldo || cand.em > respaldo.em) respaldo = cand
@@ -686,7 +724,7 @@ export function layoutDescripcion(texto: string, anchoLinea: number): LayoutDesc
     em,
     w,
     paso: 0,
-    y1: Math.round(DESC_CENTRO_BANDA - ((DESC_CAP + fondo) * em) / 2),
+    y1: Math.round(centroBanda - ((DESC_CAP + fondo) * em) / 2),
     llenado: ((DESC_CAP + fondo) * em) / utilAlto,
   }
 }
@@ -945,6 +983,169 @@ export function construirZPLRotulo(
   return lineas.join('\n')
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// FORMATO REPUESTOS (2026-11-11, pedido del usuario): rótulo SIMPLIFICADO
+// — solo Código (GRANDE) · Descripción · Cantidad · UM · QR GRANDE.
+// Sin banda GUÍA/LOTE y sin F.P/F.V (no aplican a repuestos; la traza del
+// documento vive en la app). Mismo lienzo apaisado 1200×800 y misma tira
+// física 10×15 que Insumos — cambian SOLO el reparto de bandas:
+//
+//   ┌──────────────────────────────────────────────────┐ Y 0
+//   │             49310  (CÓDIGO GRANDE)               │  código 0..240
+//   ├───────────────────────────────┬──────────────────┤ 240  X 0..1200
+//   │                               │                  │
+//   │   LAMINA TERMOCONTRABLE       │   ▓▓▓▓▓▓▓▓▓▓     │  desc 240..560
+//   │   380 MM X 50 µ               │   ▓ QR GRANDE ▓  │  QR 240..800
+//   │   (1-3 renglones)             │   ▓▓ ~5.5 cm ▓▓  │  X 640..1200
+//   ├──────────┬────────────────────┤   ▓▓▓▓▓▓▓▓▓▓     │
+//   │  CANT:   │        25          │  UN              │  inferior
+//   └──────────┴────────────────────┴──────────────────┘ 800  560..800
+//     X: 0     120                 520  640        1200
+//
+// · El código ocupa la banda SUPERIOR COMPLETA (0..1200): con el ancho que
+//   antes repartía con el QR llega al tope de fuente (em 286) — igual o MÁS
+//   grande que el formato compartido anterior (em 267 a 5 dígitos).
+// · El QR GRANDE: interior 554 → mag 12 en el payload dominante (v5, uuid
+//   de línea) → símbolo de 444 dots ≈ 5.5 cm — 34% más que el cuadrante de
+//   4 cm de Insumos — con quiet zone ≥ 3 módulos garantizada por la fórmula.
+// · La cantidad reutiliza el render CALIBRADO de Insumos (em 294 + baseline
+//   ^FT): con 1-2 dígitos sale IDÉNTICO al formato anterior.
+// · SIN identidad para el QR (no ocurre en el flujo REP: siempre imprime
+//   desde rep_recepcion_lineas / rep_movimientos con uuid de fila):
+//   descripción y bloque inferior se expanden al ancho completo — el rótulo
+//   sale sin QR pero estructurado (degradación graceful, nunca tinta fuera).
+// · NO imprime el N° de guía ni proveedor ni fechas: el usuario definió el
+//   contenido EXACTO del rótulo REP (5 elementos, nada más).
+// ═══════════════════════════════════════════════════════════════════
+
+/** X visual del límite izquierdo de la zona QR grande (640..1200 = 560). */
+const REP_X_QR = 640
+
+/** Interior utilizable de la zona QR grande (560 − 2×3 de líneas). */
+const REP_INTERIOR_QR = 1200 - REP_X_QR - 2 * 3
+
+/** Banda de descripción REP (Y 240..560) con 9 dots de aire por lado. */
+const REP_DESC_SUP = 240 + 9
+const REP_DESC_INF = 560 - 9
+
+/**
+ * Rótulo de RECEPCIÓN REPUESTOS — formato simplificado (ver diagrama).
+ * Misma firma que construirZPLRotulo: ImprimirRotulosDialog elige entre
+ * ambos con el prop `formato` ('insumos' default · 'rep').
+ */
+export function construirZPLRotuloRep(
+  datos: DatosRotulo,
+  encabezado: EncabezadoRotulo,
+  opciones?: { copias?: number; /** Contexto del QR de guía (opcional). */ qr?: ContextoQR }
+): string {
+  const copias = Math.max(1, Math.min(999, Math.round(opciones?.copias ?? 1)))
+
+  const codigo = sanearZPL(datos.codigo)
+  const descripcion = sanearZPL(datos.descripcion)
+  const cantidad = sanearZPL(datos.cantidad)
+  const unidad = sanearZPL(datos.unidad)
+
+  const payloadQR = payloadQRRotulo(datos, {
+    guiaId: opciones?.qr?.guiaId ?? encabezado.guiaId,
+    numeroDocumento: opciones?.qr?.numeroDocumento ?? encabezado.numeroDocumento,
+  })
+  const conQr = payloadQR != null
+  const anchoIzq = conQr ? REP_X_QR : 1200
+
+  const lineas: string[] = []
+  lineas.push('^XA')
+  lineas.push('^CI28') // UTF-8: tildes y ñ
+  lineas.push(`^PW${ANCHO_FISICO + DESPLAZ_IMPRESION}`)
+  lineas.push('^LL1200')
+  lineas.push(`^LH${DESPLAZ_IMPRESION},0`)
+
+  // Marco exterior (físicamente idéntico al formato de Insumos)
+  lineas.push(cajaApaisada(0, 0, 1200, 800, 3))
+
+  // ── 1) BANDA CÓDIGO (Y 0..240) — ANCHO COMPLETO: el código GRANDE ──
+  lineas.push(cajaApaisada(0, 0, 1200, 240, 3))
+  if (codigo) {
+    const alto = altoParaCaja(codigo, 1152, TOPE_ALTO_CODIGO, 90, 0.62)
+    const y = Math.max(0, Math.round(CENTRO_BANDA_CODIGO - TINTA_CENTRO_EM * alto))
+    lineas.push(...campoApaisado(24, y, alto, Math.round(alto * 0.6), codigo, { fbAncho: 1152, negrita: true }))
+  }
+
+  // ── 2) QR GRANDE — zona X 640..1200 × Y 240..800 (interior 554) ──
+  // Separadora izquierda de la zona; el resto la cierran la banda del
+  // código (Y 240) y el marco (X 1200 / Y 800). El símbolo queda centrado.
+  if (payloadQR) {
+    lineas.push(cajaApaisada(REP_X_QR, 240, REP_X_QR + 3, 800, 2))
+    lineas.push(
+      campoQR(payloadQR, {
+        interior: REP_INTERIOR_QR,
+        xLimiteIzq: REP_X_QR,
+        yBandaSup: 240,
+        magMax: 14,
+      })
+    )
+  }
+
+  // ── 3) DESCRIPCIÓN — banda Y 240..560 en la columna izquierda ──
+  // Mismo motor determinista (1-3 renglones balanceados, tinta centrada y
+  // llenando el recuadro) con la banda MÁS ALTA del formato REP.
+  lineas.push(cajaApaisada(0, 240, anchoIzq, 560, 3))
+  if (descripcion) {
+    const anchoLinea = anchoIzq - 48
+    const layout = layoutDescripcion(descripcion, anchoLinea, { sup: REP_DESC_SUP, inf: REP_DESC_INF })
+    if (layout) {
+      layout.lineas.forEach((linea, k) => {
+        const yk = layout.y1 + k * layout.paso
+        lineas.push(...campoApaisado(24, yk, layout.em, layout.w, linea, { fbAncho: anchoLinea }))
+      })
+    }
+  }
+
+  // ── 4) BLOQUE INFERIOR (Y 560..800): CANT: · cantidad · UM ──
+  const xQty0 = 120
+  const xQty1 = conQr ? 520 : 1080
+  const xUm0 = xQty1
+  const xUm1 = conQr ? 640 : 1200
+  lineas.push(cajaApaisada(0, 560, 120, 800, 2)) // caja "CANT:"
+  lineas.push(cajaApaisada(xQty0, 560, xQty1, 800, 2)) // caja cantidad
+  lineas.push(cajaApaisada(xUm0, 560, xUm1, 800, 2)) // caja UM
+
+  // Etiqueta CANT: (misma tipografía de Insumos, centrada en su caja 240)
+  lineas.push(...campoApaisado(0, 560 + Math.floor((240 - 52) / 2), 52, 38, 'CANT:', { fbAncho: 120 }))
+
+  // Cantidad — render CALIBRADO de Insumos (em 294, baseline ^FT, ley de
+  // avance 0.462×w): caja alta de 240, el em clava la tinta [baseline −
+  // 0.7611em, baseline] dentro de la caja con margen ≥ 4 dots.
+  if (cantidad) {
+    const len = cantidad.length
+    const anchoCaja = xQty1 - xQty0
+    if (len > 20) {
+      const alto = altoParaCaja(cantidad, anchoCaja, 110)
+      const y = 560 + Math.floor((240 - alto) / 2)
+      lineas.push(...campoApaisado(xQty0, y, alto, Math.round(alto * 0.6), cantidad, { fbAncho: anchoCaja, negrita: true }))
+    } else {
+      const em = 294
+      const interior = anchoCaja - 24
+      // Span objetivo 0.89×interior (proporción Insumos 460/520): con 1-2
+      // dígitos el cap 320 da el MISMO render que el formato compartido.
+      const w = Math.max(48, Math.min(320, Math.floor((0.89 * interior) / 0.462 / Math.max(1, len))))
+      const baseline = Math.round(675 + 0.3857 * em)
+      lineas.push(...campoApaisado(xQty0, 0, em, w, cantidad, { fbAncho: anchoCaja, negrita: true, baselineVisual: baseline }))
+    }
+  }
+
+  // Unidad de medida — grande y centrada en su caja (alto 240 disponible)
+  if (unidad) {
+    const anchoUm = xUm1 - xUm0
+    const alto = altoParaCaja(unidad, anchoUm, 120)
+    const y = 560 + Math.floor((240 - alto) / 2)
+    lineas.push(...campoApaisado(xUm0, y, alto, Math.round(alto * 0.6), unidad, { fbAncho: anchoUm }))
+  }
+
+  lineas.push(`^PQ${copias},0,0,N`)
+  lineas.push('^XZ')
+  return lineas.join('\n')
+}
+
 /**
  * Alto de fuente (font 0) para que `texto` quepa en una caja de `anchoCaja`
  * dots. `holgura` (dots de avance por unidad de alto, ~0.58-0.62) permite
@@ -970,11 +1171,18 @@ export function construirZPLRotulos(
   rotulos: DatosRotulo[],
   copias: number[],
   encabezado: EncabezadoRotulo,
-  qr?: ContextoQR
+  qr?: ContextoQR,
+  /** Formato del rótulo: 'insumos' (PERECIBLE completo, default) o 'rep'
+   *  (REPUESTOS: solo código/desc/cantidad/UM + QR grande, 2026-11-11). */
+  formato: 'insumos' | 'rep' = 'insumos'
 ): string {
   return rotulos
     .map((r, i) => ({ r, copias: copias[i] ?? 1 }))
     .filter(({ copias }) => Number.isFinite(copias) && copias > 0)
-    .map(({ r, copias }) => construirZPLRotulo(r, encabezado, { copias, qr }))
+    .map(({ r, copias }) =>
+      formato === 'rep'
+        ? construirZPLRotuloRep(r, encabezado, { copias, qr })
+        : construirZPLRotulo(r, encabezado, { copias, qr })
+    )
     .join('\n')
 }

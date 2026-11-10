@@ -136,6 +136,49 @@ async function main() {
   check('Repuestos imprime el N° de guía en la banda', zplRep.includes('GR-12345'))
   check('el ZPL de repuestos sigue siendo una etiqueta válida (^XA…^XZ)', zplRep.startsWith('^XA') && zplRep.trimEnd().endsWith('^XZ'))
 
+  // ── [10] FORMATO REP del rótulo (2026-11-11): solo código/desc/cant/UM + QR grande ──
+  console.log('\n[10] construirZPLRotuloRep — formato simplificado Repuestos')
+  const { construirZPLRotuloRep, construirZPLRotulos } = require('@/lib/rackly/zebra')
+  const repDatos = {
+    codigo: 'BJ-109-003', descripcion: 'LAMINA TERMOCONTRABLE 380 MM X 50 U', cantidad: '4', unidad: 'UND',
+    lote: 'GR-12345', loteEtiqueta: 'GUÍA:', fechaProduccion: '', fechaVencimiento: '',
+    recepcionId: '9f8c3e0a-1b2c-4d3e-8f4a-5b6c7d8e9f0a',
+  }
+  const repEnc = { fecha: '', numeroDocumento: 'GR-12345', empresaOrigen: 'ACME', placa: '' }
+  const zpl = construirZPLRotuloRep(repDatos, repEnc)
+  check('etiqueta válida (^XA…^XZ)', zpl.startsWith('^XA') && zpl.trimEnd().endsWith('^XZ'))
+  check('imprime el código', zpl.includes('BJ-109-003'))
+  check('imprime la descripción (motor determinista: renglones balanceados)',
+    /\^FDLAMINA\^FS/.test(zpl) && /\^FDTERMOCONTRABLE\^FS/.test(zpl) && /\^FD380 MM X 50 U\^FS/.test(zpl))
+  check('imprime la cantidad', /\^FD4\^FS/.test(zpl))
+  check('imprime la UM', /\^FDUND\^FS/.test(zpl))
+  check('NO imprime banda GUÍA:', !zpl.includes('GUÍA:'))
+  check('NO imprime el N° de guía como TEXTO (solo viaja dentro del QR)', !/\^FDGR-12345\^FS/.test(zpl))
+  check('NO imprime F.P / F.V', !zpl.includes('F.P') && !zpl.includes('F.V'))
+  check('NO imprime LOTE:', !zpl.includes('LOTE:'))
+  check('imprime CANT:', zpl.includes('CANT:'))
+  check('imprime el QR (^BQ)', zpl.includes('^BQN,2,'))
+  const magQR = Number(zpl.match(/\^BQN,2,(\d+)/)?.[1])
+  check('QR GRANDE: mag ≥ 10 (símbolo ≥ ~4.6 cm)', magQR >= 10, `mag=${magQR}`)
+  check('QR con payload dominante v5 → mag 12 (~5.5 cm)', magQR === 12, `mag=${magQR}`)
+  check('banda del código a ANCHO COMPLETO (^GB240,1200)', zpl.includes('^GB240,1200,3'))
+  // Sin identidad → sin QR, pero el rótulo sigue estructurado (ancho completo)
+  const zplSinQr = construirZPLRotuloRep(
+    { ...repDatos, recepcionId: undefined },
+    { fecha: '', numeroDocumento: '', empresaOrigen: '', placa: '' }
+  )
+  check('sin identidad → SIN QR (nunca un QR que no resuelve)', !zplSinQr.includes('^BQN'))
+  check('sin QR → etiqueta igual válida', zplSinQr.startsWith('^XA') && zplSinQr.trimEnd().endsWith('^XZ'))
+  check('sin QR → descripción a ancho completo (^GB320,1200)', zplSinQr.includes('^GB320,1200,3'))
+
+  console.log('\n[11] construirZPLRotulos con formato "rep" — el modal elige el builder')
+  const zplLote = construirZPLRotulos([repDatos], [2], repEnc, { guiaId: null, numeroDocumento: 'GR-12345' }, 'rep')
+  check('formato rep: sin banda GUÍA:', !zplLote.includes('GUÍA:'))
+  check('formato rep: 2 copias (^PQ2)', zplLote.includes('^PQ2,0,0,N'))
+  const zplDefault = construirZPLRotulos([repDatos], [1], repEnc, { guiaId: null, numeroDocumento: 'GR-12345' })
+  check('default (sin formato) sigue siendo Insumos (GUÍA: en banda)', zplDefault.includes('GUÍA:'))
+  check('default: QR de Insumos con mag 9 (4 cm, sin cambio)', Number(zplDefault.match(/\^BQN,2,(\d+)/)?.[1]) === 9)
+
   // ── Resumen ──
   console.log(`\n════════ RESULTADO: ${ok} pasados ════════`)
   if (process.exitCode !== 1) console.log('OK test_rep_recepcion_guia')

@@ -1,4 +1,23 @@
 ---
+Task ID: rep-rotulo-formato-rep-20261111
+Agent: Main Agent
+Task: «En el rótulo que se imprime en el módulo de Recepción del almacén de REPUESTOS solo necesito esta información: Código de producto (grande, así como está ahora), descripción, UM, cantidad y el código QR grande; 1.2–8 metodología; 9 Almacén Repuestos; 10 Módulo Recepción».
+
+Work Log (1.1–8):
+- 1.2 (averiguar el hueco): el rótulo REP reutilizaba el ZPL PERECIBLE compartido con Insumos (construirZPLRotulo): imprimía banda «GUÍA:» + cajas F.P/F.V + CANT/UM — campos que el usuario NO quiere en repuestos — y el QR quedaba limitado al cuadrante de 4 cm de Insumos (Task 28).
+- 2 (qué lo genera): el modal compartido ImprimirRotulosDialog llamaba construirZPLRotulos → construirZPLRotulo (UN formato para ambos almacenes).
+- 3 (no se repite en otras pestañas): Insumos (recepción manual, vía foto GuiaFotoForm, devoluciones DevolucionFotoForm) NO cambia — el builder viejo queda INTACTO y el formato se elige con un prop ADITIVO opcional formato='insumos' (default). test_zebra_zpl (108 checks de la geometría Insumos) pasa completo. campoQR/layoutDescripcion se generalizan con DEFAULTS = valores exactos de Insumos (ZONA_QR_INSUMOS: interior 394/magMax 10 — bit a bit).
+- 4 (procedimiento más efectivo): NUEVO builder construirZPLRotuloRep en zebra.ts en vez de ensuciar el compartido con banderas — cada formato queda legible, con su diagrama y testeable por separado. Mismo lienzo apaisado 1200×800, misma tira 10×15, mismo motor de descripción determinista (Tasks 30-31) y render calibrado de cantidad (em 294 + baseline ^FT).
+- 5 (sin conflictos): único punto de decisión: ImprimirRotulosDialog.zplActual → solo Recepción REP pasa formato='rep'; las 2 vías REP (guardado con lineasARotulosRep y reimpresión con movimientosARotulosRep) comparten el mismo modal → ambas imprimen el formato nuevo. Rep_share de rótulo con ubicación: NUNCA existió — el rótulo REP sigue sin ubicación (la decide Tránsito).
+- 6/7 (código experto y ordenado): Layout REP — banda CÓDIGO a ANCHO COMPLETO 0..1200 (a 10 chars em 117→181, +55%; a 5 dígitos 234→286 = tope de fuente) · QR GRANDE zona 640..1200 × 240..800 (interior 554 → mag 12 en el payload dominante v5: símbolo 444 dots ≈ 5.5 cm vs 4.1 cm del cuadrante, +34% lineal, quiet zone ≥ 3 módulos garantizada por la fórmula de mag, magMax 14) · DESCRIPCIÓN en banda alta Y 240..560 (el ejemplo de prueba pasa de 3 renglones em 47 a em 86 — casi el doble de fuente) · bloque CANT: + cantidad + UM (Y 560..800, 240 de alto). SIN banda GUÍA/LOTE, SIN F.P/F.V; el N° de guía sigue viajando DENTRO del payload del QR (dato de máquina para el lector — no tinta visible).
+- 8 (todos los accesos): verificación visual REAL con Labelary (api.labelary.com 8dpmm, render girado 90°): código grande arriba, descripción en renglones balanceados, CANT: 4, UND, QR grande a la derecha — exactamente lo pedido; también la degradación sin identidad (rótulo a ancho completo, estructurado, sin ^BQ). QA: tsc 0 · eslint 0 · 53/53 suites · build OK · GitHub push → Cloudflare producción verificada con version.json.
+- Tests nuevos en test_rep_recepcion_guia ([10]-[11]): sin GUÍA:/LOTE:/F.P/F.V, con código/desc por renglones/cantidad/UM/CANT:, QR mag 12, banda código ^GB240,1200 (ancho completo), sin identidad → sin ^BQN + desc a ancho completo, construirZPLRotulos formato='rep' vs default (Insumos: banda GUÍA: + QR mag 9 intactos). Suite: 63 checks OK.
+
+Stage Summary:
+- El rótulo de Recepción REPUESTOS imprime SOLO: código (GRANDE, ancho completo) · descripción (grande, 1-3 renglones) · CANT: cantidad · UM · QR GRANDE (~5.5 cm). Misma tira 10×15 cm, mismo flujo (Browser Print / Plan B .zpl) y mismo QR por línea (identidad estable que sobrevive a la ubicación de Tránsito).
+- Insumos: 0 cambios de comportamiento (formato PERECIBLE completo intacto, default 'insumos').
+
+---
 Task ID: rep-recepcion-transito-ubicar-20261111
 Agent: Main Agent
 Task: «1.1 recepción SIN destino — como la imagen enviada (fila #/Código del artículo "Ej: 5653"/Cantidad/Unidad/Descripción "Se autocompleta al escribir el código"); el código debe ir impreso GRANDE en el rótulo; el lugar donde se almacena NO debe salir: recién luego de guardar pasa al área del módulo TRÁNSITO donde se verá a dónde enviarlo, así como funciona en almacén Insumos; guardar genera el archivo imprimible como rótulo por cada artículo; revisar errores/bugs/duplicados/procesos/estructura/BD; 1.2–8 metodología; 9 Almacén Repuestos; 10 Módulo Recepción (+Tránsito)».

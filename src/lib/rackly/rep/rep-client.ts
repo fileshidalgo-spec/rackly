@@ -465,6 +465,83 @@ export async function repRegistrarIngreso(params: {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MOVIMIENTOS DIRECTOS DESDE EL MAPA (paridad Insumos OcupacionTab)
+// — salida y traslado: RPCs atómicas con las mismas validaciones en BD
+//   que rep_registrar_ingreso (capacidad, stock, permiso, kardex).
+// ═══════════════════════════════════════════════════════════════════
+
+export type RepResultadoSalida = {
+  ubicacion: string
+  lado: 'A' | 'B'
+  /** Cantidad que queda en la lonchera tras la salida. */
+  restante: number
+}
+
+/** Salida directa de stock de una lonchera (RPC rep_registrar_salida). */
+export async function repRegistrarSalida(params: {
+  articuloId: string
+  loncheraId: string
+  cantidad: number
+  referencia?: string
+}): Promise<RepResultadoSalida> {
+  const { data, error } = await dataClient.rpc('rep_registrar_salida', {
+    p_articulo_id: params.articuloId,
+    p_lonchera_id: params.loncheraId,
+    p_cantidad: params.cantidad,
+    p_referencia: params.referencia ?? '',
+  })
+  lanzar(error)
+  const d = (data ?? {}) as { ubicacion?: string; lado?: 'A' | 'B'; restante?: number | string }
+  return {
+    ubicacion: d.ubicacion ?? '',
+    lado: d.lado ?? 'A',
+    restante: Number(d.restante) || 0,
+  }
+}
+
+export type RepResultadoTraslado = {
+  origen: string
+  destino: string
+  ladoDestino: 'A' | 'B'
+}
+
+/** Traslado directo entre loncheras (RPC rep_registrar_traslado). */
+export async function repRegistrarTraslado(params: {
+  articuloId: string
+  loncheraOrigenId: string
+  loncheraDestinoId: string
+  cantidad: number
+  referencia?: string
+}): Promise<RepResultadoTraslado> {
+  const { data, error } = await dataClient.rpc('rep_registrar_traslado', {
+    p_articulo_id: params.articuloId,
+    p_lonchera_origen_id: params.loncheraOrigenId,
+    p_lonchera_destino_id: params.loncheraDestinoId,
+    p_cantidad: params.cantidad,
+    p_referencia: params.referencia ?? '',
+  })
+  lanzar(error)
+  const d = (data ?? {}) as { origen?: string; destino?: string; lado_destino?: 'A' | 'B' }
+  return {
+    origen: d.origen ?? '',
+    destino: d.destino ?? '',
+    ladoDestino: d.lado_destino ?? 'A',
+  }
+}
+
+/** Historial de UNA ubicación: movimientos donde es origen o destino. */
+export async function repMovimientosDeUbicacion(ubicacionId: string, limite = 80): Promise<RepMovimiento[]> {
+  const { data, error } = await dataClient
+    .from('rep_movimientos')
+    .select('*')
+    .or(`origen_ubicacion_id.eq.${ubicacionId},destino_ubicacion_id.eq.${ubicacionId}`)
+    .order('created_at', { ascending: false })
+    .limit(limite)
+  lanzar(error)
+  return (data ?? []) as RepMovimiento[]
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MOVIMIENTOS — kardex repuestos
 // ═══════════════════════════════════════════════════════════════════
 

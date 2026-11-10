@@ -868,6 +868,105 @@ export async function repUbicarDesdeTransito(params: {
   }
 }
 
+/**
+ * Documento COMPLETO de una recepción (cabecera + líneas) para EDITAR:
+ * la edición carga la guía en el formulario y cada línea conserva SU id
+ * (uuid estable del rótulo QR — rep_editar_recepcion hace UPDATE por id,
+ * no reinserciones, para no romper los QR ya impresos).
+ */
+export async function repRecepcionCompleta(recepcionId: string): Promise<{
+  id: string
+  guia: string
+  oc: string
+  dam: string
+  lineas: RepLineaRecepcion[]
+}> {
+  const [recRes, linRes] = await Promise.all([
+    dataClient
+      .from('rep_recepciones')
+      .select('id, created_at, guia, oc, dam, usuario_nombre')
+      .eq('id', recepcionId)
+      .maybeSingle(),
+    dataClient
+      .from('rep_recepcion_lineas')
+      .select(
+        'id, created_at, recepcion_id, articulo_id, codigo, descripcion, und, cantidad, proveedor, estado, lonchera_id, ubicacion_id, movimiento_id'
+      )
+      .eq('recepcion_id', recepcionId)
+      .order('created_at', { ascending: true }),
+  ])
+  lanzar(recRes.error)
+  lanzar(linRes.error)
+  const r = recRes.data as {
+    id: string
+    created_at: string
+    guia: string
+    oc: string
+    dam: string
+    usuario_nombre: string
+  } | null
+  if (!r) throw new Error('RECEPCION_NO_EXISTE|La guía ya no existe (¿alguien la eliminó?)')
+  const lineas = ((linRes.data ?? []) as unknown as RepLineaRecepcion[]).map(
+    (l): RepLineaRecepcion => ({
+      ...l,
+      cantidad: Number(l.cantidad) || 0,
+      estado: l.estado === 'ubicado' ? 'ubicado' : 'en_transito',
+    })
+  )
+  return { id: r.id, guia: r.guia, oc: r.oc, dam: r.dam, lineas }
+}
+
+/**
+ * EDITA el documento de recepción completo (1 RPC atómica):
+ *   · cabecera (guía/OC/DAM) + conjunto de líneas sincronizadas por id:
+ *     con id → UPDATE conservando el uuid (QR ya impreso sigue válido);
+ *     sin id → INSERT (línea nueva); las que faltan en la lista → DELETE.
+ *   · SOLO guías 100% en tránsito (si algo ya está ubicado la BD rechaza
+ *     con GUIA_YA_UBICADA — stock/kardex intocables).
+ *   · Devuelve linea_ids en el MISMO orden de entrada (contrato de rótulos
+ *     igual al del registro).
+ */
+export async function repEditarRecepcion(params: {
+  recepcionId: string
+  guia: string
+  oc: string
+  dam: string
+  lineas: Array<{ id?: string | null; articuloId: string; cantidad: number; proveedor: string }>
+}): Promise<{ lineaIds: string[] }> {
+  const { data, error } = await dataClient.rpc('rep_editar_recepcion', {
+    p_recepcion_id: params.recepcionId,
+    p_guia: params.guia,
+    p_oc: params.oc,
+    p_dam: params.dam,
+    p_lineas: params.lineas.map((l) => ({
+      id: l.id ?? null,
+      articulo_id: l.articuloId,
+      cantidad: l.cantidad,
+      proveedor: l.proveedor,
+    })),
+  })
+  lanzar(error)
+  const d = (data ?? {}) as { linea_ids?: string[] }
+  return { lineaIds: d.linea_ids ?? [] }
+}
+
+/**
+ * ELIMINA la guía de recepción completa (1 RPC atómica). Solo permitido si
+ * NADA de la guía está ubicado (la BD rechaza con GUIA_YA_UBICADA: no se
+ * deja stock ni kardex huérfanos). Las líneas en tránsito desaparecen de
+ * Tránsito con el documento.
+ */
+export async function repEliminarRecepcion(
+  recepcionId: string
+): Promise<{ lineasEliminadas: number }> {
+  const { data, error } = await dataClient.rpc('rep_eliminar_recepcion', {
+    p_recepcion_id: recepcionId,
+  })
+  lanzar(error)
+  const d = (data ?? {}) as { lineas_eliminadas?: number }
+  return { lineasEliminadas: Number(d.lineas_eliminadas ?? 0) }
+}
+
 /** Últimas recepciones guardadas (para el panel de Recepción). */
 export async function repListarRecepciones(limit = 10): Promise<RepRecepcion[]> {
   const { data, error } = await dataClient

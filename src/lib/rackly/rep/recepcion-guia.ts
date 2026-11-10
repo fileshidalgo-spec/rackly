@@ -54,6 +54,11 @@ export type LineaRecepcionRep = {
   /** Identidad local de la línea (crypto.randomUUID) para el render y la
    *  eliminación; NO viaja a la BD. */
   key: string
+  /** uuid de la línea EN BD (rep_recepcion_lineas.id). null/ausente = línea
+   *  nueva del formulario. Solo llega en modo EDICIÓN de una guía guardada:
+   *  rep_editar_recepcion hace UPDATE por id para conservar la identidad del
+   *  rótulo QR ya impreso. */
+  id?: string
   articuloId: string
   codigo: string
   descripcion: string

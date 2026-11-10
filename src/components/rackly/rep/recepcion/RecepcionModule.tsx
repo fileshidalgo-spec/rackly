@@ -49,6 +49,9 @@ import { formatDateTime } from '@/lib/utils'
 import {
   repArticuloPorCodigo,
   repRegistrarRecepcion,
+  repEditarRecepcion,
+  repEliminarRecepcion,
+  repRecepcionCompleta,
   repStockDeArticulo,
   repListarRecepciones,
   repLineasPorGuia,
@@ -84,6 +87,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import {
   PackageCheck,
@@ -94,6 +107,8 @@ import {
   BookOpen,
   Plus,
   Printer,
+  PencilLine,
+  Trash2,
   X,
   FileText,
   Truck,
@@ -123,6 +138,7 @@ function uuidLocal(): string {
 export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
   const { perfil } = useAuth()
   const puedeGestionar = puede(perfil, 'repuestos.gestionar')
+  const puedeEliminarRep = puede(perfil, 'repuestos.eliminar')
 
   // ── Panel lateral ──
   const [recepciones, setRecepciones] = useState<RepRecepcion[]>([])
@@ -149,6 +165,14 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
   const [altaOpen, setAltaOpen] = useState(false)
   const [modal, setModal] = useState<ModalRotulos>(null)
   const [imprimiendo, setImprimiendo] = useState('')
+  // ── EDICIÓN / ELIMINACIÓN de guías guardadas (supervisión): el cuadro de
+  //    permisos da EDITAR con repuestos.gestionar y BORRAR con
+  //    repuestos.eliminar — por defecto supervisores, coordinadores y admin.
+  const [editando, setEditando] = useState<{ recepcionId: string; guia: string } | null>(null)
+  const [cargandoEdicion, setCargandoEdicion] = useState('')
+  const [eliminando, setEliminando] = useState<RepRecepcion | null>(null)
+  const [borrando, setBorrando] = useState(false)
+  const formRef = useRef<HTMLDivElement>(null)
   const codigoRef = useRef<HTMLInputElement>(null)
   // Guard de generación: solo la búsqueda más reciente puede pintar resultados
   // (evita que la respuesta tardía de un código anterior sobrescriba al nuevo).
@@ -262,50 +286,93 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
     }
     setGuardando(true)
     const guiaGuardada = cabecera.guia.trim()
+    const edicion = editando
     try {
-      if (!loteRef.current) loteRef.current = uuidLocal()
-      const res = await repRegistrarRecepcion({
-        guia: guiaGuardada,
-        oc: cabecera.oc.trim(),
-        dam: cabecera.dam.trim(),
-        lineas: lineas.map((l) => ({
-          articuloId: l.articuloId,
-          cantidad: l.cantidad,
-          proveedor: proveedorDeLinea(cabecera, l),
-        })),
-        uuidSync: loteRef.current,
-      })
-
-      const lineasOk = [...lineas]
-      // Limpieza ANTES del refresco (lección auditoría 2026-11-10): las líneas
-      // salen de la lista aunque el refresco falle — y el lote liberado hace
-      // que un siguiente guardado sea un documento NUEVO, no un eco.
-      setLineas([])
-      limpiarCabecera()
-      loteRef.current = null
-
-      if (res.duplicado) {
-        toast.info('La recepción ya estaba guardada', {
-          description: 'Un reintento anterior llegó a la base de datos — no se duplicó nada.',
+      if (edicion) {
+        // ── EDICIÓN: 1 RPC atómica que sincroniza por id (UPDATE conserva
+        //    el uuid del rótulo; INSERT para nuevas; DELETE para las que
+        //    quedaron fuera). La BD rechaza si algo ya está ubicado.
+        const res = await repEditarRecepcion({
+          recepcionId: edicion.recepcionId,
+          guia: guiaGuardada,
+          oc: cabecera.oc.trim(),
+          dam: cabecera.dam.trim(),
+          lineas: lineas.map((l) => ({
+            id: l.id ?? null,
+            articuloId: l.articuloId,
+            cantidad: l.cantidad,
+            proveedor: proveedorDeLinea(cabecera, l),
+          })),
         })
-      } else {
-        toast.success(`Guía ${guiaGuardada}: ${lineasOk.length} artículo(s) en tránsito`, {
-          description: 'Asígnalos a su lonchera desde el módulo TRÁNSITO.',
+
+        const lineasOk = [...lineas]
+        // Limpieza ANTES del refresco (misma lección del alta): el formulario
+        // sale del modo edición aunque el refresco falle.
+        setLineas([])
+        limpiarCabecera()
+        setEditando(null)
+
+        toast.success(`Guía ${guiaGuardada} actualizada (${lineasOk.length} artículo(s))`, {
+          description: 'Los cambios reemplazaron el documento.',
           duration: 9000,
         })
+        setModal({
+          rotulos: lineasARotulosRep(lineasOk, res.lineaIds, guiaGuardada),
+          encabezado: {
+            fecha: formatDateTime(new Date().toISOString()),
+            numeroDocumento: guiaGuardada,
+            empresaOrigen: etiquetaProveedores(lineasOk.map((l) => proveedorDeLinea(cabecera, l))),
+            placa: '',
+            registradoPor: perfil?.nombre ?? undefined,
+            tipoDocumento: 'Guía',
+          },
+          nota: `Edición guardada — ${lineasOk.length} artículo(s) de la guía ${guiaGuardada}. Las líneas conservadas mantienen su QR; las nuevas llevan rótulo nuevo.`,
+        })
+      } else {
+        if (!loteRef.current) loteRef.current = uuidLocal()
+        const res = await repRegistrarRecepcion({
+          guia: guiaGuardada,
+          oc: cabecera.oc.trim(),
+          dam: cabecera.dam.trim(),
+          lineas: lineas.map((l) => ({
+            articuloId: l.articuloId,
+            cantidad: l.cantidad,
+            proveedor: proveedorDeLinea(cabecera, l),
+          })),
+          uuidSync: loteRef.current,
+        })
+
+        const lineasOk = [...lineas]
+        // Limpieza ANTES del refresco (lección auditoría 2026-11-10): las líneas
+        // salen de la lista aunque el refresco falle — y el lote liberado hace
+        // que un siguiente guardado sea un documento NUEVO, no un eco.
+        setLineas([])
+        limpiarCabecera()
+        loteRef.current = null
+
+        if (res.duplicado) {
+          toast.info('La recepción ya estaba guardada', {
+            description: 'Un reintento anterior llegó a la base de datos — no se duplicó nada.',
+          })
+        } else {
+          toast.success(`Guía ${guiaGuardada}: ${lineasOk.length} artículo(s) en tránsito`, {
+            description: 'Asígnalos a su lonchera desde el módulo TRÁNSITO.',
+            duration: 9000,
+          })
+        }
+        setModal({
+          rotulos: lineasARotulosRep(lineasOk, res.lineaIds, guiaGuardada),
+          encabezado: {
+            fecha: formatDateTime(new Date().toISOString()),
+            numeroDocumento: guiaGuardada,
+            empresaOrigen: etiquetaProveedores(lineasOk.map((l) => proveedorDeLinea(cabecera, l))),
+            placa: '',
+            registradoPor: perfil?.nombre ?? undefined,
+            tipoDocumento: 'Guía',
+          },
+          nota: `Recepción guardada — ${lineasOk.length} artículo(s) de la guía ${guiaGuardada} en tránsito. Descarga el archivo .zpl o imprime directo.`,
+        })
       }
-      setModal({
-        rotulos: lineasARotulosRep(lineasOk, res.lineaIds, guiaGuardada),
-        encabezado: {
-          fecha: formatDateTime(new Date().toISOString()),
-          numeroDocumento: guiaGuardada,
-          empresaOrigen: etiquetaProveedores(lineasOk.map((l) => proveedorDeLinea(cabecera, l))),
-          placa: '',
-          registradoPor: perfil?.nombre ?? undefined,
-          tipoDocumento: 'Guía',
-        },
-        nota: `Recepción guardada — ${lineasOk.length} artículo(s) de la guía ${guiaGuardada} en tránsito. Descarga el archivo .zpl o imprime directo.`,
-      })
 
       // Refresco best-effort con aviso propio (nunca enmascara el guardado).
       try {
@@ -364,6 +431,89 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
     }
   }
 
+  /**
+   * EDICIÓN (supervisión): trae el documento completo al formulario —
+   * cabecera + líneas conservando el id BD de cada línea (identidad del
+   * rótulo QR). Guardar llama a rep_editar_recepcion (UPDATE por id / INSERT
+   * de nuevas / DELETE de las que faltan) — paridad Insumos «Revisar/editar».
+   */
+  async function abrirEdicion(r: RepRecepcion) {
+    if (cargandoEdicion) return
+    setCargandoEdicion(r.id)
+    try {
+      const doc = await repRecepcionCompleta(r.id)
+      // Proveedores de las líneas → modo único (todos iguales) o múltiple.
+      const provs = [...new Set(doc.lineas.map((l) => l.proveedor.trim()).filter(Boolean))]
+      const multi = provs.length > 1
+      setEditando({ recepcionId: doc.id, guia: doc.guia })
+      setGuia(doc.guia)
+      setOc(doc.oc)
+      setDam(doc.dam)
+      setMultiProveedor(multi)
+      setProveedorGeneral(provs[0] ?? '')
+      setLineas(
+        doc.lineas.map((l) => ({
+          key: claveLinea(),
+          id: l.id,
+          articuloId: l.articulo_id,
+          codigo: l.codigo,
+          descripcion: l.descripcion,
+          und: l.und,
+          cantidad: Number(l.cantidad) || 0,
+          proveedor: multi ? l.proveedor : '',
+        }))
+      )
+      // El borrador de ALTA pendiente se descarta (sus líneas fueron
+      // reemplazadas por las de la guía editada).
+      loteRef.current = null
+      toast.info(`Editando la guía ${doc.guia}`, {
+        description:
+          'Corrige guía/OC/DAM, códigos, cantidades o proveedores y pulsa «Guardar cambios».',
+        duration: 8000,
+      })
+      setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+    } catch (err: unknown) {
+      toast.error('No se pudo abrir la guía para editar', { description: mensajeError(err) })
+    } finally {
+      setCargandoEdicion('')
+    }
+  }
+
+  /** Sale del modo edición y deja el formulario limpio (sin tocar la BD). */
+  function cancelarEdicion() {
+    setEditando(null)
+    setLineas([])
+    limpiarCabecera()
+    setCodigo('')
+    setCantidad('')
+    setProveedorLinea('')
+    setArticulo(null)
+    setStockActual([])
+    loteRef.current = null
+  }
+
+  /** Elimina la guía confirmada (RPC rep_eliminar_recepcion: solo si nada
+   *  está ubicado — la BD rechaza y el mensaje real sube en el toast). */
+  async function confirmarEliminar() {
+    const target = eliminando
+    if (!target) return
+    setBorrando(true)
+    try {
+      const res = await repEliminarRecepcion(target.id)
+      toast.success(`Guía ${target.guia} eliminada`, {
+        description: `${res.lineasEliminadas} artículo(s) en tránsito borrados del documento.`,
+      })
+      setEliminando(null)
+      // Si la guía eliminada estaba abierta en edición: salir limpio.
+      if (editando?.recepcionId === target.id) cancelarEdicion()
+      await cargarContexto()
+    } catch (err: unknown) {
+      toast.error('No se pudo eliminar la guía', { description: mensajeError(err) })
+    } finally {
+      setBorrando(false)
+    }
+  }
+
   /** Proveedores únicos de un conjunto de valores (etiqueta compacta). */
   function etiquetaProveedores(vals: string[]): string {
     const unicos = [...new Set(vals.map((v) => v.trim()).filter(Boolean))]
@@ -376,8 +526,27 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
 
   return (
     <div className="space-y-4">
+      {/* ═══ AVISO DE EDICIÓN (supervisión) ═══ */}
+      {editando && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2.5">
+          <p className="text-xs text-sky-900">
+            <b>Editando la guía {editando.guia}</b> — al guardar, los cambios reemplazan el
+            documento: las líneas conservadas mantienen su QR y las nuevas imprimen rótulo nuevo.
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={cancelarEdicion}
+            disabled={guardando}
+            className="h-7 shrink-0 gap-1 text-xs text-sky-700 hover:bg-sky-100"
+          >
+            <X className="h-3.5 w-3.5" /> Cancelar edición
+          </Button>
+        </div>
+      )}
+
       {/* ═══ 1 · DATOS DE LA GUÍA ═══ */}
-      <div className="rounded-xl border bg-white p-4 space-y-3">
+      <div ref={formRef} className="rounded-xl border bg-white p-4 space-y-3">
         <div className="flex items-center gap-2">
           <FileText className="h-4 w-4 text-slate-400" />
           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">1 · Datos de la guía</p>
@@ -588,7 +757,9 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
           )}
           <Button onClick={guardar} disabled={!puedeGuardar} className="gap-2">
             {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
-            Guardar recepción {lineas.length > 0 && `(${lineas.length})`} y generar rótulos
+            {editando
+              ? `Guardar cambios ${lineas.length > 0 ? `(${lineas.length})` : ''}`
+              : `Guardar recepción ${lineas.length > 0 ? `(${lineas.length})` : ''} y generar rótulos`}
           </Button>
         </div>
         {guardando && (
@@ -651,6 +822,40 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
                 >
                   {imprimiendo === r.guia ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Printer className="h-3.5 w-3.5" />}
                 </Button>
+                {puedeGestionar && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-1.5 shrink-0 text-slate-400 hover:text-sky-700 hover:bg-sky-50"
+                    onClick={() => abrirEdicion(r)}
+                    disabled={guardando || cargandoEdicion !== '' || r.pendientes !== r.totalLineas}
+                    title={
+                      r.pendientes !== r.totalLineas
+                        ? `No editable: ${r.totalLineas - r.pendientes} artículo(s) ya ubicados`
+                        : `Revisar / editar la guía ${r.guia}`
+                    }
+                    aria-label={`Editar la guía ${r.guia}`}
+                  >
+                    {cargandoEdicion === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PencilLine className="h-3.5 w-3.5" />}
+                  </Button>
+                )}
+                {puedeEliminarRep && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-1.5 shrink-0 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                    onClick={() => setEliminando(r)}
+                    disabled={guardando || borrando || r.pendientes !== r.totalLineas}
+                    title={
+                      r.pendientes !== r.totalLineas
+                        ? `No eliminable: ${r.totalLineas - r.pendientes} artículo(s) ya ubicados`
+                        : `Eliminar la guía ${r.guia}`
+                    }
+                    aria-label={`Eliminar la guía ${r.guia}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
@@ -678,6 +883,33 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
           buscarArticulo(a.codigo)
         }}
       />
+
+      {/* ═══ CONFIRMAR ELIMINACIÓN DE GUÍA (supervisión) ═══ */}
+      <AlertDialog open={eliminando !== null} onOpenChange={(o) => { if (!o) setEliminando(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar la guía {eliminando?.guia}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se borrarán {eliminando?.totalLineas ?? 0} artículo(s) en tránsito y desaparecerán del
+              módulo Tránsito. No hay stock ni kardex asociados (nada está ubicado). Esta acción no
+              se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={borrando}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 text-white hover:bg-rose-700"
+              disabled={borrando}
+              onClick={(e) => {
+                e.preventDefault()
+                void confirmarEliminar()
+              }}
+            >
+              {borrando ? 'Eliminando…' : 'Sí, eliminar guía'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

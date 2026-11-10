@@ -199,6 +199,17 @@ export async function signOut() {
   await supabase.auth.signOut()
 }
 
+/**
+ * Cierra las sesiones de este usuario en TODOS los demás dispositivos,
+ * conservando la sesión actual (scope 'others' de Supabase Auth).
+ * Los otros equipos quedan fuera en cuanto intenten renovar su token
+ * (máx. ~1 h — jwt_exp 3600 s configurado en este proyecto).
+ */
+export async function signOutOtrosDispositivos() {
+  const { error } = await supabase.auth.signOut({ scope: 'others' })
+  if (error) throw error
+}
+
 export async function resetPassword(correo: string) {
   const redirectTo = `${window.location.origin}/`
   const { data, error } = await supabase.auth.resetPasswordForEmail(correo, {

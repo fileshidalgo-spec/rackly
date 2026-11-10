@@ -1,14 +1,28 @@
 'use client'
 
+import { useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
-import { signOut } from '@/lib/rackly/auth'
+import { signOut, signOutOtrosDispositivos } from '@/lib/rackly/auth'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { LogOut, Shield, User } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { LogOut, MonitorSmartphone, Shield, User } from 'lucide-react'
 import { toast } from 'sonner'
 
 export function SesionBar() {
   const { perfil, refresh } = useAuth()
+  const [cerrandoOtros, setCerrandoOtros] = useState(false)
+  const [dialogOtros, setDialogOtros] = useState(false)
 
   if (!perfil) return null
 
@@ -18,6 +32,22 @@ export function SesionBar() {
       await refresh()
     } catch {
       toast.error('Error al cerrar sesión')
+    }
+  }
+
+  async function handleCerrarOtros() {
+    setCerrandoOtros(true)
+    try {
+      await signOutOtrosDispositivos()
+      toast.success(
+        'Sesiones cerradas en los otros equipos. Este equipo mantiene su sesión activa.'
+      )
+      setDialogOtros(false)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Error desconocido'
+      toast.error(`No se pudo cerrar las otras sesiones: ${msg}`)
+    } finally {
+      setCerrandoOtros(false)
     }
   }
 
@@ -33,6 +63,42 @@ export function SesionBar() {
           {perfil.rol}
         </Badge>
       </div>
+      <AlertDialog open={dialogOtros} onOpenChange={setDialogOtros}>
+        <AlertDialogTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={cerrandoOtros}
+            title="Cerrar sesión en otros equipos (este equipo mantiene su sesión)"
+            className="gap-1 text-slate-400 hover:text-white hover:bg-white/10"
+          >
+            <MonitorSmartphone className="h-4 w-4" />
+            <span className="sm:hidden text-xs">Otros equipos</span>
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Cerrar las sesiones abiertas en otros equipos?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Este equipo mantiene su sesión activa. Las demás computadoras quedarán fuera en
+              cuanto intenten continuar (máximo 1 hora, cuando su sesión deje de renovarse).
+              Úsalo si dejaste la sesión abierta en otro equipo o sospechas de un acceso ajeno.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cerrandoOtros}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={cerrandoOtros}
+              onClick={(e) => {
+                e.preventDefault()
+                handleCerrarOtros()
+              }}
+            >
+              {cerrandoOtros ? 'Cerrando…' : 'Sí, cerrar otras sesiones'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <Button
         variant="ghost"
         size="sm"

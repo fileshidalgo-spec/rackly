@@ -21,8 +21,8 @@ import { POLLING_INTERVAL, MOV_FETCH_TTL_MS } from '@/lib/rackly/constants'
 /**
  * Hook que mantiene la lista de movimientos sincronizada.
  * Usa Supabase Realtime como mecanismo principal y polling cada 8s como respaldo.
- * El canal usa dataClient (service_role): sigue recibiendo eventos con RLS
- * restringido a authenticated y sin exponer cambios al cliente público anon.
+ * El canal usa dataClient (anon + JWT de sesión, fix P1 2026-10-21): la
+ * suscripción viaja con la sesión del usuario y respeta las políticas RLS.
  *
  * SINGLETON COMPARTIDO: Todas las instancias del hook comparten el MISMO polling
  * interval y la MISMA suscripción Realtime. Solo se inicia el polling/realtime cuando

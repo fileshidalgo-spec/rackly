@@ -9,8 +9,8 @@ import { POLLING_INTERVAL } from '@/lib/rackly/constants'
  * Escucha cambios en las tablas piso_movimientos y piso_movimiento_detalles
  * mediante Supabase Realtime, con polling SOLO como respaldo cuando el
  * WebSocket NO está conectado.
- * El canal usa dataClient (service_role): sigue recibiendo eventos con RLS
- * restringido a authenticated y sin exponer cambios al cliente público anon.
+ * El canal usa dataClient (anon + JWT de sesión, fix P1 2026-10-21): la
+ * suscripción viaja con la sesión del usuario y respeta las políticas RLS.
  *
  * Comportamiento:
  * - Al montar: carga inicial (refresh) + intenta conectar WebSocket

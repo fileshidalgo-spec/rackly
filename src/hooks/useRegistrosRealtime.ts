@@ -20,8 +20,8 @@
  *     cuando el módulo se monta 2 veces (StrictMode, etc.).
  *   · Debounce REAL de 200 ms: una guía de 20 artículos dispara 20 INSERT
  *     seguidos → 1 solo refresco, no 20.
- *   · dataClient (service_role) para el canal: recibe eventos aunque RLS
- *     restrinja el rol anónimo (mismo criterio que useMovimientosRealtime).
+ *   · dataClient (anon + JWT de sesión) para el canal: Realtime entrega los
+ *     eventos de BD; el refresco lo hace el módulo con su cliente normal.
  *   · El REFRESCO lo hace cada módulo con su propio `cargar` (filtros y
  *     paginación propias): este hook solo AVISA. La decisión de refrescar
  *     (p. ej. solo si está en la página 1) la toma el módulo.

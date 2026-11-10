@@ -268,8 +268,8 @@ function SetNewPasswordScreen({
       // FIX auditoría 2026-10-16: antes usaba el cliente anon (`supabase`) y
       // DESCARTABA el resultado (`.error` nunca se leía) — si RLS lo bloqueaba
       // el flag quedaba en true en silencio y el usuario entraba en bucle de
-      // "debes cambiar tu contraseña". Ahora usa dataClient (service_role,
-      // igual que cambiarPasswordPropia en auth.ts) y registra el error.
+      // "debes cambiar tu contraseña". Ahora usa dataClient (anon + JWT de
+      // sesión, igual que cambiarPasswordPropia en auth.ts) y registra el error.
       try {
         const { data: u } = await supabase.auth.getUser()
         if (u?.user) {

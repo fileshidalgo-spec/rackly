@@ -1093,3 +1093,22 @@ Stage Summary:
 - Evidencia: QA completo local + verificación de sello en el bundle real + E2E navegador producción de Racks→Piso y Piso→Racks con retorno y búsqueda restaurada.
 
 ---
+---
+Task ID: sesion-cerrar-otros-equipos-20261111
+Agent: Main Agent
+Task: «1.1 implementar el botón de cerrar sesión en otros dispositivos, revisar si al implementar la mejora hay errores en la app, bugs, duplicados, que los procesos en cada módulo funcionen correctamente, que cada código esté funcionando bien, que la estructura de datos sea la más eficiente y segura, la base de datos esté funcionando correctamente; 1.2–8 metodología».
+
+Work Log (1.1–8):
+- Contexto: la auditoría integral 2026-11-10 (4d95a6c, veredicto APROBADO) dejó la app verificada; este pedido añade el botón acordado en la consulta previa y RE-VERIFICA la app tras el cambio. Repo local re-sincronizado desde historia obsoleta (backup/local-0fde678 + stash) a origin/main 4d95a6c = producción.
+- 1.2/2 (qué se resuelve): el usuario deja sesiones abiertas en otras computadoras — el botón «Salir» usa signOut() sin scope = GLOBAL (cierra también la sesión actual, sorprende) y no existía forma de cerrar SOLO las demás conservando la actual. DB: auth.sessions muestra 154 sesiones activas acumuladas (36 de la cuenta del usuario desde el 01-nov) — problema real y medible.
+- 3 (no se repite en otras pestañas): signOut aparece en 4 puntos: SesionBar (única barra de sesión de la SPA, page.tsx) + 3 en AuthGate (cambio de contraseña obligatorio, cuenta pendiente, recuperación de sesión — ahí el alcance global es el correcto: fin de sesión completo). El nuevo alcance va SOLO en SesionBar; AuthGate intacto. No hay otras UIs de sesión (una sola SPA).
+- 4 (procedimiento más efectivo): scope 'others' de Supabase Auth — UNA llamada de plataforma revoca todos los refresh tokens del usuario excepto el de la sesión actual; los demás equipos quedan fuera al intentar renovar (máx. jwt_exp 3600 s). Sin DDL, sin RPC, sin RLS: API del proveedor, superficie de riesgo mínima.
+- 5 (sin conflictos): verificado en el código del cliente auth-js: con scope 'others' NO se dispara SIGNED_OUT ni se limpia el almacenamiento local → el equipo actual ni se entera. Botón ADITIVO junto a «Salir» (que conserva su comportamiento global de siempre), con AlertDialog de confirmación (acción destructiva para los otros equipos), estado busy, toasts de resultado y error con mensaje real. 0 cambios en Insumos/Piso/REP/kardex.
+- 6/7 (experto/ordenado): función documentada signOutOtrosDispositivos() en auth.ts (capa única de auth, junto a signOut/resetPassword) — la UI no conoce la API de Supabase. UI en SesionBar.tsx: icono MonitorSmartphone + tooltip, etiqueta «Otros equipos» solo en móvil. Diff: 2 archivos, +79/−2.
+- 8 (accesos + verificación): QA sobre 37432cc: tsc 0 · eslint 0 · 53/53 suites · build OK. DB re-auditada por MAPI: 31/31 tablas CON RLS (0 sin RLS) · rep_ubicaciones 1.869 = 1.773 racks + 96 zonas (4 prepicking) · loncheras 3.642 · catálogo 1.107 · rep_stock 0 filas y 0 negativos · movs insumos 28.960 · sobrecargas rq_atender_item (3/4 args) y rep_registrar_ingreso (4/8 args) vigentes según lo corregido en el fix PGRST203 · bundle de producción sin service_role (fix P1 intacto). Push con PAT renovado (el embebido en el remote seguía muerto) → deploy Cloudflare verificado por version.json.
+
+Stage Summary:
+- Barra de sesión con botón nuevo «Cerrar sesión en otros equipos»: confirmación → cierra TODAS las sesiones del usuario MENOS la actual; los otros equipos quedan fuera en ≤1 h. «Salir» sigue cerrando todo (global) como siempre.
+- Re-verificación post-cambio: SIN errores, SIN duplicados, SIN conflictos con otras pestañas; BD saludable (RLS 31/31, conteos exactos, stock sin negativos).
+- Nota: la cuenta del usuario tenía 36 sesiones acumuladas — puede limpiarlas YA con el botón nuevo en un clic (o pedir un purge total por BD si lo prefiere).
+- Deploy: push 37432cc → producción (verificar version.json).

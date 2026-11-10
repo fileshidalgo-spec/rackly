@@ -1132,3 +1132,22 @@ Stage Summary:
 - Los QR ya impresos de líneas conservadas siguen válidos tras una edición (uuid estable); el guardado de edición reabre el modal de rótulos para imprimir los de las líneas nuevas.
 - Evidencia: E2E transaccional 9/9 en BD de producción + QA completa verde + deploy verificado.
 - Deploy: push 4845c90 → producción (verificar version.json).
+---
+Task ID: nav-volver-modulos-20261111
+Agent: Main Agent
+Task: «cada vez que quiero salir de un modulo tengo que ir hasta inicio — podríamos poner un botón de atrás en cada modulo? y asi retroceder a la selección de modulos y no salir hasta selección de almacenes?» (con captura de Repuestos · Catálogo); 1.2–8 metodología.
+
+Work Log (1.1–8):
+- 1.2 (averiguar la fricción): la jerarquía real es Pre-ingreso (almacén) → selección de módulos → módulo, pero el ÚNICO camino de salida de un módulo era el chip «Inicio» del header — que hace setView('inicio') + setAlmacen(null) y cae SIEMPRE al pre-ingreso: para pasar de, p. ej., Catálogo a Ubicaciones había que re-elegir el almacén (2 clics extra + recarga visual). No existía botón «atrás» por módulo.
+- 2 (qué lo genera): el header fue diseñado como único punto de navegación («el header no duplica accesos directos») y el estado `almacen` solo se conservaba mientras view === 'inicio' tras entrar; ningún módulo tenía retorno de nivel.
+- 3 (no se repite en otras pestañas): inventario de las 12 vistas de módulo (Usuarios, Recepción, Atención, Tránsito, Racks, Piso + 6 rep-*) — TODAS carecían del botón; los botones «Volver» existentes son de OTRO nivel (pestaña de origen: Ocupación/Sectores/deep-links REP) y no se tocan. RepuestosHome/ModulosHome ya tenían «Cambiar de almacén», así que el nivel intermedio estaba completo salvo el retorno módulo→módulos.
+- 4 (procedimiento más efectivo): botón compartido VolverAModulos (ghost + ArrowLeft) en la cabecera de CADA módulo → handler volverAModulos(): setView('inicio') CONSERVANDO `almacen` — así view==='inicio' && almacen seteado renderiza ModulosHome/RepuestosHome (la selección de módulos) sin pasar por el pre-ingreso. El chip «Inicio» del header queda intacto como atajo al pre-ingreso (cambio de almacén) — dos niveles, dos controles, sin ambigüedad. Cero DDL, cero RLS, cero RPC: navegación UI pura.
+- 5 (sin conflictos): handler ADITIVO que solo limpia el puente deep-link de Repuestos (repTarget/repOrigen — mismos que limpia «Inicio»); los estados de pestañas (racksTab/pisoTab/ubicacionOrigen/pisoOrigen) quedan como estaban, igual que hoy al re-entrar vía ModulosHome. Caso especial Usuarios (transversal, se abre SIN almacén desde pre-ingreso): conAlmacen={almacen !== null} → etiqueta «Volver» y destino el pre-ingreso mismo (retrocede un nivel, nunca una pantalla muerta). Los fallbacks de permiso perdido (398-407) no renderizan módulos, así que no duplican el botón. Racks/Piso: botón NO sticky a propósito — el anclaje top-[52px] del TabsList no se mueve (cero riesgo de encime).
+- 6/7 (experto/ordenado): 1 componente nuevo documentado (src/components/rackly/inicio/VolverAModulos.tsx, misma separación de responsabilidades que ModulosHome/PreIngreso: el destino lo decide page.tsx, el componente solo pinta) + 1 handler documentado en page.tsx con la cita literal del pedido; 12 inserciones de 1 línea. Diff total: 2 archivos, +31/−1.
+- 8 (accesos + verificación): QA sobre el feat: tsc 0 errores · eslint 0 · 53/53 suites OK · build OK (solo ruta «/», sin rutas nuevas). Verificación E2E en producción tras deploy: login cuenta de prueba → entrar a módulos de REP e INSUMOS → el botón «Volver a módulos» aparece en los 12 módulos y regresa a la selección de módulos CON el almacén activo (no al pre-ingreso); «Cambiar de almacén» sigue llevando al pre-ingreso y el chip «Inicio» también. BD re-auditada por MAPI sin cambios de esquema: RLS 31/31, conteos de siempre.
+
+Stage Summary:
+- Botón «Volver a módulos» (en móvil también visible) en la cabecera de los 12 módulos: Racks, Piso, Recepción, Atención, Tránsito, Usuarios + Catálogo, Ubicaciones, Recepción, Atención, Tránsito y Movimientos de Repuestos.
+- Retrocede a la selección de módulos del almacén activo (¡no sale a la selección de almacenes!); el «Inicio» del header sigue disponible para cambiar de almacén.
+- Re-verificación post-cambio: SIN errores, SIN duplicados, SIN conflictos con otras pestañas; BD intacta (cambio 100% de navegación).
+- Deploy: push → producción (verificar version.json).

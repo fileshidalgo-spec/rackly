@@ -22,6 +22,7 @@ import { StockIncTab } from '@/components/rackly/kardex/StockIncTab'
 import { StockIncPisoTab } from '@/components/rackly/piso/StockIncPisoTab'
 import { ModulosHome, type VistaModulo } from '@/components/rackly/inicio/ModulosHome'
 import { PreIngreso, type AlmacenRuta } from '@/components/rackly/inicio/PreIngreso'
+import { VolverAModulos } from '@/components/rackly/inicio/VolverAModulos'
 import { type PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { VersionBanner } from '@/components/rackly/VersionBanner'
 import { SELLO_VERSION } from '@/lib/rackly/version-sello'
@@ -261,6 +262,19 @@ function RacklyApp() {
     setView(`rep-${o.vista}` as RepVistaHub)
   }
 
+  /** «Atrás» de la cabecera de CADA módulo: sube UN nivel — a la selección de
+   *  módulos del almacén activo (ModulosHome / RepuestosHome). A diferencia del
+   *  «Inicio» del header, aquí NO se borra `almacen`: el usuario no cae al
+   *  pre-ingreso (selección de almacén) — pide explícita del usuario 2026-11-11
+   *  (“retroceder a la selección de módulos y no salir hasta selección de
+   *  almacenes”). Limpia solo el puente deep-link de Repuestos para no arrastrar
+   *  targets consumidos a la siguiente entrada. */
+  function volverAModulos() {
+    setRepTarget(null)
+    setRepOrigen(null)
+    setView('inicio') // `almacen` se conserva → ModulosHome / RepuestosHome
+  }
+
   useMovimientosRealtime(setMovs, setEstadoMovs)
 
   // Los flujos masivos llaman onCreated([]) solo para forzar re-render: si se
@@ -427,6 +441,7 @@ function RacklyApp() {
         {view === 'usuarios' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} conAlmacen={almacen !== null} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-500 to-slate-700 flex items-center justify-center shadow-md shadow-slate-500/20">
                   <Users className="h-5 w-5 text-white" />
@@ -447,6 +462,7 @@ function RacklyApp() {
         {view === 'recepcion' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-md shadow-amber-500/20">
                   <PackageCheck className="h-5 w-5 text-white" />
@@ -468,6 +484,7 @@ function RacklyApp() {
         {view === 'atencion' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center shadow-md shadow-teal-500/20">
                   <HeartHandshake className="h-5 w-5 text-white" />
@@ -494,6 +511,7 @@ function RacklyApp() {
         {view === 'transito' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 flex items-center justify-center shadow-md shadow-fuchsia-500/20">
                   <Truck className="h-5 w-5 text-white" />
@@ -515,6 +533,7 @@ function RacklyApp() {
         {view === 'rep-catalogo' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-md shadow-amber-500/20">
                   <BookOpen className="h-5 w-5 text-white" />
@@ -535,6 +554,7 @@ function RacklyApp() {
         {view === 'rep-ubicaciones' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-md shadow-violet-500/20">
                   <LayoutGrid className="h-5 w-5 text-white" />
@@ -561,6 +581,7 @@ function RacklyApp() {
         {view === 'rep-recepcion' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-md shadow-emerald-500/20">
                   <PackageCheck className="h-5 w-5 text-white" />
@@ -586,6 +607,7 @@ function RacklyApp() {
         {view === 'rep-atencion' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-cyan-600 flex items-center justify-center shadow-md shadow-teal-500/20">
                   <HeartHandshake className="h-5 w-5 text-white" />
@@ -615,6 +637,7 @@ function RacklyApp() {
         {view === 'rep-transito' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-fuchsia-500 to-purple-600 flex items-center justify-center shadow-md shadow-fuchsia-500/20">
                   <Truck className="h-5 w-5 text-white" />
@@ -635,6 +658,7 @@ function RacklyApp() {
         {view === 'rep-movimientos' && (
           <Card className="border-0 shadow-md shadow-slate-200/50 bg-white">
             <CardHeader className="pb-3">
+              <VolverAModulos onVolver={volverAModulos} className="mb-1" />
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center shadow-md shadow-sky-500/20">
                   <History className="h-5 w-5 text-white" />
@@ -654,6 +678,9 @@ function RacklyApp() {
         {/* ═══ KARDEX RACKS VIEW ═══ */}
         {view === 'racks' && (
           <Tabs value={racksTab} onValueChange={setRacksTab} className="w-full">
+            {/* «Atrás» del módulo — sube a la selección de módulos. Sin sticky a
+                propósito: el anclaje bajo el header se lo queda el TabsList. */}
+            <VolverAModulos onVolver={volverAModulos} className="mb-2" />
             {/* Nav Tabs — pega DEBAJO del header (52px móvil / 64px sm+); en top-0
                 se deslizaría DETRÁS del header (z-50) y se taparían entre sí. */}
             <TabsList className="sticky top-[52px] sm:top-16 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
@@ -1069,6 +1096,9 @@ function RacklyApp() {
         {/* ═══ KARDEX PISO VIEW ═══ */}
         {view === 'piso' && (
           <Tabs value={pisoTab} onValueChange={setPisoTab} className="w-full">
+            {/* «Atrás» del módulo — sube a la selección de módulos (igual que
+                Kardex Racks; sin sticky para no mover el anclaje del TabsList). */}
+            <VolverAModulos onVolver={volverAModulos} className="mb-2" />
             {/* Mismo anclaje bajo el header que Kardex (ver comentario allá). */}
             <TabsList className="sticky top-[52px] sm:top-16 z-40 flex flex-wrap gap-1.5 bg-white/80 backdrop-blur-sm p-0 pb-1 h-auto rounded-none">
               {[

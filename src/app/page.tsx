@@ -542,7 +542,7 @@ function RacklyApp() {
                 <div>
                   <CardTitle className="text-lg">Repuestos · Ubicaciones</CardTitle>
                   <CardDescription>
-                    Mapa físico: pisos, niveles, posiciones con loncheras A/B, pasillos, zonas y pre-picking.
+                    Mapa físico en 2 sectores: RACKS (R01-R36, pisos 1-2) y ZONAS (A/B/C/D, contenedor, pre-picking y recepción) con loncheras A/B y ocupación en vivo.
                   </CardDescription>
                 </div>
               </div>

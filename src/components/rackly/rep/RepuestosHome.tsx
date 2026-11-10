@@ -50,7 +50,7 @@ const PUERTAS: PuertaDef[] = [
     vista: 'ubicaciones',
     nombre: 'Ubicaciones',
     descripcion:
-      'Mapa físico: pisos, niveles, posiciones con loncheras A/B, pasillos, zonas y pre-picking.',
+      'Mapa físico en 2 sectores: RACKS (R01-R36, pisos 1-2) y ZONAS (A/B/C/D, contenedor, pre-picking y recepción) con loncheras A/B y ocupación en vivo.',
     icono: LayoutGrid,
     gradiente: 'from-violet-500 to-purple-600',
     sombra: 'shadow-violet-500/25',

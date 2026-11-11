@@ -1170,3 +1170,22 @@ Stage Summary:
 - Los lotes conservan su fecha de vencimiento en el destino (FEFO server-side por parte); los INC nunca se mueven en bloque; el resumen del modal y del toast reporta artículos, unidades, ajustes y saldos que quedan.
 - Evidencia: E2E transaccional 9/9 en BD de producción + 25 checks unitarios + QA completa verde.
 - Deploy: push → producción (verificar version.json).
+---
+Task ID: rq-editar-autocomplete-20261111
+Agent: Main Agent
+Task: «me reportan esta situación en almacén insumos, ing cuando quiero agregar no jala el código su descripción (captura: Editar RQ 0000194674, fila con código 57347 sin descripción); revisar errores/bugs/duplicados/procesos/códigos/estructura de datos/BD; 1.2–8 metodología».
+
+Work Log (1.2–8):
+- 1.2 (averiguar el error): en Editar RQ (Atención a Línea, almacén INSUMOS), tipear el código de un material NO completaba descripción ni unidad — la descripción solo llegaba si el usuario HACÍA CLIC en la lista de sugerencias; al tipear el código completo y pasar al siguiente campo (Enter/Tab/clic fuera) la fila quedaba con código y cantidad pero descripción vacía (exactamente la fila 57347 de la captura).
+- 2 (qué lo genera): RqEditarDialog solo adoptaba el catálogo vía adoptarCatalogo (clic en sugerencia). El ALTA de RQ (RqFotoForm) sí resuelve en cada tecla con buscarCatalogo() — política «al colocar el código que jale la descripción y und del catálogo» (petición explícita del usuario, implementada solo en el alta). Datos descartados como causa: código 57347 EXISTE en catálogo (STRETCH DE ALTO RENDIMIENTO 20 · KG · stock 1 896); catálogo 1 107 filas, 0 sin descripción, 0 duplicados, muy por debajo del tope de paginación (50 K).
+- 3 (no se repite en otras pestañas): auditoría de los 9 puntos de entrada de código del app — RqFotoForm ✓ (tecla), RalFotoForm ✓, DevolucionFotoForm ✓, RecepcionItemsEditor ✓, MovimientoForm ✓ (2 puntos), TrasladoTab ✓, StockTab ✓, PisoStockTab ✓ (solo lectura); StockIncTab/StockIncPisoTab son pestañas de consulta sin alta de código. El gap era EXCLUSIVO de RqEditarDialog.
+- 4 (procedimiento más efectivo): replicar el patrón probado del alta dentro del editor — resolver buscarCatalogo() EN CADA TECLA del código (tolerante: mayúsculas, espacios, puntuación suelta, ceros a la izquierda, regla histórica 09==9 con desambiguación). Match → descripción+unidad OFICIALES del catálogo; sin match → se limpia SOLO el texto que el autocompletado puso en la sesión (nuevo flag `auto` por fila); lo guardado en la RQ o tipeado a mano jamás se destruye. Extra: si el catálogo llega tarde (diálogo abierto con cache vacío), un efecto completa las filas con código tipeado y descripción vacía cuando el fetch termina.
+- 5 (sin conflictos): el flag `auto` vive solo en el estado del componente — el payload para la RPC rq_editar_rq NO cambia (filasAItems ignora el flag); validarEdicionRq intacto (congelados de atendidos, cantidad ≥ atendida, sin duplicados); el resumen pre-guardado muestra las descripciones autocompletadas como cambios (transparente antes de confirmar); sugerencias por clic intactas (adoptarCatalogo también marca auto); 0 cambios en lib/BD/RLS.
+- 6/7 (experto/ordenado): un solo archivo tocado (RqEditarDialog.tsx, +58/−7): import buscarCatalogo, flag `auto` en FilaEdicion, editarCodigo() documentado junto a adoptarCatalogo, efecto de catálogo tardío, onChange de descripción marca texto manual (auto=false). Sin cambios de contratos, sin dependencias nuevas.
+- 8 (accesos): QA local verde (tsc 0 · eslint 0 · 54/54 suites · build OK) + BD de producción verificada por MAPI: RLS 31/31 tablas con rowsecurity=true, 0 sin RLS; catálogo 1 107 filas = 1 107 códigos distintos (0 duplicados). Deploy: push cd0c9dd → producción (sello verificado en version.json) + E2E del flujo Editar RQ en la app publicada.
+
+Stage Summary:
+- Editar RQ ahora se comporta igual que el alta: tipeas el código (aunque venga con espacios, punto o ceros) y la descripción y unidad OFICIALES aparecen solas al instante; el clic en sugerencias sigue funcionando para códigos parciales.
+- Nunca borra lo que el usuario escribió a mano ni lo guardado en la RQ; solo reemplaza texto que él mismo autocompletó en la sesión.
+- Evidencia: fila 57347 de la captura → STRETCH DE ALTO RENDIMIENTO 20 · KG autocompletado; 54/54 suites; RLS 31/31; 0 duplicados en catálogo.
+- Deploy: push → producción (verificar version.json).

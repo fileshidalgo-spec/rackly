@@ -52,6 +52,7 @@ import { toast } from 'sonner'
 import { Loader2, ArrowRightLeft, PackageSearch, AlertTriangle, ArrowUpFromLine, Package, MapPin, TriangleAlert, CheckCircle2 } from 'lucide-react'
 import { formatDate, isExpired, isExpiringSoon, extractError, isInsufficientStockError, esTipoEntrada } from '@/lib/utils'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
+import { TrasladoUbicacionTab, ModoTrasladoSelector, type ModoTraslado } from './TrasladoUbicacionTab'
 
 type LocStock = {
   bloque: string
@@ -85,6 +86,10 @@ export function TrasladoTab() {
   // alerta de destino ocupado también ofrece el registro en la RQ (sin contexto
   // RQ el confirmador no aparece jamás; es regularización pura).
   const [rqConfirmer, setRqConfirmer] = useState<RqSalidaDetectada | null>(null)
+
+  // Modo del traslado: «articulo» (clásico, 1 por 1) o «ubicacion» (TODO el
+  // contenido de una posición de una vez — pedido del usuario 2026-11-11).
+  const [modoTraslado, setModoTraslado] = useState<ModoTraslado>('articulo')
 
   const [step, setStep] = useState<1 | 2>(1)
   const [codigo, setCodigo] = useState('')
@@ -222,6 +227,22 @@ export function TrasladoTab() {
 
   // Early-return de carga: DESPUÉS de todos los hooks (Rules of Hooks)
   if (!perfil) return <div className="p-4 text-muted-foreground animate-pulse">Cargando...</div>
+
+  // Modo «Ubicación completa»: componente propio con estado aislado (el modo
+  // por artículo conserva su estado al volver). Retorno tras TODOS los hooks.
+  if (modoTraslado === 'ubicacion') {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <p className="text-sm text-muted-foreground">
+            Mueve TODO el contenido de una ubicación a otra en una sola operación.
+          </p>
+          <ModoTrasladoSelector modo={modoTraslado} onChange={setModoTraslado} />
+        </div>
+        <TrasladoUbicacionTab />
+      </div>
+    )
+  }
 
   const origin = locations.find((l) => makeOriginKey(l) === selectedOrigin)
 
@@ -541,9 +562,12 @@ export function TrasladoTab() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Busca un código, elige la ubicación de origen y destino. Confirma el traslado.
-      </p>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-sm text-muted-foreground">
+          Busca un código, elige la ubicación de origen y destino. Confirma el traslado.
+        </p>
+        <ModoTrasladoSelector modo={modoTraslado} onChange={setModoTraslado} />
+      </div>
 
       <CatalogoSearchInput
         onPick={handleCatalogoPick}

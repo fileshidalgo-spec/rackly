@@ -1262,6 +1262,262 @@ export async function trasladarMovimiento(
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TRASLADO DE UBICACIÓN COMPLETA (pedido usuario 2026-11-11): mueve TODO el
+// contenido de una posición a otra en UNA transacción (RPC atómica
+// registrar_traslado_ubicacion_kardex), con cantidad ajustable por artículo:
+//   · menos → deja saldo en origen (sin filas fantasma)
+//   · más   → la RPC deriva el ajuste y registra ingreso en origen (no se
+//             confía en el cliente para el cálculo)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Artículo a trasladar en el traslado de ubicación completa. */
+export type TrasladoUbicacionItem = {
+  codigo: string
+  descripcion: string
+  un: string
+  /** Cantidad a mover: ≤ stock deja saldo; > stock genera ajuste en la RPC. */
+  cantidad: number
+  proveedor?: string
+}
+
+export type TrasladoUbicacionResultado = {
+  success: boolean
+  articulos: number
+  filas: number
+  por_articulo: Array<{ codigo: string; trasladado: number; ajuste: number; quedan: number }>
+  /** Relleno SOLO por el fallback (RPC ausente): artículos que quedaron pendientes. */
+  pendientes?: Array<{ codigo: string; cantidad: number }>
+  viaFallback?: boolean
+}
+
+export type TrasladoUbicacionParams = {
+  origen: { bloque: string; torre: string; piso: string; posicion: string }
+  destino: { bloque: string; torre: string; piso: string; posicion: string }
+  turno: Turno
+  usuarioId: string
+  usuarioNombre?: string
+  usuarioCorreo?: string
+  items: TrasladoUbicacionItem[]
+}
+
+/** Error de negocio de la RPC con código `XXX|detalle` — la UI muestra `detail`. */
+export class TrasladoUbicacionError extends Error {
+  code: string
+  detail: string
+  constructor(code: string, detail: string) {
+    super(detail)
+    this.name = 'TrasladoUbicacionError'
+    this.code = code
+    this.detail = detail
+  }
+}
+
+/** Extrae `CODIGO|detalle` de un error PostgREST de la RPC (null si no matchea). */
+export function parseTrasladoUbicacionError(msg: string): TrasladoUbicacionError | null {
+  const codes = ['NO_AUTORIZADO', 'ITEMS_VACIOS', 'TOO_MANY_ITEMS', 'SAME_ORIGIN_DESTINATION',
+    'CANTIDAD_INVALIDA', 'SIN_STOCK_ORIGEN', 'RESIDUO_NO_MOVIDO']
+  for (const c of codes) {
+    if (msg.startsWith(c + '|')) {
+      return new TrasladoUbicacionError(c, msg.slice(c.length + 1))
+    }
+  }
+  return null
+}
+
+/**
+ * Reparto FEFO de `cantidad` entre los lotes de un artículo (walk de fecha
+ * próxima → lejana). PURE — la usa el fallback y los tests.
+ *
+ * - `cantidad <= Σlotes` → tomas exactas; el resto de lotes queda en origen.
+ * - `cantidad > Σlotes`  → toma TODO y devuelve `ajuste` (> 0) para que el
+ *   caller lo registre como ingreso en origen (nunca inventa stock aquí).
+ */
+export function repartoFefoLotes(
+  cantidad: number,
+  lotes: Array<Pick<LoteInfo, 'fVencimiento' | 'cantidad'> & Partial<Pick<LoteInfo, 'lotesFisicos'>>>
+): { tomas: Array<{ fVencimiento: string; cantidad: number; loteFisicos?: string[] }>; ajuste: number } {
+  const round3 = (n: number) => Math.round(n * 1000) / 1000
+  const pedidos = round3(cantidad)
+  const ordenados = [...lotes].sort((a, b) => {
+    if (a.fVencimiento && b.fVencimiento) return a.fVencimiento.localeCompare(b.fVencimiento)
+    if (a.fVencimiento) return -1
+    if (b.fVencimiento) return 1
+    return 0
+  })
+  const tomas: Array<{ fVencimiento: string; cantidad: number; loteFisicos?: string[] }> = []
+  let restante = pedidos
+  for (const lote of ordenados) {
+    if (restante <= 1e-9) break
+    const toma = Math.min(restante, round3(lote.cantidad))
+    if (toma <= 1e-9) continue
+    tomas.push({
+      fVencimiento: lote.fVencimiento || '',
+      cantidad: round3(toma),
+      ...(lote.lotesFisicos && lote.lotesFisicos.length === 1 ? { loteFisicos: lote.lotesFisicos } : {}),
+    })
+    restante = round3(restante - toma)
+  }
+  return { tomas, ajuste: restante > 1e-9 ? restante : 0 }
+}
+
+/**
+ * Construye los items del traslado de ubicación desde el contenido de
+ * stockEnUbicacion() + las cantidades editadas en la UI. PURE.
+ *
+ * - EXCLUYE artículos INC (cuarentena: se gestionan por su flujo, no se mueven
+ *   en bloque) → `omitidosInc`.
+ * - Artículos con cantidad ≤ 0 simplemente NO se mueven (el usuario los dejó
+ *   en origen) → no son error.
+ */
+export function itemsTrasladoDesdeUbicacion(
+  contenido: StockEnUbicacion[],
+  cantidades: Record<string, string>
+): { items: TrasladoUbicacionItem[]; lotesPorCodigo: Record<string, LoteInfo[]>; omitidosInc: StockEnUbicacion[] } {
+  const items: TrasladoUbicacionItem[] = []
+  const lotesPorCodigo: Record<string, LoteInfo[]> = {}
+  const omitidosInc: StockEnUbicacion[] = []
+  for (const art of contenido) {
+    if (art.codigoInc) {
+      omitidosInc.push(art)
+      continue
+    }
+    const raw = cantidades[art.codigo] ?? String(art.stock)
+    const cantidad = Math.round((parseFloat(raw) || 0) * 1000) / 1000
+    if (cantidad <= 0) continue
+    items.push({
+      codigo: art.codigo,
+      descripcion: art.descripcion,
+      un: art.un,
+      cantidad,
+      proveedor: art.proveedor,
+    })
+    if (art.lotes && art.lotes.length > 1) lotesPorCodigo[art.codigo] = art.lotes
+  }
+  return { items, lotesPorCodigo, omitidosInc }
+}
+
+/**
+ * Traslado de ubicación completa — RPC atómica (registrar_traslado_ubicacion_kardex).
+ * All-or-nothing: si UN artículo falla la validación, NO se escribe ninguna fila.
+ *
+ * opts.refetch (default true): re-descarga movimientos al final; el caller
+ * TrasladoUbicacionTab usa refetch:false y refresca por su cuenta (mismo
+ * contrato que trasladarMovimiento, FIX auditoría 2026-10-22 P2).
+ */
+export async function trasladarUbicacionCompleta(
+  p: TrasladoUbicacionParams,
+  opts?: {
+    refetch?: boolean
+    /** Desglose FEFO en pantalla (llena la UI): lo consume SOLO el fallback. */
+    lotesPorCodigo?: Record<string, LoteInfo[]>
+    /** Fecha FEFO por código para artículos de un solo lote (fallback). */
+    vencPorCodigo?: Record<string, string>
+  }
+): Promise<TrasladoUbicacionResultado> {
+  const refetch = opts?.refetch !== false
+  if (!p.items.length) throw new TrasladoUbicacionError('ITEMS_VACIOS', 'No hay artículos para trasladar')
+
+  const rpcArgs = {
+    p_orig_bloque: p.origen.bloque,
+    p_orig_torre: p.origen.torre,
+    p_orig_piso: p.origen.piso,
+    p_orig_pos: p.origen.posicion,
+    p_dest_bloque: p.destino.bloque,
+    p_dest_torre: p.destino.torre,
+    p_dest_piso: p.destino.piso,
+    p_dest_pos: p.destino.posicion,
+    p_turno: p.turno,
+    p_usuario_id: p.usuarioId,
+    p_usuario_nombre: p.usuarioNombre ?? null,
+    p_usuario_correo: p.usuarioCorreo ?? null,
+    p_items: p.items.map((i) => ({
+      codigo: i.codigo,
+      descripcion: i.descripcion,
+      un: i.un,
+      cantidad: i.cantidad,
+      ...(i.proveedor ? { proveedor: i.proveedor } : {}),
+    })),
+  }
+
+  let res = await dataClient.rpc('registrar_traslado_ubicacion_kardex', rpcArgs)
+  if (res.error) {
+    const msg = res.error.message || ''
+    const negocio = parseTrasladoUbicacionError(msg)
+    if (negocio) throw negocio
+    const code = (res.error as unknown as Record<string, string>).code || ''
+    const esRpcAusente = code === '42883' || code === 'PGRST202'
+      || msg.includes('Could not find') || msg.includes('does not exist')
+    if (!esRpcAusente) throw res.error
+    console.warn('[trasladarUbicacionCompleta] RPC ausente — usando fallback por artículo (ejecutar 20261111_traslado_ubicacion_completa.sql).')
+  }
+
+  if (!res.error) {
+    const data = res.data as TrasladoUbicacionResultado
+    if (!refetch) return { ...data, viaFallback: false }
+    try {
+      await refrescarPostEscritura()
+    } catch (fetchErr) {
+      console.warn('[trasladarUbicacionCompleta] RPC exitosa pero refresco falló. Traslado ya registrado.', fetchErr)
+    }
+    return { ...data, viaFallback: false }
+  }
+
+  // ── Fallback: sin RPC → N traslados unitarios (reparto FEFO local) ──
+  // Mismo contrato que TrasladoTab.doTraslado: cada lote conserva su fecha; el
+  // excedente (ajuste) va en UNA llamada extra con cantidadAjuste (ingreso en
+  // origen + salida + traslado del sobrante).
+  const resultado: TrasladoUbicacionResultado = {
+    success: true, articulos: 0, filas: 0, por_articulo: [], pendientes: [], viaFallback: true,
+  }
+  for (const item of p.items) {
+    const lotes = opts?.lotesPorCodigo?.[item.codigo]
+    const { tomas, ajuste } = repartoFefoLotes(item.cantidad, lotes ?? [{
+      fVencimiento: opts?.vencPorCodigo?.[item.codigo] ?? '',
+      cantidad: item.cantidad,
+    }])
+    const llamadas: Array<{ cantidad: number; fVencimiento: string; loteFisicos?: string[]; ajuste?: number }> =
+      tomas.map((t) => ({ cantidad: t.cantidad, fVencimiento: t.fVencimiento, loteFisicos: t.loteFisicos }))
+    if (ajuste > 0) {
+      llamadas.push({
+        cantidad: ajuste,
+        fVencimiento: tomas[0]?.fVencimiento ?? opts?.vencPorCodigo?.[item.codigo] ?? '',
+        ajuste,
+      })
+    }
+    let hechasItem = 0
+    try {
+      for (const llamada of llamadas) {
+        await trasladarMovimiento({
+          codigo: item.codigo,
+          descripcion: item.descripcion,
+          un: item.un,
+          cantidad: llamada.cantidad,
+          origen: p.origen,
+          destino: p.destino,
+          turno: p.turno,
+          usuarioId: p.usuarioId,
+          usuarioNombre: p.usuarioNombre,
+          usuarioCorreo: p.usuarioCorreo,
+          fVencimiento: llamada.fVencimiento,
+          proveedor: item.proveedor,
+          ...(llamada.loteFisicos ? { lote: llamada.loteFisicos[0] } : {}),
+          ...(llamada.ajuste ? { cantidadAjuste: llamada.ajuste } : {}),
+        }, { refetch: false })
+        resultado.filas += 2
+        hechasItem++
+      }
+      resultado.articulos++
+      resultado.por_articulo.push({ codigo: item.codigo, trasladado: item.cantidad, ajuste, quedan: 0 })
+    } catch (err) {
+      if (hechasItem === 0) throw err
+      const movido = llamadas.slice(0, hechasItem).reduce((s, l) => s + l.cantidad, 0)
+      resultado.pendientes!.push({ codigo: item.codigo, cantidad: Math.round((item.cantidad - movido) * 1000) / 1000 })
+    }
+  }
+  return resultado
+}
+
 /**
  * Elimina TODOS los movimientos de la tabla.
  * Usa service_role para bypassear RLS.

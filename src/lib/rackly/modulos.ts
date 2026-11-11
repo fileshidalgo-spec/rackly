@@ -293,6 +293,54 @@ export async function listarRecepciones(
 }
 
 /**
+ * Trae TODAS las filas de recepcion_registros en un RANGO de fechas de
+ * documento [desde, hasta] (inclusivo, columna `fecha`) de UN tipo_recepcion
+ * (pestaña: 'guia' | 'devolucion'). Sirve al Excel por rango (pedido
+ * 2026-11-11: "un Excel por el rango de fechas que seleccione y por los
+ * turnos dentro de esa selección") — el histórico completo, no solo la
+ * página visible.
+ *
+ * Paginado 1000/lote con tope MAX_FILAS_RANGO_RECEPCION (50 000) — el
+ * mismo patrón de fetchCatalogo. El FILTRO POR TURNO se aplica en el
+ * cliente (recepcion-excel-rango): el turno se DERIVA del created_at con
+ * la regla de Lima (lib/rackly/turno.ts) y NO existe como columna.
+ */
+export const MAX_FILAS_RANGO_RECEPCION = 50_000
+const LOTE_RANGO_RECEPCION = 1000
+
+export async function listarRecepcionesRango(
+  desde: string,
+  hasta: string,
+  tipoRecepcion: string
+): Promise<RegistroRecepcion[]> {
+  const d = desde.trim()
+  const h = hasta.trim()
+  if (!d || !h) throw new Error('Rango de fechas incompleto: indica desde y hasta.')
+  if (d > h) throw new Error('El rango es inválido: la fecha DESDE es mayor que HASTA.')
+  const tipo = tipoRecepcion.trim()
+  if (!tipo) throw new Error('Tipo de recepción requerido (guía o devolución).')
+  const todas: RegistroRecepcion[] = []
+  for (let page = 0; page < MAX_FILAS_RANGO_RECEPCION / LOTE_RANGO_RECEPCION; page++) {
+    const from = page * LOTE_RANGO_RECEPCION
+    let q = dataClient
+      .from('recepcion_registros')
+      .select('*')
+      .eq('tipo_recepcion', tipo)
+      .gte('fecha', d)
+      .lte('fecha', h)
+      .order('fecha', { ascending: false })
+      .order('created_at', { ascending: false })
+      .range(from, from + LOTE_RANGO_RECEPCION - 1)
+    const { data, error } = await q
+    if (error) throw error
+    const filas = data ?? []
+    todas.push(...filas.map(mapRecepcion))
+    if (filas.length < LOTE_RANGO_RECEPCION) break
+  }
+  return todas
+}
+
+/**
  * Trae TODAS las filas registradas de UNA MISMA guía/documento. Sirve para
  * la impresión de rótulos agrupada: el modal recibe la guía completa (no
  * solo la fila clickeada) y imprime todos sus artículos en UN solo trabajo.

@@ -40,8 +40,14 @@ import {
 import type { EncabezadoRotulo } from '@/lib/rackly/zebra'
 import { exportarGuiaExcel } from '@/lib/rackly/guia-excel'
 import {
+  exportarRangoExcel,
+  filtrarPorTurnos,
+} from '@/lib/rackly/recepcion-excel-rango'
+import type { TurnoRecepcion } from '@/lib/rackly/turno'
+import {
   listarRecepciones,
   listarRecepcionesPorDocumento,
+  listarRecepcionesRango,
   crearRecepciones,
   guardarEdicionGuia,
   cambiarEstadoGuia,
@@ -79,6 +85,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Table,
   TableBody,
@@ -142,6 +156,12 @@ function hoyISO(): string {
   const mes = String(d.getMonth() + 1).padStart(2, '0')
   const dia = String(d.getDate()).padStart(2, '0')
   return `${d.getFullYear()}-${mes}-${dia}`
+}
+
+/** Primer día del mes en curso (default «Desde» del Excel por rango). */
+function inicioDeMesISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
 }
 
 export function RecepcionModule() {
@@ -217,6 +237,15 @@ export function RecepcionModule() {
   // archivo a la vez; el botón de ESA guía muestra el spinner mientras se
   // trae la guía completa de la BD y se genera el libro).
   const [exportando, setExportando] = useState<string | null>(null)
+  // Exportación a EXCEL POR RANGO (pedido 2026-11-11): un libro con TODOS
+  // los documentos del rango de fechas seleccionado y SOLO los turnos
+  // marcados. Defaults: mes en curso, ambos turnos.
+  const [rangoOpen, setRangoOpen] = useState(false)
+  const [rangoDesde, setRangoDesde] = useState(inicioDeMesISO())
+  const [rangoHasta, setRangoHasta] = useState(hoyISO())
+  const [rangoT1, setRangoT1] = useState(true)
+  const [rangoT2, setRangoT2] = useState(true)
+  const [rangoGenerando, setRangoGenerando] = useState(false)
   const [guardados, setGuardados] = useState<{
     rotulos: RotuloAImprimir[]
     encabezado: EncabezadoRotulo
@@ -442,6 +471,58 @@ export function RecepcionModule() {
       toast.error('No se pudo generar el Excel', { description: message })
     } finally {
       setExportando(null)
+    }
+  }
+
+  /**
+   * Excel CONSOLIDADO por RANGO (pedido 2026-11-11: "un Excel por el rango
+   * de fechas que seleccione y por los turnos dentro de esa selección"):
+   * trae TODAS las filas del rango (paginado, no solo la página visible),
+   * filtra por los turnos marcados (regla de Lima por hora de registro) y
+   * genera UN libro Resumen+Artículos. Respeta la PESTAÑA activa (guías ≠
+   * devoluciones) — la misma separación del listado.
+   */
+  async function exportarExcelRango() {
+    if (rangoGenerando) return
+    if (rangoDesde > rangoHasta) {
+      toast.error('Rango inválido', { description: 'La fecha DESDE es mayor que HASTA.' })
+      return
+    }
+    const turnos: TurnoRecepcion[] = [
+      ...(rangoT1 ? (['T1'] as const) : []),
+      ...(rangoT2 ? (['T2'] as const) : []),
+    ]
+    if (turnos.length === 0) {
+      toast.error('Sin turnos', { description: 'Marca al menos un turno (T1 o T2) para exportar.' })
+      return
+    }
+    setRangoGenerando(true)
+    try {
+      const filasRango = await listarRecepcionesRango(rangoDesde, rangoHasta, tipoActivo)
+      const filasSel = filtrarPorTurnos(filasRango, turnos)
+      if (filasSel.length === 0) {
+        toast.info('No hay registros en ese rango', {
+          description: `${rangoDesde} al ${rangoHasta} · turnos ${turnos.join(' + ')} — prueba ampliando el rango o marcando el otro turno.`,
+        })
+        return
+      }
+      const r = await exportarRangoExcel({
+        desde: rangoDesde,
+        hasta: rangoHasta,
+        turnos,
+        etiquetaSeccion: esSeccionDevo ? 'Devoluciones de línea' : 'Guías de recepción',
+        prefijoArchivo: esSeccionDevo ? 'Devoluciones' : 'Recepcion',
+        filas: filasSel,
+      })
+      toast.success(`Excel descargado: ${r.nombre}`, {
+        description: `${r.guias} documento(s) · ${r.filas} fila(s) · ${rangoDesde} al ${rangoHasta} · turnos ${turnos.join(' + ')}`,
+      })
+      setRangoOpen(false)
+    } catch (err: unknown) {
+      const message = mensajeError(err)
+      toast.error('No se pudo generar el Excel por rango', { description: message })
+    } finally {
+      setRangoGenerando(false)
     }
   }
 
@@ -1376,6 +1457,16 @@ export function RecepcionModule() {
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           Buscar
         </Button>
+        <Button
+          variant="outline"
+          onClick={() => setRangoOpen(true)}
+          disabled={rangoGenerando}
+          className="gap-2"
+          title="Un solo Excel con TODOS los documentos del rango de fechas y los turnos que elijas"
+        >
+          <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+          Excel por rango
+        </Button>
       </div>
 
       {/* ── EN VIVO: la lista se refresca sola (realtime + polling de
@@ -1815,6 +1906,87 @@ export function RecepcionModule() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Excel POR RANGO DE FECHAS + TURNOS (pedido 2026-11-11) ── */}
+      <Dialog open={rangoOpen} onOpenChange={(o) => !rangoGenerando && setRangoOpen(o)}>
+        <DialogContent className="max-w-[calc(100vw-1rem)] sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+              Excel por rango de fechas
+            </DialogTitle>
+            <DialogDescription>
+              Un solo libro con TODO lo registrado en el rango: hoja Resumen (por turno y por
+              documento) + hoja Artículos con todas las filas. Se respeta la pestaña activa
+              ({esSeccionDevo ? 'devoluciones' : 'guías'}).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Desde</span>
+                <Input
+                  type="date"
+                  className="h-9"
+                  value={rangoDesde}
+                  max={rangoHasta}
+                  onChange={(e) => setRangoDesde(e.target.value)}
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hasta</span>
+                <Input
+                  type="date"
+                  className="h-9"
+                  value={rangoHasta}
+                  min={rangoDesde}
+                  onChange={(e) => setRangoHasta(e.target.value)}
+                />
+              </label>
+            </div>
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Turnos</span>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-emerald-600"
+                    checked={rangoT1}
+                    onChange={(e) => setRangoT1(e.target.checked)}
+                  />
+                  T1 (07:20–19:20)
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-emerald-600"
+                    checked={rangoT2}
+                    onChange={(e) => setRangoT2(e.target.checked)}
+                  />
+                  T2 (19:21–07:19)
+                </label>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500 rounded-lg border border-slate-100 bg-slate-50 p-2">
+              El rango filtra por la FECHA del documento; el turno se calcula por la HORA de
+              registro (regla del almacén, hora Lima) — la misma del Excel de cada guía.
+            </p>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setRangoOpen(false)} disabled={rangoGenerando}>
+              Cancelar
+            </Button>
+            <Button
+              className="gap-1.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-white hover:from-emerald-600 hover:to-teal-700"
+              disabled={rangoGenerando}
+              onClick={() => void exportarExcelRango()}
+            >
+              {rangoGenerando ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+              Exportar Excel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -134,8 +134,10 @@ export function filasGuiaATablaTurno(filas: FilaRegistrada[]): (string | number)
 }
 
 // ─── Estilos compartidos (xlsx-js-style) ─────────────────────────────
-/** Paleta corporativa sobria para impresión (grises + acento oscuro). */
-const EST = {
+/** Paleta corporativa sobria para impresión (grises + acento oscuro).
+ *  COMPARTIDOS: guia-excel y recepcion-excel-rango (Excel por rango de
+ *  fechas/turnos) usan LA MISMA paleta — un solo look corporativo. */
+export const EST = {
   titulo: {
     font: { bold: true, sz: 16, color: { rgb: 'FFFFFF' } },
     fill: { fgColor: { rgb: '1E3A5F' } },
@@ -211,8 +213,9 @@ type Celda = { v: string | number; t: string; s?: object }
 /** Clon profundo de la plantilla de estilo: el writer de xlsx-js-style
  *  NORMALIZA los estilos mutándolos en sitio (rgb → "FF…", añade bgColor).
  *  Asignar la plantilla compartida contaminaría TODAS las celdas y los
- *  exportes siguientes de la sesión — cada celda recibe SU copia. */
-const clonar = <T,>(o: T): T => JSON.parse(JSON.stringify(o)) as T
+ *  exportes siguientes de la sesión — cada celda recibe SU copia.
+ *  Exportado para el Excel por rango (misma regla, mismo clon). */
+export const clonar = <T,>(o: T): T => JSON.parse(JSON.stringify(o)) as T
 
 /** Construye la HOJA "Guía" (PURO, exportado para tests): imprimible y
  *  con estilos. No escribe archivos — solo arma la WorkSheet. */

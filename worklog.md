@@ -1189,3 +1189,23 @@ Stage Summary:
 - Nunca borra lo que el usuario escribió a mano ni lo guardado en la RQ; solo reemplaza texto que él mismo autocompletó en la sesión.
 - Evidencia: fila 57347 de la captura → STRETCH DE ALTO RENDIMIENTO 20 · KG autocompletado; 54/54 suites; RLS 31/31; 0 duplicados en catálogo.
 - Deploy: push → producción (verificar version.json).
+---
+Task ID: recepcion-excel-rango-20261111
+Agent: Main Agent
+Task: «Actualmente en recepción se genera un Excel por cada guía, podría generar un Excel por el rango de fechas que seleccione y por los turnos dentro de esa selección; revisar errores/bugs/duplicados/procesos/códigos/estructura de datos/BD; 1.2–8 metodología; 9 Almacén INSUMOS; 10 Módulo Recepción».
+
+Work Log (1.2–8):
+- 1.2 (averiguar la fricción): el módulo Recepción exporta SOLO guía por guía (botón Excel por fila → exportarGuiaExcel). Consolidar un mes exige descargar N archivos uno a uno.
+- 2 (qué lo genera): el export existente nació POR DOCUMENTO (pedido anterior "que la guía genere un excel"). No existía una vista agregada por rango ni un fetch que trajera el histórico completo — listarRecepciones pagina a 50 filas para la LISTA, no para reportes.
+- 3 (no se repite en otras pestañas): inventario de los 4 generadores Excel del app — guia-excel (por guía, se conserva), atencion-excel (reporte global del Dashboard, sin rango de fechas por turno), FefoTab (1 hoja). El gap era exclusivo de Recepción; la regla del turno ya estaba centralizada en lib/rackly/turno.ts (calcularTurnoRecepcion, Lima) y se REUTILIZA — cero duplicación de la regla.
+- 4 (procedimiento más efectivo): misma arquitectura probada de guia-excel/atencion-excel — armado PURO en lib + writeFile en el navegador (xlsx-js-style). Data access nuevo listarRecepcionesRango en modulos.ts (paginado 1000/lote, tope 50 000 filas, filtro tipo_recepcion + rango INCLUSIVO de fecha de documento, orden fecha/created_at DESC — cubierto por el índice idx_recepcion_tipo_fecha). El filtro por TURNO se aplica en el cliente (el turno NO es columna: se deriva del created_at con la regla de Lima) — sin duplicar la regla en SQL.
+- 5 (sin conflictos): el Excel por guía queda INTACTO (mismo botón por fila); el nuevo botón es ADITIVO en la barra de filtros; el export respeta la PESTAÑA activa (guías ≠ devoluciones, misma separación del listado); 0 cambios en RLS/BD/permisos (solo SELECT); los estilos corporativos (EST + clonar) se COMPARTEN desde guia-excel — un solo look, sin paletas duplicadas.
+- 6/7 (experto/ordenado): lib nueva recepcion-excel-rango.ts (filtrarPorTurnos + agruparTurnos + filasRangoAExcel + guiasRangoAExcel + nombreArchivoRango + construirHojaResumenRango + construirLibroRango + exportarRangoExcel — puras las primeras, testables); Hoja Resumen = filtros aplicados + RESUMEN POR TURNO (documentos/filas/cantidad de T1 y T2) + tabla de TODOS los documentos; Hoja Artículos = todas las filas con contexto de documento (fecha/tipo/Nº/empresa/placa) + paleta a su columna + turno por fila. UI: diálogo Desde/Hasta (default mes en curso) + checkboxes T1/T2 + nota de la regla del turno; guardas rango invertido y sin turnos; toast con conteos. Suite nueva test_recepcion_excel_rango.js (32 checks, incluye generar el .xlsx REAL y releerlo).
+- 8 (accesos): QA local verde (tsc 0 · eslint 0 · 55/55 suites · build OK); BD por MAPI: RLS 31/31, índice de rango presente, recepcion_registros 4 882 filas (4 875 guías + 7 devoluciones) — un mes de histórico entra holgado en el fetch paginado; deploy verificado por version.json + E2E en la app publicada (abrir diálogo, exportar con ambos turnos y solo T1, toasts con conteos correctos).
+
+Stage Summary:
+- Recepción ahora tiene «Excel por rango»: eliges Desde/Hasta (default: mes en curso), marcas los turnos (T1/T2) y descargas UN solo libro con todo — el resumen por turno muestra cuántos documentos/filas/cantidad dejó cada turno dentro de tu selección.
+- El rango filtra por la FECHA del documento; el turno por la HORA de registro (T1 07:20–19:20 · T2 19:21–07:19, hora Lima) — la misma regla del Excel de cada guía.
+- El Excel por guía sigue igual (botón Excel de cada fila); exportar NO modifica datos (solo lectura).
+- Evidencia: 32 checks nuevos (xlsx real re-leído) · 55/55 suites · RLS 31/31 · E2E en producción con conteos correctos.
+- Deploy: push → producción (verificar version.json).

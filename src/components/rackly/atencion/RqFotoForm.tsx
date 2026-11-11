@@ -38,6 +38,7 @@ import {
 } from '@/lib/rackly/rq-atencion'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { aNumero } from '@/lib/rackly/formato'
+import { LINEAS_OPCIONES, normalizarLinea } from '@/lib/rackly/lineas'
 import {
   RecortarImagenDialog,
   type OrigenRecorte,
@@ -310,7 +311,16 @@ export function RqFotoForm({
   /** Aplica la mejor extracción al formulario + resumen de lo detectado. */
   function procesarExtraccion(datos: DatosRq, avisosExtra: string[] = []) {
     const itemsOcr = itemsDesdeOcr(datos)
-    setAvisos(avisosExtra)
+    // Línea CANÓNICA (pedido 2026-11-12): el OCR trae texto libre («LINEA 7»,
+    // «L7», «auxiliares»…) — se mapea a la lista oficial; si no hay match
+    // confiable queda VACÍA para que el usuario elija de la lista desplegable
+    // (nunca se adivina una línea equivocada) y se avisa.
+    const lineaCanon = normalizarLinea(datos.linea)
+    const avisosLinea =
+      lineaCanon || !datos.linea.trim()
+        ? avisosExtra
+        : [...avisosExtra, `Línea «${datos.linea}» no reconocida — selecciona de la lista`]
+    setAvisos(avisosLinea)
     const base = formVacio()
     setForm({
       ...base,
@@ -322,7 +332,7 @@ export function RqFotoForm({
       // Task 35: el turno de la hoja (004/005) manda si el OCR lo leyó;
       // si no, queda el turno del sistema como punto de partida.
       turnoRq: datos.turnoRq || base.turnoRq,
-      linea: datos.linea,
+      linea: lineaCanon,
       solicitante: datos.solicitante,
       items: itemsOcr.length > 0 ? itemsOcr : [itemVacio()],
     })
@@ -801,22 +811,28 @@ export function RqFotoForm({
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Línea de producción</Label>
-          <Input
-            list="lineas-rq-sugeridas"
-            placeholder="L1, L2, JARABES…"
-            title="Campo «Línea:» de la requisición física — se llena con el OCR y queda editable"
-            maxLength={80}
+          <Select
             value={form.linea}
-            onChange={(e) => set('linea', e.target.value)}
-          />
-          <datalist id="lineas-rq-sugeridas">
-            <option value="L1" />
-            <option value="L2" />
-            <option value="L3" />
-            <option value="L4" />
-            <option value="L5" />
-            <option value="JARABES" />
-          </datalist>
+            onValueChange={(v) => set('linea', v)}
+          >
+            <SelectTrigger
+              title="Lista oficial de líneas — evita confusiones de la digitalización (OCR)"
+              className={form.linea ? '' : 'text-slate-400'}
+            >
+              <SelectValue placeholder="Selecciona la línea…" />
+            </SelectTrigger>
+            <SelectContent className="max-h-64">
+              {LINEAS_OPCIONES.map((l) => (
+                <SelectItem key={l} value={l}>
+                  {l}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[10px] text-slate-400 leading-tight">
+            Lista oficial: Línea 1 a 20 y Materiales auxiliares. Si el OCR no
+            la reconoce, elígela aquí (evita líneas escritas distinto).
+          </p>
         </div>
         <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
           <Label className="text-xs">Notas (opcional)</Label>

@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime } from '@/hooks/useRegistrosRealtime'
-import { puede } from '@/lib/rackly/permisos'
+import { puedeEditarSolicitudes } from '@/lib/rackly/permisos'
 import {
   atenderItemRq,
   revertirItemRq,
@@ -170,7 +170,9 @@ export function RqDetalle({
 }) {
   const { perfil } = useAuth()
   // Permiso granular (rol + overrides por usuario): editar RQ = acción «Editar»
-  const puedeEditar = puede(perfil, 'atencion.editar')
+  // Edición: espejo del guard de la RPC rq_editar_rq (admin + supervisión)
+  // — antes «atencion.editar» mostraba el botón a roles que la BD rechazaría.
+  const puedeEditar = puedeEditarSolicitudes(perfil)
   const [rq, setRq] = useState<RqAtencion | null>(null)
   const [items, setItems] = useState<RqItem[]>([])
   const [loading, setLoading] = useState(true)

@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Download, Loader2, RefreshCw } from 'lucide-react'
+import { BarChart3, Download, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   cargarReporteAtencion,
@@ -26,6 +26,7 @@ import {
   type ReporteItem,
 } from '@/lib/rackly/atencion-reporte'
 import { exportarExcelAtencion } from '@/lib/rackly/atencion-excel'
+import { TableroExcelDialog } from '@/components/rackly/atencion/TableroExcelDialog'
 import { mensajeError } from '@/lib/rackly/errores'
 
 const EST_KPI: Record<string, string> = {
@@ -75,6 +76,7 @@ export function RqDashboard() {
   const [datos, setDatos] = useState<DatosReporte | null>(null)
   const [loading, setLoading] = useState(true)
   const [exportando, setExportando] = useState(false)
+  const [tableroOpen, setTableroOpen] = useState(false)
   const [hora, setHora] = useState('')
   const genRef = useRef(0)
 
@@ -155,6 +157,9 @@ export function RqDashboard() {
 
   return (
     <div className="space-y-4">
+      {/* Diálogo del TABLERO por línea (Excel) */}
+      <TableroExcelDialog open={tableroOpen} onOpenChange={setTableroOpen} />
+
       {/* Acciones */}
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-extrabold text-slate-800">Dashboard · Atención a Líneas</h3>
@@ -163,6 +168,16 @@ export function RqDashboard() {
           <Button variant="outline" size="sm" onClick={() => void cargar(true)} disabled={loading} className="gap-1.5">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Actualizar
+          </Button>
+          {/* TABLERO por línea (pedido 2026-11-12 con imagen del pivot) */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTableroOpen(true)}
+            className="gap-1.5 border-teal-200 text-teal-700 hover:bg-teal-50"
+          >
+            <BarChart3 className="h-4 w-4" />
+            Tablero por línea
           </Button>
           <Button
             size="sm"

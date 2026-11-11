@@ -73,7 +73,7 @@ export const PERMISOS: PermisoDef[] = [
   // ── Atención ──
   { codigo: 'atencion.ver', modulo: 'atencion', accion: 'ver', etiqueta: 'Ver Atención', descripcion: 'Abrir el módulo Atención y consultar RQ y RAL.' },
   { codigo: 'atencion.crear', modulo: 'atencion', accion: 'crear', etiqueta: 'Atender / crear', descripcion: 'Crear solicitudes (RQ), RAL y atender materiales.' },
-  { codigo: 'atencion.editar', modulo: 'atencion', accion: 'editar', etiqueta: 'Editar solicitudes', descripcion: 'Editar el encabezado y los materiales de una RQ; revertir atenciones.' },
+  { codigo: 'atencion.editar', modulo: 'atencion', accion: 'editar', etiqueta: 'Editar solicitudes', descripcion: 'Editar el encabezado y los materiales de una RQ o RAL (supervisión); revertir atenciones.' },
   { codigo: 'atencion.eliminar', modulo: 'atencion', accion: 'eliminar', etiqueta: 'Eliminar RQ/RAL', descripcion: 'Borrar solicitudes (RQ), atenciones y registros RAL de cualquier usuario.' },
   // ── Tránsito ──
   { codigo: 'transito.ver', modulo: 'transito', accion: 'ver', etiqueta: 'Ver Tránsito', descripcion: 'Abrir el módulo Tránsito (también le permite leer las guías de Recepción que transfiere).' },
@@ -206,6 +206,24 @@ export function puede(
   const override = perfil.permisosExtra?.[permiso]
   if (typeof override === 'boolean') return override
   return rolConcedePermiso(perfil.rol, permiso)
+}
+
+/**
+ * ¿Puede EDITAR solicitudes (RQ/RAL)? Espejo EXACTO del guard de las RPCs
+ * rq_editar_rq / ral_editar: admin + roles de supervisión (coordinador y
+ * supervisores de almacén/operaciones). El permiso de la matriz
+ * («atencion.editar») es más amplio por diseño, pero las RPCs exigen
+ * ADEMÁS el rol — el UI se alinea para no mostrar un botón que la BD
+ * rechazaría con NO_AUTORIZADO (inconsistencia detectada en la
+ * revisión 2026-11-12). Alineado con eliminar (PERMISOS_SUPERVISION).
+ */
+export function puedeEditarSolicitudes(
+  perfil: PerfilConPermisos | null | undefined
+): boolean {
+  if (!perfil) return false
+  if (perfil.rol === 'admin') return true
+  if (!(ROLES_SUPERVISION as readonly string[]).includes(perfil.rol ?? '')) return false
+  return puede(perfil, 'atencion.editar')
 }
 
 /** Etiqueta legible de un permiso (para toasts y badges) */

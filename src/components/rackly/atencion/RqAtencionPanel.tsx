@@ -32,7 +32,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useRegistrosRealtime, type MotivoRealtime } from '@/hooks/useRegistrosRealtime'
-import { puede } from '@/lib/rackly/permisos'
+import { puede, puedeEditarSolicitudes } from '@/lib/rackly/permisos'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import {
   listarRqs,
@@ -44,7 +44,9 @@ import {
 import {
   listarRals,
   eliminarRal,
+  obtenerRalCompleta,
   type RalRegistro,
+  type RalItem,
 } from '@/lib/rackly/ral'
 import {
   conteosEstado,
@@ -55,6 +57,7 @@ import type { PisoTargetPosicion } from '@/lib/piso/navegacion'
 import { RqFotoForm, type RqRegistradaInfo } from '@/components/rackly/atencion/RqFotoForm'
 import { RalFotoForm } from '@/components/rackly/atencion/RalFotoForm'
 import { RalDetalle } from '@/components/rackly/atencion/RalDetalle'
+import { RalEditarDialog } from '@/components/rackly/atencion/RalEditarDialog'
 import { RqDashboard } from '@/components/rackly/atencion/RqDashboard'
 import { RqDetalle } from '@/components/rackly/atencion/RqDetalle'
 import { RqEditarDialog } from '@/components/rackly/atencion/RqEditarDialog'
@@ -119,6 +122,10 @@ export function RqAtencionPanel({
   const { perfil } = useAuth()
   // Permiso granular (rol + overrides por usuario, espejo de la política BD)
   const puedeEliminar = puede(perfil, 'atencion.eliminar')
+  // Edición RQ/RAL: espejo EXACTO del guard de las RPCs rq_editar_rq / ral_editar
+  // (admin + supervisión) — antes «atencion.editar» mostraba el botón a roles
+  // que la BD rechazaría con NO_AUTORIZADO (revisión 2026-11-12).
+  const puedeEditar = puedeEditarSolicitudes(perfil)
 
   const [vista, setVista] = useState<Vista>('lista')
   const [rqAbiertaId, setRqAbiertaId] = useState<string>(() =>
@@ -145,6 +152,9 @@ export function RqAtencionPanel({
   const [editarTarget, setEditarTarget] = useState<RqAtencion | null>(null)
   const [editarItems, setEditarItems] = useState<RqItem[]>([])
   const [cargandoEdicion, setCargandoEdicion] = useState<string | null>(null)
+  /** Edición supervisada del RAL (2026-11-12, paridad con la RQ). */
+  const [editarRalTarget, setEditarRalTarget] = useState<RalRegistro | null>(null)
+  const [editarRalItems, setEditarRalItems] = useState<RalItem[]>([])
 
   const cargaGenRef = useRef(0)
   const offsetRef = useRef(0)
@@ -369,6 +379,21 @@ export function RqAtencionPanel({
       const { items } = await obtenerRqCompleta(r.id)
       setEditarItems(items)
       setEditarTarget(r)
+    } catch (err: unknown) {
+      const message = mensajeError(err)
+      toast.error('No se pudo abrir la edición', { description: message })
+    } finally {
+      setCargandoEdicion(null)
+    }
+  }
+
+  /** Abre el editor del RAL con sus materiales vigentes (paridad RQ). */
+  async function abrirEdicionRal(r: RalRegistro) {
+    setCargandoEdicion(r.id)
+    try {
+      const { ral, items } = await obtenerRalCompleta(r.id)
+      setEditarRalItems(items)
+      setEditarRalTarget(ral)
     } catch (err: unknown) {
       const message = mensajeError(err)
       toast.error('No se pudo abrir la edición', { description: message })
@@ -605,7 +630,10 @@ export function RqAtencionPanel({
                   key={f.key}
                   r={f.ral}
                   puedeEliminar={puedeEliminar}
+                  puedeEditar={puedeEditar}
+                  cargandoEdicion={cargandoEdicion === f.ral.id}
                   onAtender={() => abrirDetalleRal(f.ral.id)}
+                  onEditar={() => void abrirEdicionRal(f.ral)}
                   onEliminar={() => setDeleteRalTarget(f.ral)}
                 />
               )
@@ -734,6 +762,22 @@ export function RqAtencionPanel({
                     </>
                   )}
                 </Button>
+                {puedeEditar && (
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-9 w-9 shrink-0 text-slate-500 hover:text-violet-700"
+                    onClick={() => void abrirEdicionRal(f.ral)}
+                    disabled={cargandoEdicion === f.ral.id}
+                    title="Editar RAL (corregir datos y materiales)"
+                  >
+                    {cargandoEdicion === f.ral.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Pencil className="h-4 w-4" />
+                    )}
+                  </Button>
+                )}
                 {puedeEliminar && (
                   <Button
                     variant="outline"
@@ -765,6 +809,24 @@ export function RqAtencionPanel({
             Cargar más ({filas.length} de {total})
           </Button>
         </div>
+      )}
+
+      {/* ── Edición supervisada del RAL (2026-11-12, paridad RQ) ── */}
+      {editarRalTarget && (
+        <RalEditarDialog
+          open={!!editarRalTarget}
+          onOpenChange={(o) => !o && setEditarRalTarget(null)}
+          ral={editarRalTarget}
+          items={editarRalItems}
+          onGuardada={() => {
+            void cargarRals()
+          }}
+          onSincronizada={(ralNuevo) => {
+            // Reversa dentro del editor: el encabezado puede cambiar de estado.
+            setEditarRalTarget(ralNuevo)
+            void cargarRals()
+          }}
+        />
       )}
 
       {/* ── Confirmar eliminación RQ ── */}
@@ -941,12 +1003,18 @@ function FilaRqTabla({
 function FilaRalTabla({
   r,
   puedeEliminar,
+  puedeEditar,
+  cargandoEdicion,
   onAtender,
+  onEditar,
   onEliminar,
 }: {
   r: RalRegistro
   puedeEliminar: boolean
+  puedeEditar: boolean
+  cargandoEdicion: boolean
   onAtender: () => void
+  onEditar: () => void
   onEliminar: () => void
 }) {
   return (
@@ -1011,6 +1079,18 @@ function FilaRalTabla({
               </>
             )}
           </Button>
+          {puedeEditar && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-slate-500 hover:text-violet-700 hover:bg-violet-50"
+              onClick={onEditar}
+              disabled={cargandoEdicion}
+              title="Editar RAL (corregir datos y materiales)"
+            >
+              {cargandoEdicion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+            </Button>
+          )}
           {puedeEliminar && (
             <Button
               variant="ghost"

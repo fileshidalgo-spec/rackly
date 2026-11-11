@@ -53,6 +53,24 @@ export type RalRegistro = {
    *  porque solo se buscaba en columnas del encabezado). Vacío fuera de
    *  listarRals; el filtro compara en minúsculas. */
   textoItems: string
+  /** Auditoría de ediciones (2026-11-12, paridad con la RQ): más reciente
+   *  primero, máx 20 — la llena la RPC ral_editar. */
+  ediciones: RalEdicionLog[]
+}
+
+/** Entrada del historial de ediciones del RAL (columna rals.ediciones). */
+export type RalEdicionLog = {
+  en: string
+  usuarioId: string
+  usuarioNombre: string
+  usuarioCorreo: string
+  resumen: {
+    encabezado: number
+    materialesEditados: number
+    materialesAgregados: number
+    materialesQuitados: number
+  }
+  cambios: Record<string, unknown>[]
 }
 
 export type RalItem = {
@@ -121,6 +139,27 @@ function filaARal(f: FilaRal): RalRegistro {
     estado: String(f.estado ?? '') || 'Pendiente',
     articulos: 0, // lo rellena listarRals con los items reales
     textoItems: '', // ídem (código+descripción de los items, para búsqueda)
+    ediciones: Array.isArray(f.ediciones)
+      ? (f.ediciones as unknown[]).map(filaARalEdicion)
+      : [],
+  }
+}
+
+function filaARalEdicion(v: unknown): RalEdicionLog {
+  const r = (v ?? {}) as Record<string, unknown>
+  const res = (r.resumen ?? {}) as Record<string, unknown>
+  return {
+    en: String(r.en ?? ''),
+    usuarioId: String(r.usuario_id ?? ''),
+    usuarioNombre: String(r.usuario_nombre ?? ''),
+    usuarioCorreo: String(r.usuario_correo ?? ''),
+    resumen: {
+      encabezado: Number(res.encabezado ?? 0),
+      materialesEditados: Number(res.materiales_editados ?? 0),
+      materialesAgregados: Number(res.materiales_agregados ?? 0),
+      materialesQuitados: Number(res.materiales_quitados ?? 0),
+    },
+    cambios: Array.isArray(r.cambios) ? (r.cambios as Record<string, unknown>[]) : [],
   }
 }
 
@@ -511,4 +550,206 @@ export async function revertirItemRal(itemId: string, cantidad: number): Promise
     throw new Error('Otro usuario modificó este artículo al mismo tiempo. Recarga e intenta de nuevo.')
   await recalcularEstadoRal(itemPrevio.ralId)
   return filaARalItem(upd as FilaRal)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// EDICIÓN SUPERVISADA (2026-11-12 — paridad con la RQ, Task 26)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * RAL existentes con ESTE documento (máx 5, excluye un id). Espejo de
+ * buscarRqPorNumero (DB1, 2026-11-12): la idempotencia por `id` de
+ * ral_crear_completa NO cubre el mismo `documento` con id distinto — caso
+ * REAL detectado en auditoría (RAL 8455 registrado ×2 a 46 segundos por el
+ * mismo usuario). Sin constraint UNIQUE a propósito: la verificación es
+ * una ADVERTENCIA en la UI, no un bloqueo duro.
+ */
+export async function buscarRalPorDocumento(
+  documento: string,
+  excluirId?: string
+): Promise<RalRegistro[]> {
+  const d = documento.trim()
+  if (!d) return []
+  const { data, error } = await dataClient
+    .from('rals')
+    .select('*')
+    .eq('documento', d)
+    .order('created_at', { ascending: false })
+    .limit(5)
+  if (error) throw error
+  return ((data ?? []) as FilaRal[])
+    .map(filaARal)
+    .filter((r) => r.id !== excluirId)
+}
+
+/** Material de una edición del RAL: CON id = actualizar · SIN id = agregar.
+ *  Los materiales que faltan en la lista se ELIMINAN (solo si no tienen
+ *  atención registrada — lo valida la RPC ral_editar y validarEdicionRal). */
+export type ItemEditarRal = {
+  id?: string
+  orden: number
+  codigo: string
+  descripcion: string
+  unidad: string
+  centroCostos: string
+  cantidad: number
+}
+
+/** Campos del encabezado corregibles (parcial: solo los presentes).
+ *  Sin turno: el RAL no es hoja de producción. */
+export type EncabezadoEditarRal = Partial<{
+  documento: string
+  transaccion: string
+  areaSolicitante: string
+  solicitante: string
+  aprobadoPor: string
+  almacen: string
+  linea: string
+  notas: string
+  fecha: string
+}>
+
+export type ResultadoEdicionRal = { ral: RalRegistro; items: RalItem[]; cambios: number }
+
+function fmtNumRal(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toLocaleString('es-PE', { maximumFractionDigits: 3 })
+}
+
+/**
+ * Valida la edición de un RAL con las MISMAS reglas que la RPC ral_editar
+ * (espejo del cliente para feedback inmediato en el diálogo). Devuelve la
+ * lista de problemas; [] = la edición es válida.
+ */
+export function validarEdicionRal(items: ItemEditarRal[], actuales: RalItem[]): string[] {
+  const errores: string[] = []
+  if (items.length === 0) {
+    return ['El RAL debe conservar al menos un material. Si ya no sirve, usa Eliminar RAL.']
+  }
+  const ids = new Set<string>()
+  for (const it of items) {
+    const id = (it.id ?? '').trim()
+    const codigo = it.codigo.trim().toUpperCase()
+    if (id) {
+      if (ids.has(id)) errores.push(`El material ${codigo || id} viene dos veces en la edición.`)
+      ids.add(id)
+    }
+    if (!codigo) errores.push('Hay materiales sin código: completa o elimina esa fila.')
+    else if (!(it.cantidad > 0)) {
+      errores.push(`La cantidad de ${codigo} debe ser mayor que cero.`)
+    }
+    if (!id) continue // material nuevo: no tiene atención registrada
+    const previo = actuales.find((a) => a.id === id)
+    if (!previo) {
+      errores.push(`El material ${codigo} ya no existe en el RAL: recarga la pantalla e inténtalo de nuevo.`)
+      continue
+    }
+    if (it.cantidad !== previo.cantidad && it.cantidad < previo.cantidadAtendida) {
+      errores.push(
+        `${previo.codigo}: pides ${fmtNumRal(it.cantidad)} pero ya se atendieron ${fmtNumRal(previo.cantidadAtendida)} — primero revierte su atención.`
+      )
+    }
+    if (
+      previo.cantidadAtendida > 0 &&
+      (codigo !== previo.codigo.trim().toUpperCase() || it.unidad.trim() !== previo.unidad.trim())
+    ) {
+      errores.push(
+        `${previo.codigo}: con atención registrada no se puede cambiar el código ni la unidad (revierte primero).`
+      )
+    }
+  }
+  for (const a of actuales) {
+    if (!ids.has(a.id) && a.cantidadAtendida > 0) {
+      errores.push(
+        `${a.codigo}: tiene ${fmtNumRal(a.cantidadAtendida)} atendidos — revierte su atención antes de quitarlo del RAL.`
+      )
+    }
+  }
+  return errores
+}
+
+/** Payload PURO de la RPC ral_editar (testeable con esbuild+node). */
+export function payloadRpcEditarRal(
+  ralId: string,
+  encabezado: EncabezadoEditarRal,
+  items: ItemEditarRal[],
+  usuario: UsuarioCtx
+): {
+  p_ral_id: string
+  p_encabezado: Record<string, string>
+  p_items: Record<string, unknown>[]
+  p_usuario_id: string | null
+  p_usuario_nombre: string
+  p_usuario_correo: string
+} {
+  // Encabezado: solo los campos presentes (la RPC compara y aplica).
+  const p_encabezado: Record<string, string> = {}
+  const CAMPOS: Array<[keyof EncabezadoEditarRal, string]> = [
+    ['documento', 'documento'],
+    ['transaccion', 'transaccion'],
+    ['areaSolicitante', 'area_solicitante'],
+    ['solicitante', 'solicitante'],
+    ['aprobadoPor', 'aprobado_por'],
+    ['almacen', 'almacen'],
+    ['linea', 'linea'],
+    ['notas', 'notas'],
+    ['fecha', 'fecha'],
+  ]
+  for (const [k, col] of CAMPOS) {
+    if (encabezado[k] !== undefined) p_encabezado[col] = String(encabezado[k] ?? '')
+  }
+  return {
+    p_ral_id: ralId,
+    p_encabezado,
+    p_items: items.map((it, i) => ({
+      orden: Number.isInteger(it.orden) ? it.orden : i,
+      ...(it.id?.trim() ? { id: it.id.trim() } : {}),
+      codigo: it.codigo.trim().toUpperCase(),
+      descripcion: it.descripcion.trim(),
+      unidad: it.unidad.trim(),
+      centro_costos: it.centroCostos.trim(),
+      cantidad: it.cantidad,
+    })),
+    p_usuario_id: usuario.id?.trim() || null,
+    p_usuario_nombre: usuario.nombre || '',
+    p_usuario_correo: usuario.correo || '',
+  }
+}
+
+/**
+ * Edita el RAL (encabezado + diff declarativo de materiales) en UNA
+ * transacción en la BD: RPC ral_editar (paridad rq_editar_rq).
+ *
+ * Integridad física (la RPC rechaza con mensaje claro):
+ *   · cantidad CAMBIADA a < cantidad_atendida     → CANTIDAD_MENOR_ATENDIDA
+ *   · código/unidad de un material con atención   → ITEM_CON_ATENCION
+ *     (el CENTRO DE COSTOS sí es editable siempre: metadata de costos)
+ *   · eliminar material con atención registrada   → ITEM_CON_ATENCION
+ *
+ * Sin respaldo cliente A PROPOSITO (diferencia con crearRal): la migración
+ * se aplica a producción ANTES de desplegar el frontend; simular el diff
+ * en el cliente escribiría en varias peticiones sin transacción.
+ */
+export async function editarRal(
+  ralId: string,
+  encabezado: EncabezadoEditarRal,
+  items: ItemEditarRal[],
+  usuario: UsuarioCtx
+): Promise<ResultadoEdicionRal> {
+  const p = payloadRpcEditarRal(ralId, encabezado, items, usuario)
+  const { data, error } = await dataClient.rpc('ral_editar', p)
+  if (!error && data) {
+    const r = data as Record<string, unknown>
+    return {
+      ral: filaARal((r.ral ?? {}) as FilaRal),
+      items: ((r.items ?? []) as Record<string, unknown>[]).map(filaARalItem),
+      cambios: Number(r.cambios ?? 0),
+    }
+  }
+  const msg = error?.message ?? ''
+  if (/pgrst20[24]|not found|does not exist|schema cache/i.test(msg)) {
+    throw new Error(
+      'La edición de RAL aún no está disponible en esta conexión: recarga la pestaña (F5) e inténtalo de nuevo.'
+    )
+  }
+  throw error ?? new Error('Error desconocido al editar el RAL')
 }

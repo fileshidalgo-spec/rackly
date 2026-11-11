@@ -45,7 +45,7 @@ import {
   puntuarExtraccionRal,
   type DatosRal,
 } from '@/lib/rackly/ral-ocr'
-import { crearRal } from '@/lib/rackly/ral'
+import { crearRal, buscarRalPorDocumento } from '@/lib/rackly/ral'
 import { eliminarFotoRq, subirFotoRq } from '@/lib/rackly/rq-atencion'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { aNumero, hoyISO } from '@/lib/rackly/formato'
@@ -573,6 +573,29 @@ export function RalFotoForm({
     if (!form.fecha) {
       toast.error('Ingresa la fecha del RAL')
       return
+    }
+    // DB1 (auditoría 2026-11-12): advertencia informada si el documento ya
+    // existe (caso real: RAL 8455 registrado ×2 a 46 segundos por el mismo
+    // usuario). ANTES de subir la foto — si cancela no queda huérfano en
+    // Storage. NO bloquea: pueden ser documentos físicos distintos con el
+    // mismo número.
+    const docNuevo = form.documento.trim()
+    let existentes: Awaited<ReturnType<typeof buscarRalPorDocumento>> = []
+    try {
+      existentes = await buscarRalPorDocumento(docNuevo)
+    } catch {
+      // Si la verificación falla (red), se registra igual: nunca peor.
+    }
+    if (existentes.length > 0) {
+      const e0 = existentes[0]
+      const ok = window.confirm(
+        `Ya existe ${existentes.length > 1 ? `${existentes.length} RAL` : 'UN RAL'} con el documento ${docNuevo}` +
+          `${e0.fecha ? ` (fecha ${e0.fecha}` : ''}${e0.areaSolicitante ? `, área ${e0.areaSolicitante}` : ''}${e0.fecha ? ')' : ''}.\n\n` +
+          'Si es EL MISMO documento registrado dos veces, cancela y atiéndelo desde la lista ' +
+          '(registrarlo otra vez duplica su atención y sus reportes).\n\n' +
+          '¿Registrar de todos modos (documento distinto con el mismo número)?'
+      )
+      if (!ok) return
     }
     setSaving(true)
     try {

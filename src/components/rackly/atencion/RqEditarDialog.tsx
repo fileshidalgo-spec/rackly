@@ -49,6 +49,7 @@ import {
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
 import { calcularTurno } from '@/lib/rackly/turno'
+import { LINEAS_OPCIONES, esLineaCanonica } from '@/lib/rackly/lineas'
 import { aNumero } from '@/lib/rackly/formato'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
@@ -522,7 +523,25 @@ export function RqEditarDialog({
                   </select>
                 </Campo>
                 <Campo etiqueta="Línea">
-                  <Input className="h-9" value={linea} onChange={(e) => setLinea(e.target.value)} placeholder="Ej. 6 LÍNEA 15" />
+                  {/* Lista OFICIAL de líneas (pedido 2026-11-12). El valor
+                      histórico no canónico se conserva como opción extra
+                      para no mutar datos al abrir → guardar sin tocar. */}
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none"
+                    value={linea}
+                    onChange={(e) => setLinea(e.target.value)}
+                    title="Lista oficial de líneas — evita confusiones de la digitalización"
+                  >
+                    <option value="">— (sin línea) —</option>
+                    {!esLineaCanonica(linea) && linea.trim() !== '' && (
+                      <option value={linea}>{linea} (histórico)</option>
+                    )}
+                    {LINEAS_OPCIONES.map((l) => (
+                      <option key={l} value={l}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
                 </Campo>
                 <Campo etiqueta="Solicitante">
                   <Input className="h-9" value={solicitante} onChange={(e) => setSolicitante(e.target.value)} />

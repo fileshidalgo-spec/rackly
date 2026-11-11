@@ -30,6 +30,8 @@ import {
   type RalRegistro,
   type RalItem,
 } from '@/lib/rackly/ral'
+import { puedeEditarSolicitudes } from '@/lib/rackly/permisos'
+import { RalEditarDialog } from '@/components/rackly/atencion/RalEditarDialog'
 import { estadoDeItem, pendienteDeItem } from '@/lib/rackly/rq-atencion'
 import { aNumero } from '@/lib/rackly/formato'
 import { Badge } from '@/components/ui/badge'
@@ -54,6 +56,7 @@ import {
   Undo2,
   Plus,
   ClipboardList,
+  Pencil,
 } from 'lucide-react'
 import { mensajeError } from '@/lib/rackly/errores'
 
@@ -75,6 +78,8 @@ type ConfirmacionRevertir = { item: RalItem; cantidad: number }
 
 export function RalDetalle({ ralId, onVolver }: { ralId: string; onVolver: () => void }) {
   const { perfil } = useAuth()
+  // Edición (2026-11-12, paridad RQ): espejo del guard de la RPC ral_editar.
+  const puedeEditar = puedeEditarSolicitudes(perfil)
   const [ral, setRal] = useState<RalRegistro | null>(null)
   const [items, setItems] = useState<RalItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -85,6 +90,8 @@ export function RalDetalle({ ralId, onVolver }: { ralId: string; onVolver: () =>
   const [confirmarRevertir, setConfirmarRevertir] = useState<ConfirmacionRevertir | null>(null)
   /** Filas COMPLETAS donde el usuario abrió el atender para añadir EXCEDENTE. */
   const [excedenteAbierto, setExcedenteAbierto] = useState<Record<string, boolean>>({})
+  /** Edición supervisada del RAL (paridad con la RQ). */
+  const [editarAbierto, setEditarAbierto] = useState(false)
 
   const genRef = useRef(0)
   const savingRef = useRef(false)
@@ -256,9 +263,22 @@ export function RalDetalle({ ralId, onVolver }: { ralId: string; onVolver: () =>
               {ral.transaccion ? ` · transacción ${ral.transaccion}` : ''}
             </p>
           </div>
-          <Badge variant="outline" className={`${ESTADO_RAL_CLASE[ral.estado] ?? ''}`}>
-            {ral.estado}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {puedeEditar && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 border-slate-300 text-slate-600 hover:bg-slate-50"
+                onClick={() => setEditarAbierto(true)}
+                title="Corregir datos y materiales del RAL"
+              >
+                <Pencil className="h-3.5 w-3.5" /> Editar
+              </Button>
+            )}
+            <Badge variant="outline" className={`${ESTADO_RAL_CLASE[ral.estado] ?? ''}`}>
+              {ral.estado}
+            </Badge>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600 min-[430px]:grid-cols-3">
           <span>Fecha: <b>{ral.fecha}</b></span>
@@ -532,6 +552,24 @@ export function RalDetalle({ ralId, onVolver }: { ralId: string; onVolver: () =>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Edición supervisada (2026-11-12, paridad con la RQ) ── */}
+      {ral && editarAbierto && (
+        <RalEditarDialog
+          open={editarAbierto}
+          onOpenChange={setEditarAbierto}
+          ral={ral}
+          items={items}
+          onGuardada={() => {
+            void cargar()
+          }}
+          onSincronizada={(ralNuevo, itemsNuevos) => {
+            // Reversa dentro del editor: sincroniza ral+items con la vista.
+            setRal(ralNuevo)
+            setItems(itemsNuevos)
+          }}
+        />
+      )}
 
       {/* ── Confirmación de REVERTIR ── */}
       <AlertDialog open={!!confirmarRevertir} onOpenChange={(o) => !o && setConfirmarRevertir(null)}>

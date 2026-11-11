@@ -15,6 +15,10 @@
  *   · Hoja 5 "Dashboard"       → KPIs + tablas por día/línea y top de
  *                                artículos, listo para presentar/imprimir.
  *
+ * 2026-11-12: además exporta el TABLERO por línea (exportarExcelTablero,
+ * hoja única con la presentación del pivot del usuario: LINEA · PRODUCTO ·
+ * sku · DESCRIPCION · Suma de CANTIDAD).
+ *
  * Patrón idéntico a guia-excel.ts: armado de datos PURO (testeable con
  * esbuild+node); solo exportarExcelAtencion() toca el navegador (descarga
  * directa vía xlsx-js-style — 'xlsx' CE no escribe estilos).
@@ -22,6 +26,8 @@
 
 import type { DatosReporte, ReporteRq, ReporteItem, ReporteToma, KpisAtencion, SerieDia, SerieLinea, TopArticulo, ResumenArticulo } from '@/lib/rackly/atencion-reporte'
 import { kpisAtencion, resumenPorArticulo, serieRqsPorDia, serieRqsPorLinea, topArticulosAtendidos } from '@/lib/rackly/atencion-reporte'
+import type { FilaTablero } from '@/lib/rackly/atencion-tablero'
+import { turnoDeToma } from '@/lib/rackly/atencion-tablero'
 
 type Celda = { s?: Record<string, unknown>; t?: string; v?: unknown }
 
@@ -120,7 +126,11 @@ export function filasHojaSalidas(
       'F. vencimiento': venc,
       'Saldo tras toma': t.saldoResultante === null ? '' : cant3(t.saldoResultante),
       'Atendió': t.usuarioNombre,
-      'Turno salida': t.turno,
+      // FIX 2026-11-12: el ledger traía turno VACÍO (309/309 filas — la RPC
+      // no lo enviaba; el trigger trg_rq_tomas_turno lo llena desde hoy).
+      // Los históricos se DERIVAN de la hora de la salida (regla del almacén,
+      // hora Lima) — nunca queda vacío ni el pivot lo pierde.
+      'Turno salida': turnoDeToma(t),
     }
   })
 }
@@ -183,6 +193,62 @@ export function tablaDashboard(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// HOJA TABLERO (pedido 2026-11-12 — misma presentación del pivot actual:
+// filtros FECHA + TURNO y columnas LINEA · PRODUCTO · sku · DESCRIPCION ·
+// Suma de CANTIDAD, con subtotal por línea y total general)
+// ═══════════════════════════════════════════════════════════════════
+
+export function nombreArchivoTablero(desde: string, hasta: string): string {
+  const hoy = new Date()
+  const mm = String(hoy.getMonth() + 1).padStart(2, '0')
+  const dd = String(hoy.getDate()).padStart(2, '0')
+  return `Tablero_Atenciones_Linea_${desde}_${hasta}_${hoy.getFullYear()}${mm}${dd}.xlsx`
+}
+
+/**
+ * AOA de la hoja Tablero (PURO): título + filtros + tabla con subtotales
+ * por línea y TOTAL GENERAL. Marcadores para el estilista: la fila cuyo
+ * primer valor es 'LINEA' es la cabecera; 'Total ' inicia subtotales;
+ * 'TOTAL GENERAL' cierra.
+ */
+export function tablaTablero(
+  desde: string,
+  hasta: string,
+  turnos: string[],
+  filas: FilaTablero[],
+  generado: string
+): (string | number)[][] {
+  const filas2d: (string | number)[][] = []
+  filas2d.push(['TABLERO DE ATENCIONES POR LÍNEA Y MATERIALES AUXILIARES'])
+  filas2d.push([`FECHA: ${desde} al ${hasta}`])
+  filas2d.push([`TURNO: ${turnos.join(' · ')}`])
+  filas2d.push([
+    `Salidas NETAS del almacén a líneas (reversas descontadas) · Generado: ${generado}`,
+  ])
+  filas2d.push([])
+  filas2d.push(['LINEA', 'PRODUCTO', 'sku', 'DESCRIPCION', 'Suma de CANTIDAD'])
+
+  let subtotal = 0
+  let lineaActual = ''
+  let total = 0
+  for (const f of filas) {
+    if (lineaActual && f.linea !== lineaActual) {
+      filas2d.push([`Total ${lineaActual}`, '', '', '', Math.round(subtotal * 1000) / 1000])
+      subtotal = 0
+    }
+    filas2d.push([f.linea, f.producto, f.sku, f.descripcion, Math.round(f.cantidad * 1000) / 1000])
+    lineaActual = f.linea
+    subtotal += f.cantidad
+    total += f.cantidad
+  }
+  if (lineaActual) {
+    filas2d.push([`Total ${lineaActual}`, '', '', '', Math.round(subtotal * 1000) / 1000])
+  }
+  filas2d.push(['TOTAL GENERAL', '', '', '', Math.round(total * 1000) / 1000])
+  return filas2d
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // ESTILOS (xlsx-js-style) — paleta sobria de impresión
 // ═══════════════════════════════════════════════════════════════════
 
@@ -203,6 +269,16 @@ const EST = {
   seccion: {
     font: { bold: true, sz: 11, color: { rgb: '1E3A5F' } },
     fill: { fgColor: { rgb: 'EEF2F7' } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+  },
+  total: {
+    font: { bold: true, sz: 10, color: { rgb: '1E3A5F' } },
+    fill: { fgColor: { rgb: 'E4EBF3' } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+  },
+  totalGeneral: {
+    font: { bold: true, sz: 12, color: { rgb: 'FFFFFF' } },
+    fill: { fgColor: { rgb: '2E5A88' } },
     alignment: { horizontal: 'left', vertical: 'center' },
   },
   titulo: {
@@ -290,6 +366,62 @@ export async function exportarExcelAtencion(datos: DatosReporte): Promise<string
   const nombre = nombreArchivoReporte()
   XLSX.writeFile(wb, nombre)
   return nombre
+}
+
+/**
+ * Genera y DESCARGA el .xlsx del TABLERO por línea (1 hoja). Devuelve el
+ * nombre del archivo. La agregación (construirTablero) ya viene lista.
+ */
+export async function exportarExcelTablero(args: {
+  desde: string
+  hasta: string
+  turnos: string[]
+  filas: FilaTablero[]
+}): Promise<string> {
+  const XLSX = (await import('xlsx-js-style')) as unknown as typeof import('xlsx')
+  const wb = XLSX.utils.book_new()
+  const ws = XLSX.utils.aoa_to_sheet(
+    tablaTablero(
+      args.desde,
+      args.hasta,
+      args.turnos,
+      args.filas,
+      new Date().toLocaleString('es-PE')
+    )
+  )
+  aplicarEstilosTablero(ws, XLSX)
+  XLSX.utils.book_append_sheet(wb, ws, 'Tablero')
+  const nombre = nombreArchivoTablero(args.desde, args.hasta)
+  XLSX.writeFile(wb, nombre)
+  return nombre
+}
+
+/** Estilos del tablero: título + filtros + cabecera + subtotales. */
+function aplicarEstilosTablero(
+  ws: Record<string, unknown>,
+  XLSX: typeof import('xlsx'),
+): void {
+  const rango = XLSX.utils.decode_range((ws['!ref'] as string) || 'A1')
+  for (let R = rango.s.r; R <= rango.e.r; R++) {
+    for (let C = rango.s.c; C <= 4; C++) {
+      const addr = XLSX.utils.encode_cell({ r: R, c: C })
+      if (!(addr in ws)) continue
+      const v = String((ws[addr] as Celda).v ?? '')
+      if (R === 0) (ws[addr] as Celda).s = EST.titulo
+      else if (R === 3) (ws[addr] as Celda).s = { font: { sz: 9, italic: true, color: { rgb: '64748B' } } }
+      else if (v === 'LINEA') (ws[addr] as Celda).s = EST.cabTabla
+      else if (v === 'TOTAL GENERAL') (ws[addr] as Celda).s = EST.totalGeneral
+      else if (C === 0 && v.startsWith('Total ')) (ws[addr] as Celda).s = EST.total
+      else if (C === 4 && R > 0) {
+        const izq = XLSX.utils.encode_cell({ r: R, c: 0 })
+        const vIzq = String((ws[izq] as Celda | undefined)?.v ?? '')
+        if (vIzq.startsWith('Total ') || vIzq === 'TOTAL GENERAL')
+          (ws[addr] as Celda).s = vIzq === 'TOTAL GENERAL' ? EST.totalGeneral : EST.total
+      }
+    }
+  }
+  ws['!cols'] = [{ wch: 24 }, { wch: 34 }, { wch: 14 }, { wch: 42 }, { wch: 16 }]
+  ws['!margins'] = { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 }
 }
 
 /** Estilos del dashboard: título + secciones + cabeceras de mini-tablas. */

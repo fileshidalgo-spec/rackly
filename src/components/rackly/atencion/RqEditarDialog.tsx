@@ -43,6 +43,7 @@ import {
   type LotePuenteDeItem,
 } from '@/lib/rackly/rq-atencion'
 import {
+  buscarCatalogo,
   fetchCatalogo,
   getCachedCatalogo,
   type CatalogoItem,
@@ -85,6 +86,9 @@ type FilaEdicion = {
   cantidad: string
   /** Atención ya registrada (congela código/unidad y prohíbe quitar). */
   atendida: number
+  /** Descripción/unidad fueron puestos por el AUTOCOMPLETADO en esta sesión
+   *  (al cambiar el código se limpian sin destruir lo tipeado a mano). */
+  auto: boolean
 }
 
 /** Etiquetas legibles de los campos del encabezado (confirmación y auditoría). */
@@ -110,7 +114,7 @@ function fmt(n: number): string {
 
 function filaVacia(): FilaEdicion {
   seqFila += 1
-  return { key: `nueva-${seqFila}`, id: '', codigo: '', descripcion: '', unidad: '', cantidad: '', atendida: 0 }
+  return { key: `nueva-${seqFila}`, id: '', codigo: '', descripcion: '', unidad: '', cantidad: '', atendida: 0, auto: false }
 }
 
 function filaDeItem(it: RqItem): FilaEdicion {
@@ -122,6 +126,7 @@ function filaDeItem(it: RqItem): FilaEdicion {
     unidad: it.unidad,
     cantidad: String(it.cantidad),
     atendida: it.cantidadAtendida,
+    auto: false,
   }
 }
 
@@ -248,6 +253,22 @@ export function RqEditarDialog({
     return () => document.removeEventListener('click', cerrar)
   }, [sugerenciaKey])
 
+  /** El catálogo llegó tarde (se abrió el diálogo con el cache vacío):
+   *  completa filas con código tipeado pero SIN descripción. Nunca toca
+   *  descripciones guardadas ni escritas a mano (solo vacías). */
+  useEffect(() => {
+    if (catalogo.length === 0) return
+    setFilas((prev) =>
+      prev.map((f) => {
+        if (!f.codigo.trim() || f.descripcion.trim()) return f
+        const cat = buscarCatalogo(f.codigo, catalogo)
+        return cat
+          ? { ...f, descripcion: cat.descripcion, unidad: cat.un || f.unidad, auto: true }
+          : f
+      })
+    )
+  }, [catalogo])
+
   const erroresVivos = useMemo(
     () => validarEdicionRq(filasAItems(filas), items),
     [filas, items]
@@ -325,12 +346,45 @@ export function RqEditarDialog({
     }
   }
 
-  /** Adopta código del catálogo: completa descripción/unidad si están vacíos. */
+  /**
+   * Código tipeado: resuelve contra el catálogo EN CADA TECLA — misma política
+   * que el alta de RQ (RqFotoForm: «al colocar el código que jale la
+   * descripción y und del catálogo», petición explícita del usuario).
+   *  · Match (tolerante: mayúsculas/espacios/puntuación/ceros a la izq.) →
+   *    descripción y unidad OFICIALES del catálogo.
+   *  · Sin match → limpia SOLO el texto que el autocompletado puso en esta
+   *    sesión (`auto`); lo guardado en la RQ o tipeado a mano se conserva.
+   */
+  function editarCodigo(f: FilaEdicion, valor: string) {
+    const v = valor.toUpperCase()
+    const cat = v.trim()
+      ? buscarCatalogo(v, catalogo.length > 0 ? catalogo : undefined)
+      : undefined
+    if (cat) {
+      editarFila(f.key, {
+        codigo: v,
+        descripcion: cat.descripcion,
+        unidad: cat.un || f.unidad,
+        auto: true,
+      })
+    } else {
+      editarFila(f.key, {
+        codigo: v,
+        descripcion: f.auto ? '' : f.descripcion,
+        unidad: f.auto ? '' : f.unidad,
+        auto: false,
+      })
+    }
+    setSugerenciaKey(f.key)
+  }
+
+  /** Adopta una sugerencia del catálogo: código, descripción y unidad oficiales. */
   function adoptarCatalogo(key: string, c: CatalogoItem) {
     editarFila(key, {
       codigo: c.codigo,
       descripcion: c.descripcion,
       unidad: c.un,
+      auto: true,
     })
     setSugerenciaKey('')
   }
@@ -509,10 +563,7 @@ export function RqEditarDialog({
                           placeholder="Código"
                           value={f.codigo}
                           autoComplete="off"
-                          onChange={(e) => {
-                            editarFila(f.key, { codigo: e.target.value.toUpperCase() })
-                            setSugerenciaKey(f.key)
-                          }}
+                          onChange={(e) => editarCodigo(f, e.target.value)}
                         />
                         {sugerenciaKey === f.key && f.codigo.trim().length >= 2 && (
                           <SugerenciasCodigo
@@ -527,7 +578,7 @@ export function RqEditarDialog({
                         className="h-8 text-xs flex-[2] min-w-0"
                         placeholder="Descripción"
                         value={f.descripcion}
-                        onChange={(e) => editarFila(f.key, { descripcion: e.target.value })}
+                        onChange={(e) => editarFila(f.key, { descripcion: e.target.value, auto: false })}
                       />
                       {/* Unidad */}
                       <Input

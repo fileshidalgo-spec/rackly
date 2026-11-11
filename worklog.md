@@ -1229,3 +1229,23 @@ Stage Summary:
 - El feature «Excel por rango + turnos» está en producción y VALIDADO numéricamente contra la BD (no solo visualmente): los conteos por turno y cantidades coinciden al centavo.
 - La app completa pasó la revisión (QA verde en entorno limpio + BD íntegra + RLS 31/31 + E2E sin errores).
 - Observación abierta (opcional, decisión del usuario): 18 guías con filas multi-roll idénticas para cuadre contra el ERP si se desea; el software ya previene re-registros accidentales por las 3 vías.
+---
+
+Task ID: rep-catalogo-supervisores-20261111
+Agent: Main Agent
+Task: «La información que tiene el catálogo no le carga a los supervisores» (1.1–10; 9 = Almacén Repuestos, 10 = Módulo Recepción).
+
+Work Log (1.2–8):
+- 1.2 (averiguar): en Repuestos el "catálogo" es rep_articulos (16 517 filas, TODAS importadas el 2026-11-09 — el almacén nació hace 2 días) y Recepción jala descripción/UM con repArticuloPorCodigo. Reporte: a los SUPERVISORES no les carga.
+- 2 (qué lo genera) — descartes con evidencia: (a) RLS: la política rep_articulos_select exige tiene_permiso(uid,'repuestos.ver') — verificado por base64 que el permiso es EXACTO y simulando la sesión authenticated con JWT de un supervisor (set_config role+jwt dentro de función wrapper, porque en el SELECT list set_config no garantiza orden y la prueba ambigua corría como owner): el supervisor VE los 16 517 artículos; (b) matriz de permisos: permiso_defecto_rol da 'repuestos.ver' a TODOS los roles y el espejo del cliente (permisos.ts) está sincronizado; (c) 0 overrides 'repuestos%' en user_permisos; (d) sin caché del catálogo en el código REP; (e) data íntegra: 0 duplicados, 0 descripciones/UM vacías, 0 inactivos.
+- CAUSA RAÍZ (confirmada en código + datos): PreIngreso.tsx line 92 — visibleRepuestos = (esAdmin || perfil.accesoRepuestos === true) && puede('repuestos.ver'). El almacén REPUESTOS es de «alta controlada» (default acceso_repuestos=false, comentario del propio código); el módulo Usuarios lo habilita por usuario (RPC establecer_acceso_almacen). 7 de los 8 supervisor_almacen tenían acceso_repuestos=FALSE (solo Diego Remicio y un auxiliar lo tenían) → el almacén ni les aparecía → el catálogo «no les cargaba». El admin (Miguel) no los había habilitado.
+- 3 (no se repite): el flag de acceso SOLO gobierna el pre-ingreso (PreIngreso + display en UsuariosTab); los permisos granulares del almacén ya venían bien por defecto para el rol. INSUMOS usa default abierto (acceso_insumos !== false) — no afectado.
+- 4 (procedimiento más efectivo): configuración, no código — el mismo UPDATE que hace la RPC establecer_acceso_almacen (verificado: guard de permiso para el browser; por MAPI corre como owner y el efecto es idéntico), sin cambiar diseño ni código.
+- 5 (sin conflictos): UPDATE quirúrgico solo acceso_repuestos=true para perfiles con rol supervisor_almacen (RETURNING: 8 filas — Diego idempotente). acceso_insumos intacto. Nada más del app lee el flag para lógica. El flujo completo de Recepción REP quedó accesible por RLS para el rol (SELECT ver · INSERT/UPDATE crear/gestionar · DELETE eliminar — supervisores los tienen todos).
+- 8 (accesos) QA: tsc 0 · eslint 0 · 55/55 suites (mismo commit 3a1f7a4 ya desplegado — cero cambios de código, build ya certificado en producción). E2E en producción: login → pre-ingreso OK; Repuestos → Recepción → lookup código 62008 → «PANEL DE VIDRIO DE PANTALLA TACTIL… SIEMENS» + UM autocompletados (el flujo exacto que ejercerán los supervisores; RLS idéntica por rol).
+- Nota técnica del E2E: el fill/type no actualizaba el estado React del input de código (botón disabled con el DOM ya poblado); resuelto con setter nativo + dispatchEvent('input') vía eval.
+
+Stage Summary:
+- Los 8 supervisores de almacén YA VEN el almacén REPUESTOS (refrescar la página basta — el perfil se re-lee al montar). El catálogo (16 517 artículos) y toda la Recepción de Repuestos quedan operativos para su rol.
+- El «alta controlada» se mantiene: cada usuario nuevo de Repuestos requiere la habilitación en Usuarios (acceso a almacenes) — así se diseñó y así queda; no se cambió código ni diseño.
+- Pendiente opcional para el admin: el coordinador_operaciones (Victor Vernazza) sigue sin acceso a Repuestos — habilitarlo igual desde Usuarios si corresponde.

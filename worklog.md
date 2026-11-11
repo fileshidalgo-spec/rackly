@@ -1209,3 +1209,23 @@ Stage Summary:
 - El Excel por guía sigue igual (botón Excel de cada fila); exportar NO modifica datos (solo lectura).
 - Evidencia: 32 checks nuevos (xlsx real re-leído) · 55/55 suites · RLS 31/31 · E2E en producción con conteos correctos.
 - Deploy: push → producción (verificar version.json).
+---
+
+Task ID: recepcion-excel-rango-verificacion-20261111
+Agent: Main Agent (sesión de verificación)
+Task: Verificación integral del feature «Excel por rango de fechas + turnos» (implementado en cbc1247/643241a) + revisión de toda la app (paso 9).
+
+Work Log:
+- Entorno reconstruido (sandbox reciclado): repo sincronizado a origin/main 643241a (el snapshot sintético local se descartó; producción manda), npm install, scripts/sb_mapi.py recreado.
+- Sello de producción verificado ANTES de tocar nada: version.json = 202611111632-643241a (feature YA desplegado — esta sesión no modifica código del feature).
+- FALSA ALARMA documentada: el renderizado del tool output mostraba `const , m]` en turno.ts (parecía error de sintaxis); verificación byte a byte con od -c + blob SHA local=remoto (d717d30b) + GitHub API demostraron que el archivo está CORRECTO (`const [h, m]`). Lección: ante "errores" raros de sintaxis, verificar bytes y correr el compilador real, no fiarse del texto renderizado.
+- QA re-corrida en entorno limpio: tsc --noEmit 0 (con el TypeScript real del proyecto — el npx tsc previo instalaba el placeholder tsc@2.0.4 con exit 0: corridas "tsc 0" de sesiones recientes eran no-verificables), eslint 0, 55/55 suites, npm run build OK.
+- Auditoría BD (MAPI): RLS 31/31 tablas habilitadas; catalogo 1107 = 1107 distinct códigos, 0 duplicados, 0 vacíos; recepcion_registros 4893 (4875 guías + 18 devoluciones), 8 índices incl. idx_recepcion_tipo_fecha (soporta el rango del export); conteos sanos en movimientos/rq_*/piso_*/rep_*; rep_stock vacía = módulo REP sin ingresos aún (estado inicial, no defecto).
+- HALLAZGO ANALIZADO (duplicados intra-batch): 18 documentos (2026-10-13 → 11-05) tienen filas idénticas (codigo+lote+cantidad+created_at+observaciones) dentro del MISMO lote. Anatomía del caso extremo (T067-0015826): 24 filas = 4 lotes × 4-7 rolls del mismo código/lote — patrón LEGÍTIMO de recepción multi-roll (una fila por rótulo QR). Las 3 protecciones ya existen: uuid_sync idempotente (reintentos), hayDuplicadosRecientes (vs BD <60 s, aviso), anti-guía-duplicada (Task 23, aviso). El hueco "intra-batch" ES el caso de uso normal (rolls múltiples) — no procede bloqueo; los casos con marca «Paleta i/N» repetida (3 docs) quedan OBSERVADOS para cuadre físico opcional del usuario (sin evidencia de bug de software; el contenido del registro es fiel a lo digitado).
+- E2E EN PRODUCCIÓN (rackly.pages.dev, sello 643241a) — 7 verificaciones: 1) diálogo con defaults correctos (mes en curso, T1+T2); 2) export T1+T2 = 98 docs · 2047 filas, VALIDACIÓN CRUZADA contra BD con SQL independiente (regla turno Lima 07:20-19:20 → minutos 440..1160): T1 881 filas / 32 800 407,28 · T2 1166 / 56 611 117,33 — coincidencia EXACTA; 3) hoja Resumen (filtros + por turno + documentos con turno(s) por doc); 4) hoja Artículos 2047 filas × 20 columnas exactas, turno por fila, paletas incluidas, orden fecha DESC; 5) export SOLO T1 = 40 docs · 881 filas · cero T2; 6) pestaña Devoluciones respeta prefijo/tipo (14 docs · 24 filas); 7) cero errores de consola. Evidencia: 3 .xlsx re-leídos con openpyxl (download/e2e-recepcion-excel-rango/).
+- Excel por guía INTACTO (botón por fila verificado en producción).
+
+Stage Summary:
+- El feature «Excel por rango + turnos» está en producción y VALIDADO numéricamente contra la BD (no solo visualmente): los conteos por turno y cantidades coinciden al centavo.
+- La app completa pasó la revisión (QA verde en entorno limpio + BD íntegra + RLS 31/31 + E2E sin errores).
+- Observación abierta (opcional, decisión del usuario): 18 guías con filas multi-roll idénticas para cuadre contra el ERP si se desea; el software ya previene re-registros accidentales por las 3 vías.

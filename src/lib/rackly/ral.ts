@@ -246,11 +246,20 @@ export async function listarRals(limite = 300): Promise<RalRegistro[]> {
   if (rals.length === 0) return []
 
   const ids = rals.map((r) => r.id)
-  const { data: items, error: eI } = await dataClient
-    .from('ral_items')
-    .select('ral_id, codigo, descripcion')
-    .in('ral_id', ids)
-  if (eI) throw eI
+  // FIX auditoría 2026-11-12: paginar el .in() — con ~300 RALs el resultado
+  // puede superar max_rows (1000) y los conteos/textos quedaban truncados.
+  const items: FilaRal[] = []
+  for (let from = 0; ; from += 1000) {
+    const { data: pag, error: eP } = await dataClient
+      .from('ral_items')
+      .select('ral_id, codigo, descripcion')
+      .in('ral_id', ids)
+      .range(from, from + 999)
+    if (eP) throw eP
+    if (!pag || pag.length === 0) break
+    items.push(...(pag as FilaRal[]))
+    if (pag.length < 1000) break
+  }
   const conteo = new Map<string, number>()
   const textos = new Map<string, string[]>()
   for (const it of items ?? []) {

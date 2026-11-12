@@ -367,10 +367,13 @@ export async function cambiarPasswordPropia(nuevaPassword: string) {
   if (error) throw error
   const { data: u } = await supabase.auth.getUser()
   if (u?.user) {
-    await dataClient
+    // FIX auditoría 2026-11-12: revisar el error — un fallo silencioso dejaba
+    // must_change_password=true y el usuario caía en bucle tras cambiarla.
+    const { error: eProf } = await dataClient
       .from('profiles')
       .update({ must_change_password: false })
       .eq('id', u.user.id)
+    if (eProf) throw eProf
   }
 }
 

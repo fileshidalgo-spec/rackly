@@ -440,6 +440,9 @@ export function StockTab({
     setCatalogoResults([])
   }
 
+  // FIX auditoría 2026-11-12: ref anti doble clic para handleDelete (abajo)
+  const deleteBusyRef = useRef(false)
+
   async function handleDelete(
     bloque: string,
     torre: string,
@@ -449,6 +452,10 @@ export function StockTab({
     codigoInc?: string
   ) {
     if (!confirm('¿Eliminar TODOS los movimientos de esta ubicación?')) return
+    // FIX auditoría 2026-11-12: guard anti doble clic — un segundo clic re-lanzaba
+    // la RPC y podía borrar movimientos insertados por realtime entre ambas.
+    if (deleteBusyRef.current) return
+    deleteBusyRef.current = true
     try {
       const next = await eliminarUbicacion(selectedCodigo, bloque, torre, piso, posicion, fVencimiento, codigoInc)
       setMovs(next)
@@ -456,6 +463,8 @@ export function StockTab({
     } catch (err: unknown) {
       const message = mensajeError(err)
       toast.error('No se pudo eliminar', { description: message })
+    } finally {
+      deleteBusyRef.current = false
     }
   }
 
@@ -487,12 +496,10 @@ export function StockTab({
           <Input
             value={query}
             onChange={(e) => {
+              // FIX auditoría 2026-11-12: cuerpo muerto eliminado (el if vacío
+              // solo hacía un lookup descartado). No se auto-selecciona: el
+              // usuario elige de los resultados.
               setQuery(e.target.value)
-              // Si el usuario escribió un código exacto, seleccionarlo directo
-              const val = e.target.value.trim().toUpperCase()
-              if (isCatalogoLoaded() && findCatalogoByCodigo(val)) {
-                // No seleccionar automáticamente, dejar que el usuario elija
-              }
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && query.trim()) {

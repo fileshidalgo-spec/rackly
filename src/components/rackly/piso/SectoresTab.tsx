@@ -45,12 +45,19 @@ export function SectoresConfigTab() {
     }
   }, [])
 
+  // FIX auditoría 2026-11-12: guard anti doble-submit (doble clic registraba
+  // sectores duplicados — único submit desprotegido del módulo).
+  const [savingSector, setSavingSector] = useState(false)
+  const deletingIdRef = useRef<string | null>(null)
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!form.nombre.trim()) {
       toast.error('Nombre es requerido')
       return
     }
+    if (savingSector) return
+    setSavingSector(true)
     try {
       const data = await crearSector(
         form.nombre.trim(),
@@ -66,11 +73,15 @@ export function SectoresConfigTab() {
     } catch (err: unknown) {
       const message = mensajeError(err)
       toast.error('Error al crear sector', { description: message })
+    } finally {
+      setSavingSector(false)
     }
   }
 
   async function handleDelete(id: string) {
     if (!confirm('¿Eliminar este sector y toda su estructura?')) return
+    if (deletingIdRef.current) return
+    deletingIdRef.current = id
     try {
       const data = await eliminarSector(id)
       setSectores(data)
@@ -78,6 +89,8 @@ export function SectoresConfigTab() {
     } catch (err: unknown) {
       const message = mensajeError(err)
       toast.error('Error al eliminar', { description: message })
+    } finally {
+      deletingIdRef.current = null
     }
   }
 
@@ -121,8 +134,8 @@ export function SectoresConfigTab() {
                   </div>
                 </div>
               </div>
-              <Button type="submit" className="gap-2 bg-sky-600 hover:bg-sky-700 text-white">
-                <Plus className="h-4 w-4" /> Crear sector
+              <Button type="submit" disabled={savingSector} className="gap-2 bg-sky-600 hover:bg-sky-700 text-white">
+                <Plus className="h-4 w-4" /> {savingSector ? 'Creando…' : 'Crear sector'}
               </Button>
             </form>
           </CardContent>

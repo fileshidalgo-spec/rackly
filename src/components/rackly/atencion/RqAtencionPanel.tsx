@@ -620,6 +620,7 @@ export function RqAtencionPanel({
                   key={f.key}
                   r={f.rq}
                   puedeEliminar={puedeEliminar}
+                  puedeEditar={puedeEditar}
                   cargandoEdicion={cargandoEdicion === f.rq.id}
                   onAtender={() => abrirDetalle(f.rq.id)}
                   onEditar={() => void abrirEdicion(f.rq)}
@@ -695,7 +696,7 @@ export function RqAtencionPanel({
                     </>
                   )}
                 </Button>
-                {puedeEliminar && (
+                {puedeEditar && (
                   <>
                     <Button
                       variant="outline"
@@ -897,6 +898,7 @@ export function RqAtencionPanel({
 function FilaRqTabla({
   r,
   puedeEliminar,
+  puedeEditar,
   cargandoEdicion,
   onAtender,
   onEditar,
@@ -904,6 +906,10 @@ function FilaRqTabla({
 }: {
   r: RqAtencion
   puedeEliminar: boolean
+  /** FIX auditoría 2026-11-12: la RPC rq_editar_rq exige rol de supervisión
+   *  (puedeEditarSolicitudes) — el botón «Editar» usaba puedeEliminar y un
+   *  operario con override de eliminar veía un botón que la BD rechazaba. */
+  puedeEditar: boolean
   cargandoEdicion: boolean
   onAtender: () => void
   onEditar: () => void
@@ -971,7 +977,10 @@ function FilaRqTabla({
               </>
             )}
           </Button>
-          {puedeEliminar && (
+          {/* FIX auditoría 2026-11-12: la edición de RQ exige puedeEditarSolicitudes
+              (RPC rq_editar_rq) — antes se mostraba con puedeEliminar y fallaba
+              con NO_AUTORIZADO. Igual que las filas RAL. */}
+          {puedeEditar && (
             <>
               <Button
                 variant="ghost"

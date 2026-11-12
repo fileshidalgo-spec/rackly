@@ -5,6 +5,7 @@ import { QUERY_TIMEOUT_MS } from '@/lib/rackly/constants'
 import { isLoteUnsupportedError } from '@/lib/rackly/kardex'
 import { normalizarCodigoInc } from '@/lib/rackly/inc-norm'
 import { exigirBorradas, avisarBorradoFiltrado } from '@/lib/rackly/eliminacion-honesta'
+import { terminoBusquedaSeguro } from '@/lib/rackly/formato'
 
 /** Genera un UUID v4 simple (no requiere crypto.randomUUID que no está en todos los browsers) */
 function generateUuidSync(): string {
@@ -295,58 +296,8 @@ export async function eliminarSector(id: string): Promise<Sector[]> {
 }
 
 // ---- Structure queries ----
-export async function listarColumnas(
-  sectorId: string
-): Promise<Columna[]> {
-  const { data, error } = await dataClient
-    .from('piso_columnas')
-    .select('*')
-    .eq('sector_id', sectorId)
-    .order('letra')
-  if (error) throw error
-  return (data ?? []) as Columna[]
-}
-
-export async function listarSubcolumnas(
-  columnaId: string
-): Promise<Subcolumna[]> {
-  const { data, error } = await dataClient
-    .from('piso_subcolumnas')
-    .select('*')
-    .eq('columna_id', columnaId)
-    .order('codigo')
-  if (error) throw error
-  return (data ?? []) as Subcolumna[]
-}
-
-export async function listarNivelesDeSubcolumna(
-  subcolumnaId: string
-): Promise<{ posicion: Posicion; niveles: Nivel[] }[]> {
-  const { data: posData, error: posErr } = await dataClient
-    .from('piso_posiciones')
-    .select('*')
-    .eq('subcolumna_id', subcolumnaId)
-    .order('numero')
-  if (posErr) throw posErr
-
-  const posiciones = (posData ?? []) as Posicion[]
-  if (posiciones.length === 0) return []
-
-  const posIds = posiciones.map((p) => p.id)
-  const { data: nivData, error: nivErr } = await dataClient
-    .from('piso_niveles')
-    .select('*')
-    .in('posicion_id', posIds)
-    .order('numero')
-  if (nivErr) throw nivErr
-
-  const niveles = (nivData ?? []) as Nivel[]
-
-  return posiciones.map((pos) => ({
-    posicion: pos,
-    niveles: niveles.filter((n) => n.posicion_id === pos.id),
-  }))
-}
+// (listarColumnas / listarSubcolumnas / listarNivelesDeSubcolumna eliminadas en
+// auditoría 2026-11-12: exports muertos — los CRUD vivos van por otros caminos)
 
 // ═══ Bloques — FUENTE ÚNICA DE VERDAD: catálogo de Racks ═══
 // Desde la unificación del catálogo (Task 15), `catalogo` es la ÚNICA fuente de
@@ -577,23 +528,8 @@ export async function podarAnclaPisoSiSinUso(codigo: string): Promise<void> {
 }
 
 // ---- Movements ----
-export async function registrarMovimiento(
-  tipo: string,
-  turno: string,
-  detalles: DetalleInput[]
-): Promise<PisoMovimiento> {
-  const { data, error } = await dataClient.rpc('piso_registrar_movimiento', {
-    _tipo: tipo,
-    _turno: turno,
-    _detalles: detalles,
-  })
-  if (error) throw error
-  if (!data || (data as unknown[]).length === 0) {
-    throw new Error('La RPC piso_registrar_movimiento no devolvió resultado')
-  }
-  const result = data as unknown[]
-  return result[0] as PisoMovimiento
-}
+// (registrarMovimiento eliminado en auditoría 2026-11-12: export muerto —
+// las escrituras vivas van por RPCs dedicadas con rollback y guards)
 
 export async function eliminarMovimiento(movimientoId: string): Promise<void> {
   // RPC atómico server-side (mejoras-piso 20261107): detalles + cabecera en una
@@ -658,12 +594,24 @@ export async function selectIn<T>(
 ): Promise<T[]> {
   const out: T[] = []
   for (let i = 0; i < ids.length; i += CHUNK) {
-    const { data, error } = await dataClient
-      .from(table)
-      .select(select)
-      .in(idColumn, ids.slice(i, i + CHUNK))
-    if (error) throw error
-    out.push(...((data ?? []) as T[]))
+    const chunk = ids.slice(i, i + CHUNK)
+    // FIX auditoría 2026-11-12: cada chunk puede devolver >1000 filas
+    // (max_rows de PostgREST trunca en silencio) — paginar con .range() hasta
+    // agotarlo. Crítico para validarStockSuficiente: stock subestimado permitía
+    // salidas por encima del stock real en la ruta fallback.
+    let from = 0
+    for (;;) {
+      const { data, error } = await dataClient
+        .from(table)
+        .select(select)
+        .in(idColumn, chunk)
+        .range(from, from + 999)
+      if (error) throw error
+      const page = (data ?? []) as T[]
+      out.push(...page)
+      if (page.length < 1000) break
+      from += 1000
+    }
   }
   return out
 }
@@ -853,12 +801,14 @@ export async function cargarPosicionesSector(
       if (columnas.length === 0) return []
       const colMap = new Map(columnas.map((c) => [c.id, c.letra]))
 
-      const { data: subs } = await dataClient
+      const { data: subs, error: subErr } = await dataClient
         .from('piso_subcolumnas').select('id, codigo, columna_id').in('columna_id', columnas.map((c) => c.id))
+      if (subErr) throw subErr // FIX auditoría 2026-11-12: antes se destruía
       const subMap = new Map(((subs ?? []) as { id: string; codigo: string; columna_id: string }[]).map((s) => [s.id, s]))
 
-      const { data: posData } = await dataClient
+      const { data: posData, error: posErr } = await dataClient
         .from('piso_posiciones').select('id, numero, subcolumna_id').in('subcolumna_id', ((subs ?? []) as { id: string }[]).map((s) => s.id))
+      if (posErr) throw posErr
       const posiciones = (posData ?? []) as { id: string; numero: number; subcolumna_id: string }[]
 
       // 2. Mapear resultados del RPC por posicion_id
@@ -1007,10 +957,11 @@ export async function cargarPosicionesSector(
   // Buscar IDs reales en piso_bloques
   const realBloqueIds = bloqueIdsSet.filter((id) => !id.startsWith('cat_'))
   if (realBloqueIds.length > 0) {
-    const { data: bloqData } = await dataClient
+    const { data: bloqData, error: bloqErr } = await dataClient
       .from('piso_bloques')
       .select('id, codigo')
       .in('id', realBloqueIds)
+    if (bloqErr) throw bloqErr // FIX auditoría 2026-11-12: antes se destruía
     for (const b of (bloqData ?? []) as { id: string; codigo: string }[]) {
       bloqueMap.set(b.id, b.codigo)
     }
@@ -1609,12 +1560,10 @@ async function registrarTrasladoPosicionDirecto(
     throw ingErr
   }
 
-  try {
-    await insertarDetallesConRollback(salId, detallesSalida, 'registrarTrasladoPosicion', [salId, ingId])
-    await insertarDetallesConRollback(ingId, detallesIngreso, 'registrarTrasladoPosicion', [salId, ingId])
-  } finally {
-    // insertarDetallesConRollback ya hace rollback de cabeceras ante fallo
-  }
+  // insertarDetallesConRollback ya hace rollback de cabeceras ante fallo
+  // (FIX auditoría 2026-11-12: try/finally con finally vacío eliminado)
+  await insertarDetallesConRollback(salId, detallesSalida, 'registrarTrasladoPosicion', [salId, ingId])
+  await insertarDetallesConRollback(ingId, detallesIngreso, 'registrarTrasladoPosicion', [salId, ingId])
 }
 
 // ═══ API PÚBLICA DE ESCRITURA — RPC-FIRST (atómicas en servidor;
@@ -1796,67 +1745,7 @@ export async function obtenerNivelesPosicion(posicionId: string, columnaLetra?: 
   return result
 }
 
-/**
- * Obtiene el stock detallado de una posición desglosado por nivel.
- */
-export async function stockPorNivelPosicion(
-  posicionId: string
-): Promise<{ nivel_id: string; nivel_numero: number; bloque_codigo: string; cantidad: number }[]> {
-  const { data: nivData, error: nivErr } = await dataClient
-    .from('piso_niveles')
-    .select('id, numero')
-    .eq('posicion_id', posicionId)
-    .order('numero')
-  if (nivErr) throw nivErr
-  const niveles = (nivData ?? []) as { id: string; numero: number }[]
-  if (niveles.length === 0) return []
-
-  const nivelIds = niveles.map((n) => n.id)
-  const nivelMap = new Map(niveles.map((n) => [n.id, n.numero]))
-
-  const { data: detData, error: detErr } = await dataClient
-    .from('piso_movimiento_detalles')
-    .select('nivel_id, bloque_id, cantidad, movimiento_id, piso_movimientos(tipo)')
-    .in('nivel_id', nivelIds)
-  if (detErr) throw detErr
-
-  // Calcular stock neto por nivel y bloque
-  const stockMap = new Map<string, number>()
-  for (const d of (detData ?? []) as unknown as {
-    nivel_id: string; bloque_id: string; cantidad: unknown;
-    piso_movimientos: { tipo: string } | null | { tipo: string }[]
-  }[]) {
-    const qty = typeof d.cantidad === 'number' ? d.cantidad : parseFloat(String(d.cantidad ?? '0')) || 0
-    const tipo = Array.isArray(d.piso_movimientos) ? (d.piso_movimientos[0]?.tipo ?? '') : (d.piso_movimientos?.tipo ?? '')
-    const delta = (tipo === 'ingreso' || tipo === 'stock_inicial' || tipo === 'devolucion') ? qty : -qty
-    if (delta === 0) continue
-    stockMap.set(d.nivel_id, (stockMap.get(d.nivel_id) ?? 0) + delta)
-  }
-
-  // Obtener códigos de bloques
-  const bloqueIds = [...new Set((detData ?? []).map((d: unknown) => (d as { bloque_id: string }).bloque_id))] as string[]
-  const bloqueMap = new Map<string, string>()
-  const realIds = bloqueIds.filter((id) => !id.startsWith('cat_') && !id.startsWith('manual_'))
-  if (realIds.length > 0) {
-    const { data: bloqData } = await dataClient.from('piso_bloques').select('id, codigo').in('id', realIds)
-    for (const b of (bloqData ?? []) as { id: string; codigo: string }[]) bloqueMap.set(b.id, b.codigo)
-  }
-  for (const id of bloqueIds) {
-    if (!bloqueMap.has(id)) {
-      bloqueMap.set(id, id.startsWith('cat_') ? id.replace('cat_', '') : id.startsWith('manual_') ? id.replace('manual_', '') : id)
-    }
-  }
-
-  const results: { nivel_id: string; nivel_numero: number; bloque_codigo: string; cantidad: number }[] = []
-  for (const [nivelId, stock] of stockMap) {
-    // Redondeo defensivo ANTES del filtro > 0 (evita "artículos en 0" por residuos)
-    const q = Math.round(stock * 1000) / 1000
-    if (q > 0) {
-      results.push({ nivel_id: nivelId, nivel_numero: nivelMap.get(nivelId) ?? 0, bloque_codigo: '', cantidad: q })
-    }
-  }
-  return results
-}
+// (stockPorNivelPosicion eliminado en auditoría 2026-11-12: export muerto)
 
 /**
  * Lista artículos para los selectores de Piso — FUENTE ÚNICA: catálogo de Racks.
@@ -2098,31 +1987,36 @@ export async function stockPisoGlobal(): Promise<StockPisoItem[]> {
   const nivelIds = [...new Set(fefoResults.map(r => r.nivel_id))]
   const locMap = new Map<string, { ubicacion: string; sector_nombre: string; sector_id: string; posicion_id: string; posicion_numero: number; columna_letra: string; subcolumna_codigo: string }>()
   if (nivelIds.length > 0) {
-    const { data: nivData } = await dataClient.from('piso_niveles').select('id, posicion_id').in('id', nivelIds)
+    const { data: nivData, error: nivErr } = await dataClient.from('piso_niveles').select('id, posicion_id').in('id', nivelIds)
+    if (nivErr) throw nivErr // FIX auditoría 2026-11-12: antes se destruía
     const nivToPos = new Map<string, string>()
     for (const n of (nivData ?? []) as { id: string; posicion_id: string }[]) nivToPos.set(n.id, n.posicion_id)
 
     const posIds = [...nivToPos.values()]
     if (posIds.length > 0) {
-      const { data: posData } = await dataClient.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds)
+      const { data: posData, error: posErr } = await dataClient.from('piso_posiciones').select('id, numero, subcolumna_id').in('id', posIds)
+      if (posErr) throw posErr
       const posMap = new Map<string, { numero: number; subcolumna_id: string }>()
       for (const p of (posData ?? []) as { id: string; numero: number; subcolumna_id: string }[])
         posMap.set(p.id, { numero: p.numero, subcolumna_id: p.subcolumna_id })
       const subIds = [...new Set([...posMap.values()].map(p => p.subcolumna_id))]
       if (subIds.length > 0) {
-        const { data: subData } = await dataClient.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds)
+        const { data: subData, error: subErr } = await dataClient.from('piso_subcolumnas').select('id, codigo, columna_id').in('id', subIds)
+        if (subErr) throw subErr
         const subMap = new Map<string, { codigo: string; columna_id: string }>()
         for (const s of (subData ?? []) as { id: string; codigo: string; columna_id: string }[])
           subMap.set(s.id, { codigo: s.codigo, columna_id: s.columna_id })
         const colIds = [...new Set([...subMap.values()].map(s => s.columna_id))]
         if (colIds.length > 0) {
-          const { data: colData } = await dataClient.from('piso_columnas').select('id, letra, sector_id').in('id', colIds)
+          const { data: colData, error: colErr } = await dataClient.from('piso_columnas').select('id, letra, sector_id').in('id', colIds)
+          if (colErr) throw colErr
           const colMap = new Map<string, { letra: string; sector_id: string }>()
           for (const c of (colData ?? []) as { id: string; letra: string; sector_id: string }[])
             colMap.set(c.id, { letra: c.letra, sector_id: c.sector_id })
           const secIds = [...new Set([...colMap.values()].map(c => c.sector_id))]
           if (secIds.length > 0) {
-            const { data: secData } = await dataClient.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', secIds)
+            const { data: secData, error: secErr } = await dataClient.from('piso_sectores').select('id, nombre, n_columnas, n_subcolumnas').in('id', secIds)
+            if (secErr) throw secErr
             const secMap = new Map<string, { nombre: string; nCol: number; nSub: number }>()
             for (const s of (secData ?? []) as { id: string; nombre: string; n_columnas: number; n_subcolumnas: number }[]) secMap.set(s.id, { nombre: s.nombre, nCol: s.n_columnas, nSub: s.n_subcolumnas })
             for (const [nivId, posId] of nivToPos) {
@@ -2239,8 +2133,9 @@ async function _stockPisoBuscarImpl(term: string): Promise<StockPisoItem[]> {
   try {
     const t = term.trim()
     if (!t) return []
-    // Sanitizar para el .or() de PostgREST: comas/paréntesis rompen la sintaxis
-    const safe = t.replace(/[,()]/g, ' ').trim()
+    // FIX auditoría 2026-11-12: sanitizador CENTRAL (antes solo quitaba comas y
+    // paréntesis — pasaban % _ " \ y un .or() podía romperse con HTTP 400).
+    const safe = terminoBusquedaSeguro(t)
     if (!safe) return []
 
     // ─── 1. Códigos candidatos: CATÁLOGO DE RACKS (fuente de verdad, descripción
@@ -2301,38 +2196,47 @@ export async function stockPisoPorCodigos(codigos: string[]): Promise<StockPisoI
     const bloqueInfoMap = await resolverInfoBloques(bloqueIds)
 
     // ─── Detalles SOLO de esos bloques + ubicación resuelta en 1 query ───
-    const { data: detalles, error: errD } = await dataClient
-      .from('piso_movimiento_detalles')
-      .select(`
-        bloque_id,
-        nivel_id,
-        cantidad,
-        fecha_vencimiento,
-        piso_movimientos(tipo, codigo_inc, fecha),
-        piso_niveles!inner(
-          posicion_id,
-          piso_posiciones!inner(
-            numero,
-            subcolumna_id,
-            piso_subcolumnas!inner(
-              codigo,
-              columna_id,
-              piso_columnas!inner(
-                letra,
-                sector_id,
-                piso_sectores!inner(
-                  nombre,
-                  n_columnas,
-                  n_subcolumnas
+    // FIX auditoría 2026-11-12: la query puede devolver >1000 filas (max_rows
+    // de PostgREST trunca en silencio) — paginar con .range() hasta agotar.
+    const detalles: unknown[] = []
+    for (let from = 0; ; from += 1000) {
+      const { data: pag, error: errP } = await dataClient
+        .from('piso_movimiento_detalles')
+        .select(`
+          bloque_id,
+          nivel_id,
+          cantidad,
+          fecha_vencimiento,
+          piso_movimientos(tipo, codigo_inc, fecha),
+          piso_niveles!inner(
+            posicion_id,
+            piso_posiciones!inner(
+              numero,
+              subcolumna_id,
+              piso_subcolumnas!inner(
+                codigo,
+                columna_id,
+                piso_columnas!inner(
+                  letra,
+                  sector_id,
+                  piso_sectores!inner(
+                    nombre,
+                    n_columnas,
+                    n_subcolumnas
+                  )
                 )
               )
             )
           )
-        )
-      `)
-      .in('bloque_id', bloqueIds)
-    if (errD) throw errD
-    if (!detalles || detalles.length === 0) return []
+        `)
+        .in('bloque_id', bloqueIds)
+        .range(from, from + 999)
+      if (errP) throw errP
+      if (!pag || pag.length === 0) break
+      detalles.push(...pag)
+      if (pag.length < 1000) break
+    }
+    if (detalles.length === 0) return []
 
     // ─── FEFO DIRIGIDO por (bloque_id, nivel_id) con orden temporal ───
     type BusqRow = {
@@ -2586,6 +2490,9 @@ export async function cargarVistaColumna(
     .from('piso_movimiento_detalles')
     .select('nivel_id, bloque_id, cantidad, fecha_vencimiento, movimiento_id, piso_movimientos(tipo, codigo_inc)')
     .in('nivel_id', nivelIds)
+  // FIX auditoría 2026-11-12: revisar el error (antes se destruía y una BD
+  // caída pintaba la columna con stock 0 fingiendo éxito — espejo del FIX E1).
+  if (movErr) throw movErr
   const movDetalles = (movData ?? []) as {
     nivel_id: string; bloque_id: string; cantidad: unknown; fecha_vencimiento: string | null;
     movimiento_id: string;

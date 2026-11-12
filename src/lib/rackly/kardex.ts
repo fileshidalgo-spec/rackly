@@ -483,9 +483,18 @@ export async function calcularStockUbicacion(
   if (excluirInc) {
     query.is('codigo_inc', null)
   }
-  const { data, error } = await query
-  if (error) throw error
-  return (data ?? []).reduce(
+  // FIX auditoría 2026-11-12: paginar con .range() — una ubicación caliente
+  // puede superar las 1000 filas de max_rows (PostgREST trunca en silencio) y
+  // el stock quedaba SOBREESTIMADO al validar salidas/traslados del fallback.
+  const filas: Record<string, unknown>[] = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await query.range(from, from + 999)
+    if (error) throw error
+    const pag = (data ?? []) as Record<string, unknown>[]
+    filas.push(...pag)
+    if (pag.length < 1000) break
+  }
+  return filas.reduce(
     (s: number, r: Record<string, unknown>) => {
       // Doble filtro: BD ya filtró por bloque+codigo, pero verificamos ubicación con norm()
       // por si hay formatos mixtos (ej. BD tiene '01' y el grid usa '1')
@@ -836,7 +845,10 @@ export async function stockEnUbicacion(
       proveedor: g.proveedor || undefined,
       codigoInc: g.codigoInc || undefined,
     }))
-  } catch {
+  } catch (e) {
+    // FIX auditoría 2026-11-12: registrar la causa — antes el fallo del cálculo
+    // directo se perdía y solo fallaba (en consola) el fallback RPC.
+    console.warn('[kardex.stockEnUbicacion] cálculo directo falló, usando fallback RPC:', e)
     // Fallback al RPC original si falla la consulta directa
     try {
       const { data, error } = await dataClient.rpc('stock_en_ubicacion', {
@@ -1516,24 +1528,6 @@ export async function trasladarUbicacionCompleta(
     }
   }
   return resultado
-}
-
-/**
- * Elimina TODOS los movimientos de la tabla.
- * Usa service_role para bypassear RLS.
- */
-export async function deleteAllMovimientos(): Promise<{ deleted: boolean; error?: string }> {
-  const admin = dataClient
-
-  // Borrar todo — gte('id', '00000000-...') matchea todos los UUIDs
-  const { error } = await admin
-    .from('movimientos')
-    .delete()
-    .gte('id', '00000000-0000-0000-0000-000000000000')
-
-  if (error) return { deleted: false, error: error.message }
-
-  return { deleted: true }
 }
 
 /**

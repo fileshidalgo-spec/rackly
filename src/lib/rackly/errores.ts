@@ -107,12 +107,8 @@ export function mensajeError(err: unknown): string {
   return String(err)
 }
 
-/**
- * Mensaje para errores de RPCs con convención "CODE|detalle" — igual que
- * mensajeError (la convención ya se aplica dentro). Se conserva como alias
- * con nombre histórico para los módulos de Tránsito.
- */
-export const mensajeRpcCanonica = mensajeError
+// (mensajeRpcCanonica eliminado en auditoría 2026-11-12: alias muerto —
+// usar mensajeError, que ya aplica la convención "CODE|detalle")
 
 // ═══════════════════════════════════════════════════════════════════
 // ERRORES CONTROLADOS (2026-10-30, auditoría integral):

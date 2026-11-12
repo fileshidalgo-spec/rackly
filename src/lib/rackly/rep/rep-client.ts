@@ -111,7 +111,10 @@ export type RepFiltroArticulos = {
 /** Búsqueda paginada en servidor (25 000 filas: jamás se bajan todas). */
 export async function repBuscarArticulos(f: RepFiltroArticulos = {}): Promise<RepPagina<RepArticulo>> {
   const page = Math.max(1, f.page ?? 1)
-  const pageSize = Math.min(200, Math.max(10, f.pageSize ?? 50))
+  // FIX auditoría 2026-11-12: el clamp 200 mataba la paginación de la UI
+  // («Cargar más» pedía límites hasta 1000 — desde la 2.ª pulsación devolvía
+  // siempre las mismas filas).
+  const pageSize = Math.min(1000, Math.max(10, f.pageSize ?? 50))
   const desde = (page - 1) * pageSize
   const hasta = desde + pageSize - 1
 
@@ -397,15 +400,7 @@ export async function repStockDeLonchera(loncheraId: string): Promise<RepStockDe
   }))
 }
 
-/** ¿Cuántos artículos distintos tiene la lonchera? (pre-chequeo de capacidad 15) */
-export async function repContarArticulosLonchera(loncheraId: string): Promise<number> {
-  const { count, error } = await dataClient
-    .from('rep_stock')
-    .select('id', { count: 'exact', head: true })
-    .eq('lonchera_id', loncheraId)
-  lanzar(error)
-  return count ?? 0
-}
+// (repContarArticulosLonchera eliminado en auditoría 2026-11-12: export muerto)
 
 // ═══════════════════════════════════════════════════════════════════
 // RECEPCIÓN — RPC atómica rep_registrar_ingreso
@@ -531,6 +526,10 @@ export async function repRegistrarTraslado(params: {
 
 /** Historial de UNA ubicación: movimientos donde es origen o destino. */
 export async function repMovimientosDeUbicacion(ubicacionId: string, limite = 80): Promise<RepMovimiento[]> {
+  // FIX auditoría 2026-11-12: validar UUID antes de interpolar en .or() —
+  // única interpolación sin guard del repo (un id manipulado por deep-link
+  // podía romper el parseo del filtro; RLS seguía aplicando).
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ubicacionId)) return []
   const { data, error } = await dataClient
     .from('rep_movimientos')
     .select('*')
@@ -556,7 +555,10 @@ export type RepFiltroMovimientos = {
 
 export async function repListarMovimientos(f: RepFiltroMovimientos = {}): Promise<RepPagina<RepMovimiento>> {
   const page = Math.max(1, f.page ?? 1)
-  const pageSize = Math.min(200, Math.max(10, f.pageSize ?? 50))
+  // FIX auditoría 2026-11-12: el clamp 200 mataba la paginación de la UI
+  // («Cargar más» pedía límites hasta 1000 — desde la 2.ª pulsación devolvía
+  // siempre las mismas filas).
+  const pageSize = Math.min(1000, Math.max(10, f.pageSize ?? 50))
   const desde = (page - 1) * pageSize
   const hasta = desde + pageSize - 1
 
@@ -599,15 +601,7 @@ export async function repListarRals(params: { estado?: RepEstadoRal | 'todos'; p
   return { filas: (data ?? []) as RepRal[], total: count ?? 0 }
 }
 
-export async function repRalPorNumero(numero: string): Promise<RepRal | null> {
-  const { data, error } = await dataClient
-    .from('rep_ral')
-    .select('*')
-    .eq('numero', numero.trim().toUpperCase())
-    .maybeSingle()
-  lanzar(error)
-  return (data as RepRal | null) ?? null
-}
+// (repRalPorNumero eliminado en auditoría 2026-11-12: export muerto)
 
 export async function repCrearRal(input: { numero: string; fecha: string; solicitante: string; usuarioId: string; usuarioNombre: string }): Promise<RepRal> {
   const { data, error } = await dataClient

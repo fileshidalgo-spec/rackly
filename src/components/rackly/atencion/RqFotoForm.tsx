@@ -707,6 +707,9 @@ export function RqFotoForm({
             className="gap-1.5"
             onClick={() => {
               if (!originalRef.current) return
+              // FIX auditoría 2026-11-12: re-cortar re-ejecuta el OCR y reconstruye
+              // el form desde cero — avisar antes de descartar lo digitado a mano.
+              if (!confirm('Reajustar el recorte re-ejecuta el OCR y rellena el formulario desde la foto: se pierden los cambios manuales ya digitados. ¿Continuar?')) return
               setPendiente(originalRef.current)
               setOrigenRecorte('confirmar')
               setPaso('recortar')

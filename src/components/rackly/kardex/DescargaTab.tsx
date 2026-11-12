@@ -632,7 +632,10 @@ function UpDataSection() {
             <div>
               <p className="text-xs font-bold text-red-700">Se eliminarán todos los movimientos registrados</p>
               <p className="text-[11px] text-red-600/80 mt-0.5">
-                Al cargar el archivo, primero se borra todo el historial de movimientos y luego se insertan los datos del Excel como ingresos nuevos. El stock quedará exactamente como indica el archivo.
+                {/* FIX auditoría 2026-11-12: copy actualizado — el orden destructivo
+                    antiguo ya no es el del código (hoy: snapshot de IDs → insertar
+                    los nuevos → recién entonces podar los antiguos). */}
+                Al cargar el archivo se insertan primero los datos del Excel como ingresos nuevos y SOLO si la carga completa tiene éxito se borra el historial anterior (snapshot de IDs). El stock quedará exactamente como indica el archivo.
               </p>
             </div>
           </div>

@@ -989,8 +989,8 @@ const TITULO_SEMAFORO: Record<string, string> = {
 }
 
 function formatearNum(n: number): string {
-  const r = Math.round(n * 100) / 100
-  return Number.isInteger(r) ? String(r) : String(r)
+  // FIX auditoría 2026-11-12: ternario redundante eliminado (ambas ramas idénticas)
+  return String(Math.round(n * 100) / 100)
 }
 
 /** 'YYYY-MM-DD' → 'DD/MM/YY' (null/'' → ''). */

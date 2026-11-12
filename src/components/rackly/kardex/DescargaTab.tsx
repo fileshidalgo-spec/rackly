@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import { fetchMovimientos, addMovimientosBatch, listarMovimientoIds, eliminarMovimientosPorIds, calcularLotesRemanentes, proveedorPorVenc, compararFEFO, compararUbicacionNum, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
+import { fetchMovimientos, addMovimientosBatch, listarMovimientoIds, eliminarMovimientosPorIds, compararFEFO, compararUbicacionNum, type Movimiento, type UploadStockRow } from '@/lib/rackly/kardex'
+import { agruparPoolsLote, remanentesDePool, proveedoresDePool } from '@/lib/rackly/lotes'
 import { aNumero, hoyISO } from '@/lib/rackly/formato'
-import { esTipoEntrada } from '@/lib/utils'
 import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
 import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { useAuth } from '@/hooks/useAuth'
@@ -63,53 +63,33 @@ function DownloadSection({ movs }: { movs: Movimiento[] }) {
       // el MISMO algoritmo que Stock/Ocupación/FEFO (calcularLotesRemanentes)
       // y el proveedor del ingreso más reciente de cada lote remanente.
       // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
-      type PoolRow = {
-        code: string; desc: string; un: string;
-        bloque: string; torre: string; piso: string; posicion: string;
-        inc: string;
-        ing: Map<string, number>;
-        sal: Array<{ venc: string; qty: number; ts: string; id: string }>;
-        provIn: Array<{ venc: string; proveedor?: string; ts: string }>;
-      }
-      const stockMap = new Map<string, PoolRow>()
-      for (const m of movs) {
-        const incKey = m.codigoInc || ''
-        const key = `${m.codigo}|${m.bloque}|${m.torre}|${m.piso}|${m.posicion}|${incKey}`
-        const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
-        if (!(qty > 0)) continue
-        let p = stockMap.get(key)
-        if (!p) {
-          p = { code: m.codigo, desc: m.descripcion, un: m.un, bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion, inc: incKey, ing: new Map(), sal: [], provIn: [] }
-          stockMap.set(key, p)
-        }
-        if (!p.desc && m.descripcion) p.desc = m.descripcion
-        const vencKey = m.fVencimiento || ''
-        if (esTipoEntrada(m.tipo)) {
-          p.ing.set(vencKey, (p.ing.get(vencKey) ?? 0) + qty)
-          if (m.proveedor) p.provIn.push({ venc: vencKey, proveedor: m.proveedor, ts: m.fModificacion })
-        } else {
-          p.sal.push({ venc: vencKey, qty, ts: m.fModificacion, id: m.id })
-        }
-      }
-      const stockData = Array.from(stockMap.values())
+      // FIX deuda 2026-11-12: agregación central (lib/rackly/lotes.ts) — pools
+      // por (código|ubicación|INC), salidas ASC por (ts, id); usa el MISMO
+      // algoritmo que Stock/Ocupación/FEFO (calcularLotesRemanentes) y el
+      // proveedor del ingreso más reciente de cada lote remanente.
+      const pools = agruparPoolsLote(movs, {
+        modoInc: 'todos',
+        ordenarSalidas: true,
+        claveDe: (m) => `${m.codigo}|${m.bloque}|${m.torre}|${m.piso}|${m.posicion}|${m.codigoInc || ''}`,
+      })
+      const stockData = Array.from(pools.values())
         .flatMap((p) => {
-          const sal = p.sal.sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
-          const rem = calcularLotesRemanentes(p.ing, sal)
-          const provPorVenc = proveedorPorVenc(p.provIn)
+          const rem = remanentesDePool(p)
+          const provPorVenc = proveedoresDePool(p)
           return rem.map((l) => ({
-            'CÓDIGO': p.code,
+            'CÓDIGO': p.codigo,
             'BLOQUE': p.bloque,
             'TORRE': p.torre,
             'PISO': p.piso,
             'POSICIÓN': p.posicion,
-            'DESCRIPCIÓN': p.desc,
+            'DESCRIPCIÓN': p.descripcion,
             'UN': p.un,
             'CANTIDAD': Math.round(l.cantidad * 1000) / 1000,
-            'NUMERO DE INC': p.inc,
+            'NUMERO DE INC': p.codigoInc,
             'FECHA DE VENCIMIENTO': l.venc,
             'PROVEEDOR': provPorVenc.get(l.venc) ?? '',
             _bloque: p.bloque, _torre: p.torre, _piso: p.piso, _posicion: p.posicion,
-            _code: p.code, _inc: p.inc, _venc: l.venc,
+            _code: p.codigo, _inc: p.codigoInc, _venc: l.venc,
           }))
         })
         .sort((a, b) => {

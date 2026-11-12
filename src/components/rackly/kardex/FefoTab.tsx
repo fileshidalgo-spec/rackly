@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { fetchMovimientos, calcularLotesRemanentes, proveedorPorVenc, type Movimiento } from '@/lib/rackly/kardex'
+import { fetchMovimientos, type Movimiento } from '@/lib/rackly/kardex'
+import { agruparPoolsLote, remanentesDePool, proveedoresDePool, textoLoteFisico } from '@/lib/rackly/lotes'
 import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
 import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { loadTabState, saveTabState } from '@/lib/rackly/tab-state'
 import { hoyISO } from '@/lib/rackly/formato'
-import { esTipoEntrada } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -137,67 +137,28 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
   const fefoData = useMemo(() => {
     // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
 
-    // Pools por (ubicación + código), excluyendo INC (igual que Stock/Ocupación)
-    const ingresosMap = new Map<string, Map<string, number>>() // key → (fv → qty)
-    const salidasMap = new Map<string, Array<{ venc: string; qty: number; ts: string; id: string }>>()
-    // Códigos de lote FÍSICOS (digitados en ingresos) por key → (fv → Set): trazabilidad
-    const lotesFisMap = new Map<string, Map<string, Set<string>>>()
-    // Ingresos con proveedor por key → proveedor REAL de cada lote remanente
-    const provInMap = new Map<string, Array<{ venc: string; proveedor?: string; ts: string }>>()
-    const metaMap = new Map<string, { posKey: string; code: string; descripcion: string; un: string; proveedor?: string }>()
-
-    for (const m of movs) {
-      if (m.codigoInc) continue // INC no participa en FEFO (pestañas propias para INC)
-      const code = m.codigo.trim().toUpperCase()
-      const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-      const key = `${posKey}||${code}`
-      const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
-      if (!(qty > 0)) continue
-      if (!metaMap.has(key)) {
-        metaMap.set(key, { posKey, code, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor || undefined })
-      }
-      const venc = m.fVencimiento || ''
-      if (esTipoEntrada(m.tipo)) {
-        const pool = ingresosMap.get(key) ?? new Map<string, number>()
-        pool.set(venc, (pool.get(venc) ?? 0) + qty)
-        ingresosMap.set(key, pool)
-        if (m.proveedor) {
-          const list = provInMap.get(key) ?? []
-          list.push({ venc, proveedor: m.proveedor, ts: m.fModificacion })
-          provInMap.set(key, list)
-        }
-        if (m.lote) {
-          let porKey = lotesFisMap.get(key)
-          if (!porKey) { porKey = new Map(); lotesFisMap.set(key, porKey) }
-          const set = porKey.get(venc) ?? new Set<string>()
-          set.add(m.lote)
-          porKey.set(venc, set)
-        }
-      } else {
-        const list = salidasMap.get(key) ?? []
-        list.push({ venc, qty, ts: m.fModificacion, id: m.id })
-        salidasMap.set(key, list)
-      }
-    }
+    // Pools por (ubicación + código), excluyendo INC (igual que Stock/Ocupación).
+    // FIX deuda 2026-11-12: agregación central (lib/rackly/lotes.ts) — salidas
+    // ordenadas ASC por (ts, id), misma convención de siempre.
+    const pools = agruparPoolsLote(movs, {
+      modoInc: 'excluir',
+      ordenarSalidas: true,
+      claveDe: (m) => `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.codigo.trim().toUpperCase()}`,
+    })
 
     const hoy = new Date(); hoy.setHours(0, 0, 0, 0)
     const items: FefoItem[] = []
 
-    for (const [key, pool] of ingresosMap) {
-      const meta = metaMap.get(key)
-      if (!meta) continue
-      // Salidas en orden temporal (ASC) — igual que la consulta de stockEnUbicacion
-      const salidas = (salidasMap.get(key) ?? []).sort((a, b) =>
-        a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
-      const remanentes = calcularLotesRemanentes(pool, salidas)
+    for (const lp of pools.values()) {
+      // Salidas ya ordenadas ASC por (ts, id) — igual que la consulta de stockEnUbicacion
+      const remanentes = remanentesDePool(lp)
       const total = remanentes.reduce((s, l) => s + l.cantidad, 0)
       if (total <= 0) continue // igual que Stock/Ocupación: solo stock neto > 0
 
-      const [bloque, torre, piso, posicion] = meta.posKey.split('-')
-      const porVenc = lotesFisMap.get(key)
+      const [bloque, torre, piso, posicion] = lp.clave.split('||')[0].split('-')
       // Proveedor REAL por lote (ingreso más reciente de ese venc) — no el del
       // primer movimiento histórico, que puede ser de un lote ya consumido.
-      const provPorVenc = proveedorPorVenc(provInMap.get(key) ?? [])
+      const provPorVenc = proveedoresDePool(lp)
       for (const lote of remanentes) {
         const fv = lote.venc
         let status: FefoStatus = 'sin_fecha'
@@ -211,15 +172,14 @@ export function FefoTab({ onGotoUbicacion }: { onGotoUbicacion?: (bloque: string
           if (!Number.isFinite(dias)) dias = -1
           status = dias < 0 ? 'vencido' : dias <= 15 ? 'urgente' : dias <= 30 ? 'proximo' : 'vigente'
         }
-        const fis = porVenc?.get(fv)
         items.push({
-          codigo: meta.code, descripcion: meta.descripcion,
+          codigo: lp.codigo.trim().toUpperCase(), descripcion: lp.descripcion,
           bloque, torre, piso, posicion,
           stock: round3(lote.cantidad), diasRestantes: dias, fVencimiento: fv,
-          un: meta.un,
+          un: lp.un,
           // Proveedor del lote FEFO (ingreso más reciente de ese venc); fallback al histórico
-          proveedor: provPorVenc.get(fv) ?? meta.proveedor,
-          loteFisico: fis && fis.size > 0 ? Array.from(fis).sort().join(', ') : undefined,
+          proveedor: provPorVenc.get(fv) ?? lp.proveedor,
+          loteFisico: textoLoteFisico(lp, fv),
           status,
         })
       }

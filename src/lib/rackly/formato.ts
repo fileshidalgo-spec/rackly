@@ -64,3 +64,17 @@ export function hoyISO(): string {
   const dd = String(d.getDate()).padStart(2, '0')
   return `${d.getFullYear()}-${mm}-${dd}`
 }
+
+/**
+ * FIX deuda 2026-11-12: fecha de HOY SIEMPRE en America/Lima como YYYY-MM-DD,
+ * independiente de la zona del equipo (hoyISO() usa la zona del dispositivo;
+ * esta es la versión canónica Lima, misma TZ que fechaLimaISO de
+ * atencion-tablero.ts — úsala en series/gráficos que comparan contra fechas
+ * de la BD para que dashboard y Excel no difieran fuera de Perú).
+ */
+export function hoyLimaISO(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date()) // en-CA → YYYY-MM-DD
+}

@@ -4,12 +4,12 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   addMovimiento,
   stockEnUbicacion,
-  calcularLotesRemanentes,
   type Movimiento,
   type TipoMovimiento,
   type StockEnUbicacion,
   type Turno,
 } from '@/lib/rackly/kardex'
+import { agruparPoolsLote, remanentesDePool, textoLoteFisico } from '@/lib/rackly/lotes'
 
 import { calcularTurno } from '@/lib/rackly/turno'
 import { BLOQUES, PISOS, PROVEEDORES_FILM } from '@/lib/rackly/constants'
@@ -24,7 +24,6 @@ import {
   isExpiringSoon,
   extractError,
   isInsufficientStockError,
-  esTipoEntrada,
 } from '@/lib/utils'
 import { aNumero } from '@/lib/rackly/formato'
 import { detectarRqParaSalida, type RqSalidaDetectada } from '@/lib/rackly/rq-contexto-salida'
@@ -824,60 +823,35 @@ function SalidaForm({
       // esta respuesta, descartarla (evita "datos fantasma" de la búsqueda anterior)
       if (searchCodeRef.current.trim() !== code) return
       const upperCode = code.toUpperCase()
-      const locMap = new Map<string, {
-        bloque: string; torre: string; piso: string; posicion: string;
-        codigo: string; descripcion: string; un: string; proveedor?: string;
-        ingresos: Map<string, number>
-        salidas: Array<{ venc: string; qty: number }>
-        lotesFis: Map<string, Set<string>>  // códigos de lote físicos por fecha (trazabilidad)
-      }>()
-      // EXCLUIR movimientos INC de la vista de salidas normales
-      const relevant = movs.filter((m) => m.codigo === upperCode && !m.codigoInc)
+      // FIX deuda 2026-11-12: agregación central en lib/rackly/lotes.ts (el
+      // bucle estaba copiado en 6 pestañas y ya había divergido — aquí faltaba
+      // la normalización trim+mayúsculas del FIX Task 24: un código con
+      // espacios visible en Traslado/Stock no aparecía en Salidas).
+      // Sin ordenarSalidas: el orden de llegada es la semántica histórica de
+      // Salidas (fetchMovimientosByCodigo trae DESC por f_modificacion).
+      const pools = agruparPoolsLote(movs, {
+        codigo: upperCode,
+        modoInc: 'excluir',
+        claveDe: (m) => `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`,
+      })
       let desc = ''
       let un = ''
-      // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
-      for (const m of relevant) {
+      for (const m of movs) {
+        if (m.codigo.trim().toUpperCase() !== upperCode || m.codigoInc) continue
         if (!desc && m.descripcion) desc = m.descripcion
         if (!un && m.un) un = m.un
-        const qty = m.cantidad
-        if (isNaN(qty) || !isFinite(qty) || qty <= 0) continue
-        const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-        let cur = locMap.get(key)
-        if (!cur) {
-          cur = {
-            bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
-            codigo: m.codigo, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor,
-            ingresos: new Map(), salidas: [], lotesFis: new Map(),
-          }
-          locMap.set(key, cur)
-        }
-        if (!cur.proveedor && m.proveedor) cur.proveedor = m.proveedor
-        const venc = m.fVencimiento || ''
-        if (esTipoEntrada(m.tipo)) {
-          cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
-          // Registrar el código de lote físico si el ingreso lo trajo
-          if (m.lote) {
-            const set = cur.lotesFis.get(venc) ?? new Set<string>()
-            set.add(m.lote)
-            cur.lotesFis.set(venc, set)
-          }
-        } else {
-          cur.salidas.push({ venc, qty })
-        }
       }
       // UNA FILA POR LOTE con su fecha real: la salida descuenta EXACTAMENTE el lote
       // elegido (no se usa más la "fecha más próxima histórica" de la ubicación).
       const results: LocWithKey[] = []
-      for (const lp of locMap.values()) {
-        const remanentes = calcularLotesRemanentes(lp.ingresos, lp.salidas)
-        for (const lote of remanentes) {
-          const fis = lp.lotesFis.get(lote.venc)
+      for (const lp of pools.values()) {
+        for (const lote of remanentesDePool(lp)) {
           results.push({
             bloque: lp.bloque, torre: lp.torre, piso: lp.piso, posicion: lp.posicion,
             codigo: lp.codigo, descripcion: lp.descripcion, un: lp.un,
             stock: Math.round(lote.cantidad * 1000) / 1000,
             fVencimiento: lote.venc || undefined,
-            loteFisico: fis && fis.size > 0 ? Array.from(fis).sort().join(', ') : undefined,
+            loteFisico: textoLoteFisico(lp, lote.venc),
             proveedor: lp.proveedor,
           })
         }
@@ -1622,63 +1596,31 @@ function SalidaIncForm({
       // Guard de vigencia: descarta respuestas de una búsqueda ya reemplazada
       if (searchCodeRef.current.trim() !== code) return
       const upperCode = code.toUpperCase()
-      // Pools por (ubicación + codigoInc): ingresos por lote + salidas dirigidas
-      const locMap = new Map<string, {
-        bloque: string; torre: string; piso: string; posicion: string;
-        codigo: string; descripcion: string; un: string; proveedor?: string; codigoInc: string;
-        ingresos: Map<string, number>
-        salidas: Array<{ venc: string; qty: number }>
-        lotesFis: Map<string, Set<string>>  // códigos de lote físicos por fecha (trazabilidad)
-      }>()
-      // SOLO movimientos INC — invertir el filtro de salidas normales
-      const relevant = movs.filter((m) => m.codigo === upperCode && !!m.codigoInc)
+      // FIX deuda 2026-11-12: agregación central (lib/rackly/lotes.ts) — solo INC,
+      // pools por (ubicación + codigoInc); sin ordenarSalidas (orden de llegada).
+      const pools = agruparPoolsLote(movs, {
+        codigo: upperCode,
+        modoInc: 'solo',
+        claveDe: (m) => `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.codigoInc || ''}`,
+      })
       let desc = ''
       let un = ''
-      // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
-      for (const m of relevant) {
+      for (const m of movs) {
+        if (m.codigo.trim().toUpperCase() !== upperCode || !m.codigoInc) continue
         if (!desc && m.descripcion) desc = m.descripcion
         if (!un && m.un) un = m.un
-        const qty = m.cantidad
-        if (isNaN(qty) || !isFinite(qty) || qty <= 0) continue
-        const key = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.codigoInc || ''}`
-        let cur = locMap.get(key)
-        if (!cur) {
-          cur = {
-            bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
-            codigo: m.codigo, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor,
-            codigoInc: m.codigoInc || '', ingresos: new Map(), salidas: [], lotesFis: new Map(),
-          }
-          locMap.set(key, cur)
-        }
-        if (!cur.proveedor && m.proveedor) cur.proveedor = m.proveedor
-        const venc = m.fVencimiento || ''
-        if (esTipoEntrada(m.tipo)) {
-          cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
-          // Registrar el código de lote físico si el ingreso lo trajo
-          if (m.lote) {
-            const set = cur.lotesFis.get(venc) ?? new Set<string>()
-            set.add(m.lote)
-            cur.lotesFis.set(venc, set)
-          }
-        } else {
-          // Las salidas conservan su orden temporal (fetchMovimientosByCodigo ordena por f_modificacion DESC;
-          // calcularLotesRemanentes procesa dirigido + desborde FEFO, sin dejar lotes negativos)
-          cur.salidas.push({ venc, qty })
-        }
       }
       // UNA FILA POR LOTE INC: la salida descuenta EXACTAMENTE el lote elegido
       // (misma semántica que SalidaForm normal: FEFO como orden, lote como fila).
       const results: LocIncWithKey[] = []
-      for (const lp of locMap.values()) {
-        const remanentes = calcularLotesRemanentes(lp.ingresos, lp.salidas)
-        for (const lote of remanentes) {
-          const fis = lp.lotesFis.get(lote.venc)
+      for (const lp of pools.values()) {
+        for (const lote of remanentesDePool(lp)) {
           results.push({
             bloque: lp.bloque, torre: lp.torre, piso: lp.piso, posicion: lp.posicion,
             codigo: lp.codigo, descripcion: lp.descripcion, un: lp.un,
             stock: Math.round(lote.cantidad * 1000) / 1000,
             fVencimiento: lote.venc || undefined,
-            loteFisico: fis && fis.size > 0 ? Array.from(fis).sort().join(', ') : undefined,
+            loteFisico: textoLoteFisico(lp, lote.venc),
             proveedor: lp.proveedor,
             codigoInc: lp.codigoInc,
           })

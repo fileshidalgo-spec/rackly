@@ -5,10 +5,10 @@ import {
   trasladarMovimiento,
   stockEnUbicacion,
   addMovimiento,
-  calcularLotesRemanentes,
   type Movimiento,
   type StockEnUbicacion,
 } from '@/lib/rackly/kardex'
+import { agruparPoolsLote, remanentesDePool, textoLoteFisico } from '@/lib/rackly/lotes'
 import { calcularTurno } from '@/lib/rackly/turno'
 import { BLOQUES, PISOS, torresDeBloque, posicionesDeBloque } from '@/lib/rackly/ubicaciones'
 import { useAuth } from '@/hooks/useAuth'
@@ -50,7 +50,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { Loader2, ArrowRightLeft, PackageSearch, AlertTriangle, ArrowUpFromLine, Package, MapPin, TriangleAlert, CheckCircle2 } from 'lucide-react'
-import { formatDate, isExpired, isExpiringSoon, extractError, isInsufficientStockError, esTipoEntrada } from '@/lib/utils'
+import { formatDate, isExpired, isExpiringSoon, extractError, isInsufficientStockError } from '@/lib/utils'
 import type { CatalogoItem } from '@/lib/rackly/catalogo'
 import { TrasladoUbicacionTab, ModoTrasladoSelector, type ModoTraslado } from './TrasladoUbicacionTab'
 
@@ -140,57 +140,24 @@ export function TrasladoTab() {
   const locations = useMemo(() => {
     if (!codigo) return []
     const code = codigo.toUpperCase()
-    const locMap = new Map<string, {
-      bloque: string; torre: string; piso: string; posicion: string;
-      codigo: string; descripcion: string; un: string; proveedor?: string;
-      ingresos: Map<string, number>
-      salidas: Array<{ venc: string; qty: number }>
-      lotesFis: Map<string, Set<string>>  // códigos de lote físicos por fecha (trazabilidad)
-    }>()
-    // FIX Task 24: normalizar AMBOS lados (trim + mayúsculas) igual que Stock y
-    // FEFO — la igualdad estricta excluía filas cuyo codigo viniera con espacios
-    // o minúsculas en BD (clase entera de "no me da información")
-    const relevant = movs.filter((m) => m.codigo.trim().toUpperCase() === code && !m.codigoInc)
-    // Convención de signos: esTipoEntrada() (fuente única, utils.ts)
-    for (const m of relevant) {
-      const qty = m.cantidad
-      if (isNaN(qty) || !isFinite(qty) || qty <= 0) continue
-      const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-      let cur = locMap.get(posKey)
-      if (!cur) {
-        cur = {
-          bloque: m.bloque, torre: m.torre, piso: m.piso, posicion: m.posicion,
-          codigo: m.codigo, descripcion: m.descripcion, un: m.un, proveedor: m.proveedor,
-          ingresos: new Map(), salidas: [], lotesFis: new Map(),
-        }
-        locMap.set(posKey, cur)
-      }
-      if (!cur.proveedor && m.proveedor) cur.proveedor = m.proveedor
-      const venc = m.fVencimiento || ''
-      if (esTipoEntrada(m.tipo)) {
-        cur.ingresos.set(venc, (cur.ingresos.get(venc) ?? 0) + qty)
-        // Registrar el código de lote físico si el ingreso lo trajo
-        if (m.lote) {
-          const set = cur.lotesFis.get(venc) ?? new Set<string>()
-          set.add(m.lote)
-          cur.lotesFis.set(venc, set)
-        }
-      } else {
-        cur.salidas.push({ venc, qty })
-      }
-    }
+    // FIX deuda 2026-11-12: agregación central (lib/rackly/lotes.ts) — conserva
+    // la normalización trim+mayúsculas del FIX Task 24 y el orden de llegada.
+    const pools = agruparPoolsLote(movs, {
+      codigo: code,
+      modoInc: 'excluir',
+      claveDe: (m) => `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`,
+    })
     const rows: LocStock[] = []
-    for (const [, lp] of locMap) {
-      const remanentes = calcularLotesRemanentes(lp.ingresos, lp.salidas)
+    for (const lp of pools.values()) {
+      const remanentes = remanentesDePool(lp)
       const totalPos = remanentes.reduce((s, l) => s + l.cantidad, 0)
       for (const lote of remanentes) {
-        const fis = lp.lotesFis.get(lote.venc)
         rows.push({
           bloque: lp.bloque, torre: lp.torre, piso: lp.piso, posicion: lp.posicion,
           codigo: lp.codigo, descripcion: lp.descripcion, un: lp.un,
           stock: Math.round(lote.cantidad * 1000) / 1000,
           fVencimiento: lote.venc || '',
-          loteFisico: fis && fis.size > 0 ? Array.from(fis).sort().join(', ') : undefined,
+          loteFisico: textoLoteFisico(lp, lote.venc),
           proveedor: lp.proveedor,
           stockTotalPos: Math.round(totalPos * 1000) / 1000,
         })

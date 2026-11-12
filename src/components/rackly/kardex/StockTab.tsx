@@ -5,11 +5,11 @@ import {
   type Movimiento,
   eliminarUbicacion,
   fetchStockPorCodigoRPC,
-  calcularLotesRemanentes,
   proveedorPorVenc,
   compararFEFO,
   compararUbicacionNum,
 } from '@/lib/rackly/kardex'
+import { agruparPoolsLote, remanentesDePool, proveedoresDePool } from '@/lib/rackly/lotes'
 // Panel cruzado con Piso (CrossModuleStock): SOLO LECTURA, carga perezosa y
 // errores visibles — el desacople de 442e7da eliminó el cruce antiguo por
 // mezclar resultados y fallar en silencio; este panel separado respeta la
@@ -21,7 +21,7 @@ import {
   searchCatalogo,
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
-import { esTipoEntrada, impactoStock } from '@/lib/utils'
+import { impactoStock } from '@/lib/utils'
 import { useMovimientosRealtime, reintentarMovimientos, type EstadoMovs } from '@/hooks/useMovimientosRealtime'
 import { EstadoCargaMovs } from './EstadoCargaMovs'
 import { Input } from '@/components/ui/input'
@@ -142,44 +142,29 @@ export function StockTab({
       proveedor: rem[0] ? provPorVenc.get(rem[0].venc) || undefined : undefined,
     })
 
+    // FIX deuda 2026-11-12: agregación central (lib/rackly/lotes.ts) — salidas
+    // ordenadas ASC por (ts, id), misma convención FEFO/Stock de siempre.
     if (isIncMode) {
       // INC: pools por (posición + codigoInc); salidas dirigidas dentro de su INC;
       // remanentes combinados por posición para el desglose informativo.
-      type Pool = { ing: Map<string, number>; sal: Array<{ venc: string; qty: number; ts: string; id: string }> }
-      const pools = new Map<string, Pool>()
+      const pools = agruparPoolsLote(movs, {
+        codigo: code,
+        modoInc: 'solo',
+        ordenarSalidas: true,
+        claveDe: (m) => `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}||${m.codigoInc}`,
+      })
       // Proveedores de ingresos por posición (todas las INC combinadas)
       const provInByPos = new Map<string, Array<{ venc: string; proveedor?: string; ts: string }>>()
-      for (const m of movs) {
-        if (!m.codigoInc) continue
-        if (m.codigo.trim().toUpperCase() !== code) continue
-        const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-        const key = `${posKey}||${m.codigoInc}`
-        const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
-        if (!(qty > 0)) continue
-        const venc = m.fVencimiento || ''
-        if (esTipoEntrada(m.tipo)) {
-          let p = pools.get(key)
-          if (!p) { p = { ing: new Map(), sal: [] }; pools.set(key, p) }
-          p.ing.set(venc, (p.ing.get(venc) ?? 0) + qty)
-          if (m.proveedor) {
-            const list = provInByPos.get(posKey) ?? []
-            list.push({ venc, proveedor: m.proveedor, ts: m.fModificacion })
-            provInByPos.set(posKey, list)
-          }
-        } else {
-          let p = pools.get(key)
-          if (!p) { p = { ing: new Map(), sal: [] }; pools.set(key, p) }
-          p.sal.push({ venc, qty, ts: m.fModificacion, id: m.id })
-        }
-      }
       const merged = new Map<string, Map<string, number>>() // posKey → (venc → qty)
-      for (const [key, p] of pools) {
-        const posKey = key.split('||')[0]
-        const sal = p.sal.sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
-        const rem = calcularLotesRemanentes(p.ing, sal)
+      for (const lp of pools.values()) {
+        const posKey = lp.clave.split('||')[0]
+        const rem = remanentesDePool(lp)
         let mm = merged.get(posKey)
         if (!mm) { mm = new Map(); merged.set(posKey, mm) }
         for (const l of rem) mm.set(l.venc, (mm.get(l.venc) ?? 0) + l.cantidad)
+        const list = provInByPos.get(posKey) ?? []
+        list.push(...lp.provIn)
+        provInByPos.set(posKey, list)
       }
       for (const [posKey, mm] of merged) {
         const rem = [...mm.entries()].map(([venc, cantidad]) => ({ venc, cantidad }))
@@ -187,36 +172,16 @@ export function StockTab({
         info.set(posKey, fmtInfo(rem, proveedorPorVenc(provInByPos.get(posKey) ?? [])))
       }
     } else {
-      const ing = new Map<string, Map<string, number>>() // posKey → (fv → qty)
-      const sal = new Map<string, Array<{ venc: string; qty: number; ts: string; id: string }>>()
-      const provIn = new Map<string, Array<{ venc: string; proveedor?: string; ts: string }>>()
-      for (const m of movs) {
-        if (m.codigoInc) continue
-        if (m.codigo.trim().toUpperCase() !== code) continue
-        const posKey = `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`
-        const qty = typeof m.cantidad === 'number' ? m.cantidad : parseFloat(String(m.cantidad)) || 0
-        if (!(qty > 0)) continue
-        const venc = m.fVencimiento || ''
-        if (esTipoEntrada(m.tipo)) {
-          const pool = ing.get(posKey) ?? new Map<string, number>()
-          pool.set(venc, (pool.get(venc) ?? 0) + qty)
-          ing.set(posKey, pool)
-          if (m.proveedor) {
-            const list = provIn.get(posKey) ?? []
-            list.push({ venc, proveedor: m.proveedor, ts: m.fModificacion })
-            provIn.set(posKey, list)
-          }
-        } else {
-          const list = sal.get(posKey) ?? []
-          list.push({ venc, qty, ts: m.fModificacion, id: m.id })
-          sal.set(posKey, list)
-        }
-      }
-      for (const [posKey, pool] of ing) {
-        const s = (sal.get(posKey) ?? []).sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
-        const rem = calcularLotesRemanentes(pool, s)
+      const pools = agruparPoolsLote(movs, {
+        codigo: code,
+        modoInc: 'excluir',
+        ordenarSalidas: true,
+        claveDe: (m) => `${m.bloque}-${m.torre}-${m.piso}-${m.posicion}`,
+      })
+      for (const lp of pools.values()) {
+        const rem = remanentesDePool(lp)
         if (rem.length === 0) continue
-        info.set(posKey, fmtInfo(rem, proveedorPorVenc(provIn.get(posKey) ?? [])))
+        info.set(lp.clave, fmtInfo(rem, proveedoresDePool(lp)))
       }
     }
     return info

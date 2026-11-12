@@ -118,6 +118,18 @@ export function FefoPisoTab({ onGotoPosicion }: { onGotoPosicion?: (target: Piso
   const loadSeqRef = useRef(0)
 
   async function load(silent = false) {
+    // FIX deuda 2026-11-12 (rendimiento): con la pestaña oculta (otra pestaña del
+    // navegador u otra app) NO descargar stockPisoGlobal en cada ráfaga realtime —
+    // se reprograma al final de la ventana y, al volver a ser visible, el listener
+    // de visibilitychange refresca si los datos quedaron viejos.
+    if (silent && typeof document !== 'undefined' && document.hidden) {
+      if (!loadTimerRef.current) {
+        loadTimerRef.current = setTimeout(() => {
+          loadTimerRef.current = null
+        }, 3300)
+      }
+      return
+    }
     if (silent && Date.now() - lastLoadRef.current < 3000) {
       // Ventana anti-martilleo: programar recarga al FINAL de la ventana
       // (trailing edge) en vez de saltar el evento — nunca se pierde la última.
@@ -165,6 +177,17 @@ export function FefoPisoTab({ onGotoPosicion }: { onGotoPosicion?: (target: Piso
 
   // Realtime: si otro usuario mueve mercadería, los lotes FEFO se refrescan solos
   usePisoRealtime(() => { if (loadedRef.current) load(true) })
+
+  // FIX deuda 2026-11-12 (compañero del guard de visibilidad): al volver a la
+  // pestaña, refrescar si los datos quedaron viejos mientras estaba oculta.
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible' && loadedRef.current &&
+          Date.now() - lastLoadRef.current > 3500) load(true)
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
 
   // Sectores presentes en los datos (para el filtro)
   const sectoresDisponibles = useMemo(

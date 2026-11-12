@@ -22,6 +22,7 @@
  */
 
 import { dataClient } from '@/lib/supabase/client'
+import { hoyLimaISO } from '@/lib/rackly/formato'
 
 // ═══════════════════════════════════════════════════════════════════
 // TIPOS (filas crudas mapeadas)
@@ -368,11 +369,16 @@ export type SerieDia = { dia: string; rqs: number; atendidas: number }
 
 /** RQs registradas y completadas por día (últimos N días calendario, Lima). */
 export function serieRqsPorDia(rqs: ReporteRq[], dias = 14): SerieDia[] {
-  const hoy = new Date()
+  // FIX deuda 2026-11-12: la ventana de días usaba la zona HORARIA LOCAL del
+  // equipo mientras el tablero Excel usa America/Lima — fuera de Perú el
+  // gráfico quedaba corrido un día respecto al Excel exportado en el mismo
+  // momento. La ventana ahora se construye desde la fecha de LIMA.
+  const hoyLima = hoyLimaISO()
+  const base = new Date(hoyLima + 'T12:00:00') // mediodía: inmune a DST
   const diasClave: string[] = []
   for (let i = dias - 1; i >= 0; i--) {
-    const d = new Date(hoy)
-    d.setDate(hoy.getDate() - i)
+    const d = new Date(base)
+    d.setDate(base.getDate() - i)
     const mm = String(d.getMonth() + 1).padStart(2, '0')
     const dd = String(d.getDate()).padStart(2, '0')
     diasClave.push(`${d.getFullYear()}-${mm}-${dd}`)

@@ -1293,3 +1293,27 @@ Pedido (Almacén INSUMOS · Módulo Atención, con imagen del form RAL resaltand
 - 3 (no se repite): revisados TODOS los usos de turnoRq — displays intactos por diseño; wizard QR no lo usa; Dashboard Excel mantiene ambas columnas para históricos (nuevas RQs muestran el mismo valor en ambas). El Turno único aplica solo al RQ (RAL ya tiene el suyo desde la 2.ª iteración).
 - 5 (sin conflictos): cero cambios de BD/RLS/RPC; solo UI + payload. QA: tsc 0 · eslint 0 · **58/58 suites** · build OK. BD auditada: RLS 31/31 ON; duplicados de documento RAL (8422/8455/…) son los conocidos del guard no bloqueante — sin nuevos; históricos de línea intactos.
 - E2E en producción (sello **202611121349-490a920**, commit feat **490a920**): T1 form RAL → combobox «Por defecto Materiales auxiliares…» muestra **«Materiales auxiliares» seleccionado por defecto** y el dropdown tiene **22 opciones** (Línea 1–20 · Materiales auxiliares · Jarabe) ✓; T2 form RQ → **UN solo campo «Turno»** («Selecciona el turno…» + nota del impreso 004/005), sin «Turno del RQ (hoja)» ✓; consola limpia, 0 errores.
+
+---
+
+## auditoria-profunda-app-completa — 2026-11-12
+
+Pedido: «AUDITORÍA PROFUNDA, código por código, estructura, procesos; revisar TODA LA APP» — metodología 1.2–9 completa.
+
+- Alcance auditado: 181 archivos TS/TSX · 75 142 líneas (src/lib 48 archivos + piso, componentes de 9 módulos INSUMOS + 6 REP, hooks, app, auth) + BD completa (31 tablas). 3 barridos paralelos de código + pipeline QA + auditoría BD vía MAPI + E2E con la cuenta real.
+- **QA máquina:** tsc 0 · eslint 0 · **58/58 suites** · build OK · 0 console.log · 0 `as any` · 0 `debugger` · 0 secretos hardcodeados (service_role fuera del bundle; solo `NEXT_PUBLIC_*`).
+- **BD:** RLS **31/31 ON** (180 políticas, 486 grants, 50 MB); **todas las FKs con índice** (0 sin índice); catálogo SIN duplicados; duplicados existentes son LEGÍTIMOS por diseño (rals.documento ×2 = guard no bloqueante decidido por el usuario; rq numero ×2 = mismo nº físico presentado en 2 turnos, verificado: 0000007425 = T1+T2, 0000007505 = T1+T2, con override confirmado); conteos: movimientos 29 295, recepcion_registros 5 279, rq 567, rals 79, piso_detalles 2 466, rep_movimientos 12; sin huérfanos (items→rq/ral, tomas→rq).
+- **Hallazgos y correcciones aplicadas (commit fix 623d813, 13 archivos):**
+  1. **CRÍTICO** `piso/api selectIn` → paginar cada chunk con `.range()`: max_rows=1000 truncaba en silencio y `validarStockSuficiente` (ruta fallback) podía permitir salidas sobre stock real. Latente (BD hoy 2 466 detalles), corregido por estructura.
+  2. piso/api: **9 errores destruidos** ahora revisados (movErr de cargarVistaColumna + 5 de stockPisoGlobal + subs/posData/bloqData) — una BD caída pintaba stock 0 fingiendo éxito (espejo del FIX E1 que solo cubrió colErr).
+  3. piso/api stockPisoPorCodigos → paginado `.range()` (FEFO dirigido completo); sanitizer local → **terminoBusquedaSeguro** central (pasaban `% _ " \` → HTTP 400 posible); try/finally vacío eliminado en registrarTrasladoPosicionDirecto.
+  4. kardex calcularStockUbicacion → paginado (ubicación caliente >1000 movimientos sobrestimaba stock en el fallback); catch sin causa → console.warn con el error.
+  5. ral listarRals → items `.in()` paginado (conteos/textos de búsqueda sin truncar).
+  6. auth cambiarPasswordPropia → revisar error del update (fallo silencioso = bucle de «debe cambiar contraseña»).
+  7. rep-client: UUID validado antes de interpolar en `.or()` (única interpolación sin guard) + clamp pageSize 200→1000 (**«Cargar más» muerto** desde la 2.ª pulsación — pedía hasta 1000).
+  8. RqAtencionPanel: botón **Editar RQ con puedeEditar** (la RPC rq_editar_rq exige puedeEditarSolicitudes; antes con puedeEliminar → NO_AUTORIZADO). Alineado con filas RAL; FilaRqTabla recibe la prop nueva.
+  9. SectoresTab (crear/eliminar sector) y StockTab (eliminar ubicación): **guard anti doble-submit** (los únicos submits desprotegidos).
+  10. Rq/RalFotoForm: **confirmar antes de descartar** ediciones manuales al «Reajustar recorte» (el OCR reconstruye el form desde cero).
+  11. Higiene: **9 exports muertos** eliminados (deleteAllMovimientos con docstring falso «service_role», registrarMovimiento, listarColumnas/Subcolumnas/NivelesDeSubcolumna, stockPorNivelPosicion, repContarArticulosLonchera, repRalPorNumero, mensajeRpcCanonica); ternario redundante formatearNum; cuerpo muerto del onChange de StockTab; copy de DescargaTab actualizado al orden real (snapshot→insert→podar).
+- **Documentados, NO corregidos** (deuda priorizada, con razón): duplicación SalidaForm/SalidaIncForm ~800 líneas con drift de trim (MEDIO, refactor grande); RecepcionModule duplicado INSUMOS/REP (arquitectura intencional); loop de lotes copiado ×6 en Kardex; FefoPisoTab recarga stock global en cada realtime (perf); N+1 en Despacho RAL de REP; serie dashboard usa fecha local vs Lima en Excel (MENOR); useAuth refresca en TOKEN_REFRESHED (redundante pero con guard); ventana doble-submit benigna en guardar() RQ/RAL (idempotencia BD converge).
+- **E2E producción (sello `202611121432-623d813`):** login ✓ → INSUMOS: Recepción/Atención/Racks/Piso/Tránsito todos cargan con **0 errores** ✓ → REPUESTOS: 6 módulos listados, Catálogo paginado (331 págs) ✓, footer muestra el sello nuevo ✓; consola global limpia. Mejoras de Atención (3 iteraciones) intactas.

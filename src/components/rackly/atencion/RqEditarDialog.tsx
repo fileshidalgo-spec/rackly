@@ -48,7 +48,7 @@ import {
   getCachedCatalogo,
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
-import { calcularTurno } from '@/lib/rackly/turno'
+import { calcularTurnoRecepcion } from '@/lib/rackly/turno'
 import { LINEAS_OPCIONES, esLineaCanonica } from '@/lib/rackly/lineas'
 import { aNumero } from '@/lib/rackly/formato'
 import { useAuth } from '@/hooks/useAuth'
@@ -322,7 +322,9 @@ export function RqEditarDialog({
     setRevirtiendo(true)
     try {
       if (lotesDeFila && lotesDeFila.length > 0) {
-        const r = await revertirOrigenRq(f.id, null, calcularTurno(), {
+        // Turno de la REVERSA en convención T1/T2 del ledger (la col.
+        // rq_atencion_tomas.turno guarda T1/T2, nunca Día/Noche).
+        const r = await revertirOrigenRq(f.id, null, calcularTurnoRecepcion(new Date()), {
           id: perfil?.id ?? '',
           nombre: perfil?.nombre || perfil?.correo || '',
           correo: perfil?.correo ?? '',

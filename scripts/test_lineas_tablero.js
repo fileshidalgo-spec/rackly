@@ -3,15 +3,17 @@
  * RACKLY — 2026-11-12 · LÍNEAS canónicas + TABLERO de atenciones por línea.
  *
  * Suite PURA (sin stub — ni lineas.ts ni atencion-tablero.ts tocan red):
- *   A. lineas.ts: 21 opciones (Línea 1–20 + Materiales auxiliares),
+ *   A. lineas.ts: 22 opciones (Línea 1–20 + Materiales auxiliares + Jarabe),
  *      normalizador OCR/histórico, clave de orden canónica.
  *   B. atencion-tablero.ts: fecha Lima, turno de la toma (columna o
  *      derivado), filtro rango+turnos, NETO con reversas, agrupación
- *      línea+producto+sku, fallback de producto, orden y subtotales.
+ *      línea+sku (2.ª iteración 2026-11-12: el MISMO código se suma en una
+ *      fila por línea, producto dominante), fallback de producto, orden.
  */
 const {
   LINEAS_OPCIONES,
   LINEA_AUXILIARES,
+  LINEA_JARABE,
   esLineaCanonica,
   normalizarLinea,
   lineaParaAgrupar,
@@ -36,9 +38,10 @@ function check(nombre, cond) {
 }
 
 // ── A. lineas.ts ──────────────────────────────────────────────────────
-check('A1 · 21 opciones canónicas', LINEAS_OPCIONES.length === 21)
+check('A1 · 22 opciones canónicas', LINEAS_OPCIONES.length === 22)
 check('A2 · Línea 1..20 presentes', LINEAS_OPCIONES[0] === 'Línea 1' && LINEAS_OPCIONES[19] === 'Línea 20')
-check('A3 · Materiales auxiliares al final', LINEAS_OPCIONES[20] === 'Materiales auxiliares')
+check('A3 · Materiales auxiliares en 21', LINEAS_OPCIONES[20] === 'Materiales auxiliares')
+check('A3b · Jarabe en 22 (pedido 2026-11-12)', LINEAS_OPCIONES[21] === 'Jarabe' && LINEA_JARABE === 'Jarabe')
 check('A4 · «Línea 7» es canónica', esLineaCanonica('Línea 7'))
 check('A5 · «LINEA 7» NO es canónica', !esLineaCanonica('LINEA 7'))
 
@@ -52,20 +55,24 @@ check('A12 · normaliza «7»', normalizarLinea('7') === 'Línea 7')
 check('A13 · normaliza «AUXILIAR»', normalizarLinea('AUXILIAR') === LINEA_AUXILIARES)
 check('A14 · normaliza «MATERIALES AUXILIARES»', normalizarLinea('MATERIALES AUXILIARES') === LINEA_AUXILIARES)
 check('A15 · normaliza «mat aux»', normalizarLinea('mat aux') === LINEA_AUXILIARES)
-check('A16 · NO inventa «JARABES»', normalizarLinea('JARABES') === '')
-check('A17 · NO inventa «60 TANQUES DE JARABE GASEOSA»', normalizarLinea('60 TANQUES DE JARABE GASEOSA') === '')
+check('A16 · «JARABES» → Jarabe (pedido 2026-11-12)', normalizarLinea('JARABES') === 'Jarabe')
+check('A17 · «60 TANQUES DE JARABE GASEOSA» → Jarabe', normalizarLinea('60 TANQUES DE JARABE GASEOSA') === 'Jarabe')
+check('A17b · «Jarabe de Pulp» → Jarabe', normalizarLinea('Jarabe de Pulp') === 'Jarabe')
+check('A17c · «Jarabe» canónico pasa igual', normalizarLinea('Jarabe') === 'Jarabe')
 check('A18 · NO inventa fuera de rango «LINEA 25»', normalizarLinea('LINEA 25') === '')
 check('A19 · vacío → vacío', normalizarLinea('  ') === '')
 check('A20 · canonical pasa igual', normalizarLinea('Línea 15') === 'Línea 15')
 
 check('A21 · agrupar: vacío → (sin línea)', lineaParaAgrupar('') === '(sin línea)')
-check('A22 · agrupar: histórico sin mapeo queda tal cual', lineaParaAgrupar('JARABES') === 'JARABES')
+check('A22 · agrupar: «JARABES» → Jarabe (se agrupa con la canónica)', lineaParaAgrupar('JARABES') === 'Jarabe')
 check('A23 · agrupar: «LINEA 9» → Línea 9', lineaParaAgrupar('LINEA 9') === 'Línea 9')
 
-check('A24 · orden: Línea 1 < Línea 2 < Materiales auxiliares < históricos',
+check('A24 · orden: Línea 1 < Línea 2 < Materiales auxiliares < Jarabe < históricos',
   claveOrdenLinea('Línea 1')[0] === 0 &&
   claveOrdenLinea('Línea 2')[0] === 0 &&
   claveOrdenLinea(LINEA_AUXILIARES)[0] === 0 &&
+  claveOrdenLinea(LINEA_JARABE)[0] === 0 &&
+  claveOrdenLinea(LINEA_AUXILIARES)[1] < claveOrdenLinea(LINEA_JARABE)[1] &&
   claveOrdenLinea('JARABES')[0] === 1)
 
 // ── B. atencion-tablero.ts ────────────────────────────────────────────
@@ -120,8 +127,14 @@ const tomas = [
 const datos = { rqs, items, tomas, vencimientos: new Map() }
 
 const t = construirTablero(datos, { desde: '2026-11-10', hasta: '2026-11-10', turnos: ['T1', 'T2'] })
-check('B13 · agrupa: Línea 2 · SPORADE neto 10 (reversa descontada)', t.filas.some((f) => f.linea === 'Línea 2' && f.producto === 'SPORADE TROPICAL' && f.sku === '118' && f.cantidad === 10))
-check('B14 · agrupa: Línea 2 · VOLT neto 7', t.filas.some((f) => f.linea === 'Línea 2' && f.producto === 'VOLT ORIGINAL' && f.cantidad === 7))
+// 2.ª iteración (pedido 2026-11-12): el MISMO código se suma en UNA fila
+// por línea — sku 118 salió para SPORADE (10) y VOLT (7) → una fila de 17.
+check('B13 · suma el mismo código en la línea: sku 118 neto 17 (10 SPORADE + 7 VOLT)',
+  t.filas.some((f) => f.linea === 'Línea 2' && f.sku === '118' && f.cantidad === 17))
+check('B14 · producto dominante: SPORADE (10 > 7) en la fila sumada',
+  t.filas.filter((f) => f.linea === 'Línea 2').length === 1 &&
+  t.filas[0].producto === 'SPORADE TROPICAL')
+check('B14b · numTomas de la fila sumada = 5 (4 SPORADE + 1 VOLT)', t.filas[0].numTomas === 5)
 check('B15 · agrupa: AUXILIARES → Materiales auxiliares + producto MATERIALES AUXILIARES', t.filas.some((f) => f.linea === 'Materiales auxiliares' && f.producto === 'MATERIALES AUXILIARES' && f.cantidad === 2))
 check('B16 · excluye lo fuera de rango (99 no entra)', !t.filas.some((f) => f.cantidad === 99))
 check('B17 · tomasEnRango = 6', t.tomasEnRango === 6)
@@ -130,12 +143,13 @@ check('B19 · subtotal Línea 2 = 17', t.subtotales.get('Línea 2') === 17)
 check('B20 · orden: Línea 2 antes que Materiales auxiliares', t.filas[0].linea === 'Línea 2')
 
 const t1solo = construirTablero(datos, { desde: '2026-11-10', hasta: '2026-11-10', turnos: ['T1'] })
-check('B21 · filtro turno T1 solo: neto Línea 2·SPORADE = 10 (las 4 salidas T1)', t1solo.filas.filter((f) => f.linea === 'Línea 2').every((f) => f.cantidad === 10))
-check('B22 · filtro turno T1: VOLT (T2) no entra', !t1solo.filas.some((f) => f.producto === 'VOLT ORIGINAL'))
+check('B21 · filtro turno T1 solo: neto sku 118 = 10 (las 4 salidas T1)', t1solo.filas.filter((f) => f.linea === 'Línea 2').every((f) => f.cantidad === 10))
+check('B22 · filtro turno T1: VOLT (T2) no entra', !t1solo.filas.some((f) => f.linea === 'Materiales auxiliares') && t1solo.filas.length === 1)
 check('B23 · filtro turno T1: auxiliares (T2) no entra', !t1solo.filas.some((f) => f.linea === 'Materiales auxiliares'))
 
 const tRango = construirTablero(datos, { desde: '2026-11-10', hasta: '2026-11-11', turnos: ['T1', 'T2'] })
-check('B24 · rango ampliado incluye la toma del día 11 (neto SPORADE 109)', tRango.filas.some((f) => f.cantidad === 109))
+// rango ampliado: sku 118 = 10 (SPORADE) + 99 (fuera de rango antes) + 7 (VOLT) = 116
+check('B24 · rango ampliado suma todo el sku 118 en una fila (neto 116)', tRango.filas.some((f) => f.linea === 'Línea 2' && f.cantidad === 116))
 
 const tRqBorrada = construirTablero(
   { rqs, items, tomas: [{ ...tomaDe('2026-11-10T15:00:00Z'), rqId: 'rq-eliminada' }], vencimientos: new Map() },

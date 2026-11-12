@@ -11,7 +11,8 @@
  * Fuente de verdad: el LEDGER de salidas (rq_atencion_tomas) — cada
  * atención física de la RQ deja una fila con fecha/hora (creado_en) y
  * cantidad con signo (positivo = salida · negativo = reversa). El tablero
- * es el NETO por línea+producto+material: lo que realmente salió del
+ * es el NETO por línea+material (pedido 2026-11-12: el mismo código se
+ * suma en una fila por línea): lo que realmente salió del
  * almacén hacia la línea en el rango/turno elegidos.
  *
  *   · FECHA  = día de la SALIDA en hora Lima (creado_en).
@@ -41,13 +42,16 @@ import { claveOrdenLinea, lineaParaAgrupar } from '@/lib/rackly/lineas'
 export type FilaTablero = {
   /** Línea (normalizada para agrupar; históricos sin mapeo quedan tal cual). */
   linea: string
-  /** Producto de la OP de la RQ (o MATERIALES AUXILIARES / (sin producto)). */
+  /** Producto de la OP de la RQ (o MATERIALES AUXILIARES / (sin producto)).
+   *  Pedido 2026-11-12: el mismo CÓDIGO se suma en UNA fila por línea —
+   *  cuando el código salió para varios productos se muestra el dominante
+   *  (el de mayor cantidad neta; empate → alfabético). */
   producto: string
   /** Código del material (sku). */
   sku: string
   /** Descripción del material (la más reciente entre las tomas). */
   descripcion: string
-  /** Suma NETA de cantidades (salidas − reversas). */
+  /** Suma NETA de cantidades (salidas − reversas) del código EN la línea. */
   cantidad: number
   /** Nº de tomas (salidas + reversas) que forman la fila. */
   numTomas: number
@@ -64,7 +68,9 @@ export type FiltroTablero = {
 
 export type TableroAtenciones = {
   filas: FilaTablero[]
-  /** Subtotales por línea (mismo orden que filas). */
+  /** Subtotales por línea (mismo orden que filas). El EXCEL ya no los
+   *  imprime (pedido 2026-11-12: quitar los totales de cada línea) pero
+   *  quedan para pruebas y futuros reportes. */
   subtotales: Map<string, number>
   /** Total general neto. */
   totalGeneral: number
@@ -116,8 +122,10 @@ export function productoDeRq(rq: ReporteRq | undefined, linea: string): string {
 
 /**
  * Construye el tablero: filtra tomas por FECHA de salida (Lima) + TURNOS,
- * resuelve línea/producto desde la RQ y agrupa neto por
- * línea+producto+sku. Orden: Línea 1→20, Materiales auxiliares, luego
+ * resuelve línea/producto desde la RQ y agrupa neto por línea+sku —
+ * pedido 2026-11-12: «haga la suma de los artículos del mismo código
+ * atendido en cada línea» (el producto ya NO divide filas; se muestra el
+ * dominante). Orden: Línea 1→20, Materiales auxiliares, Jarabe, luego
  * valores históricos sin mapeo alfabéticos; dentro: producto, sku.
  */
 export function construirTablero(
@@ -129,7 +137,7 @@ export function construirTablero(
 
   const acc = new Map<
     string,
-    { linea: string; producto: string; sku: string; desc: string; cant: number; n: number }
+    { linea: string; sku: string; desc: string; cant: number; n: number; prods: Map<string, number> }
   >()
 
   for (const t of datos.tomas) {
@@ -143,21 +151,35 @@ export function construirTablero(
     const sku = t.codigo.trim().toUpperCase()
     const desc = item.get(t.itemId)?.descripcion?.trim() ?? ''
 
-    const k = `${linea}\u0001${producto}\u0001${sku}`
+    const k = `${linea}\u0001${sku}`
     let a = acc.get(k)
     if (!a) {
-      a = { linea, producto, sku, desc: '', cant: 0, n: 0 }
+      a = { linea, sku, desc: '', cant: 0, n: 0, prods: new Map() }
       acc.set(k, a)
     }
     a.cant += t.cantidad
     a.n += 1
+    a.prods.set(producto, (a.prods.get(producto) ?? 0) + t.cantidad)
     if (desc && !a.desc) a.desc = desc
+  }
+
+  /** Producto dominante: mayor cantidad neta; empate → alfabético. */
+  const productoDominante = (prods: Map<string, number>): string => {
+    let mejor = ''
+    let cantMejor = -Infinity
+    for (const [p, c] of prods) {
+      if (c > cantMejor || (c === cantMejor && p < mejor)) {
+        mejor = p
+        cantMejor = c
+      }
+    }
+    return mejor
   }
 
   const filas = Array.from(acc.values())
     .map<FilaTablero>((a) => ({
       linea: a.linea,
-      producto: a.producto,
+      producto: productoDominante(a.prods),
       sku: a.sku,
       descripcion: a.desc,
       cantidad: Math.round(a.cant * 1000) / 1000,

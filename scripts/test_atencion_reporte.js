@@ -163,11 +163,26 @@ console.log('— resumenPorArticulo —')
 
 console.log('— series / top —')
 {
-  const rqs = [RQ, RQ2, RQ3].map(mRq)
+  // La serie cuenta por fecha REAL de hoy (serieRqsPorDia usa new Date()):
+  // los fixtures de la serie se generan relativos a HOY para que el test no
+  // se rompa cuando «2026-10-29» sale de la ventana de 14 días (pasaba el
+  // 2026-11-11 y fallaba el 2026-11-12 — bug de dependencia temporal).
+  const hace = (n) => {
+    const d = new Date()
+    d.setDate(d.getDate() - n)
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${d.getFullYear()}-${mm}-${dd}`
+  }
+  const diaHace1 = hace(1)
+  const diaHace2 = hace(2)
+  const rqs = [RQ, RQ2, RQ3].map((r) => ({ ...mRq(r), fecha: r.id === 'rq-2' ? diaHace1 : diaHace2 }))
   const serie = serieRqsPorDia(rqs, 14)
   check('serie 14 días', serie.length === 14)
-  const d29 = serie.find((d) => d.dia === '2026-10-29')
-  check('29/10: 2 registradas · 1 atendida', d29.rqs === 2 && d29.atendidas === 1)
+  const dObj = serie.find((d) => d.dia === diaHace1)
+  check('día −1: 1 registrada · 0 atendidas (rq-2 Pendiente)', dObj.rqs === 1 && dObj.atendidas === 0)
+  const dObj2 = serie.find((d) => d.dia === diaHace2)
+  check('día −2: 2 registradas · 1 atendida (rq-1 Atendido + rq-3 En proceso)', dObj2.rqs === 2 && dObj2.atendidas === 1)
   const lineas = serieRqsPorLinea(rqs)
   check('líneas: L1 y L2 y Sin línea (1 RQ c/u)', lineas.length === 3 && lineas.every((l) => l.rqs === 1) && lineas[0].linea === 'L1')
   const top = topArticulosAtendidos(ITEMS.map(mIt))

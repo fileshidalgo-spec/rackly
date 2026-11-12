@@ -109,8 +109,9 @@ export function TableroExcelDialog({
           </DialogTitle>
           <DialogDescription>
             Excel con la presentación de tu tabla dinámica: LINEA · PRODUCTO ·
-            sku · DESCRIPCION · Suma de CANTIDAD (salidas netas del almacén,
-            reversas descontadas), con subtotal por línea y total general.
+            sku · DESCRIPCION · Suma de CANTIDAD — el mismo código se suma en
+            UNA fila por línea (salidas netas del almacén, reversas
+            descontadas), con total general y sin totales por línea.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -162,8 +163,8 @@ export function TableroExcelDialog({
           <p className="text-[11px] text-slate-500 rounded-lg border border-slate-100 bg-slate-50 p-2">
             El rango filtra por la FECHA de la SALIDA a la línea; el turno por la
             HORA de esa salida (regla del almacén, hora Lima). Las líneas se
-            agrupan con la lista oficial (Línea 1–20 · Materiales auxiliares);
-            los valores históricos no reconocidos aparecen tal cual.
+            agrupan con la lista oficial (Línea 1–20 · Materiales auxiliares ·
+            Jarabe); los valores históricos no reconocidos aparecen tal cual.
           </p>
         </div>
         <DialogFooter className="gap-2 sm:gap-0">

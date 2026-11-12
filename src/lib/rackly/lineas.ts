@@ -22,9 +22,15 @@
 
 export const LINEA_AUXILIARES = 'Materiales auxiliares' as const
 
+/** Pedido del usuario (2026-11-12): «en la lista desplegable de RQ agregar
+ *  "Jarabe"» — es el área de jarabes (70 RQs históricos llegaban como
+ *  «JARABES», «TANQUES DE JARABE», «JARABE DE NARANJA»…). */
+export const LINEA_JARABE = 'Jarabe' as const
+
 export const LINEAS_OPCIONES: readonly string[] = [
   ...Array.from({ length: 20 }, (_, i) => `Línea ${i + 1}`),
   LINEA_AUXILIARES,
+  LINEA_JARABE,
 ]
 
 /** ¿Es un valor canónico exacto? (los históricos «LINEA 2» NO lo son). */
@@ -64,9 +70,10 @@ export function claveOrdenLinea(linea: string): [number, string] {
  *   · «2» (solo un número 1..20)      → Línea 2
  *   · «AUXILIAR», «AUXILIARES», «MAT AUX», «MATERIALES AUXILIARES»
  *                                     → Materiales auxiliares
- * Casos que NO resuelve (devuelve ''): «JARABES», «60 TANQUES DE JARABE»,
- * «D4 MATERIA PRIMA E INSUMOS» — valores que no identifican una línea
- * canónica sin ambigüedad.
+ *   · «JARABES», «JARABE», «TANQUES DE JARABE GASEOSA», «JARABE DE PULP»
+ *                                     → Jarabe (pedido 2026-11-12)
+ * Casos que NO resuelve (devuelve ''): «D4 MATERIA PRIMA E INSUMOS» —
+ * valores que no identifican una línea canónica sin ambigüedad.
  */
 export function normalizarLinea(valor: string): string {
   const t = (valor ?? '').trim()
@@ -78,6 +85,10 @@ export function normalizarLinea(valor: string): string {
   // Materiales auxiliares: «auxili» (auxiliar/auxiliares) o «aux» como
   // palabra completa (abreviatura «mat aux», «aux», «aux 1»…)
   if (/auxil|\baux\b/.test(min)) return LINEA_AUXILIARES
+
+  // Jarabe (pedido 2026-11-12): «JARABES», «JARABE», «TANQUES DE JARABE
+  // GASEOSA», «JARABE DE PULP» — cualquier valor que mencione jarabe.
+  if (/jarab/.test(min)) return LINEA_JARABE
 
   // Número: «L7», «L-07», «L 12», «linea 2», «linea2», «2»
   const m = min.match(/^l[\s.\-–_:]*(\d{1,2})$/) ?? min.match(/^linea[\s.\-–_:]*(\d{1,2})$/)

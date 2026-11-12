@@ -17,7 +17,8 @@
  *
  * 2026-11-12: además exporta el TABLERO por línea (exportarExcelTablero,
  * hoja única con la presentación del pivot del usuario: LINEA · PRODUCTO ·
- * sku · DESCRIPCION · Suma de CANTIDAD).
+ * sku · DESCRIPCION · Suma de CANTIDAD — sumado por código y sin
+ * subtotales por línea).
  *
  * Patrón idéntico a guia-excel.ts: armado de datos PURO (testeable con
  * esbuild+node); solo exportarExcelAtencion() toca el navegador (descarga
@@ -195,7 +196,9 @@ export function tablaDashboard(
 // ═══════════════════════════════════════════════════════════════════
 // HOJA TABLERO (pedido 2026-11-12 — misma presentación del pivot actual:
 // filtros FECHA + TURNO y columnas LINEA · PRODUCTO · sku · DESCRIPCION ·
-// Suma de CANTIDAD, con subtotal por línea y total general)
+// Suma de CANTIDAD. 2.ª iteración (2026-11-12): las filas ya vienen
+// SUMADAS por línea+sku (construirTablero) y SIN los totales de cada
+// línea — solo cierra con el TOTAL GENERAL.
 // ═══════════════════════════════════════════════════════════════════
 
 export function nombreArchivoTablero(desde: string, hasta: string): string {
@@ -206,10 +209,10 @@ export function nombreArchivoTablero(desde: string, hasta: string): string {
 }
 
 /**
- * AOA de la hoja Tablero (PURO): título + filtros + tabla con subtotales
- * por línea y TOTAL GENERAL. Marcadores para el estilista: la fila cuyo
- * primer valor es 'LINEA' es la cabecera; 'Total ' inicia subtotales;
- * 'TOTAL GENERAL' cierra.
+ * AOA de la hoja Tablero (PURO): título + filtros + tabla sumada por
+ * línea+sku con TOTAL GENERAL al cierre. Marcadores para el estilista:
+ * la fila cuyo primer valor es 'LINEA' es la cabecera; 'TOTAL GENERAL'
+ * cierra. Sin subtotales por línea (pedido 2026-11-12).
  */
 export function tablaTablero(
   desde: string,
@@ -228,21 +231,10 @@ export function tablaTablero(
   filas2d.push([])
   filas2d.push(['LINEA', 'PRODUCTO', 'sku', 'DESCRIPCION', 'Suma de CANTIDAD'])
 
-  let subtotal = 0
-  let lineaActual = ''
   let total = 0
   for (const f of filas) {
-    if (lineaActual && f.linea !== lineaActual) {
-      filas2d.push([`Total ${lineaActual}`, '', '', '', Math.round(subtotal * 1000) / 1000])
-      subtotal = 0
-    }
     filas2d.push([f.linea, f.producto, f.sku, f.descripcion, Math.round(f.cantidad * 1000) / 1000])
-    lineaActual = f.linea
-    subtotal += f.cantidad
     total += f.cantidad
-  }
-  if (lineaActual) {
-    filas2d.push([`Total ${lineaActual}`, '', '', '', Math.round(subtotal * 1000) / 1000])
   }
   filas2d.push(['TOTAL GENERAL', '', '', '', Math.round(total * 1000) / 1000])
   return filas2d
@@ -396,7 +388,7 @@ export async function exportarExcelTablero(args: {
   return nombre
 }
 
-/** Estilos del tablero: título + filtros + cabecera + subtotales. */
+/** Estilos del tablero: título + filtros + cabecera + total general. */
 function aplicarEstilosTablero(
   ws: Record<string, unknown>,
   XLSX: typeof import('xlsx'),
@@ -411,12 +403,10 @@ function aplicarEstilosTablero(
       else if (R === 3) (ws[addr] as Celda).s = { font: { sz: 9, italic: true, color: { rgb: '64748B' } } }
       else if (v === 'LINEA') (ws[addr] as Celda).s = EST.cabTabla
       else if (v === 'TOTAL GENERAL') (ws[addr] as Celda).s = EST.totalGeneral
-      else if (C === 0 && v.startsWith('Total ')) (ws[addr] as Celda).s = EST.total
-      else if (C === 4 && R > 0) {
+      else if (C === 4) {
         const izq = XLSX.utils.encode_cell({ r: R, c: 0 })
-        const vIzq = String((ws[izq] as Celda | undefined)?.v ?? '')
-        if (vIzq.startsWith('Total ') || vIzq === 'TOTAL GENERAL')
-          (ws[addr] as Celda).s = vIzq === 'TOTAL GENERAL' ? EST.totalGeneral : EST.total
+        if (String((ws[izq] as Celda | undefined)?.v ?? '') === 'TOTAL GENERAL')
+          (ws[addr] as Celda).s = EST.totalGeneral
       }
     }
   }

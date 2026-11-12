@@ -50,6 +50,8 @@ import { aNumero } from '@/lib/rackly/formato'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -97,6 +99,7 @@ const ETIQUETAS: Record<string, string> = {
   aprobadoPor: 'Aprobó',
   almacen: 'Almacén',
   linea: 'Línea',
+  turno: 'Turno',
   notas: 'Notas',
   fecha: 'Fecha',
 }
@@ -206,6 +209,7 @@ export function RalEditarDialog({
   const [aprobadoPor, setAprobadoPor] = useState('')
   const [almacen, setAlmacen] = useState('')
   const [linea, setLinea] = useState('')
+  const [turno, setTurno] = useState('')
   const [notas, setNotas] = useState('')
   const [fecha, setFecha] = useState('')
 
@@ -235,6 +239,7 @@ export function RalEditarDialog({
     setAprobadoPor(ral.aprobadoPor)
     setAlmacen(ral.almacen)
     setLinea(ral.linea)
+    setTurno(ral.turno)
     setNotas(ral.notas)
     setFecha(ral.fecha)
     setFilas(items.length > 0 ? items.map(filaDeItem) : [filaVacia()])
@@ -277,10 +282,10 @@ export function RalEditarDialog({
   const resumen = useMemo(() => {
     const enc = encabezadoDesdeEstado({
       documento, transaccion, areaSolicitante, solicitante, aprobadoPor,
-      almacen, linea, notas, fecha,
+      almacen, linea, turno, notas, fecha,
     })
     return resumenDeCambios(enc, ral, filas, items)
-  }, [ral, items, filas, documento, transaccion, areaSolicitante, solicitante, aprobadoPor, almacen, linea, notas, fecha])
+  }, [ral, items, filas, documento, transaccion, areaSolicitante, solicitante, aprobadoPor, almacen, linea, turno, notas, fecha])
 
   const hayCambios =
     resumen.encabezado.length > 0 ||
@@ -398,7 +403,7 @@ export function RalEditarDialog({
     try {
       const enc = encabezadoDesdeEstado({
         documento, transaccion, areaSolicitante, solicitante, aprobadoPor,
-        almacen, linea, notas, fecha,
+        almacen, linea, turno, notas, fecha,
       })
       const resultado = await editarRal(
         ral.id,
@@ -488,6 +493,17 @@ export function RalEditarDialog({
                     onChange={(e) => setLinea(e.target.value)}
                     title="Campo «Línea:» del formato RAL (área o sección)"
                   />
+                </Campo>
+                <Campo etiqueta="Turno">
+                  <Select value={turno} onValueChange={setTurno}>
+                    <SelectTrigger className={`h-9 ${turno ? '' : 'text-slate-400'}`}>
+                      <SelectValue placeholder="Selecciona el turno…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="T1">T1 (07:20 – 19:20)</SelectItem>
+                      <SelectItem value="T2">T2 (19:21 – 07:19)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </Campo>
                 <Campo etiqueta="Fecha">
                   <Input type="date" className="h-9" value={fecha} onChange={(e) => setFecha(e.target.value)} />
@@ -759,6 +775,7 @@ function encabezadoDesdeEstado(s: {
   aprobadoPor: string
   almacen: string
   linea: string
+  turno: string
   notas: string
   fecha: string
 }): EncabezadoEditarRal {
@@ -771,6 +788,7 @@ function encabezadoDesdeEstado(s: {
     aprobadoPor: s.aprobadoPor,
     almacen: s.almacen,
     linea: s.linea,
+    turno: s.turno,
     notas: s.notas,
     fecha: s.fecha,
   }

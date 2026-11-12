@@ -41,7 +41,9 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,7 +57,6 @@ import {
 import { LectorQR } from '@/components/rackly/transito/LectorQR'
 import { fetchStockPorCodigoRPC } from '@/lib/rackly/kardex'
 import { stockPisoBuscar } from '@/lib/piso/api'
-import { calcularTurno } from '@/lib/rackly/turno'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { claveCeldaRack, EPS_TRANSITO, type ArticuloTransito } from '@/lib/rackly/transito-core'
 import {
@@ -111,6 +112,10 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
   const [registrando, setRegistrando] = useState(false)
   const [confirmarAbierto, setConfirmarAbierto] = useState(false)
   const [confirmaExcedente, setConfirmaExcedente] = useState(false)
+  /** Turno de la atención (pedido 2026-11-12): ya NO se deduce de la hora —
+   *  el registrador elige a qué turno pertenece este lote. Vacío = sin
+   *  elegir: el botón de registro no se habilita hasta elegirlo. */
+  const [turnoLote, setTurnoLote] = useState('')
   /** Alerta de PRODUCTO INCORRECTO: código escaneado que no pertenece a la RQ. */
   const [alertaAjeno, setAlertaAjeno] = useState<string | null>(null)
 
@@ -443,6 +448,10 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
 
   async function ejecutarRegistro() {
     if (tomas.length === 0 || lineasSinSaldo.length > 0) return
+    if (!turnoLote) {
+      toast.error('Selecciona el turno de la atención')
+      return
+    }
     setConfirmarAbierto(false)
     setRegistrando(true)
     const batchUuid = nuevoUuid()
@@ -461,7 +470,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
         batchUuid,
         tomas: payload,
         confirmaExcedente: excede ? confirmaExcedente : true,
-        turno: calcularTurno(),
+        turno: turnoLote,
         usuario: {
           id: perfil?.id ?? '',
           nombre: perfil?.nombre || perfil?.correo || '',
@@ -484,6 +493,7 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
         })
       }
       onRegistrado()
+      setTurnoLote('') // siguiente atención: elige turno otra vez (nunca heredado)
       onOpenChange(false)
     } catch (err: unknown) {
       toast.error('No se pudo registrar el lote', {
@@ -894,10 +904,29 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
                       </label>
                     )}
 
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Turno de la atención</Label>
+                      <Select value={turnoLote} onValueChange={setTurnoLote}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="Selecciona el turno…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="T1">T1 (07:20 – 19:20)</SelectItem>
+                          <SelectItem value="T2">T2 (19:21 – 07:19)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        Elige el turno al que pertenece esta atención (ya no se deduce de la hora).
+                      </p>
+                    </div>
+
                     <Button
                       className="w-full h-12 gap-2 bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 text-white font-bold"
                       disabled={
-                        registrando || lineasSinSaldo.length > 0 || (excede && !confirmaExcedente)
+                        registrando ||
+                        !turnoLote ||
+                        lineasSinSaldo.length > 0 ||
+                        (excede && !confirmaExcedente)
                       }
                       onClick={() => setConfirmarAbierto(true)}
                     >
@@ -983,7 +1012,8 @@ export function RqAtenderQrWizard({ open, onOpenChange, rqNumero, item, onRegist
               del material <b className="font-mono">{item.codigo}</b> en la RQ {rqNumero}.
               <br />
               <br />
-              · Descuento de guías en tránsito: <b>{fmt(totales.transito)}</b>
+              · Turno: <b>{turnoLote}</b>
+              <br />· Descuento de guías en tránsito: <b>{fmt(totales.transito)}</b>
               <br />· Salidas desde posiciones: <b>{fmt(totales.posicion)}</b>
               {excede && (
                 <>

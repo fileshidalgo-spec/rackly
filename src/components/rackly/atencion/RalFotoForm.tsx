@@ -59,6 +59,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import {
   Camera,
@@ -105,6 +106,9 @@ type FormRal = {
   documento: string
   transaccion: string
   fecha: string
+  /** Turno T1/T2 del RAL (pedido 2026-11-12): el registrador lo elige —
+   *  no se deduce de la hora de registro. */
+  turno: string
   areaSolicitante: string
   solicitante: string
   aprobadoPor: string
@@ -129,12 +133,14 @@ function itemVacio(): ItemRalForm {
   }
 }
 
-/** Estado inicial FRESCO: fecha del momento (no congelada al montar). */
+/** Estado inicial FRESCO: fecha del momento; turno SIN elegir (el
+ *  registrador elige al que pertenece el RAL — no es automático). */
 function formVacio(): FormRal {
   return {
     documento: '',
     transaccion: '',
     fecha: hoyISO(),
+    turno: '',
     areaSolicitante: '',
     solicitante: '',
     aprobadoPor: '',
@@ -574,6 +580,10 @@ export function RalFotoForm({
       toast.error('Ingresa la fecha del RAL')
       return
     }
+    if (!form.turno) {
+      toast.error('Selecciona el turno al que pertenece el RAL')
+      return
+    }
     // DB1 (auditoría 2026-11-12): advertencia informada si el documento ya
     // existe (caso real: RAL 8455 registrado ×2 a 46 segundos por el mismo
     // usuario). ANTES de subir la foto — si cancela no queda huérfano en
@@ -615,6 +625,7 @@ export function RalFotoForm({
         await crearRal(
           {
             fecha: form.fecha,
+            turno: form.turno,
             documento: form.documento.trim(),
             transaccion: form.transaccion.trim(),
             areaSolicitante: form.areaSolicitante.trim(),
@@ -837,6 +848,21 @@ export function RalFotoForm({
           />
         </div>
         <div className="space-y-1.5">
+          <Label className="text-xs">Turno</Label>
+          <Select value={form.turno} onValueChange={(v) => set('turno', v)}>
+            <SelectTrigger
+              title="Elige el turno al que pertenece este RAL (ya no se deduce de la hora)"
+              className={form.turno ? '' : 'text-slate-400'}
+            >
+              <SelectValue placeholder="Selecciona el turno…" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="T1">T1 (07:20 – 19:20)</SelectItem>
+              <SelectItem value="T2">T2 (19:21 – 07:19)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
           <Label className="text-xs">Transacción</Label>
           <Input
             placeholder="RAL Requerimiento al Almacén"
@@ -883,6 +909,9 @@ export function RalFotoForm({
             value={form.linea}
             onChange={(e) => set('linea', e.target.value)}
           />
+          <p className="text-[10px] text-slate-400 leading-tight">
+            Los RAL son atenciones de <b>Materiales auxiliares</b>.
+          </p>
         </div>
         <div className="space-y-1.5 sm:col-span-1 lg:col-span-3">
           <Label className="text-xs">Notas (opcional)</Label>

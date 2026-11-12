@@ -34,6 +34,9 @@ export type RalRegistro = {
   aprobadoPor: string
   almacen: string
   linea: string
+  /** Turno T1/T2 del RAL — elegido por el registrador (pedido 2026-11-12).
+   *  '' en históricos anteriores a la columna. */
+  turno: string
   fotoUrl: string
   notas: string
   usuarioId: string
@@ -107,6 +110,8 @@ export type NuevoRal = {
   aprobadoPor?: string
   almacen?: string
   linea?: string
+  /** Turno T1/T2 elegido por el registrador (pedido 2026-11-12). */
+  turno?: string
   notas?: string
   fotoUrl?: string
 }
@@ -131,6 +136,7 @@ function filaARal(f: FilaRal): RalRegistro {
     aprobadoPor: String(f.aprobado_por ?? ''),
     almacen: String(f.almacen ?? ''),
     linea: String(f.linea ?? ''),
+    turno: String(f.turno ?? ''),
     fotoUrl: String(f.foto_url ?? ''),
     notas: String(f.notas ?? ''),
     usuarioId: String(f.usuario_id ?? ''),
@@ -308,6 +314,7 @@ export function payloadRpcCrearRal(
       aprobado_por: datos.aprobadoPor ?? '',
       almacen: datos.almacen ?? '',
       linea: datos.linea ?? '',
+      turno: datos.turno ?? '',
       foto_url: datos.fotoUrl ?? '',
       notas: datos.notas ?? '',
       usuario_id: usuario.id,
@@ -393,6 +400,7 @@ export async function crearRal(
     aprobado_por: datos.aprobadoPor ?? '',
     almacen: datos.almacen ?? '',
     linea: datos.linea ?? '',
+    turno: datos.turno ?? '',
     foto_url: datos.fotoUrl ?? '',
     notas: datos.notas ?? '',
     usuario_id: usuario.id,
@@ -596,7 +604,7 @@ export type ItemEditarRal = {
 }
 
 /** Campos del encabezado corregibles (parcial: solo los presentes).
- *  Sin turno: el RAL no es hoja de producción. */
+ *  turno: T1/T2 elegido por el registrador (pedido 2026-11-12). */
 export type EncabezadoEditarRal = Partial<{
   documento: string
   transaccion: string
@@ -605,6 +613,7 @@ export type EncabezadoEditarRal = Partial<{
   aprobadoPor: string
   almacen: string
   linea: string
+  turno: string
   notas: string
   fecha: string
 }>
@@ -691,6 +700,7 @@ export function payloadRpcEditarRal(
     ['aprobadoPor', 'aprobado_por'],
     ['almacen', 'almacen'],
     ['linea', 'linea'],
+    ['turno', 'turno'],
     ['notas', 'notas'],
     ['fecha', 'fecha'],
   ]

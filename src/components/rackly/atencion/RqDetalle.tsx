@@ -80,7 +80,7 @@ import {
   revertirOrigenRq,
   type LotePuenteDeItem,
 } from '@/lib/rackly/rq-atencion'
-import { calcularTurno } from '@/lib/rackly/turno'
+import { calcularTurnoRecepcion } from '@/lib/rackly/turno'
 import { aNumero } from '@/lib/rackly/formato'
 import { mensajeError } from '@/lib/rackly/errores'
 
@@ -320,7 +320,9 @@ export function RqDetalle({
       const r = await revertirOrigenRq(
         conf.item.id,
         null, // todos los lotes del puente de este material
-        calcularTurno(),
+        // Turno de la REVERSA en convención T1/T2 del ledger (la col.
+        // rq_atencion_tomas.turno guarda T1/T2, nunca Día/Noche).
+        calcularTurnoRecepcion(new Date()),
         {
           id: perfil?.id ?? '',
           nombre: perfil?.nombre || perfil?.correo || '',

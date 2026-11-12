@@ -129,7 +129,9 @@ function itemVacio(): ItemRqForm {
   }
 }
 
-/** Estado inicial FRESCO: fecha/turno del momento (no congelados al montar). */
+/** Estado inicial FRESCO: fecha del momento. El TURNO ya NO es automático
+ *  (pedido 2026-11-12): el registrador elige el turno al que pertenece la
+ *  RQ — puede llegar de madrugada/tarde para OTRO turno. */
 function formVacio(): FormRq {
   return {
     numeroRq: '',
@@ -137,7 +139,7 @@ function formVacio(): FormRq {
     productoCodigo: '',
     productoDescripcion: '',
     fecha: hoyISO(),
-    turno: calcularTurnoRecepcion(new Date()),
+    turno: '',
     turnoRq: calcularTurnoRecepcion(new Date()),
     linea: '',
     solicitante: '',
@@ -463,6 +465,10 @@ export function RqFotoForm({
       toast.error('Ingresa la fecha de la RQ')
       return
     }
+    if (!form.turno) {
+      toast.error('Selecciona el turno al que pertenece la RQ')
+      return
+    }
     // DB1 (auditoría 2026-10-30): advertencia informada si el Nº de RQ ya
     // existe (doble registro real: RQ 2026008365 ×2 a 16 min). ANTES de subir
     // la foto — si el usuario cancela no queda huérfano en Storage. NO bloquea:
@@ -782,16 +788,22 @@ export function RqFotoForm({
           />
         </div>
         <div className="space-y-1.5">
-          <Label className="text-xs">Turno (automático)</Label>
+          <Label className="text-xs">Turno</Label>
           <Select value={form.turno} onValueChange={(v) => set('turno', v)}>
-            <SelectTrigger className="h-9">
-              <SelectValue />
+            <SelectTrigger
+              title="Elige el turno al que pertenece esta RQ (ya no se deduce de la hora)"
+              className={form.turno ? '' : 'text-slate-400'}
+            >
+              <SelectValue placeholder="Selecciona el turno…" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="T1">T1 (07:20 – 19:20)</SelectItem>
               <SelectItem value="T2">T2 (19:21 – 07:19)</SelectItem>
             </SelectContent>
           </Select>
+          <p className="text-[10px] text-slate-400 leading-tight">
+            Elige el turno al que pertenece la RQ (ya no es automático).
+          </p>
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Turno del RQ (hoja)</Label>

@@ -7,7 +7,8 @@
  * dataClient; el xlsx real queda --external y no se usa en las funciones
  * puras probadas aquí):
  *   A. tablaTablero: título/filtros + cabecera LINEA..Suma de CANTIDAD +
- *      subtotal por línea + TOTAL GENERAL con marcadores estilizables.
+ *      filas sumadas por código SIN totales por línea (pedido 2026-11-12)
+ *      + TOTAL GENERAL al cierre.
  *   B. nombreArchivoTablero.
  *   C. filasHojaSalidas: 'Turno salida' NUNCA vacío (columna o derivado
  *      de la hora Lima — 309 filas históricas venían con '').
@@ -39,9 +40,9 @@ check('A2 · filtros FECHA y TURNO', aoa[1][0] === 'FECHA: 2026-11-10 al 2026-11
 check('A3 · nota de salidas netas', String(aoa[3][0]).includes('Salidas NETAS') && String(aoa[3][0]).includes('Generado'))
 check('A4 · cabecera en fila 5', JSON.stringify(aoa[5]) === JSON.stringify(['LINEA', 'PRODUCTO', 'sku', 'DESCRIPCION', 'Suma de CANTIDAD']))
 check('A5 · filas de datos en orden', aoa[6][0] === 'Línea 2' && aoa[6][2] === '118' && aoa[6][4] === 10 && aoa[7][2] === 'TAU' && aoa[7][4] === 7)
-check('A6 · subtotal al cambiar de línea', aoa[8][0] === 'Total Línea 2' && aoa[8][4] === 17)
-check('A7 · segunda línea de datos + su subtotal', aoa[9][0] === 'Materiales auxiliares' && aoa[10][0] === 'Total Materiales auxiliares' && aoa[10][4] === 2)
-check('A8 · TOTAL GENERAL cierra', aoa[11][0] === 'TOTAL GENERAL' && aoa[11][4] === 19)
+check('A6 · SIN subtotal al cambiar de línea (pedido 2026-11-12)', aoa[8][0] === 'Materiales auxiliares' && aoa[8][4] === 2)
+check('A7 · ninguna fila empieza con «Total »', aoa.every((r) => String(r[0] ?? '').startsWith('Total ') === false))
+check('A8 · TOTAL GENERAL cierra (19 = 10 + 7 + 2)', aoa[9][0] === 'TOTAL GENERAL' && aoa[9][4] === 19 && aoa.length === 10)
 check('A9 · sin filas → solo TOTAL GENERAL 0', (() => {
   const a = tablaTablero('2026-11-01', '2026-11-01', ['T1'], [], 'g')
   return a.length === 7 && a[6][0] === 'TOTAL GENERAL' && a[6][4] === 0

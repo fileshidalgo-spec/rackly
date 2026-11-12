@@ -282,6 +282,8 @@ export function RalDetalle({ ralId, onVolver }: { ralId: string; onVolver: () =>
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600 min-[430px]:grid-cols-3">
           <span>Fecha: <b>{ral.fecha}</b></span>
+          {ral.turno && <span>Turno: <b>{ral.turno}</b></span>}
+          <span className="min-w-0 truncate" title="RAL = atención de Materiales auxiliares">Tipo: <b>Materiales auxiliares</b></span>
           {ral.areaSolicitante && <span className="min-w-0 truncate" title={ral.areaSolicitante}>Área: <b>{ral.areaSolicitante}</b></span>}
           {ral.solicitante && <span className="min-w-0 truncate" title={ral.solicitante}>Solicitante: <b>{ral.solicitante}</b></span>}
           {ral.aprobadoPor && <span className="min-w-0 truncate" title={ral.aprobadoPor}>Aprobó: <b>{ral.aprobadoPor}</b></span>}

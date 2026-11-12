@@ -47,6 +47,7 @@ import {
   type CatalogoItem,
 } from '@/lib/rackly/catalogo'
 import { aNumero } from '@/lib/rackly/formato'
+import { LINEAS_OPCIONES, esLineaCanonica } from '@/lib/rackly/lineas'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -487,12 +488,32 @@ export function RalEditarDialog({
                   <Input className="h-9" value={almacen} onChange={(e) => setAlmacen(e.target.value)} />
                 </Campo>
                 <Campo etiqueta="Línea">
-                  <Input
-                    className="h-9"
-                    value={linea}
-                    onChange={(e) => setLinea(e.target.value)}
-                    title="Campo «Línea:» del formato RAL (área o sección)"
-                  />
+                  {/* Lista OFICIAL de líneas (pedido 2026-11-12). El valor
+                      histórico no canónico se conserva como opción extra
+                      para no mutar datos al abrir → guardar sin tocar. */}
+                  <Select value={linea} onValueChange={setLinea}>
+                    <SelectTrigger
+                      className={`h-9 ${linea ? '' : 'text-slate-400'}`}
+                      title="Por defecto Materiales auxiliares; elige de la lista (Línea 1–20 · Materiales auxiliares · Jarabe)"
+                    >
+                      <SelectValue placeholder="Selecciona la línea…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {!linea && (
+                        <SelectItem value="(sin línea)" disabled>
+                          (histórico sin línea — elige una de la lista)
+                        </SelectItem>
+                      )}
+                      {!esLineaCanonica(linea) && linea.trim() !== '' && (
+                        <SelectItem value={linea}>{linea} (histórico)</SelectItem>
+                      )}
+                      {LINEAS_OPCIONES.map((l) => (
+                        <SelectItem key={l} value={l}>
+                          {l}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Campo>
                 <Campo etiqueta="Turno">
                   <Select value={turno} onValueChange={setTurno}>

@@ -100,7 +100,6 @@ const ETIQUETAS: Record<string, string> = {
   productoDescripcion: 'Producto',
   fecha: 'Fecha',
   turno: 'Turno',
-  turnoRq: 'Turno del RQ',
   linea: 'Línea',
   solicitante: 'Solicitante',
   notas: 'Notas',
@@ -200,9 +199,9 @@ export function RqEditarDialog({
   const [productoDescripcion, setProductoDescripcion] = useState('')
   const [fecha, setFecha] = useState('')
   const [turno, setTurno] = useState('T1')
-  // Task 35: turno de la HOJA física (004=T1 · 005=T2). Históricos sin
-  // dato arrancan con el turno del sistema (fallback COALESCE del filtro).
-  const [turnoRq, setTurnoRq] = useState('T1')
+  // Una sola selección de Turno (pedido 2026-11-12): el campo «Turno del RQ
+  // (hoja)» ya no se edita — turno_rq de los HISTÓRICOS no se toca (la
+  // edición deja de enviarlo y la RPC solo aplica los campos presentes).
   const [linea, setLinea] = useState('')
   const [solicitante, setSolicitante] = useState('')
   const [notas, setNotas] = useState('')
@@ -233,7 +232,6 @@ export function RqEditarDialog({
     setProductoDescripcion(rq.productoDescripcion)
     setFecha(rq.fecha)
     setTurno(rq.turno || 'T1')
-    setTurnoRq(rq.turnoRq || rq.turno || 'T1')
     setLinea(rq.linea)
     setSolicitante(rq.solicitante)
     setNotas(rq.notas)
@@ -278,10 +276,10 @@ export function RqEditarDialog({
   const resumen = useMemo(() => {
     const enc = encabezadoDesdeEstado({
       numeroRq, ordenProduccion, productoCodigo, productoDescripcion,
-      fecha, turno, turnoRq, linea, solicitante, notas,
+      fecha, turno, linea, solicitante, notas,
     })
     return resumenDeCambios(enc, rq, filas, items)
-  }, [rq, items, filas, numeroRq, ordenProduccion, productoCodigo, productoDescripcion, fecha, turno, turnoRq, linea, solicitante, notas])
+  }, [rq, items, filas, numeroRq, ordenProduccion, productoCodigo, productoDescripcion, fecha, turno, linea, solicitante, notas])
 
   const hayCambios =
     resumen.encabezado.length > 0 ||
@@ -422,7 +420,7 @@ export function RqEditarDialog({
     try {
       const enc = encabezadoDesdeEstado({
         numeroRq, ordenProduccion, productoCodigo, productoDescripcion,
-        fecha, turno, turnoRq, linea, solicitante, notas,
+        fecha, turno, linea, solicitante, notas,
       })
       const resultado = await editarRq(
         rq.id,
@@ -510,18 +508,6 @@ export function RqEditarDialog({
                   >
                     <option value="T1">T1</option>
                     <option value="T2">T2</option>
-                  </select>
-                </Campo>
-                {/* Task 35: turno de la hoja física (004=T1 · 005=T2). */}
-                <Campo etiqueta="Turno del RQ (hoja)">
-                  <select
-                    className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none"
-                    value={turnoRq}
-                    onChange={(e) => setTurnoRq(e.target.value)}
-                    title="Turno impreso en la hoja: 004 = turno 1 · 005 = turno 2"
-                  >
-                    <option value="T1">T1 (hoja 004)</option>
-                    <option value="T2">T2 (hoja 005)</option>
                   </select>
                 </Campo>
                 <Campo etiqueta="Línea">
@@ -817,12 +803,13 @@ function encabezadoDesdeEstado(s: {
   productoDescripcion: string
   fecha: string
   turno: string
-  turnoRq: string
   linea: string
   solicitante: string
   notas: string
 }): EncabezadoEditarRq {
   // Siempre presentes: la RPC compara con lo guardado y solo aplica lo cambiado.
+  // turno_rq NO se envía (una sola selección de Turno, pedido 2026-11-12):
+  // el valor histórico de los RQs antiguos queda intacto.
   return {
     numeroRq: s.numeroRq,
     ordenProduccion: s.ordenProduccion,
@@ -830,7 +817,6 @@ function encabezadoDesdeEstado(s: {
     productoDescripcion: s.productoDescripcion,
     fecha: s.fecha,
     turno: s.turno,
-    turnoRq: s.turnoRq,
     linea: s.linea,
     solicitante: s.solicitante,
     notas: s.notas,

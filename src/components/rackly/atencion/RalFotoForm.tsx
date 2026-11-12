@@ -49,6 +49,7 @@ import { crearRal, buscarRalPorDocumento } from '@/lib/rackly/ral'
 import { eliminarFotoRq, subirFotoRq } from '@/lib/rackly/rq-atencion'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
 import { aNumero, hoyISO } from '@/lib/rackly/formato'
+import { LINEA_AUXILIARES, LINEAS_OPCIONES, normalizarLinea } from '@/lib/rackly/lineas'
 import {
   RecortarImagenDialog,
   type OrigenRecorte,
@@ -113,6 +114,9 @@ type FormRal = {
   solicitante: string
   aprobadoPor: string
   almacen: string
+  /** Línea de la lista OFICIAL (pedido 2026-11-12, 2.ª iteración): por
+   *  DEFECTO «Materiales auxiliares»; elegible de la lista (Línea 1–20,
+   *  Materiales auxiliares, Jarabe). */
   linea: string
   notas: string
   items: ItemRalForm[]
@@ -134,7 +138,8 @@ function itemVacio(): ItemRalForm {
 }
 
 /** Estado inicial FRESCO: fecha del momento; turno SIN elegir (el
- *  registrador elige al que pertenece el RAL — no es automático). */
+ *  registrador elige al que pertenece el RAL — no es automático). Línea
+ *  por DEFECTO «Materiales auxiliares» (pedido 2026-11-12). */
 function formVacio(): FormRal {
   return {
     documento: '',
@@ -145,7 +150,7 @@ function formVacio(): FormRal {
     solicitante: '',
     aprobadoPor: '',
     almacen: '',
-    linea: '',
+    linea: LINEA_AUXILIARES,
     notas: '',
     items: [itemVacio()],
   }
@@ -323,7 +328,10 @@ export function RalFotoForm({
       solicitante: datos.solicitante,
       aprobadoPor: datos.aprobadoPor,
       almacen: datos.almacen,
-      linea: datos.linea,
+      // Lista OFICIAL de líneas: el OCR se normaliza a la canónica; si no
+      // hay match confiable queda el DEFAULT «Materiales auxiliares»
+      // (nunca se inventa una línea).
+      linea: normalizarLinea(datos.linea) || LINEA_AUXILIARES,
       items: itemsOcr.length > 0 ? itemsOcr : [itemVacio()],
     })
 
@@ -904,13 +912,24 @@ export function RalFotoForm({
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Línea</Label>
-          <Input
-            placeholder="04 Materia Prima y Materiales…"
-            value={form.linea}
-            onChange={(e) => set('linea', e.target.value)}
-          />
+          <Select value={form.linea} onValueChange={(v) => set('linea', v)}>
+            <SelectTrigger
+              title="Por defecto Materiales auxiliares; elige una línea de la lista si corresponde"
+              className={form.linea ? '' : 'text-slate-400'}
+            >
+              <SelectValue placeholder="Selecciona la línea…" />
+            </SelectTrigger>
+            <SelectContent>
+              {LINEAS_OPCIONES.map((l) => (
+                <SelectItem key={l} value={l}>
+                  {l}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <p className="text-[10px] text-slate-400 leading-tight">
-            Los RAL son atenciones de <b>Materiales auxiliares</b>.
+            Por defecto <b>Materiales auxiliares</b> — cámbiala de la lista
+            (Línea 1–20 · Materiales auxiliares · Jarabe) si corresponde.
           </p>
         </div>
         <div className="space-y-1.5 sm:col-span-1 lg:col-span-3">

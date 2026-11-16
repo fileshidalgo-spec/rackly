@@ -1355,3 +1355,16 @@ Pedido: «Que el Tránsito de Almacén Repuestos funcione igual que el de Tráns
 - **QA (paso 5)**: tsc 0 · eslint 0 · **59/59 suites** · build OK.
 - **E2E local (guía de prueba T001-TESTQR-E2E, borrada al final — cero stock escrito)**: recepción guardada → Escanear QR → payload residual `RKLY||guía|código` → diálogo → ZONAS → A-02 → confirmación (documento completo) → Cancelar; batch «Ubicar las 8 juntas» de T001-125411 → RACKS 1er piso → R01-04-01 → lado A/B con ocupación → Cancelar; cámara ausente muestra su mensaje y el fallback manual; guía de prueba eliminada; consola limpia.
 - **E2E producción (sello `202611161509-9cfc103`, solo lectura)**: Escanear QR + En vivo presentes → diálogo con línea real → mapa de Zonas → Cancelar; consola 0 errores.
+
+
+---
+
+## rep-transito-qr — realtime aplicado con el MAPI token (continuación 2026-11-16)
+
+El usuario entregó el token de la Supabase Management API; se ejecutó el único pendiente de la sesión anterior:
+
+- `supabase/migrations/20261116_rep_transito_qr.sql` aplicada vía scripts/apply_sql_mapi.js (DO idempotente, `[]` = sin filas).
+- Verificación estructural (scripts/verify_rep_realtime_1116.js, nuevo, solo lectura): `rep_recepcion_lineas` ya figura en `supabase_realtime` (8 tablas publicadas: atencion_registros, movimientos, piso_movimiento_detalles, piso_movimientos, rals, recepcion_registros, rep_recepcion_lineas, rq_atenciones) · RLS ON · replica identity `d` (default=PK, suficiente para UPDATE/DELETE).
+- Verificación de ENTREGA de punta a punta (scripts/verify_realtime_rep_1116.js, nuevo, no entra en run_all_tests): cliente supabase-js autenticado con la cuenta real (postgres_changes se autoriza contra RLS con el JWT del socket) → canal SUBSCRIBED → UPDATE no-op vía MAPI → **evento recibido en 4.2 s**. Realtime del Tránsito de Repuestos CONFIRMADO de punta a punta.
+- Nota de entorno: el navegador del sandbox no mantiene wss (por eso el módulo mostraba solo el tic de polling de 8 s); el hook ya cubre ese caso con el polling de respaldo por diseño. Producción (oficina/celular) abre wss sin restricciones.
+- Queda cero pendientes de esta mejora.

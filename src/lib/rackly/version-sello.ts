@@ -1,4 +1,4 @@
 // AUTO-GENERADO por scripts/gen_version.mjs (prebuild) — NO editar a mano.
 /** Sello del build: se compara con public/version.json para avisar
  *  al usuario cuando su pestaña quedó en una versión anterior. */
-export const SELLO_VERSION = '202611122011-a144d9b'
+export const SELLO_VERSION = '202611161505-2cfc564'

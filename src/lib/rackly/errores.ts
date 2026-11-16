@@ -174,3 +174,33 @@ export function codigoControladoDe(err: unknown): string | null {
   const nombre = err.name?.trim() ?? ''
   return nombre && !NOMBRES_NATIVOS.has(nombre) ? nombre : null
 }
+
+/**
+ * ¿El error es el código RPC indicado (convención «CODE|detalle» que usan
+ * las RPCs de Rackly: LONCHERA_LLENA, LINEA_YA_UBICADA…)? Cubre TODAS las
+ * formas en que el código llega a la UI:
+ *   · Error creado con errorControlado (code = Error.name) — rep-client.
+ *   · PostgrestError plano { message: 'CODE|detalle' } — objeto, no Error.
+ *   · Error nativo cuyo message arranca con el código.
+ * Para BRANCHING interno (reintentos, mensajes especiales); el texto para el
+ * operario sale de mensajeError(). Nunca lanza.
+ */
+export function esErrorRpc(err: unknown, codigo: string): boolean {
+  if (!codigo) return false
+  if (codigoControladoDe(err) === codigo) return true
+  let msg: string
+  if (typeof err === 'string') {
+    msg = err
+  } else if (err instanceof Error) {
+    msg = err.message ?? ''
+  } else if (err && typeof err === 'object') {
+    msg = typeof (err as { message?: unknown }).message === 'string'
+      ? (err as { message: string }).message
+      : typeof (err as { msg?: unknown }).msg === 'string'
+        ? (err as { msg: string }).msg
+        : ''
+  } else {
+    return false
+  }
+  return msg.trim().startsWith(codigo + '|')
+}

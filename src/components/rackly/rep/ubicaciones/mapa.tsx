@@ -97,6 +97,7 @@ export function CeldaPosicion({
   ocupacion,
   onAbrir,
   compacta,
+  marcada,
 }: {
   u: RepUbicacion
   loncheras: Array<{ id: string; lado: 'A' | 'B' }>
@@ -104,6 +105,9 @@ export function CeldaPosicion({
   onAbrir: (u: RepUbicacion) => void
   /** Compacta = celda de zona (muestra el código completo, alto fijo). */
   compacta?: boolean
+  /** MARCADA (Tránsito 2026-11-16): la posición ya guarda el artículo
+   *  escaneado — anillo ámbar doble para que el operario la distinga. */
+  marcada?: boolean
 }) {
   const e = estadoPosicion(loncheras, ocupacion)
   const { enTransito } = ocupacionPosicion(loncheras, ocupacion)
@@ -112,14 +116,17 @@ export function CeldaPosicion({
     <button
       onClick={() => onAbrir(u)}
       title={`${u.codigo} — ${ETIQUETA_ESTADO[e]}${tipLoncheras(loncheras, ocupacion) ? ` (${tipLoncheras(loncheras, ocupacion)})` : ''}`}
-      aria-label={`${u.codigo}, ${ETIQUETA_ESTADO[e]}`}
+      aria-label={`${u.codigo}, ${ETIQUETA_ESTADO[e]}${marcada ? ', aquí ya hay stock de tu artículo' : ''}`}
       className={`relative flex-1 min-w-0 rounded font-bold transition-all duration-150 cursor-pointer border flex flex-col items-center justify-center hover:scale-105 active:scale-95 ${
         compacta ? 'px-1 py-1.5 text-[10px]' : 'h-9 text-[9px]'
-      } ${CELDA_ESTADO[e]}`}
+      } ${CELDA_ESTADO[e]} ${marcada ? 'ring-2 ring-amber-300 ring-offset-1 ring-offset-slate-900' : ''}`}
     >
       <span className="truncate w-full text-center px-px">{sufijo}</span>
       {enTransito > 0 && (
         <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-300 rounded-full ring-1 ring-slate-800" />
+      )}
+      {marcada && (
+        <span className="absolute -top-1 -left-1 w-2 h-2 rounded-full bg-amber-300 ring-1 ring-slate-800" title="Tu artículo ya tiene stock aquí" />
       )}
     </button>
   )
@@ -142,6 +149,7 @@ export function SectorRacks({
   loncherasPorUbicacion,
   ocupacion,
   onAbrir,
+  marcadas,
 }: {
   piso: 1 | 2
   setPiso: (p: 1 | 2) => void
@@ -150,6 +158,8 @@ export function SectorRacks({
   loncherasPorUbicacion: Map<string, Array<{ id: string; lado: 'A' | 'B' }>>
   ocupacion: Map<string, RepOcupacionLonchera>
   onAbrir: (u: RepUbicacion) => void
+  /** Ids de posición a resaltar (el artículo escaneado ya tiene stock ahí). */
+  marcadas?: Set<string>
 }) {
   return (
     <div className="space-y-3">
@@ -185,6 +195,7 @@ export function SectorRacks({
               loncherasPorUbicacion={loncherasPorUbicacion}
               ocupacion={ocupacion}
               onAbrir={onAbrir}
+              marcadas={marcadas}
             />
           ))}
         </div>
@@ -202,12 +213,14 @@ function RackCard({
   loncherasPorUbicacion,
   ocupacion,
   onAbrir,
+  marcadas,
 }: {
   rack: number
   niveles: RackVista['niveles']
   loncherasPorUbicacion: Map<string, Array<{ id: string; lado: 'A' | 'B' }>>
   ocupacion: Map<string, RepOcupacionLonchera>
   onAbrir: (u: RepUbicacion) => void
+  marcadas?: Set<string>
 }) {
   const etiqueta = `R${String(rack).padStart(2, '0')}`
   const { total, ocupadas } = useMemo(() => {
@@ -268,13 +281,13 @@ function RackCard({
               </div>
               <div className="flex px-1.5 pt-1.5 gap-[2px]">
                 {renglonA.map((u) => (
-                  <CeldaPosicion key={u.id} u={u} loncheras={loncherasPorUbicacion.get(u.id) ?? []} ocupacion={ocupacion} onAbrir={onAbrir} />
+                  <CeldaPosicion key={u.id} u={u} loncheras={loncherasPorUbicacion.get(u.id) ?? []} ocupacion={ocupacion} onAbrir={onAbrir} marcada={marcadas?.has(u.id)} />
                 ))}
               </div>
               {renglonB.length > 0 && (
                 <div className="flex px-1.5 pt-[2px] pb-1.5 gap-[2px]">
                   {renglonB.map((u) => (
-                    <CeldaPosicion key={u.id} u={u} loncheras={loncherasPorUbicacion.get(u.id) ?? []} ocupacion={ocupacion} onAbrir={onAbrir} />
+                    <CeldaPosicion key={u.id} u={u} loncheras={loncherasPorUbicacion.get(u.id) ?? []} ocupacion={ocupacion} onAbrir={onAbrir} marcada={marcadas?.has(u.id)} />
                   ))}
                 </div>
               )}
@@ -297,11 +310,14 @@ export function SectorZonas({
   loncherasPorUbicacion,
   ocupacion,
   onAbrir,
+  marcadas,
 }: {
   zonas: ZonaVista[]
   loncherasPorUbicacion: Map<string, Array<{ id: string; lado: 'A' | 'B' }>>
   ocupacion: Map<string, RepOcupacionLonchera>
   onAbrir: (u: RepUbicacion) => void
+  /** Ids de posición a resaltar (el artículo escaneado ya tiene stock ahí). */
+  marcadas?: Set<string>
 }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -331,7 +347,7 @@ export function SectorZonas({
             <div className="p-3 grid grid-cols-8 gap-1.5">
               {posiciones.map((u) => (
                 <div key={u.id} className="flex">
-                  <CeldaPosicion u={u} loncheras={loncherasPorUbicacion.get(u.id) ?? []} ocupacion={ocupacion} onAbrir={onAbrir} compacta />
+                  <CeldaPosicion u={u} loncheras={loncherasPorUbicacion.get(u.id) ?? []} ocupacion={ocupacion} onAbrir={onAbrir} compacta marcada={marcadas?.has(u.id)} />
                 </div>
               ))}
             </div>

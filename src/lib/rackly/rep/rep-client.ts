@@ -54,7 +54,25 @@ export function repNormalizarCodigo(codigo: string): string {
 }
 
 function lanzar(error: { message: string } | null): void {
-  if (error) throw new Error(mensajeError(error))
+  if (!error) return
+  // FIX Tránsito QR (2026-11-16): las RPCs rep_* marcan errores controlados
+  // con «CODE|detalle» (LINEA_YA_UBICADA, LONCHERA_LLENA…), pero al relanzar
+  // como Error(mensajeError(…)) el prefijo se PERDÍA y la UI no podía
+  // ramificar (el diálogo de ubicación necesita distinguir LINEA_YA_UBICADA
+  // para pintar "ya estaba ubicado" en vez de un error). Ahora el código
+  // viaja en Error.name (errorControlado) y el mensaje sigue siendo el
+  // detalle legible — mismo comportamiento visible, branching posible.
+  // El parseo es sobre el mensaje CRUDO: mensajeError() ya quita el prefijo.
+  const crudo = (error.message ?? '').trim()
+  const i = crudo.indexOf('|')
+  if (i > 0 && i < crudo.length - 1) {
+    const codigo = crudo.slice(0, i).trim()
+    const detalle = crudo.slice(i + 1).trim()
+    if (/^[A-Z][A-Z0-9_]+$/.test(codigo)) {
+      throw errorControlado(codigo, detalle)
+    }
+  }
+  throw new Error(mensajeError(error))
 }
 
 /** Guard de UPDATE honesto: la RLS puede filtrar en silencio (HTTP 200, 0 filas). */
@@ -992,6 +1010,51 @@ export async function repListarRecepciones(limit = 10): Promise<RepRecepcion[]> 
   }))
 }
 
+/** Mapea la fila cruda (embed `recepcion`) a RepLineaConDocumento — helper
+ *  compartido por repLineasEnTransito / repLineaPorId / repLineasPorGuiaNumero. */
+function lineaConDocumento(
+  l: {
+    id: string
+    created_at: string
+    recepcion_id: string
+    articulo_id: string
+    codigo: string
+    descripcion: string
+    und: string
+    cantidad: number | string
+    proveedor: string
+    estado: string
+    lonchera_id: string | null
+    ubicacion_id: string | null
+    movimiento_id: string | null
+    recepcion: { guia: string; oc: string; dam: string; created_at: string } | Array<{ guia: string; oc: string; dam: string; created_at: string }> | null
+  }
+): RepLineaConDocumento {
+  const rec = Array.isArray(l.recepcion) ? l.recepcion[0] : l.recepcion
+  return {
+    id: l.id,
+    created_at: l.created_at,
+    recepcion_id: l.recepcion_id,
+    articulo_id: l.articulo_id,
+    codigo: l.codigo,
+    descripcion: l.descripcion,
+    und: l.und,
+    cantidad: Number(l.cantidad) || 0,
+    proveedor: l.proveedor,
+    estado: l.estado === 'ubicado' ? 'ubicado' : 'en_transito',
+    lonchera_id: l.lonchera_id,
+    ubicacion_id: l.ubicacion_id,
+    movimiento_id: l.movimiento_id,
+    guia: rec?.guia ?? '',
+    oc: rec?.oc ?? '',
+    dam: rec?.dam ?? '',
+    fechaRecepcion: rec?.created_at ?? '',
+  }
+}
+
+const SELECT_LINEA_DOC =
+  'id, created_at, recepcion_id, articulo_id, codigo, descripcion, und, cantidad, proveedor, estado, lonchera_id, ubicacion_id, movimiento_id, recepcion:rep_recepciones(guia, oc, dam, created_at)'
+
 /**
  * Líneas EN TRÁNSITO con su documento (la lista de trabajo de Tránsito).
  * Ordenadas por recepción (más vieja primero: lo que llegó antes, se ubica
@@ -1000,50 +1063,46 @@ export async function repListarRecepciones(limit = 10): Promise<RepRecepcion[]> 
 export async function repLineasEnTransito(limit = 300): Promise<RepLineaConDocumento[]> {
   const { data, error } = await dataClient
     .from('rep_recepcion_lineas')
-    .select(
-      'id, created_at, recepcion_id, articulo_id, codigo, descripcion, und, cantidad, proveedor, estado, lonchera_id, ubicacion_id, movimiento_id, recepcion:rep_recepciones(guia, oc, dam, created_at)'
-    )
+    .select(SELECT_LINEA_DOC)
     .eq('estado', 'en_transito')
     .order('created_at', { ascending: true })
     .limit(limit)
   lanzar(error)
-  return ((data ?? []) as unknown as Array<{
-    id: string
-    created_at: string
-    recepcion_id: string
-    articulo_id: string
-    codigo: string
-    descripcion: string
-    und: string
-    cantidad: number
-    proveedor: string
-    estado: string
-    lonchera_id: string | null
-    ubicacion_id: string | null
-    movimiento_id: string | null
-    recepcion: { guia: string; oc: string; dam: string; created_at: string } | Array<{ guia: string; oc: string; dam: string; created_at: string }>
-  }>).map((l) => {
-    const rec = Array.isArray(l.recepcion) ? l.recepcion[0] : l.recepcion
-    return {
-      id: l.id,
-      created_at: l.created_at,
-      recepcion_id: l.recepcion_id,
-      articulo_id: l.articulo_id,
-      codigo: l.codigo,
-      descripcion: l.descripcion,
-      und: l.und,
-      cantidad: Number(l.cantidad) || 0,
-      proveedor: l.proveedor,
-      estado: l.estado === 'ubicado' ? 'ubicado' : 'en_transito',
-      lonchera_id: l.lonchera_id,
-      ubicacion_id: l.ubicacion_id,
-      movimiento_id: l.movimiento_id,
-      guia: rec?.guia ?? '',
-      oc: rec?.oc ?? '',
-      dam: rec?.dam ?? '',
-      fechaRecepcion: rec?.created_at ?? '',
-    }
-  })
+  return ((data ?? []) as unknown as Parameters<typeof lineaConDocumento>[0][]).map(lineaConDocumento)
+}
+
+/**
+ * UNA línea de recepción POR ID (cualquier estado) con su documento — puerta
+ * del ESCANEO QR: la identidad del rótulo es el uuid de SU fila
+ * (rep_recepcion_lineas.id, ver recepcion-guia.ts/lineasARotulosRep), así que
+ * el escaneo resuelve a ESA línea exacta aunque ya no esté en la lista
+ * en_transito cargada (ubicada o fuera del tope). null si ya no existe.
+ */
+export async function repLineaPorId(lineaId: string): Promise<RepLineaConDocumento | null> {
+  const { data, error } = await dataClient
+    .from('rep_recepcion_lineas')
+    .select(SELECT_LINEA_DOC)
+    .eq('id', lineaId)
+    .maybeSingle()
+  lanzar(error)
+  return data ? lineaConDocumento(data as unknown as Parameters<typeof lineaConDocumento>[0]) : null
+}
+
+/**
+ * Líneas de una GUÍA por su Nº de documento (fallback del escaneo QR para
+ * rótulos residuales sin identidad). Sin filtro de estado: quien escanea
+ * decide qué hacer con en_transito vs ya ubicadas.
+ */
+export async function repLineasPorGuiaNumero(guia: string): Promise<RepLineaConDocumento[]> {
+  const numero = guia.trim()
+  if (!numero) return []
+  const { data, error } = await dataClient
+    .from('rep_recepcion_lineas')
+    .select(SELECT_LINEA_DOC)
+    .eq('recepcion.guia', numero)
+    .order('created_at', { ascending: true })
+  lanzar(error)
+  return ((data ?? []) as unknown as Parameters<typeof lineaConDocumento>[0][]).map(lineaConDocumento)
 }
 
 /**

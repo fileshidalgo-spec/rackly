@@ -2,7 +2,8 @@
 
 /**
  * RACKLY — Realtime genérico para las tablas de módulos
- * (recepcion_registros, atencion_registros, movimientos).
+ * (recepcion_registros, atencion_registros, movimientos, rq_atenciones,
+ * rals, rep_recepcion_lineas).
  *
  * Problema: los módulos cargan su listado una sola vez (montaje/filtros);
  * lo que registra otro usuario (o el mismo desde el celular) solo aparecía
@@ -50,6 +51,7 @@ export type TablaRealtime =
   | 'movimientos'
   | 'rq_atenciones'
   | 'rals'
+  | 'rep_recepcion_lineas'
 
 /** Por qué se pide el refresco (ver documentación del hook). */
 export type MotivoRealtime = 'evento' | 'poll' | 'visible'
@@ -60,6 +62,7 @@ const CANAL_POR_TABLA: Record<TablaRealtime, string> = {
   movimientos: 'movs-realtime-sync',
   rq_atenciones: 'rq-atencion-realtime-sync',
   rals: 'rals-realtime-sync',
+  rep_recepcion_lineas: 'rep-transito-realtime-sync',
 }
 
 type EstadoTabla = {

@@ -1382,3 +1382,13 @@ El usuario entregó el token de la Supabase Management API; se ejecutó el únic
 - QA: tsc OK · eslint 0/0 · 59/59 suites · build OK.
 - INCIDENTE de entorno (sin pérdida): el sandbox restauró rackly/ desde un snapshot de SEPTIEMBRE (clon shallow en 0fde678, línea divergente, mtimes 08-09, sin node_modules) mientras GitHub main seguía en ee0d712 y producción servía ee0d712. Recuperación: fetch unshallow anónimo (repo público) + reset --hard a la línea actual + npm ci. Nota: el PAT del remote responde 401 en la API REST pero SÍ funciona para git (ls-remote/push).
 - Despliegue verificado: PAT nuevo del usuario → push `ee0d712..bbfa127` OK → Actions «Deploy to Cloudflare Pages» success → sello `202611161931-bbfa127` en producción. Spot-check del bundle: «Despacho RAL» y subtítulos viejos = 0 apariciones en los 13 chunks; texto nuevo «mapa visual» presente (3×).
+
+
+---
+
+## 2026-11-16 · Recepción INSUMOS: «¿En cuántas paletas?» — salto directo al número digitado
+- Pedido 1.1 (metodología 10 pasos): en «Dividir en paletas» se pueda DIGITAR en cuántas paletas dividir — hoy tocaba 3 fijas y agregar de 1 en 1 (37 pulsaciones para 40 paletas).
+- Helpers PUROS en recepcion-filas.ts (testeables): `numeroPaletasValido` (entero 2..MAX_PALETAS=44, decimal trunca, inválido→null: la UI deshabilita en vez de adivinar) y `cantidadesSinBase` (sin total ni suma: conserva las cantidades existentes, las nuevas nacen vacías — nunca inventa valores).
+- UI en RecepcionItemsEditor (compartido por las 3 vías: manual, foto de guía, devolución): `ControlDividir` (botón + «¿En cuántas?»; el N digitado va directo al reparto) y en el panel «Saltar a N paletas» (Enter aplica). Reglas intactas: partes iguales con residuo al final, conserva lote/fechas/proveedor PROPIOS por posición (combinarPaletas), MAX_PALETAS=44.
+- Sin cambios de BD: el registro sigue expandiendo 1 fila por paleta (expandirEnFilas intacto) — mismo modelo de datos, cero riesgo. Paso 3 de la metodología: consumidores en Atención (RqFotoForm, Rq/RalEditarDialog) usan funciones NO modificadas → sin conflictos.
+- QA: tsc OK · eslint 0/0 · 59/59 suites · test_recepcion_filas 148 checks (17 nuevos en [4c]) · build OK.

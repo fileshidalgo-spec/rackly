@@ -17,6 +17,10 @@
  *                     N paletas con cantidades distintas: "Dividir en
  *                     paletas" parte el artículo y al registrar sale 1
  *                     fila/rótulo POR PALETA con su cantidad propia.
+ *                     El operario DIGITA en cuántas paletas dividir
+ *                     (2026-11-16: botón + «¿en cuántas?» — salta directo
+ *                     a N sin pulsar «Agregar» de una en una) y el reparto
+ *                     es en partes iguales (editable por paleta).
  *                     Agregar/quitar paletas REPARTE el total solo.
  *   · Lote y fechas → manuales, en cada tarjeta de artículo.
  *   · POR PALETA    → cada paleta puede llevar SU lote/producción/vencimiento
@@ -33,9 +37,11 @@ import { buscarCatalogo, fetchCatalogo, isCatalogoLoaded, searchCatalogo, type C
 import { aNumero } from '@/lib/rackly/formato'
 import {
   combinarPaletas,
+  cantidadesSinBase,
   distribuirEquitativo,
   formatearCantidad,
   MAX_PALETAS,
+  numeroPaletasValido,
   repartirEquitativo,
   sumaPaletas,
   type PaletaDividir,
@@ -133,6 +139,13 @@ export function itemsValidos(items: ItemRecepcion[]): ItemRecepcion[] {
 }
 
 const MAX_SUGERENCIAS = 8
+
+/**
+ * Reparto inicial al dividir (igual que siempre): si el operario no cambia
+ * el «¿en cuántas?», el artículo parte en 3 paletas. El número exacto lo
+ * digita el usuario en el control de dividir (2..MAX_PALETAS).
+ */
+const PALETAS_INICIALES = 3
 
 /**
  * Opciones del Select de proveedor: la MISMA lista que Racks (PROVEEDORES_FILM)
@@ -266,15 +279,14 @@ export function RecepcionItemsEditor({
 
   // ─── DIVIDIR EN PALETAS ───────────────────────────────────────────
   // La guía trae la SUMA; la mercadería llega en N paletas con cantidades
-  // distintas y CADA paleta se rotula con SU cantidad. Dividir pre-llena
-  // partes iguales (editable) y al registrar salen filas separadas.
+  // distintas y CADA paleta se rotula con SU cantidad. El N lo digita el
+  // operario (ControlDividir: «¿en cuántas?» — pedido 2026-11-16) y el
+  // reparto sale en partes iguales, editable paleta por paleta.
 
-  const PALETAS_INICIALES = 3
-
-  function dividir(idx: number) {
+  function dividir(idx: number, n: number) {
     const it = items[idx]
     actualizar(idx, {
-      paletas: combinarPaletas([], distribuirEquitativo(it.cantidad, PALETAS_INICIALES)),
+      paletas: combinarPaletas([], distribuirEquitativo(it.cantidad, n)),
     })
   }
 
@@ -493,18 +505,10 @@ export function RecepcionItemsEditor({
                   ámbar, ancho completo en móvil. */}
               {!(it.paletas && it.paletas.length > 0) ? (
                 <div className="sm:pl-8">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-9 w-full gap-1.5 border-dashed border-amber-300 text-xs font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-800 sm:w-auto sm:px-4"
-                    onClick={() => dividir(idx)}
-                    title="La guía trae la suma: divide la cantidad por paleta para rotular paleta por paleta"
-                  >
-                    <Scissors className="h-3.5 w-3.5" />
-                    Dividir en paletas
-                    <span className="hidden sm:inline font-normal text-slate-400">— la guía trae la suma; separa la cantidad por paleta</span>
-                  </Button>
+                  <ControlDividir
+                    defecto={PALETAS_INICIALES}
+                    onDividir={(n) => dividir(idx, n)}
+                  />
                 </div>
               ) : (
                 <div className="sm:pl-8">
@@ -523,6 +527,53 @@ export function RecepcionItemsEditor({
       <Button type="button" variant="outline" className="w-full gap-1.5 text-xs border-dashed" onClick={agregar}>
         <Plus className="h-3.5 w-3.5" /> Agregar artículo ({items.length} en la guía)
       </Button>
+    </div>
+  )
+}
+
+/**
+ * Control «Dividir en paletas» con el Nº digitado (pedido 2026-11-16):
+ * el operario escribe CUÁNTAS paletas quiere (2..MAX_PALETAS) y el botón
+ * salta directo a ese reparto en partes iguales — sin agregar de una en
+ * una. Número inválido (vacío/no numérico/fuera de rango) deshabilita el
+ * botón en vez de adivinar; 3 sigue siendo el valor inicial de siempre.
+ */
+function ControlDividir({
+  defecto,
+  onDividir,
+}: {
+  defecto: number
+  onDividir: (n: number) => void
+}) {
+  const [nTexto, setNTexto] = useState(String(defecto))
+  const n = numeroPaletasValido(nTexto)
+  return (
+    <div className="flex items-end gap-2 w-full sm:w-auto">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-9 flex-1 sm:flex-none gap-1.5 border-dashed border-amber-300 text-xs font-semibold text-amber-700 hover:bg-amber-50 hover:text-amber-800 sm:px-4"
+        disabled={!n}
+        onClick={() => n && onDividir(n)}
+        title="La guía trae la suma: divide la cantidad por paleta para rotular paleta por paleta"
+      >
+        <Scissors className="h-3.5 w-3.5" />
+        Dividir en paletas
+        <span className="hidden sm:inline font-normal text-slate-400">— la guía trae la suma; separa la cantidad por paleta</span>
+      </Button>
+      <div className="w-24 shrink-0 space-y-1">
+        <Label className="text-[10px] text-slate-500">¿En cuántas?</Label>
+        <Input
+          className="h-9 text-xs"
+          inputMode="numeric"
+          value={nTexto}
+          onChange={(e) => setNTexto(e.target.value)}
+          placeholder={String(defecto)}
+          aria-label="¿En cuántas paletas dividir?"
+          title={`Digite el número de paletas (2 a ${MAX_PALETAS}) — la cantidad total se reparte en partes iguales`}
+        />
+      </div>
     </div>
   )
 }
@@ -599,6 +650,22 @@ function PanelPaletas({
     if (next) onPaletas(combinarPaletas(paletas, next))
   }
 
+  // «SALTAR A N» (pedido 2026-11-16): el número se queda tal cual lo teclee
+  // el operario (no se reescribe al agregar/quitar paletas — lo que ve es
+  // lo que hay). Nace con el nº actual como punto de partida.
+  const [nSaltar, setNSaltar] = useState(String(paletas.length))
+  const nValido = numeroPaletasValido(nSaltar)
+
+  /** SALTAR directo a N paletas: reparte en partes iguales con el total del
+   *  artículo (o, si no hay total, con la suma actual de las paletas); sin
+   *  base de reparto conserva las cantidades existentes y las nuevas nacen
+   *  vacías. Los lote/fechas/proveedor PROPIOS sobreviven por posición —
+   *  misma regla de agregar/quitar. */
+  function saltarA(n: number) {
+    const cant = repartirEquitativo(it, n) ?? cantidadesSinBase(paletas, n)
+    onPaletas(combinarPaletas(paletas, cant))
+  }
+
   /** Borra los datos propios de todas las paletas: vuelven a heredar del
    *  artículo (el "reset" cómodo después de corregir a mano). */
   function usarElDelArticulo() {
@@ -659,7 +726,8 @@ function PanelPaletas({
       {/* Ayuda reducida a UNA línea (el detalle completo vive en los
           title/hover de cada botón, no estorba a la vista). */}
       <p className="text-[10px] leading-snug text-sky-800/90">
-        Agregar o quitar reparte el total en partes iguales · lote/fechas/proveedor vacíos usan los del artículo.
+        Agregar o quitar reparte el total en partes iguales · «Saltar a N» va directo al nº digitado ·
+        lote/fechas/proveedor vacíos usan los del artículo.
       </p>
       {/* Aviso de descuadre con LÍNEA PROPIA y visible: antes iba perdido en
           la esquina inferior derecha, en texto de 10px mezclado con botones. */}
@@ -803,6 +871,38 @@ function PanelPaletas({
         >
           <Scale className="h-3 w-3" /> Repartir en partes iguales
         </Button>
+        {/* SALTAR A N PALETAS (pedido 2026-11-16): digita CUÁNTAS quieres y
+            va directo a ese reparto — 2000 en 40 paletas sin pulsar
+            «Agregar paleta» 37 veces. Inválido (vacío/fuera de 2..44) deja
+            el botón deshabilitado; Enter también aplica. */}
+        <div className="flex items-center gap-1.5">
+          <Input
+            className="h-8 w-16 text-center text-xs"
+            inputMode="numeric"
+            value={nSaltar}
+            onChange={(e) => setNSaltar(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                if (nValido) saltarA(nValido)
+              }
+            }}
+            placeholder={String(paletas.length)}
+            aria-label="¿A cuántas paletas saltar?"
+            title={`Salta directo a N paletas en partes iguales (2 a ${MAX_PALETAS})`}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1 border-dashed px-2.5 text-[11px]"
+            disabled={!nValido}
+            onClick={() => nValido && saltarA(nValido)}
+            title={`Reparte el total en partes iguales entre ${nValido ?? '—'} paletas (conserva los datos propios por posición)`}
+          >
+            <Scissors className="h-3 w-3" /> Saltar a {nValido ?? 'N'} paletas
+          </Button>
+        </div>
         {/* Reset cómodo: si te equivocaste digitando datos propios en las
             paletas, un clic las devuelve a heredar el dato del artículo.
             Solo aparece cuando HAY datos propios (no estorba el resto). */}

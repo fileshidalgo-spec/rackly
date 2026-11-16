@@ -290,6 +290,32 @@ export function repartirEquitativo(item: ItemConPaletas, n: number): string[] | 
 }
 
 /**
+ * «¿EN CUÁNTAS PALETAS?» — normaliza lo digitado por el operario (pedido
+ * 2026-11-16: saltar DIRECTO al número de paletas sin pulsar «Agregar
+ * paleta» de una en una):
+ *   · entero entre 2 y MAX_PALETAS → ese número.
+ *   · decimal → trunca al entero (40.9 = 40).
+ *   · vacío/no numérico/fuera de rango → null (la UI deshabilita el botón
+ *     en vez de adivinar; 1 no es dividir — para eso está «Quitar división»).
+ */
+export function numeroPaletasValido(texto: string): number | null {
+  const n = Math.floor(aNumero(texto ?? ''))
+  if (isNaN(n) || n < 2 || n > MAX_PALETAS) return null
+  return n
+}
+
+/**
+ * Cantidades al saltar a N paletas SIN base de reparto (total vacío/0 y
+ * suma de paletas 0): las posiciones existentes conservan SU cantidad tal
+ * cual y las nuevas nacen vacías — nunca inventa valores ni pierde los ya
+ * digitados. (Con base de reparto manda `repartirEquitativo`.)
+ */
+export function cantidadesSinBase(prev: (string | PaletaDividir)[], n: number): string[] {
+  const prevN = (prev ?? []).map(aPaleta)
+  return Array.from({ length: n }, (_, i) => prevN[i]?.cantidad ?? '')
+}
+
+/**
  * AVISOS de coherencia por artículo dividido: la suma de sus paletas debería
  * cuadrar con el total digitado de la guía. Devuelve mensajes legibles
  * (vacío = todo cuadra); la UI decide cómo mostrarlos. Se permite guardar

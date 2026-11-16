@@ -30,6 +30,8 @@ const {
   repartirEquitativo,
   totalParaRedistribuir,
   combinarPaletas,
+  numeroPaletasValido,
+  cantidadesSinBase,
   aPaleta,
   planSyncEdicionPorId,
   MAX_PALETAS,
@@ -129,6 +131,42 @@ const avisos = avisosDePaletas([{ ...base, paletas: pal(['2200', '1800', '2000']
 check('paletas 6000 ≠ total 10000 → 1 aviso', avisos.length === 1 && avisos[0].includes('5653') && avisos[0].includes('6000'), JSON.stringify(avisos))
 check('paletas que cuadran → sin avisos', avisosDePaletas([{ ...base, paletas: pal(['4000', '6000']) }]).length === 0)
 check('artículo sin dividir → sin avisos', avisosDePaletas([{ ...base }]).length === 0)
+
+// ─── 4c. «¿EN CUÁNTAS PALETAS?» — saltar DIRECTO al número digitado ───
+// Pedido 2026-11-16: "que se pueda digitar en cuántas paletas se quiere
+// dividir" — 2000 en 40 paletas de una sola vez (sin «Agregar paleta» 37
+// veces). Misma cadena que usa la UI:
+//   combinarPaletas(prev, repartirEquitativo(it, N) ?? cantidadesSinBase(prev, N))
+console.log('\n[4c] numeroPaletasValido / cantidadesSinBase — saltar a N paletas')
+check('«3» → 3', numeroPaletasValido('3') === 3)
+check('«40» → 40', numeroPaletasValido('40') === 40)
+check('«44» → 44 (justo el máximo)', numeroPaletasValido('44') === 44)
+check('«45» → null (encima del máximo)', numeroPaletasValido('45') === null)
+check('«1» → null (1 no es dividir: existe «Quitar división»)', numeroPaletasValido('1') === null)
+check('«0» y «-5» → null', numeroPaletasValido('0') === null && numeroPaletasValido('-5') === null)
+check('vacío o no numérico → null (la UI deshabilita, no adivina)', numeroPaletasValido('') === null && numeroPaletasValido('abc') === null)
+check('decimal trunca al entero: «40.9» → 40', numeroPaletasValido('40.9') === 40)
+
+const previasSalto = [
+  { cantidad: '500', lote: 'L-PROPIO-1', fechaProduccion: '', fechaVencimiento: '' },
+  { cantidad: '700', lote: '', fechaProduccion: '', fechaVencimiento: '' },
+  { cantidad: '800', lote: '', fechaProduccion: '', fechaVencimiento: '' },
+]
+check('sin base: conserva las cantidades existentes y rellena con vacíos', JSON.stringify(cantidadesSinBase(previasSalto, 5)) === JSON.stringify(['500', '700', '800', '', '']), JSON.stringify(cantidadesSinBase(previasSalto, 5)))
+check('sin base: si N es menor, trunca SIN perder lo conservado', JSON.stringify(cantidadesSinBase(previasSalto, 2)) === JSON.stringify(['500', '700']), JSON.stringify(cantidadesSinBase(previasSalto, 2)))
+check('sin base: acepta el formato string legacy', JSON.stringify(cantidadesSinBase(['500', '700'], 3)) === JSON.stringify(['500', '700', '']), JSON.stringify(cantidadesSinBase(['500', '700'], 3)))
+
+const art2000 = { ...base, cantidad: '2000' }
+const salto40 = combinarPaletas(previasSalto, repartirEquitativo(art2000, 40) ?? cantidadesSinBase(previasSalto, 40))
+check('2000 → saltar a 40: nacen 40 paletas', salto40.length === 40, String(salto40.length))
+check('2000 en 40 → 50 por paleta (el residuo cae al final)', salto40[0].cantidad === '50' && salto40[39].cantidad === '50', `${salto40[0].cantidad}/${salto40[39].cantidad}`)
+check('el salto CONSERVA el lote propio de la posición 1 y las nuevas heredan', salto40[0].lote === 'L-PROPIO-1' && salto40[5].lote === '', `${salto40[0].lote}/${salto40[5].lote}`)
+check('el salto suma exactamente el total de la guía', Math.abs(sumaPaletas(salto40) - 2000) < 0.001, String(sumaPaletas(salto40)))
+const filas40 = expandirEnFilas([{ ...art2000, paletas: salto40 }])
+check('al registrar: 40 filas rotuladas Paleta i/40', filas40.length === 40 && filas40[3].paleta === 'Paleta 4/40' && filas40[39].paleta === 'Paleta 40/40', filas40[3]?.paleta)
+// Salto SIN base (total vacío y paletas sin suma): no inventa cantidades.
+const saltoSinBase = combinarPaletas(pal(['', '']), repartirEquitativo({ ...base, cantidad: '', paletas: pal(['', '']) }, 4) ?? cantidadesSinBase(pal(['', '']), 4))
+check('sin total ni suma: las 4 paletas nuevas nacen vacías (nunca inventa)', saltoSinBase.length === 4 && saltoSinBase.every((p) => p.cantidad === ''), JSON.stringify(saltoSinBase.map((p) => p.cantidad)))
 
 // ─── 5. agruparGuias — UNA fila por guía en el registro ───
 console.log('\n[5] agruparGuias — registro agrupado por documento')

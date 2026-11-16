@@ -77,7 +77,7 @@ const PUERTAS: PuertaDef[] = [
     vista: 'transito',
     nombre: 'Tránsito',
     descripcion:
-      'Estacionamiento de la carga del día: despacho al día siguiente o devolución a lonchera.',
+      'Lo que llegó de Recepción sin destino: escaneo QR del rótulo y ubicación a lonchera con mapa visual.',
     icono: Truck,
     gradiente: 'from-fuchsia-500 to-purple-600',
     sombra: 'shadow-fuchsia-500/25',

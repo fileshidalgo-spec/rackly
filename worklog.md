@@ -1368,3 +1368,16 @@ El usuario entregó el token de la Supabase Management API; se ejecutó el únic
 - Verificación de ENTREGA de punta a punta (scripts/verify_realtime_rep_1116.js, nuevo, no entra en run_all_tests): cliente supabase-js autenticado con la cuenta real (postgres_changes se autoriza contra RLS con el JWT del socket) → canal SUBSCRIBED → UPDATE no-op vía MAPI → **evento recibido en 4.2 s**. Realtime del Tránsito de Repuestos CONFIRMADO de punta a punta.
 - Nota de entorno: el navegador del sandbox no mantiene wss (por eso el módulo mostraba solo el tic de polling de 8 s); el hook ya cubre ese caso con el polling de respaldo por diseño. Producción (oficina/celular) abre wss sin restricciones.
 - Queda cero pendientes de esta mejora.
+
+
+---
+
+## 2026-11-16 · REP·Tránsito: retirada la pestaña «Despacho RAL» (flujo antiguo manual)
+- Petición del usuario: quitar la parte antigua manual y el «Despacho RAL» de REP·Tránsito (captura del módulo).
+- Blast radius medido ANTES de cortar (scripts/verify_impacto_despacho_ral_1116.js, nuevo): rep_ral registrados=0, despachados=0, recientes(14d)=0; rep_stock con ral_id=0 → nada queda huérfano. Las 6 salidas rep en 30 d confirman uso histórico del flujo.
+- Retirado (TransitoModule rep): pestaña «Despacho RAL» + panel completo (listado de RALs, filtro, Despachar→rep_despachar_ral, Devolver→rep_devolver_linea), estado/handlers asociados (vista, filtroEstado, loading, despachando, devolviendo, genRef, cargar(), effect de pestaña) y la barra de pestañas — el módulo queda de UNA vista (Por ubicar desenvuelto) con Escanear QR + búsqueda + En vivo realtime intactos.
+- NO se tocó: RPCs rep_despachar_ral/rep_devolver_linea en BD (por si el ciclo vuelve), funciones repDespacharRal/repDevolverLinea en rep-client (las sigue ejercitando scripts/test_rep_atencion), y las vistas de RAL de Atención REP.
+- Subtítulos actualizados a solo-QR: src/app/page.tsx (tarjeta del hub) y RepuestosHome.tsx (descripción del módulo).
+- Cirugía asistida con aserciones (scripts/cirugia_transito_rep_1116.py, nuevo): borra wrapper+cierre y dedenta el panel; aborta si el archivo no está exactamente como espera.
+- QA: tsc OK · eslint 0/0 · 59/59 suites · build OK.
+- INCIDENTE de entorno (sin pérdida): el sandbox restauró rackly/ desde un snapshot de SEPTIEMBRE (clon shallow en 0fde678, línea divergente, mtimes 08-09, sin node_modules) mientras GitHub main seguía en ee0d712 y producción servía ee0d712. Recuperación: fetch unshallow anónimo (repo público) + reset --hard a la línea actual + npm ci. Nota: el PAT del remote responde 401 en la API REST pero SÍ funciona para git (ls-remote/push).

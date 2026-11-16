@@ -645,7 +645,7 @@ function RacklyApp() {
                 <div>
                   <CardTitle className="text-lg">Repuestos · Tránsito</CardTitle>
                   <CardDescription>
-                    Por ubicar (lo que llegó de Recepción, sin destino) + despacho RAL del día siguiente o devolución a lonchera.
+                    Lo que llegó de Recepción (sin destino): escanea el QR del rótulo y ubícalo en su lonchera con el mapa visual.
                   </CardDescription>
                 </div>
               </div>

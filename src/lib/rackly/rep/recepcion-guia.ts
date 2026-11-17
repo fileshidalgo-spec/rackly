@@ -66,6 +66,10 @@ export type LineaRecepcionRep = {
   cantidad: number
   /** Proveedor de ESTA línea (vacío en modo proveedor único). */
   proveedor: string
+  /** ESTADO EN BD (solo en edición, 2026-11-17): «ubicado» = línea CONGELADA
+   *  (artículo y cantidad intocables — su stock y su kardex dependen de ella;
+   *  el proveedor sí se puede corregir). Ausente = alta normal o en tránsito. */
+  estado?: 'en_transito' | 'ubicado'
 }
 
 /** Resultado de validar cabecera + líneas (mensajes listos para el usuario). */

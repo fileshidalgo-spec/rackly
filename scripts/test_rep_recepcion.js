@@ -12,7 +12,7 @@ process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'dummy'
 process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY = 'dummy'
 
 const stub = require('@/lib/supabase/client')
-const { repRegistrarIngreso, repArticuloPorCodigo } = require('@/lib/rackly/rep/rep-client')
+const { repRegistrarIngreso, repArticuloPorCodigo, repEditarRecepcion, repEliminarRecepcion } = require('@/lib/rackly/rep/rep-client')
 const { mensajeError, codigoControladoDe } = require('@/lib/rackly/errores')
 
 let ok = 0
@@ -145,6 +145,33 @@ async function main() {
   check('sin OC → p_oc ""', callSin.args.p_oc === '')
   check('sin DAM → p_dam ""', callSin.args.p_dam === '')
   check('sin proveedor → p_proveedor ""', callSin.args.p_proveedor === '')
+
+  // ── EDICIÓN MIXTA + ELIMINACIÓN CON REVERSA (2026-11-17): wrappers RPC ──
+  // La lógica pesada vive en la BD (verificada con test transaccional
+  // BEGIN…ROLLBACK en producción); aquí se prueba el CONTRATO del cliente.
+  console.log('\n[final] repEditarRecepcion / repEliminarRecepcion — contrato de la reversa')
+  stub.__setRpcResult('rep_eliminar_recepcion', { data: { ok: true, lineas_eliminadas: 3, lineas_reversadas: 1 } })
+  const resElim = await repEliminarRecepcion('rec-1')
+  check('lineasEliminadas mapea lineas_eliminadas (3)', resElim.lineasEliminadas === 3, JSON.stringify(resElim))
+  check('lineasReversadas mapea lineas_reversadas (1)', resElim.lineasReversadas === 1)
+  check('RPC llamada con el id de la guía', stub.__rpcCalls().some((c) => c.name === 'rep_eliminar_recepcion' && c.args.p_recepcion_id === 'rec-1'))
+
+  stub.__setRpcResult('rep_editar_recepcion', { data: { ok: true, linea_ids: ['l1', 'l2', 'l3'] } })
+  const resEdit = await repEditarRecepcion({
+    recepcionId: 'rec-1',
+    guia: 'GR-9',
+    oc: 'OC-9',
+    dam: 'DAM-9',
+    lineas: [
+      { id: 'l1', articuloId: 'a1', cantidad: 9, proveedor: 'P1' },
+      { id: 'l2', articuloId: 'a1', cantidad: 6, proveedor: 'P2' },
+      { articuloId: 'a2', cantidad: 2, proveedor: 'P3' },
+    ],
+  })
+  check('edición: 3 linea_ids en orden', resEdit.lineaIds.length === 3 && resEdit.lineaIds[2] === 'l3')
+  const callEdit = stub.__rpcCalls().filter((c) => c.name === 'rep_editar_recepcion').at(-1)
+  check('edición: líneas con id → uuid BD; nuevas → id null', callEdit.args.p_lineas[0].id === 'l1' && callEdit.args.p_lineas[2].id === null)
+  check('edición: cabecera viaja completa (guía/OC/DAM)', callEdit.args.p_guia === 'GR-9' && callEdit.args.p_oc === 'OC-9' && callEdit.args.p_dam === 'DAM-9')
 
   // ── Resumen ──
   console.log(`\n════════ RESULTADO: ${ok} pasados ════════`)

@@ -933,8 +933,11 @@ export async function repRecepcionCompleta(recepcionId: string): Promise<{
  *   · cabecera (guía/OC/DAM) + conjunto de líneas sincronizadas por id:
  *     con id → UPDATE conservando el uuid (QR ya impreso sigue válido);
  *     sin id → INSERT (línea nueva); las que faltan en la lista → DELETE.
- *   · SOLO guías 100% en tránsito (si algo ya está ubicado la BD rechaza
- *     con GUIA_YA_UBICADA — stock/kardex intocables).
+ *   · EDICIÓN MIXTA (2026-11-17): las líneas YA UBICADAS se conservan pero
+ *     quedan CONGELADAS en la BD (artículo y cantidad idénticos; solo el
+ *     proveedor es corregible) — la BD rechaza con LINEA_UBICADA_CONGELADA
+ *     cualquier intento de cambiarlas o quitarlas: su stock y su kardex
+ *     dependen de ellas. Las en tránsito se editan con libertad.
  *   · Devuelve linea_ids en el MISMO orden de entrada (contrato de rótulos
  *     igual al del registro).
  */
@@ -963,20 +966,26 @@ export async function repEditarRecepcion(params: {
 }
 
 /**
- * ELIMINA la guía de recepción completa (1 RPC atómica). Solo permitido si
- * NADA de la guía está ubicado (la BD rechaza con GUIA_YA_UBICADA: no se
- * deja stock ni kardex huérfanos). Las líneas en tránsito desaparecen de
- * Tránsito con el documento.
+ * ELIMINA la guía de recepción completa (1 RPC atómica). ELIMINACIÓN CON
+ * REVERSA (2026-11-17): los artículos ya ubicados NO se borran a ciegas —
+ * la BD desconta su stock de la lonchera (a 0 elimina la fila y libera el
+ * cupo de 15) y registra una DEVOLUCIÓN en el kardex (el ingreso original
+ * queda como traza). Si ya hubo salidas que dejarían el stock negativo o
+ * huérfano, la BD rechaza con STOCK_CONSUMIDO. Las líneas en tránsito
+ * desaparecen de Tránsito con el documento.
  */
 export async function repEliminarRecepcion(
   recepcionId: string
-): Promise<{ lineasEliminadas: number }> {
+): Promise<{ lineasEliminadas: number; lineasReversadas: number }> {
   const { data, error } = await dataClient.rpc('rep_eliminar_recepcion', {
     p_recepcion_id: recepcionId,
   })
   lanzar(error)
-  const d = (data ?? {}) as { lineas_eliminadas?: number }
-  return { lineasEliminadas: Number(d.lineas_eliminadas ?? 0) }
+  const d = (data ?? {}) as { lineas_eliminadas?: number; lineas_reversadas?: number }
+  return {
+    lineasEliminadas: Number(d.lineas_eliminadas ?? 0),
+    lineasReversadas: Number(d.lineas_reversadas ?? 0),
+  }
 }
 
 /** Últimas recepciones guardadas (para el panel de Recepción). */

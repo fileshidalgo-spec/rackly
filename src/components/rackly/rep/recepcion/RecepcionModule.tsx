@@ -266,6 +266,14 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
   }
 
   function quitarLinea(key: string) {
+    // Línea YA UBICADA (edición mixta): congelada — su stock y su kardex
+    // dependen de ella. La BD también lo rechazaría (LINEA_UBICADA_CONGELADA).
+    if (editando && lineas.find((l) => l.key === key)?.estado === 'ubicado') {
+      toast.error('Ese artículo ya está ubicado: no se puede quitar de la guía', {
+        description: 'Para revertirlo, elimina la guía completa — la BD genera la devolución en el kardex.',
+      })
+      return
+    }
     setLineas((prev) => prev.filter((l) => l.key !== key))
   }
 
@@ -449,6 +457,7 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
       // Proveedores de las líneas → modo único (todos iguales) o múltiple.
       const provs = [...new Set(doc.lineas.map((l) => l.proveedor.trim()).filter(Boolean))]
       const multi = provs.length > 1
+      const congeladas = doc.lineas.filter((l) => l.estado === 'ubicado').length
       setEditando({ recepcionId: doc.id, guia: doc.guia })
       setGuia(doc.guia)
       setOc(doc.oc)
@@ -465,6 +474,7 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
           und: l.und,
           cantidad: Number(l.cantidad) || 0,
           proveedor: multi ? l.proveedor : '',
+          estado: l.estado === 'ubicado' ? 'ubicado' : undefined,
         }))
       )
       // El borrador de ALTA pendiente se descarta (sus líneas fueron
@@ -472,7 +482,9 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
       loteRef.current = null
       toast.info(`Editando la guía ${doc.guia}`, {
         description:
-          'Corrige guía/OC/DAM, códigos, cantidades o proveedores y pulsa «Guardar cambios».',
+          congeladas > 0
+            ? `Corrige guía/OC/DAM y las líneas en tránsito — ${congeladas} artículo(s) YA UBICADOS quedan congelados (su stock y su kardex dependen de ellos).`
+            : 'Corrige guía/OC/DAM, códigos, cantidades o proveedores y pulsa «Guardar cambios».',
         duration: 8000,
       })
       setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
@@ -496,16 +508,22 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
     loteRef.current = null
   }
 
-  /** Elimina la guía confirmada (RPC rep_eliminar_recepcion: solo si nada
-   *  está ubicado — la BD rechaza y el mensaje real sube en el toast). */
+  /** Elimina la guía confirmada (RPC rep_eliminar_recepcion con REVERSA:
+   *  los ubicados se descontan del stock y quedan como devolución en el
+   *  kardex; si ya hubo salidas que lo impiden, la BD rechaza y el mensaje
+   *  real sube en el toast). */
   async function confirmarEliminar() {
     const target = eliminando
     if (!target) return
     setBorrando(true)
     try {
       const res = await repEliminarRecepcion(target.id)
+      const reversadas = res.lineasReversadas
       toast.success(`Guía ${target.guia} eliminada`, {
-        description: `${res.lineasEliminadas} artículo(s) en tránsito borrados del documento.`,
+        description:
+          reversadas > 0
+            ? `${res.lineasEliminadas} artículo(s) borrados — ${reversadas} ya ubicado(s): stock descontado y DEVOLUCIÓN registrada en el kardex.`
+            : `${res.lineasEliminadas} artículo(s) en tránsito borrados del documento.`,
       })
       setEliminando(null)
       // Si la guía eliminada estaba abierta en edición: salir limpio.
@@ -763,15 +781,25 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
                       <td className="px-2.5 py-1.5 text-slate-600 max-w-[140px] truncate" title={l.proveedor}>{l.proveedor || '—'}</td>
                     )}
                     <td className="px-2.5 py-1.5">
-                      <button
-                        onClick={() => quitarLinea(l.key)}
-                        disabled={guardando}
-                        className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40"
-                        title="Quitar de la guía"
-                        aria-label={`Quitar ${l.codigo}`}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center justify-end gap-1">
+                        {l.estado === 'ubicado' && (
+                          <span
+                            className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5 whitespace-nowrap"
+                            title="Ya ubicado: línea congelada (su stock y su kardex dependen de ella)"
+                          >
+                            ubicado
+                          </span>
+                        )}
+                        <button
+                          onClick={() => quitarLinea(l.key)}
+                          disabled={guardando || l.estado === 'ubicado'}
+                          className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                          title={l.estado === 'ubicado' ? 'Ya ubicado: no se puede quitar — elimina la guía completa para revertirlo' : 'Quitar de la guía'}
+                          aria-label={`Quitar ${l.codigo}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -864,10 +892,10 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
                     variant="ghost"
                     className="h-6 px-1.5 shrink-0 text-slate-400 hover:text-sky-700 hover:bg-sky-50"
                     onClick={() => abrirEdicion(r)}
-                    disabled={guardando || cargandoEdicion !== '' || r.pendientes !== r.totalLineas}
+                    disabled={guardando || cargandoEdicion !== ''}
                     title={
                       r.pendientes !== r.totalLineas
-                        ? `No editable: ${r.totalLineas - r.pendientes} artículo(s) ya ubicados`
+                        ? `Revisar / editar la guía ${r.guia} — los ${r.totalLineas - r.pendientes} ya ubicado(s) quedan congelados`
                         : `Revisar / editar la guía ${r.guia}`
                     }
                     aria-label={`Editar la guía ${r.guia}`}
@@ -881,10 +909,10 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
                     variant="ghost"
                     className="h-6 px-1.5 shrink-0 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
                     onClick={() => setEliminando(r)}
-                    disabled={guardando || borrando || r.pendientes !== r.totalLineas}
+                    disabled={guardando || borrando}
                     title={
                       r.pendientes !== r.totalLineas
-                        ? `No eliminable: ${r.totalLineas - r.pendientes} artículo(s) ya ubicados`
+                        ? `Eliminar la guía ${r.guia} — los ${r.totalLineas - r.pendientes} ya ubicado(s) se revierten (stock + devolución en kardex)`
                         : `Eliminar la guía ${r.guia}`
                     }
                     aria-label={`Eliminar la guía ${r.guia}`}
@@ -920,17 +948,36 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
         }}
       />
 
-      {/* ═══ CONFIRMAR ELIMINACIÓN DE GUÍA (supervisión) ═══ */}
+      {/* ═══ CONFIRMAR ELIMINACIÓN DE GUÍA (supervisión, con reversa) ═══ */}
       <AlertDialog open={eliminando !== null} onOpenChange={(o) => { if (!o) setEliminando(null) }}>
         <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Eliminar la guía {eliminando?.guia}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Se borrarán {eliminando?.totalLineas ?? 0} artículo(s) en tránsito y desaparecerán del
-              módulo Tránsito. No hay stock ni kardex asociados (nada está ubicado). Esta acción no
-              se puede deshacer.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
+          <AlertDialogTitle>¿Eliminar la guía {eliminando?.guia}?</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="text-sm space-y-1.5">
+              {(() => {
+                const ubicadas = (eliminando?.totalLineas ?? 0) - (eliminando?.pendientes ?? 0)
+                const enTransito = eliminando?.pendientes ?? 0
+                return (
+                  <>
+                    {ubicadas > 0 ? (
+                      <p>
+                        La guía tiene <b>{ubicadas} artículo(s) YA UBICADOS</b> en sus loncheras: al eliminar,
+                        la BD descontará su stock y registrará una <b>DEVOLUCIÓN en el kardex</b> (el ingreso
+                        original queda como traza). Si ya hubo salidas que lo impiden, la BD lo rechazará.
+                      </p>
+                    ) : null}
+                    {enTransito > 0 ? (
+                      <p>
+                        {ubicadas > 0 ? `Además, ${enTransito} artículo(s) en tránsito` : `Se borrarán ${enTransito} artículo(s) en tránsito`}
+                        {ubicadas > 0 ? ' desaparecerán del módulo Tránsito con el documento.' : ' y desaparecerán del módulo Tránsito. No hay stock ni kardex asociados (nada está ubicado).'}
+                      </p>
+                    ) : null}
+                    <p>Esta acción no se puede deshacer.</p>
+                  </>
+                )
+              })()}
+            </div>
+          </AlertDialogDescription>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={borrando}>Cancelar</AlertDialogCancel>
             <AlertDialogAction

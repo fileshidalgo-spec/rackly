@@ -1414,3 +1414,15 @@ El usuario entregó el token de la Supabase Management API; se ejecutó el únic
 - Rótulos: reutiliza ImprimirRotulosDialog formato 'rep' (código GRANDE + QR único por activo = id de su fila + «ACT: XXXX» en la descripción; CANT 1 ACT). El builder compartido NO se tocó → cero impacto en Insumos/Devoluciones.
 - Stub de Supabase: insert() ahora es thenable encadenable con cola FIFO (__setInsertResult) — aditivo, compatible con las 59 suites previas.
 - QA: tsc 0 · eslint 0/0 · **60/60 suites** (nueva suite test_activos_fijos: 44 checks) · build OK.
+
+
+---
+
+## 2026-11-17 (v2) · Repuestos · Recepción·Activos fijos — EDITAR/ELIMINAR documento + OC y ACT en la etiqueta
+- Pedido del usuario: (1) poder ELIMINAR y MODIFICAR el documento de activos fijos una vez guardado; (2) la etiqueta debe llevar la OC y el código de activación.
+- EDICIÓN: «Editar» por documento en «Últimos activos recibidos» re-carga guía/OC/fecha y sus filas EDITABLES inline (artículo con detección automática de excepción, descripción, activación + «Aún no tiene», quitar → lista «Se eliminarán al guardar» con RESTAURAR antes de guardar). Aviso de edición (paridad mercadería): conservados mantienen su QR, los nuevos imprimen rótulo. guardarEdicionAF = updates por ID exacto SOLO de filas tocadas (+todas si cambió el documento, denormalizado por fila) → delete por ID → insert con uuid_sync; verificación honesta por paso (exige la fila actualizada/borrada; estado real recargado si falla). Sin cambios → 0 escrituras (verificado en test).
+- ELIMINACIÓN: «Eliminar» por documento con confirmación explícita (guía, OC, fecha, N activos, irreversible) y permiso repuestos.eliminar; borrarDocumentoAF filtra fecha+guía+oc y devuelve cuántas filas borró. Mientras un doc está en edición no se puede eliminar (guard).
+- ETIQUETA: banda META nueva en el builder REP — «ACT: … · OC: …» en la franja inferior de la caja de descripción (Y 500..556, em 34, centrada; descripción cede zona con inf 492). DatosRotulo.oc/activacion opcionales: SIN ellos los rótulos de mercadería salen bit a bit idénticos (verificado en test). rotulosDesdeActivos pasa oc (con override por documento) y activacion como campos propios (descripción limpia).
+- QA: tsc 0 · eslint 0/0 · **60/60 suites** (test_activos_fijos ampliado a 68 checks: banda META ^FO255, edición 2 escenarios, honestidad del update fantasma, borrado por doc) · build OK. BD: 4 políticas (select/insert/update/delete) verificadas por MAPI. Deploy a3d8034, sello 202611172258-a3d8034, strings de edición presentes en el bundle vivo.
+- Fix de tests: __updateCalls() del stub devuelve COPIA (slice) → comparar conteos, no mutar.
+- PAT de GitHub: el que quedó en .git/config tras el reciclaje estaba caducado (401) — restaurado el vigente.

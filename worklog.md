@@ -1403,3 +1403,14 @@ El usuario entregó el token de la Supabase Management API; se ejecutó el únic
 - **Fixes** (recepcion-filas.ts · modulos.ts · RecepcionModule · GuiaFotoForm): ① planSync dedupa el reclamo doble SOLO si el contenido es idéntico (distinto sigue insertando — compatible hacia atrás vía `mismoContenido` opcional); ② nuevo puro `tarjetasIdenticasDePaletas` + confirmación antes del alta en ambas vías (misma filosofía "nunca en silencio"); ③ comparador de contenido en guardarEdicionGuia.
 - Los 35 grupos históricos NO se borran automáticamente (ambigüedad legítima/duplicado) — quedan documentados para decisión del usuario.
 - QA: tsc · eslint 0/0 · 59/59 suites (test_recepcion_filas 158 checks, 10 nuevos en [4d]) · build OK.
+
+
+---
+
+## 2026-11-17 · Almacén Repuestos · Recepción — PESTAÑA NUEVA «Activos fijos»
+- Pedido del usuario: N° Guía, N° OC, N° Artículo con AUTOCOMPLETADO de la serie 12 («22» → 12000022, serie fija + sufijo digitado; pegar código completo funciona idempotente), botón «Excepción de serie» (otro inicio), código de activación con opción «aún no tiene» (desactiva el campo), descripción MANUAL (hasta tener la BD fuente), impresión Zebra.
+- BD (migración MAPI): tabla **rep_activos_fijos** — 1 fila por activo (NO es stock/kardex, no entra a Tránsito); RLS FORZADO + 4 políticas authenticated (patrón rep_stock); índices fecha/artículo/guía; CHECKs de formato (artículo ^[A-Z0-9._-]{3,30}$, activación ^[A-Z0-9._-]{3,40}$); uuid_sync UNIQUE → idempotencia M-1 (reintento de red no duplica; 23505 = aviso honesto).
+- Código: lib **rep/activos-fijos.ts** (autocompletarArticuloAF puro + validadores + registrarActivosFijos por lotes de 500 + duplicadosRecientesAF <60s + listar + rotulosDesdeActivos + agruparPorDocumentoAF) y UI **ActivosFijosTab.tsx** AUTOCONTENIDA; pestaña «Mercadería (repuestos) / Activos fijos» al tope de Recepción (retorno temprano tras los hooks — el flujo existente no se toca).
+- Rótulos: reutiliza ImprimirRotulosDialog formato 'rep' (código GRANDE + QR único por activo = id de su fila + «ACT: XXXX» en la descripción; CANT 1 ACT). El builder compartido NO se tocó → cero impacto en Insumos/Devoluciones.
+- Stub de Supabase: insert() ahora es thenable encadenable con cola FIFO (__setInsertResult) — aditivo, compatible con las 59 suites previas.
+- QA: tsc 0 · eslint 0/0 · **60/60 suites** (nueva suite test_activos_fijos: 44 checks) · build OK.

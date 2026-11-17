@@ -31,6 +31,11 @@ const rpcCalls = []
 const upsertCalls = []
 /** Cola FIFO de resultados para upsert (error simulado una vez). */
 const upsertQueue = []
+/** Aditivo 2026-11-17 (activos fijos): cola FIFO de resultados de
+ *  insert().select('id') — registrarActivosFijos necesita los ids insertados
+ *  para el QR único de cada rótulo. Sin enlatado resuelve {data:null}
+ *  (compatibilidad TOTAL con los suites previos que ignoraban el data). */
+const insertQueue = []
 /** Resultado pendiente para update().select().maybeSingle() (un uso). */
 let updateResult = null
 /** El próximo maybeSingle pertenece a un update (sirve updateResult, no tabla). */
@@ -93,7 +98,17 @@ function builder(table) {
       const r = upsertQueue.length ? upsertQueue.shift() : { data: null, error: null }
       return Promise.resolve(r)
     },
-    insert(payload) { insertCalls.push({ table, payload }); return Promise.resolve({ data: null, error: null }) },
+    insert(payload) {
+      insertCalls.push({ table, payload })
+      const r = () => (insertQueue.length ? insertQueue.shift() : { data: null, error: null })
+      // Thenable encadenable: await insert(...) directo (suites previos) y
+      // insert(...).select('id') (activos fijos) consumen UN resultado FIFO.
+      const b = {
+        select() { return Promise.resolve(r()) },
+        then(ok, err) { return Promise.resolve(r()).then(ok, err) },
+      }
+      return b
+    },
     update(payload) {
       updateCalls.push({ table, payload })
       pendingUpdate = true
@@ -143,6 +158,7 @@ module.exports = {
   __updateCalls() { return updateCalls.slice() },
   __setUpdateResult(r) { updateResult = r },
   __setDeleteResult(r) { deleteQueue.push(r) },
+  __setInsertResult(r) { insertQueue.push(r) },
   /** Encola el resultado del PRÓXIMO update await-ed (FIFO) — honestidad UPDATE. */
   __setUpdateData(r) { updateQueue.push(r) },
   /** Encola el resultado del PRÓXIMO rpc(name) (cola FIFO por nombre). */

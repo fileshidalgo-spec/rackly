@@ -44,6 +44,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { ActivosFijosTab } from '@/components/rackly/rep/recepcion/ActivosFijosTab'
 import { puede } from '@/lib/rackly/permisos'
 import { formatDateTime } from '@/lib/utils'
 import {
@@ -171,6 +172,9 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
   const [editando, setEditando] = useState<{ recepcionId: string; guia: string } | null>(null)
   const [cargandoEdicion, setCargandoEdicion] = useState('')
   const [eliminando, setEliminando] = useState<RepRecepcion | null>(null)
+  // PESTAÑAS (2026-11-17): «Mercadería» = flujo documental existente; «Activos
+  // fijos» = pestaña nueva autocontenida (no comparte estado con el flujo).
+  const [pestana, setPestana] = useState<'mercaderia' | 'activos'>('mercaderia')
   const [borrando, setBorrando] = useState(false)
   const formRef = useRef<HTMLDivElement>(null)
   const codigoRef = useRef<HTMLInputElement>(null)
@@ -524,8 +528,40 @@ export function RecepcionModule({ onIrACatalogo, onIrATransito }: Props) {
   const puedeGuardar = lineas.length > 0 && !guardando
   const pendientesTotal = recepciones.reduce((s, r) => s + r.pendientes, 0)
 
+  // Control de pestañas compartido por ambas vistas (se renderiza arriba).
+  const pestanasRecepcion = (
+    <div className="flex gap-1 rounded-xl border bg-white p-1 text-sm">
+      <button
+        type="button"
+        onClick={() => setPestana('mercaderia')}
+        className={`flex-1 rounded-lg px-3 py-1.5 font-medium transition ${pestana === 'mercaderia' ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}
+      >
+        Mercadería (repuestos)
+      </button>
+      <button
+        type="button"
+        onClick={() => setPestana('activos')}
+        className={`flex-1 rounded-lg px-3 py-1.5 font-medium transition ${pestana === 'activos' ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:bg-slate-50'}`}
+      >
+        Activos fijos
+      </button>
+    </div>
+  )
+
+  // Pestaña ACTIVOS FIJOS: autocontenida — el flujo de mercadería no se
+  // renderiza (todos los hooks ya corrieron: JSX condicional es seguro).
+  if (pestana === 'activos') {
+    return (
+      <div className="space-y-4">
+        {pestanasRecepcion}
+        <ActivosFijosTab />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
+      {pestanasRecepcion}
       {/* ═══ AVISO DE EDICIÓN (supervisión) ═══ */}
       {editando && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2.5">

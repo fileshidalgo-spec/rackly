@@ -111,6 +111,12 @@ export type DatosRotulo = {
    *  ESA fila exacta — jamás jala datos de otro palet. Si falta (rótulo
    *  de emergencia sin fila), el QR cae a la identidad de guía legada. */
   recepcionId?: string
+  /** ACTIVOS FIJOS (2026-11-17, pedido del usuario): banda META del rótulo
+   *  REP con la OC del documento y el código de activación del activo
+   *  (impresa solo si existe). Ausentes ⇒ rótulos de mercadería SIN
+   *  CAMBIOS — la banda de descripción mantiene su zona completa. */
+  oc?: string
+  activacion?: string
 }
 
 /** Encabezado compartido por los rótulos de una recepción.
@@ -1088,16 +1094,36 @@ export function construirZPLRotuloRep(
   // ── 3) DESCRIPCIÓN — banda Y 240..560 en la columna izquierda ──
   // Mismo motor determinista (1-3 renglones balanceados, tinta centrada y
   // llenando el recuadro) con la banda MÁS ALTA del formato REP.
+  // ACTIVOS FIJOS: si hay META (OC / código de activación), la descripción
+  // cede su franja inferior (Y 500..556) a la banda META — sin meta, la
+  // zona completa (rótulos de mercadería bit a bit idénticos).
+  const metaRep = [datos.activacion ? `ACT: ${sanearZPL(datos.activacion)}` : '', datos.oc ? `OC: ${sanearZPL(datos.oc)}` : '']
+    .filter(Boolean)
+    .join(' · ')
   lineas.push(cajaApaisada(0, 240, anchoIzq, 560, 3))
   if (descripcion) {
     const anchoLinea = anchoIzq - 48
-    const layout = layoutDescripcion(descripcion, anchoLinea, { sup: REP_DESC_SUP, inf: REP_DESC_INF })
+    const layout = layoutDescripcion(descripcion, anchoLinea, {
+      sup: REP_DESC_SUP,
+      inf: metaRep ? 492 : REP_DESC_INF,
+    })
     if (layout) {
       layout.lineas.forEach((linea, k) => {
         const yk = layout.y1 + k * layout.paso
         lineas.push(...campoApaisado(24, yk, layout.em, layout.w, linea, { fbAncho: anchoLinea }))
       })
     }
+  }
+  // Banda META (ACTIVOS FIJOS): «ACT: … · OC: …» en la franja inferior de la
+  // caja de descripción (Y 500..556) — em 34, centrada, sin tocar el bloque
+  // CANT/UM (arranca en 560) ni el QR (arranca en X 640).
+  if (metaRep) {
+    const emMeta = 34
+    const wMeta = Math.round(emMeta * 0.6)
+    const maxChars = Math.floor((anchoIzq - 48) / (0.58 * wMeta))
+    const textoMeta = metaRep.slice(0, maxChars)
+    const y0Meta = 500 + Math.floor((56 - emMeta) / 2)
+    lineas.push(...campoApaisado(24, y0Meta, emMeta, wMeta, textoMeta, { fbAncho: anchoIzq - 48 }))
   }
 
   // ── 4) BLOQUE INFERIOR (Y 560..800): CANT: · cantidad · UM ──

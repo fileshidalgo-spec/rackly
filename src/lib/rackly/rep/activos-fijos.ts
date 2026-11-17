@@ -18,10 +18,16 @@
  * (23505 → aviso honesto, nunca silencio).
  *
  * RÓTULOS: se reutiliza ImprimirRotulosDialog con formato 'rep' (código
- * grande + QR único por activo + descripción); el código de activación
- * viaja DENTRO de la descripción («… · ACT: XXXX») para no tocar el
- * builder compartido — cero impacto en las demás pestañas.
+ * grande + QR único por activo); la banda META del builder REP imprime
+ * «ACT: …» y «OC: …» (pedido del usuario 2026-11-17) en la franja inferior
+ * de la caja de descripción — sin OC/activación, los rótulos de mercadería
+ * salen bit a bit idénticos.
  */
+
+/** EDICIÓN/ELIMINACIÓN (pedido del usuario 2026-11-17): el documento guardado
+ *  (guía+OC+fecha) se puede MODIFICAR (editar documento, activos conservados
+ *  mantienen su id/QR; se actualizan por fila con verificación honesta) o
+ *  ELIMINAR completo (con permiso repuestos.eliminar y confirmación). */
 
 import { dataClient } from '@/lib/supabase/client'
 import { nuevoUuid } from '@/lib/rackly/recepcion-idempotencia'
@@ -160,21 +166,24 @@ export async function listarActivosFijos(limite = 40): Promise<ActivoFijoDB[]> {
 }
 
 /**
- * RÓTULOS desde filas de BD (alta recién guardada y REIMPRESIÓN). 1 rótulo
- * por activo: código GRANDE (N° de artículo), QR único (id de SU fila),
- * descripción manual + «ACT: …» cuando ya tiene código de activación.
- * CANT 1 ACT — un activo fijo es una unidad física única.
+ * RÓTULOS desde filas de BD (alta recién guardada, REIMPRESIÓN y edición).
+ * 1 rótulo por activo: código GRANDE (N° de artículo), QR único (id de SU
+ * fila), descripción manual + banda META «ACT: … · OC: …» (campos propios
+ * del rótulo, no texto pegado — el builder REP la dibuja en la franja
+ * inferior de la caja de descripción). CANT 1 ACT — un activo es único.
  */
-export function rotulosDesdeActivos(activos: ActivoFijoDB[]): RotuloAImprimir[] {
+export function rotulosDesdeActivos(activos: ActivoFijoDB[], ocDocumento?: string): RotuloAImprimir[] {
   return activos.map((a) => ({
     codigo: a.articulo,
-    descripcion: [a.descripcion, a.activacion ? `ACT: ${a.activacion}` : ''].filter(Boolean).join(' · ') || a.articulo,
+    descripcion: a.descripcion || a.articulo,
     cantidad: '1',
     unidad: 'ACT',
     lote: a.guia,
     fechaProduccion: '',
     fechaVencimiento: '',
     recepcionId: a.id,
+    activacion: a.activacion ?? undefined,
+    oc: (ocDocumento ?? a.oc ?? '').trim() || undefined,
     copias: 1,
   }))
 }
@@ -189,4 +198,98 @@ export function agruparPorDocumentoAF(activos: ActivoFijoDB[]): Array<{ clave: s
     grupos.set(clave, g)
   }
   return [...grupos.values()]
+}
+
+/* ═══════════════ EDICIÓN Y ELIMINACIÓN (pedido del usuario 2026-11-17) ═══════════════ */
+
+/** Fila conservada del documento en edición (valores actuales del editor). */
+export type FilaEditadaAF = {
+  id: string
+  articulo: string
+  descripcion: string
+  activacion: string | null
+  conExcepcion: boolean
+  /** true = el usuario tocó el contenido de ESTA fila (solo esas se actualizan). */
+  contenidoCambio: boolean
+}
+
+/** Elimina UN activo por id — verificación honesta: debe desaparecer 1. */
+export async function borrarActivoAF(id: string): Promise<void> {
+  const { data, error } = await dataClient.from('rep_activos_fijos').delete().eq('id', id).select('id')
+  if (error) throw error
+  if ((data ?? []).length !== 1) {
+    throw new Error('El activo ya no existía (otro usuario lo eliminó antes).')
+  }
+}
+
+/** Elimina el DOCUMENTO completo (guía + OC + fecha): todas sus filas. */
+export async function borrarDocumentoAF(doc: { fecha: string; guia: string; oc: string }): Promise<number> {
+  const { data, error } = await dataClient
+    .from('rep_activos_fijos')
+    .delete()
+    .eq('fecha', doc.fecha)
+    .eq('guia', doc.guia.trim())
+    .eq('oc', (doc.oc ?? '').trim())
+    .select('id')
+  if (error) throw error
+  return (data ?? []).length
+}
+
+/** Actualiza UNA fila (contenido editado y/o documento cambiado — el doc vive
+ *  denormalizado por fila). Verificación honesta: exige la fila actualizada. */
+export async function actualizarActivoFijo(
+  fila: FilaEditadaAF,
+  doc?: { fecha: string; guia: string; oc: string }
+): Promise<void> {
+  const cambios: Record<string, unknown> = {
+    articulo: fila.articulo.trim().toUpperCase(),
+    descripcion: (fila.descripcion ?? '').trim(),
+    activacion: fila.activacion?.trim().toUpperCase() || null,
+    con_excepcion: fila.conExcepcion,
+  }
+  if (doc) {
+    cambios.fecha = doc.fecha
+    cambios.guia = doc.guia.trim()
+    cambios.oc = (doc.oc ?? '').trim()
+  }
+  const { data, error } = await dataClient.from('rep_activos_fijos').update(cambios).eq('id', fila.id).select('id')
+  if (error) throw error
+  if ((data ?? []).length !== 1) {
+    throw new Error(`El activo ${fila.articulo} no se pudo actualizar (quizá otro usuario lo eliminó).`)
+  }
+}
+
+/**
+ * GUARDAR EDICIÓN del documento: actualiza las filas conservadas cuyo
+ * contenido cambió (o todas si cambió el documento), borra las eliminadas e
+ * inserta las nuevas. Secuencia con verificación por paso (mismo patrón
+ * honesto que editar guía); si un paso falla se informa QUÉ se completó.
+ */
+export async function guardarEdicionAF(params: {
+  docOriginal: { fecha: string; guia: string; oc: string }
+  docNuevo: { fecha: string; guia: string; oc: string }
+  conservadas: FilaEditadaAF[]
+  idsEliminados: string[]
+  nuevas: ActivoFijoNuevo[]
+  usuario: { id: string; nombre: string; correo: string }
+}): Promise<{ actualizadas: number; eliminadas: number; nuevasIds: string[]; docCambio: boolean }> {
+  const docCambio =
+    params.docOriginal.fecha !== params.docNuevo.fecha ||
+    params.docOriginal.guia.trim() !== params.docNuevo.guia.trim() ||
+    (params.docOriginal.oc ?? '').trim() !== (params.docNuevo.oc ?? '').trim()
+
+  let actualizadas = 0
+  for (const fila of params.conservadas) {
+    if (fila.contenidoCambio || docCambio) {
+      await actualizarActivoFijo(fila, docCambio ? params.docNuevo : undefined)
+      actualizadas++
+    }
+  }
+  for (const id of params.idsEliminados) {
+    await borrarActivoAF(id)
+  }
+  const nuevasIds = params.nuevas.length > 0
+    ? (await registrarActivosFijos(params.nuevas, params.docNuevo, params.usuario)).ids
+    : []
+  return { actualizadas, eliminadas: params.idsEliminados.length, nuevasIds, docCambio }
 }

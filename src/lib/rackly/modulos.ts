@@ -856,7 +856,22 @@ export async function guardarEdicionGuia(
   autor: UsuarioCtx,
   usuarioActualId?: string
 ): Promise<{ actualizadas: number; eliminadas: number; insertadas: number }> {
-  const plan = planSyncEdicionPorId(idsOriginales, filasNuevas)
+  const plan = planSyncEdicionPorId(idsOriginales, filasNuevas, {
+    // AUDITORÍA 2026-11-17: el mismo filaId reclamado por DOS filas con
+    // contenido idéntico es UNA MISMA paleta re-ensamblada dos veces → la
+    // copia se descarta (antes se INSERTABA: filas fantasma ×2 en guías
+    // reales, p. ej. T173-00004274). Contenido distinto sigue insertando.
+    mismoContenido: (a, b) =>
+      a.codigo === b.codigo &&
+      a.descripcion === b.descripcion &&
+      a.cantidad === b.cantidad &&
+      a.unidadMedida === b.unidadMedida &&
+      a.lote === b.lote &&
+      a.fechaProduccion === b.fechaProduccion &&
+      a.fechaVencimiento === b.fechaVencimiento &&
+      a.proveedor === b.proveedor &&
+      a.observaciones === b.observaciones,
+  })
 
   // GUARD Tránsito (edición) — ANTES de escribir NADA: si el usuario quitó
   // filas que ya fueron transferidas por Tránsito, ABORTAR en seco. Borrar

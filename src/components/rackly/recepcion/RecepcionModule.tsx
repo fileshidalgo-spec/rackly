@@ -23,7 +23,7 @@ import { puede } from '@/lib/rackly/permisos'
 import { observacionesContextoRq } from '@/lib/rackly/devolucion-rq'
 import { DevolucionFotoForm } from '@/components/rackly/recepcion/DevolucionFotoForm'
 import { fetchCatalogo } from '@/lib/rackly/catalogo'
-import { agruparGuias, avisosDePaletas, expandirEnFilas, faltanProveedor, filasAItems, obsSinMarcaPaleta, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
+import { agruparGuias, avisosDePaletas, expandirEnFilas, faltanProveedor, filasAItems, obsSinMarcaPaleta, tarjetasIdenticasDePaletas, type GuiaAgrupada } from '@/lib/rackly/recepcion-filas'
 import { GuiaFotoForm, type GuiaRegistradaInfo } from '@/components/rackly/recepcion/GuiaFotoForm'
 import {
   RecepcionItemsEditor,
@@ -915,6 +915,23 @@ export function RecepcionModule() {
         cancelarEdicion()
         cargar(0, true)
         return
+      }
+
+      // AUDITORÍA 2026-11-17: tarjetas DIVIDIDAS idénticas (mismo código y
+      // EXACTAMENTE las mismas paletas) — pueden ser 2 grupos físicos reales
+      // del mismo código o una tarjeta duplicada del editor. NUNCA en
+      // silencio (misma filosofía que avisosDePaletas y los guards M-1).
+      const identicas = tarjetasIdenticasDePaletas(validos)
+      if (identicas.length > 0) {
+        const ok = window.confirm(
+          `Hay ${identicas.length} tarjeta(s) dividida(s) EXACTAMENTE idénticas (${identicas
+            .map((i) => i.codigo?.trim() || i.descripcion?.trim() || '?')
+            .join(', ')}).\n\nSi son 2 grupos físicos reales del mismo código (2 cargas/lotes), continúa.\nSi es una tarjeta duplicada por error, cancela, quítala del editor y vuelve a registrar.`
+        )
+        if (!ok) {
+          setSaving(false)
+          return
+        }
       }
 
       // ── ALTA normal: filas nuevas con el encabezado digitado ──

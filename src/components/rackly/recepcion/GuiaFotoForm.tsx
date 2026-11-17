@@ -42,7 +42,12 @@ import {
   reducirImagen,
   type DatosGuia,
 } from '@/lib/rackly/guia-ocr'
-import { avisosDePaletas, expandirEnFilas, faltanProveedor } from '@/lib/rackly/recepcion-filas'
+import {
+  avisosDePaletas,
+  expandirEnFilas,
+  faltanProveedor,
+  tarjetasIdenticasDePaletas,
+} from '@/lib/rackly/recepcion-filas'
 import { crearRecepciones, listarRecepcionesPorDocumento, marcarGuiaRecepcionada, subirFotoGuia, TIPOS_DOCUMENTO_RECEPCION, TIPO_RECEPCION } from '@/lib/rackly/modulos'
 import { puede } from '@/lib/rackly/permisos'
 import { useLoteUuidSync } from '@/lib/rackly/recepcion-idempotencia'
@@ -573,6 +578,22 @@ export function GuiaFotoForm({
           // lo digitado en las paletas).
           description: `${avisos[0]}. Con UNA sola paleta con cantidad se registra el total del artículo; con varias paletas, lo digitado en ellas.`,
         })
+      }
+      // AUDITORÍA 2026-11-17: tarjetas DIVIDIDAS idénticas (mismo código y
+      // EXACTAMENTE las mismas paletas) — pueden ser 2 grupos físicos reales
+      // del mismo código o una tarjeta duplicada del editor: guías reales
+      // grabaron "Paleta i/N" ×2 con TODO idéntico. NUNCA en silencio.
+      const identicas = tarjetasIdenticasDePaletas(validos)
+      if (identicas.length > 0) {
+        const ok = window.confirm(
+          `Hay ${identicas.length} tarjeta(s) dividida(s) EXACTAMENTE idénticas (${identicas
+            .map((i) => i.codigo?.trim() || i.descripcion?.trim() || '?')
+            .join(', ')}).\n\nSi son 2 grupos físicos reales del mismo código (2 cargas/lotes), continúa.\nSi es una tarjeta duplicada por error, cancela, quítala del editor y vuelve a guardar.`
+        )
+        if (!ok) {
+          setSaving(false)
+          return
+        }
       }
       // M-2: crearRecepciones devuelve la identidad única de ESTA recepción
       // (guia_id compartido por todas sus filas).

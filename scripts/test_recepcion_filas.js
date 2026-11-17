@@ -32,6 +32,7 @@ const {
   combinarPaletas,
   numeroPaletasValido,
   cantidadesSinBase,
+  tarjetasIdenticasDePaletas,
   aPaleta,
   planSyncEdicionPorId,
   MAX_PALETAS,
@@ -167,6 +168,44 @@ check('al registrar: 40 filas rotuladas Paleta i/40', filas40.length === 40 && f
 // Salto SIN base (total vacío y paletas sin suma): no inventa cantidades.
 const saltoSinBase = combinarPaletas(pal(['', '']), repartirEquitativo({ ...base, cantidad: '', paletas: pal(['', '']) }, 4) ?? cantidadesSinBase(pal(['', '']), 4))
 check('sin total ni suma: las 4 paletas nuevas nacen vacías (nunca inventa)', saltoSinBase.length === 4 && saltoSinBase.every((p) => p.cantidad === ''), JSON.stringify(saltoSinBase.map((p) => p.cantidad)))
+
+// ─── 4d. AUDITORÍA 2026-11-17 — filas fantasma ×2 y tarjetas idénticas ───
+// Guías reales grabaron "Paleta i/N" ×2 con TODO idéntico: 31 grupos nacieron
+// en el ALTA (tarjetas dobles en el editor) y 4 en la EDICIÓN (planSync
+// re-insertaba el segundo reclamo del mismo filaId). Fixes:
+//   · planSyncEdicionPorId: reclamo doble con contenido IDÉNTICO → se
+//     descarta (la copia fantasma); con contenido distinto → INSERT (igual).
+//   · tarjetasIdenticasDePaletas: detecta las tarjetas divididas idénticas
+//     para que la UI pida confirmación (nunca en silencio).
+console.log('\n[4d] planSync dedupe de reclamos + tarjetas idénticas')
+const idA = 'fila-aaa'
+const filaX = { codigo: '56684', descripcion: 'FILM', cantidad: 156000, unidadMedida: 'KG', lote: '', fechaProduccion: '', fechaVencimiento: '', proveedor: '', observaciones: 'Paleta 1/6', filaId: idA }
+const filaXcopia = { ...filaX }
+const filaXdif = { ...filaX, cantidad: 999 }
+const mismoContenido = (a, b) =>
+  a.codigo === b.codigo && a.descripcion === b.descripcion && a.cantidad === b.cantidad &&
+  a.unidadMedida === b.unidadMedida && a.lote === b.lote && a.fechaProduccion === b.fechaProduccion &&
+  a.fechaVencimiento === b.fechaVencimiento && a.proveedor === b.proveedor && a.observaciones === b.observaciones
+const pDedupe = planSyncEdicionPorId([idA], [filaX, filaXcopia], { mismoContenido })
+check('reclamo doble IDÉNTICO → la copia se descarta (1 UPDATE, 0 INSERT)', pDedupe.actualizar.length === 1 && pDedupe.insertar.length === 0 && pDedupe.eliminar.length === 0, JSON.stringify({ a: pDedupe.actualizar.length, i: pDedupe.insertar.length }))
+const pLegado = planSyncEdicionPorId([idA], [filaX, filaXcopia])
+check('sin comparador → comportamiento legado (la copia INSERTA)', pLegado.actualizar.length === 1 && pLegado.insertar.length === 1, JSON.stringify({ a: pLegado.actualizar.length, i: pLegado.insertar.length }))
+const pDif = planSyncEdicionPorId([idA], [filaX, filaXdif], { mismoContenido })
+check('reclamo doble con contenido DISTINTO → INSERT (fila nueva legítima)', pDif.actualizar.length === 1 && pDif.insertar.length === 1, JSON.stringify({ a: pDif.actualizar.length, i: pDif.insertar.length }))
+const pSinReclamar = planSyncEdicionPorId([idA, 'fila-bbb'], [filaX], { mismoContenido })
+check('id original no reclamado → DELETE (fila quitada)', pSinReclamar.eliminar.length === 1 && pSinReclamar.eliminar[0] === 'fila-bbb', JSON.stringify(pSinReclamar.eliminar))
+
+const tarjetaA = { ...base, paletas: pal(['50', '50', '50']) }
+const tarjetaIgual = { ...base, paletas: pal(['50', '50', '50']) }
+const tarjetaOtraCant = { ...base, paletas: pal(['50', '50', '49']) }
+const tarjetaOtroLote = { ...base, lote: 'L-OTRO', paletas: pal(['50', '50', '50']) }
+const tarjetaSinDividir = { ...base }
+check('2 tarjetas divididas idénticas → detecta 1 repetida', tarjetasIdenticasDePaletas([tarjetaA, tarjetaIgual]).length === 1)
+check('3 tarjetas idénticas → detecta 2 repetidas', tarjetasIdenticasDePaletas([tarjetaA, tarjetaIgual, tarjetaIgual]).length === 2)
+check('una paleta con cantidad distinta → NO es idéntica', tarjetasIdenticasDePaletas([tarjetaA, tarjetaOtraCant]).length === 0)
+check('lote base distinto → NO es idéntica', tarjetasIdenticasDePaletas([tarjetaA, tarjetaOtroLote]).length === 0)
+check('tarjetas SIN dividir → fuera de alcance', tarjetasIdenticasDePaletas([tarjetaSinDividir, { ...base }]).length === 0)
+check('una sola tarjeta dividida → nada que avisar', tarjetasIdenticasDePaletas([tarjetaA]).length === 0)
 
 // ─── 5. agruparGuias — UNA fila por guía en el registro ───
 console.log('\n[5] agruparGuias — registro agrupado por documento')

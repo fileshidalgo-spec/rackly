@@ -337,6 +337,44 @@ export function avisosDePaletas(items: ItemConPaletas[]): string[] {
 }
 
 /**
+ * Tarjetas DIVIDIDAS idénticas (auditoría 2026-11-17): mismo código, misma
+ * descripción, mismos lote/fechas/proveedor base y EXACTAMENTE el mismo
+ * vector de paletas (cantidad + lote + fechas + proveedor por posición).
+ * Puede ser legítimo (2 grupos físicos reales del mismo código — p. ej. 2
+ * cargas del mismo film sin lote rotulado) o una tarjeta duplicada del
+ * editor: guías reales grabaron "Paleta i/6" ×2 con TODO idéntico. La UI
+ * pide CONFIRMACIÓN antes de registrar (misma filosofía que avisosDePaletas:
+ * se permite guardar igual, pero nunca en silencio).
+ */
+export function tarjetasIdenticasDePaletas(items: ItemConPaletas[]): ItemConPaletas[] {
+  const vistas = new Map<string, ItemConPaletas>()
+  const repetidas: ItemConPaletas[] = []
+  for (const it of items) {
+    if (!it.paletas || it.paletas.length === 0) continue // sin dividir: fuera de alcance
+    const clave = [
+      (it.codigo ?? '').trim().toUpperCase(),
+      (it.descripcion ?? '').trim().toUpperCase(),
+      (it.lote ?? '').trim(),
+      (it.fechaProduccion ?? '').trim(),
+      (it.fechaVencimiento ?? '').trim(),
+      (it.proveedor ?? '').trim(),
+      JSON.stringify(
+        (it.paletas ?? []).map((p) => [
+          p.cantidad ?? '',
+          p.lote ?? '',
+          p.fechaProduccion ?? '',
+          p.fechaVencimiento ?? '',
+          p.proveedor ?? '',
+        ])
+      ),
+    ].join('||')
+    if (vistas.has(clave)) repetidas.push(it)
+    else vistas.set(clave, it)
+  }
+  return repetidas
+}
+
+/**
  * Artículos que EXIGEN proveedor (lámina/stretch — MISMA regla que Racks:
  * requiereProveedor(descripcion)) y no lo traen: devuelve identificadores
  * legibles para BLOQUEAR el registro (en Racks el ingreso de film sin
@@ -557,25 +595,38 @@ export type PlanSyncEdicion<T> = {
  *
  * Reglas:
  *   · filaId presente Y perteneciente a la guía → UPDATE de esa fila.
- *   · dos filas reclamando el mismo id → la primera lo conserva (la otra
- *     INSERTA — nunca doble escritura sobre una misma fila).
+ *   · dos filas reclamando el mismo id:
+ *       − contenido IDÉNTICO (con `mismoContenido`) → la copia se DESCARTA:
+ *         es la misma paleta que el re-ensamblado produjo dos veces —
+ *         INSERTarla creaba la fila fantasma ×2 (auditoría 2026-11-17:
+ *         grupos duplicados de guías reales nacieron aquí).
+ *       − contenido distinto o sin comparador → la otra INSERTA (jamás
+ *         doble escritura sobre una misma fila).
  *   · filaId apuntando a un id ajeno a la guía (residuo raro) → INSERT
  *     seguro (jamás escribe sobre una fila que no es suya).
  *   · ids originales no reclamados → DELETE (filas quitadas por el usuario).
  */
 export function planSyncEdicionPorId<T extends { filaId?: string | null }>(
   idsOriginales: string[],
-  filas: T[]
+  filas: T[],
+  opciones?: { mismoContenido?: (a: T, b: T) => boolean }
 ): PlanSyncEdicion<T> {
   const originales = new Set(idsOriginales)
-  const usados = new Set<string>()
+  const usados = new Map<string, T>()
   const actualizar: Array<{ id: string; fila: T }> = []
   const insertar: T[] = []
+  const mismoContenido = opciones?.mismoContenido
   for (const f of filas) {
     const id = (f.filaId ?? '').trim()
-    if (id && originales.has(id) && !usados.has(id)) {
-      usados.add(id)
-      actualizar.push({ id, fila: f })
+    if (id && originales.has(id)) {
+      const previa = usados.get(id)
+      if (!previa) {
+        usados.set(id, f)
+        actualizar.push({ id, fila: f })
+        continue
+      }
+      if (mismoContenido && mismoContenido(previa, f)) continue // copia fantasma: descartada
+      insertar.push(f)
     } else {
       insertar.push(f)
     }

@@ -1392,3 +1392,14 @@ El usuario entregó el token de la Supabase Management API; se ejecutó el únic
 - UI en RecepcionItemsEditor (compartido por las 3 vías: manual, foto de guía, devolución): `ControlDividir` (botón + «¿En cuántas?»; el N digitado va directo al reparto) y en el panel «Saltar a N paletas» (Enter aplica). Reglas intactas: partes iguales con residuo al final, conserva lote/fechas/proveedor PROPIOS por posición (combinarPaletas), MAX_PALETAS=44.
 - Sin cambios de BD: el registro sigue expandiendo 1 fila por paleta (expandirEnFilas intacto) — mismo modelo de datos, cero riesgo. Paso 3 de la metodología: consumidores en Atención (RqFotoForm, Rq/RalEditarDialog) usan funciones NO modificadas → sin conflictos.
 - QA: tsc OK · eslint 0/0 · 59/59 suites · test_recepcion_filas 148 checks (17 nuevos en [4c]) · build OK.
+
+
+---
+
+## 2026-11-17 · Auditoría post-mejora: hallazgo y fix de filas fantasma ×2 (paletas)
+- Metodología 10 pasos. Forense en BD (Supabase Micro, sa-east-1, PG 17.6, 52 MB, ACTIVE_HEALTHY): **35 grupos de filas "Paleta i/N" ×2 con TODO idéntico** (10-13 → 14-11), created_at idéntico al microsegundo → nacieron EN EL MISMO batch (no doble clic). Solo artículos divididos (0 dups en filas sin marca). 5 usuarios afectados.
+- Causas: **31/35 en el ALTA** (el editor tenía 2 tarjetas divididas idénticas → payload doble; los uuids por fila burlaban la idempotencia M-1) y **4/35 en la EDICIÓN** (planSyncEdicionPorId re-insertaba el segundo reclamo del mismo filaId = fila fantasma).
+- NO son todos errores: mismo código con N grupos legítimos (2 cargas) produce el mismo patrón — ambiguo por diseño de la marca (sin identidad de grupo).
+- **Fixes** (recepcion-filas.ts · modulos.ts · RecepcionModule · GuiaFotoForm): ① planSync dedupa el reclamo doble SOLO si el contenido es idéntico (distinto sigue insertando — compatible hacia atrás vía `mismoContenido` opcional); ② nuevo puro `tarjetasIdenticasDePaletas` + confirmación antes del alta en ambas vías (misma filosofía "nunca en silencio"); ③ comparador de contenido en guardarEdicionGuia.
+- Los 35 grupos históricos NO se borran automáticamente (ambigüedad legítima/duplicado) — quedan documentados para decisión del usuario.
+- QA: tsc · eslint 0/0 · 59/59 suites (test_recepcion_filas 158 checks, 10 nuevos en [4d]) · build OK.

@@ -1426,3 +1426,14 @@ El usuario entregó el token de la Supabase Management API; se ejecutó el únic
 - QA: tsc 0 · eslint 0/0 · **60/60 suites** (test_activos_fijos ampliado a 68 checks: banda META ^FO255, edición 2 escenarios, honestidad del update fantasma, borrado por doc) · build OK. BD: 4 políticas (select/insert/update/delete) verificadas por MAPI. Deploy a3d8034, sello 202611172258-a3d8034, strings de edición presentes en el bundle vivo.
 - Fix de tests: __updateCalls() del stub devuelve COPIA (slice) → comparar conteos, no mutar.
 - PAT de GitHub: el que quedó en .git/config tras el reciclaje estaba caducado (401) — restaurado el vigente.
+
+
+---
+
+## 2026-11-17 (v3) · Repuestos · Recepción·Mercadería — EDITAR/ELIMINAR guías con artículos ya ubicados (edición mixta + reversa)
+- Diagnóstico (paso 1.2): los botones existían PERO quedaban deshabilitados para siempre en cuanto UN artículo era ubicado (guard UI pendientes===totalLineas + RPCs rechazando con GUIA_YA_UBICADA) — en la práctica ninguna guía podía editarse/eliminarse después de Tránsito.
+- EDICIÓN MIXTA (rep_editar_recepcion v2): cabecera (guía/OC/DAM) SIEMPRE editable; líneas YA UBICADAS conservadas pero CONGELADAS (artículo/cantidad intocables — stock y kardex dependen de ellas; proveedor corregible; rechazo LINEA_UBICADA_CONGELADA si se tocan o quitan); líneas en tránsito libres (editar/quitar/agregar). Todo-o-nada + advisory lock + UPDATE por id (QR estable).
+- ELIMINACIÓN CON REVERSA (rep_eliminar_recepcion v2): por cada ubicado → stock descontado de la lonchera (a 0 se elimina la fila y libera el cupo de 15) + DEVOLUCIÓN en kardex (traza del ingreso intacta, referencia «Reversa de recepción · guía X»); si ya hubo salidas (stock < recibido o fila ausente) RECHAZA con STOCK_CONSUMIDO — nunca kardex corrupto. Devuelve lineas_reversadas.
+- UI: botones habilitados SIEMPRE (títulos explican el efecto); líneas ubicadas con badge ámbar «ubicado» + X deshabilitado; aviso al abrir edición con congeladas; diálogo de eliminación con consecuencia dinámica (ubicadas → devolución; tránsito → desaparecen de Tránsito); toast final con reversas.
+- Verificación: test transaccional BEGIN…ROLLBACK en la BD REAL de producción — 7 escenarios en 1 sesión (edición mixta OK, 2 rechazos LINEA_UBICADA_CONGELADA, eliminar con reversa OK + stock borrado a fila + devolución en kardex + sin huérfanos, STOCK_CONSUMIDO con salida simulada, camino 100% tránsito intacto) — 0 persistencia. Suite node ampliada con el contrato de wrappers (6 checks) → **60/60 suites** · tsc 0 · eslint 0 · build OK.
+- Deploy 3d0cc56 (sello 202611172321-3d0cc56), string de reversa presente en el bundle vivo. Migración: scripts/migracion_rep_edicion_mixta_1117.sql; test BD: /home/z/my-project/scripts/test_rep_mixed_rpc.py.
